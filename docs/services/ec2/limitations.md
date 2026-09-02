@@ -135,6 +135,15 @@ naming the strategies that do exist. It is the one value this variable refuses
 outright; an unrecognised value — a typo — falls back to `shared` with a logged
 warning.
 
+Overlap is judged within a region. VPCs are stored per region, and every
+strategy compares a CIDR against the VPCs of the region it is created in — so
+the same CIDR in two regions, which is what CDK's default of `10.0.0.0/16` in
+every stack produces, is not a conflict to `strict`, is not shared under
+`shared`, and is not remapped under `remapped`. The host's routing table is
+still one: Docker refuses the second region's bridge, and that VPC lands as
+`unbacked` (see below). Give each region its own CIDR when more than one region
+needs a backed VPC.
+
 ### Choosing one
 
 | Situation | Use |
@@ -180,7 +189,7 @@ and on `/_overcast/debug/ec2/vpcs` alongside `DockerNetworkID` and
 | --- | --- |
 | `ok` | This VPC owns its backing Docker network |
 | `shared` | It reuses a network owned by another VPC |
-| `unbacked` | No Docker network — Docker was unavailable, or the last create failed |
+| `unbacked` | No Docker network — Docker was unavailable, the last create failed, or a VPC in another region already holds the CIDR |
 | `conflict` | `strict` mode: its CIDR collided with another VPC. Container-backed operations on it are refused with `InvalidVpc.NetworkStatus` |
 | `remapped` | `remapped` mode: backed by a shadow CIDR |
 

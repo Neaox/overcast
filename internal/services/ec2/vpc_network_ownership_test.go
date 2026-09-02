@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -73,6 +74,22 @@ func newOwnershipDaemon(t *testing.T) *ownershipDaemon {
 			d.removed = append(d.removed, name)
 			delete(d.networks, name)
 			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/networks":
+			// The list endpoint, which the full pass reads after its store
+			// scan: what a test seeded, in a stable order. A create adds no
+			// inspect, so what a test creates is not listed — nothing here
+			// needs it to be.
+			ids := make([]string, 0, len(d.inspects))
+			for id := range d.inspects {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			out := make([]docker.NetworkSummary, 0, len(ids))
+			for _, id := range ids {
+				i := d.inspects[id]
+				out = append(out, docker.NetworkSummary{ID: i.ID, Name: i.Name, Labels: i.Labels, Internal: i.Internal, Driver: i.Driver, IPAM: i.IPAM})
+			}
+			_ = json.NewEncoder(w).Encode(out)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1.45/networks/"):
 			name := strings.TrimPrefix(r.URL.Path, "/v1.45/networks/")
 			if seeded, ok := d.inspects[name]; ok {
@@ -220,10 +237,14 @@ func TestReconcileNetworks_removesNothingWithoutAnIdentity(t *testing.T) {
 
 	// When: the reconcile sees an unclaimed network, even one whose label
 	// would have matched an identity had one resolved.
-	h.reconcileNetworks(context.Background(), []docker.NetworkSummary{
+	snapshot := []docker.NetworkSummary{
 		ec2Network("net-unclaimed", "vpc-gone", "10.5.0.0/16", ""),
 		ec2Network("net-theirs", "vpc-7d738f2a", "10.3.0.0/16", "another-instance"),
-	})
+	}
+	for _, n := range snapshot {
+		daemon.seedFromSummary(h, n, true)
+	}
+	h.reconcileNetworks(context.Background(), snapshot)
 
 	// Then: nothing is removed. Ownership cannot be established, and an
 	// unremovable orphan is the cheaper mistake.

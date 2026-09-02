@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/overcast-sh/overcast/internal/clock"
 	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/middleware"
@@ -27,6 +28,10 @@ import (
 const (
 	otherRegion = "ap-southeast-2"
 	otherVPCID  = "vpc-bac19e35"
+
+	// listNetworksCall is the fake's record of one daemon list — what a
+	// reconcile pass costs on the wire.
+	listNetworksCall = "GET /v1.45/networks"
 )
 
 func regionCtx(region string) context.Context {
@@ -69,28 +74,19 @@ func storedVPCIn(t *testing.T, h *Handler, region, vpcID string) *VPC {
 	return vpc
 }
 
-// summaries is the daemon-wide snapshot the router hands ReconcileNetworks:
-// every network the fake holds, as the list endpoint would report it.
-func (f *fakeVPCDocker) summaries() []docker.NetworkSummary {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	out := make([]docker.NetworkSummary, 0, len(f.networks))
-	for _, n := range f.networks {
-		out = append(out, docker.NetworkSummary{
-			ID: n.id, Name: n.name, Labels: n.labels, Internal: n.internal, Driver: n.driver,
-			IPAM: docker.NetworkIPAM{Config: []docker.NetworkIPAMConfig{{Subnet: n.subnet}}},
-		})
-	}
-	return out
+func healthReports(tracker *docker.Tracker, name string) bool {
+	_, ok := healthStatus(tracker, name)
+	return ok
 }
 
-func healthReports(tracker *docker.Tracker, name string) bool {
+// healthStatus is what /_overcast/health says about the named network.
+func healthStatus(tracker *docker.Tracker, name string) (docker.NetworkStatus, bool) {
 	for _, n := range tracker.Snapshot().Networks {
 		if n.Name == name {
-			return true
+			return n, true
 		}
 	}
-	return false
+	return docker.NetworkStatus{}, false
 }
 
 func TestReconcileNetworks_recreatesAMissingNetworkInANonDefaultRegion(t *testing.T) {
@@ -209,10 +205,15 @@ func TestReconcileNetworks_sameRegionSameCIDRStillAdoptsBySubnet(t *testing.T) {
 	// no live sharer, owns the network. A sorts first.
 	f := newFakeVPCDocker(t)
 	h := vpcDockerHandler(t, f, "shared")
-	a := &VPC{VpcID: "vpc-00000000", CidrBlock: "10.0.0.0/16", State: "available", NetworkStatus: vpcNetworkStatusUnbacked}
+	a := &VPC{VpcID: "vpc-00000000", CidrBlock: "10.0.0.0/16", State: "available", NetworkStatus: vpcNetworkStatusUnbacked,
+		CreateTime: h.clk.Now().UnixMilli()}
 	if aerr := h.store.putVPC(context.Background(), a); aerr != nil {
 		t.Fatalf("putVPC: %s", aerr.Message)
 	}
+	// B is the later record by CreateTime — the order the strategies sort
+	// by — not by the VpcID tiebreak a mock clock stopped at the epoch
+	// would otherwise decide it on.
+	h.clk.(*clock.Mock).Add(time.Second)
 	b := createVPCIn(t, h, "us-east-1", "10.0.0.0/16")
 	bNet := storedVPC(t, h, b).DockerNetworkID
 
@@ -274,6 +275,8 @@ func TestDockerNetworkForVpc_reconcilesARegionTheStartupPassDidNotCover(t *testi
 	// default region.
 	f := newFakeVPCDocker(t)
 	h := vpcDockerHandler(t, f, "shared")
+	tracker := docker.NewTracker()
+	h.SetNetworkReporter(tracker)
 	svc := &Service{handler: h, log: h.log}
 	usVPC := createVPCIn(t, h, "us-east-1", "10.1.0.0/16")
 	usNet := storedVPCIn(t, h, "us-east-1", usVPC).DockerNetworkID
@@ -284,13 +287,7 @@ func TestDockerNetworkForVpc_reconcilesARegionTheStartupPassDidNotCover(t *testi
 		t.Fatalf("VPCNetworkStatus = %q, want launchable", status)
 	}
 	got := svc.DockerNetworkForVpc(regionCtx(otherRegion), otherVPCID)
-	lists := 0
-	for _, c := range f.calls {
-		if c == "GET /v1.45/networks" {
-			lists++
-		}
-	}
-	if lists != 1 {
+	if lists := f.callCount(listNetworksCall); lists != 1 {
 		t.Errorf("the daemon was listed %d times across two placements in one region, want once", lists)
 	}
 
@@ -306,5 +303,201 @@ func TestDockerNetworkForVpc_reconcilesARegionTheStartupPassDidNotCover(t *testi
 	// And: the other region's network was not mistaken for an orphan.
 	if !f.has(usNet) {
 		t.Error("the lazy pass removed the default region's live network")
+	}
+	// And: health lists the network from this placement on, not from the
+	// next full pass.
+	if status, ok := healthStatus(tracker, n.name); !ok || status.Drift != "" {
+		t.Errorf("health reports %+v for %q, want it listed with no drift", status, n.name)
+	}
+}
+
+func TestReconcileNetworks_sweepRetainsAnUnlabelledNetwork(t *testing.T) {
+	// Given: two EC2 networks that no VPC in any region names — one labelled
+	// as this instance's, one with no instance label at all, as a build from
+	// before the label created them.
+	f := newFakeVPCDocker(t)
+	h := vpcDockerHandler(t, f, "shared")
+	mine := h.instances.Resolve(context.Background())
+	if mine == "" {
+		t.Fatal("the handler has no instance identity; ownership could not be checked")
+	}
+	ours := f.add("overcast-vpc-vpc-0ld", "10.9.0.0/16", map[string]string{
+		docker.LabelService: serviceName, docker.LabelResourceID: "vpc-0ld", docker.LabelInstance: mine,
+	})
+	unlabelled := f.add("overcast-vpc-vpc-0lder", "10.8.0.0/16", map[string]string{
+		docker.LabelService: serviceName, docker.LabelResourceID: "vpc-0lder",
+	})
+
+	// When: the startup reconcile runs over the daemon's snapshot.
+	h.reconcileNetworks(context.Background(), f.summaries())
+
+	// Then: the sweep removed the orphan it can vouch for and kept the one it
+	// cannot — absence of a label is not permission.
+	if f.has(ours) {
+		t.Error("the orphan this instance created was retained; the sweep did not run")
+	}
+	if !f.has(unlabelled) {
+		t.Error("the sweep removed an unlabelled network, whose owner it cannot establish")
+	}
+}
+
+func TestDockerNetworkForVpc_backsOffWhileTheDaemonCannotBeListed(t *testing.T) {
+	// Given: a VPC in a region no full pass has covered, on a daemon that
+	// answers everything but the list. (A store that cannot be read takes
+	// the same deferral; the memory store cannot be made to fail here.)
+	f := newFakeVPCDocker(t)
+	h := vpcDockerHandler(t, f, "shared")
+	svc := &Service{handler: h, log: h.log}
+	clk := h.clk.(*clock.Mock)
+	putStaleVPC(t, h, otherRegion, otherVPCID, "10.0.0.0/16")
+	f.setFailList(true)
+
+	// When: one placement asks twice, as PlaceInVPC does, and a second
+	// placement follows before the retry window has passed.
+	svc.VPCNetworkStatus(regionCtx(otherRegion), otherVPCID)
+	svc.DockerNetworkForVpc(regionCtx(otherRegion), otherVPCID)
+	clk.Add(regionReconcileRetry / 2)
+	svc.VPCNetworkStatus(regionCtx(otherRegion), otherVPCID)
+
+	// Then: the daemon was asked once; the rest answered from the record.
+	if got := f.callCount(listNetworksCall); got != 1 {
+		t.Fatalf("the daemon was listed %d times inside the retry window, want once", got)
+	}
+
+	// When: the window passes and the daemon still cannot list.
+	clk.Add(regionReconcileRetry / 2)
+	svc.VPCNetworkStatus(regionCtx(otherRegion), otherVPCID)
+
+	// Then: it was asked again, once.
+	if got := f.callCount(listNetworksCall); got != 2 {
+		t.Fatalf("the daemon was listed %d times after the retry window, want twice", got)
+	}
+
+	// When: the daemon recovers and the next window passes.
+	f.setFailList(false)
+	clk.Add(regionReconcileRetry)
+	got := svc.DockerNetworkForVpc(regionCtx(otherRegion), otherVPCID)
+	svc.VPCNetworkStatus(regionCtx(otherRegion), otherVPCID)
+
+	// Then: the region was reconciled — the network is back and the answer
+	// names it — and marked, so the placement after it did not list again.
+	n := f.network(h.cfg.VPCNetwork(otherVPCID))
+	if n == nil {
+		t.Fatal("the VPC's network was not recreated once the daemon could be listed")
+	}
+	if got != n.id {
+		t.Errorf("DockerNetworkForVpc = %q, want the recreated network %q", got, n.id)
+	}
+	if got := f.callCount(listNetworksCall); got != 3 {
+		t.Errorf("the daemon was listed %d times in all, want 3: the region is covered", got)
+	}
+}
+
+func TestDockerNetworkForVpc_lazyPassLeavesIsolationDriftToTheFullPass(t *testing.T) {
+	// Given: a VPC in a region no full pass has covered, backed by a network
+	// whose --internal flag no longer matches its gateway state — flipped
+	// while the handler could not act on it.
+	f := newFakeVPCDocker(t)
+	h := vpcDockerHandler(t, f, "shared")
+	tracker := docker.NewTracker()
+	h.SetNetworkReporter(tracker)
+	svc := &Service{handler: h, log: h.log}
+	vpcID := createVPCIn(t, h, otherRegion, "10.0.0.0/16")
+	before := f.network(h.cfg.VPCNetwork(vpcID))
+	if before == nil {
+		t.Fatal("CreateVpc did not back the VPC")
+	}
+	want := before.internal
+	f.setInternal(before.id, !want)
+
+	// When: a placement asks for the VPC's network under its region.
+	got := svc.DockerNetworkForVpc(regionCtx(otherRegion), vpcID)
+
+	// Then: the lazy pass ran — it listed the daemon — and adopted the
+	// network as it stands. It did not rebuild the bridge under whatever is
+	// on it: that is a startup's job, not an ECS RunTask's.
+	if lists := f.callCount(listNetworksCall); lists != 1 {
+		t.Fatalf("the daemon was listed %d times, want once: the lazy pass did not run", lists)
+	}
+	if got != before.id {
+		t.Errorf("DockerNetworkForVpc = %q, want the existing network %q", got, before.id)
+	}
+	if n := f.network(h.cfg.VPCNetwork(vpcID)); n == nil || n.id != before.id || n.internal == want {
+		t.Errorf("the lazy pass recreated the drifted network: %+v", n)
+	}
+	if removed := f.callsUnder("DELETE /v1.45/networks/"); removed != 0 {
+		t.Errorf("the lazy pass removed %d network(s); it should repair nothing", removed)
+	}
+	// And: health says so — the network as it stands, with the drift the
+	// lazy pass left and what repairs it.
+	status, ok := healthStatus(tracker, before.name)
+	if !ok || status.Internal != !want || len(status.Mismatch) == 0 || status.Drift == "" || status.Fix == "" {
+		t.Errorf("health reports %+v for %q, want it listed as internal=%t with a mismatch, a drift line and a fix", status, before.name, !want)
+	}
+
+	// When: the full pass runs.
+	h.reconcileNetworks(context.Background(), f.summaries())
+
+	// Then: it repaired the drift, and health says that too.
+	if n := f.network(h.cfg.VPCNetwork(vpcID)); n == nil || n.internal != want {
+		t.Errorf("after the full pass the network is %+v, want internal=%t", n, want)
+	}
+	if status, ok := healthStatus(tracker, before.name); !ok || status.Internal != want || status.Drift != "" {
+		t.Errorf("after the full pass health reports %+v for %q, want internal=%t and no drift", status, before.name, want)
+	}
+}
+
+func TestReconcileNetworks_listsTheDaemonAfterItsStoreScan(t *testing.T) {
+	// Given: the router's snapshot of the daemon, and a VPC created after it
+	// was taken — network first, record second, as CreateVpc does — before
+	// the reconcile reaches the store.
+	f := newFakeVPCDocker(t)
+	h := vpcDockerHandler(t, f, "shared")
+	snapshot := f.summaries()
+	vpcID := createVPCIn(t, h, otherRegion, "10.0.0.0/16")
+	netID := storedVPCIn(t, h, otherRegion, vpcID).DockerNetworkID
+	if netID == "" {
+		t.Fatal("CreateVpc did not back the VPC")
+	}
+
+	// When: the full pass runs over that snapshot.
+	h.reconcileNetworks(context.Background(), snapshot)
+
+	// Then: the VPC keeps the network it has. Against the stale snapshot it
+	// would be a record naming a network the index lacks — unadoptable, its
+	// name refused on create, and written unbacked with the full pass then
+	// vouching for it.
+	got := storedVPCIn(t, h, otherRegion, vpcID)
+	if got.DockerNetworkID != netID || !dataplane.Launchable(got.NetworkStatus) {
+		t.Errorf("after the full pass the VPC names %q with status %q, want %q and launchable", got.DockerNetworkID, got.NetworkStatus, netID)
+	}
+	if !f.has(netID) {
+		t.Error("the full pass removed the network it did not know about")
+	}
+}
+
+func TestReconcileNetworks_sweepLeavesANetworkNewerThanItsSnapshot(t *testing.T) {
+	// Given: the router's snapshot, and a network of this instance's created
+	// after it was taken with no record yet — CreateVpc between the snapshot
+	// and the store scan, its record still on the way.
+	f := newFakeVPCDocker(t)
+	h := vpcDockerHandler(t, f, "shared")
+	mine := h.instances.Resolve(context.Background())
+	if mine == "" {
+		t.Fatal("the handler has no instance identity; ownership could not be checked")
+	}
+	snapshot := f.summaries()
+	inFlight := f.add("overcast-vpc-vpc-1nfl1ght", "10.7.0.0/16", map[string]string{
+		docker.LabelService: serviceName, docker.LabelResourceID: "vpc-1nfl1ght", docker.LabelInstance: mine,
+	})
+
+	// When: the full pass runs over that snapshot.
+	h.reconcileNetworks(context.Background(), snapshot)
+
+	// Then: the network is still there. Adoption reads the daemon after the
+	// scan, but the sweep may only take what the snapshot already held —
+	// anything newer may belong to a record the scan could not have seen.
+	if !f.has(inFlight) {
+		t.Fatal("the sweep removed a network newer than the store scan, whose record could still be on the way")
 	}
 }

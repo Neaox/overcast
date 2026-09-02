@@ -68,12 +68,14 @@ type Handler struct {
 	// created after a full pass was backed against the live daemon by
 	// EnsureNetwork and needs no healing.
 	reconciledAll atomic.Bool
-	// reconciledRegions holds the regions a per-region pass has covered
-	// since the last full pass started, for when that full pass could not
-	// run to the end (the store unreadable at the time). A region absent from
-	// both gets a pass on first use, so a VPC the startup pass could not see
-	// is still backed before anything is placed in it.
-	reconciledRegions sync.Map // region → struct{}
+	// reconciledRegions holds, per region, what the per-region backstop has
+	// established since the last full pass started, for when that full pass
+	// could not run to the end (the store unreadable at the time): that the
+	// region is covered, or that an attempt failed and when the next may be
+	// made (regionReconcile). A region absent from both gets a pass on first
+	// use, so a VPC the startup pass could not see is still backed before
+	// anything is placed in it.
+	reconciledRegions sync.Map // region → regionReconcile
 
 	// defaultVPCLocks serialises default-VPC seeding per region, so two
 	// concurrent describes cannot both find none and both seed one.
