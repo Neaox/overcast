@@ -52,9 +52,12 @@ type vpcNetworkStrategy interface {
 	OnDelete(ctx context.Context, vpc *VPC)
 
 	// SetInternal is called from AttachInternetGateway / DetachInternetGateway
-	// to toggle the Docker network's --internal flag. Strategies are free to
-	// no-op when the toggle would impact other VPCs sharing the same network.
-	SetInternal(ctx context.Context, vpcID string, internal bool)
+	// to bring the Docker network's --internal flag in line with the gateway
+	// state, before the attachment is persisted. An error means the network
+	// could not be made to match and the call must fail rather than record a
+	// gateway the network does not reflect. See Handler.setVPCNetworkInternal
+	// for the shared-network rule every strategy applies.
+	SetInternal(ctx context.Context, vpcID string, internal bool) error
 }
 
 // VPC network status values recorded on VPC.NetworkStatus. Empty string is
@@ -330,33 +333,8 @@ func (s *strictVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
 	}
 }
 
-func (s *strictVPCStrategy) SetInternal(ctx context.Context, vpcID string, internal bool) {
-	log := s.h.log.WithRecorder(ctx)
-
-	if !s.h.dockerReady.Load() {
-		return
-	}
-	vpc, aerr := s.h.store.getVPC(ctx, vpcID)
-	if aerr != nil || vpc.DockerNetworkID == "" {
-		return
-	}
-	if err := s.h.removeDockerVPCNetwork(ctx, vpc.DockerNetworkID); err != nil {
-		log.Warn("vpc network: strict: toggle internal — remove old",
-			zap.String("vpc", vpcID), zap.Error(err))
-		return
-	}
-	netID, err := s.h.createDockerVPCNetworkInternal(ctx, vpc, internal)
-	if err != nil {
-		log.Warn("vpc network: strict: toggle internal — recreate",
-			zap.String("vpc", vpcID), zap.Error(err))
-		vpc.DockerNetworkID = ""
-		vpc.NetworkStatus = vpcNetworkStatusUnbacked
-		_ = s.h.store.putVPC(ctx, vpc)
-		return
-	}
-	vpc.DockerNetworkID = netID
-	vpc.NetworkStatus = vpcNetworkStatusOK
-	_ = s.h.store.putVPC(ctx, vpc)
+func (s *strictVPCStrategy) SetInternal(ctx context.Context, vpcID string, internal bool) error {
+	return s.h.setVPCNetworkInternal(ctx, vpcID, internal)
 }
 
 // ─── remapped strategy ─────────────────────────────────────────────────────
@@ -544,37 +522,11 @@ func (s *remappedVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
 	}
 }
 
-func (s *remappedVPCStrategy) SetInternal(ctx context.Context, vpcID string, internal bool) {
-	log := s.h.log.WithRecorder(ctx)
-
-	if !s.h.dockerReady.Load() {
-		return
-	}
-	vpc, aerr := s.h.store.getVPC(ctx, vpcID)
-	if aerr != nil || vpc.DockerNetworkID == "" {
-		return
-	}
-	if err := s.h.removeDockerVPCNetwork(ctx, vpc.DockerNetworkID); err != nil {
-		log.Warn("vpc network: remapped: toggle internal — remove old",
-			zap.String("vpc", vpcID), zap.Error(err))
-		return
-	}
-	netID, err := s.h.createDockerVPCNetworkInternal(ctx, vpc, internal)
-	if err != nil {
-		log.Warn("vpc network: remapped: toggle internal — recreate",
-			zap.String("vpc", vpcID), zap.Error(err))
-		vpc.DockerNetworkID = ""
-		vpc.NetworkStatus = vpcNetworkStatusUnbacked
-		_ = s.h.store.putVPC(ctx, vpc)
-		return
-	}
-	vpc.DockerNetworkID = netID
-	if vpc.DockerCidrBlock != "" {
-		vpc.NetworkStatus = vpcNetworkStatusRemapped
-	} else {
-		vpc.NetworkStatus = vpcNetworkStatusOK
-	}
-	_ = s.h.store.putVPC(ctx, vpc)
+// SetInternal recreates the network under its shadow subnet when one is in
+// use — preferredDockerSubnet is what the recreate reads — and leaves the
+// record's status alone, so a remapped VPC stays remapped.
+func (s *remappedVPCStrategy) SetInternal(ctx context.Context, vpcID string, internal bool) error {
+	return s.h.setVPCNetworkInternal(ctx, vpcID, internal)
 }
 
 // ─── shared helpers ──────────────────────────────────────────────────────────
@@ -832,44 +784,13 @@ func (s *sharedVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
 	}
 }
 
-func (s *sharedVPCStrategy) SetInternal(ctx context.Context, vpcID string, internal bool) {
-	log := s.h.log.WithRecorder(ctx)
-
-	if !s.h.dockerReady.Load() {
-		return
-	}
-	vpc, aerr := s.h.store.getVPC(ctx, vpcID)
-	if aerr != nil || vpc.DockerNetworkID == "" {
-		return
-	}
-
-	// If the network is shared, recreating it would affect every sharer —
-	// skip the toggle and record the limitation.
-	if s.networkIsShared(ctx, vpc) {
-		log.Warn("vpc network: skipping internal toggle on shared network",
-			zap.String("vpc", vpcID),
-			zap.String("network", vpc.DockerNetworkID),
-			zap.Bool("internal", internal))
-		return
-	}
-
-	if err := s.h.removeDockerVPCNetwork(ctx, vpc.DockerNetworkID); err != nil {
-		log.Warn("vpc network: toggle internal — remove old",
-			zap.String("vpc", vpcID), zap.Error(err))
-		return
-	}
-	netID, err := s.h.createDockerVPCNetworkInternal(ctx, vpc, internal)
-	if err != nil {
-		log.Warn("vpc network: toggle internal — recreate",
-			zap.String("vpc", vpcID), zap.Error(err))
-		vpc.DockerNetworkID = ""
-		vpc.NetworkStatus = vpcNetworkStatusUnbacked
-		_ = s.h.store.putVPC(ctx, vpc)
-		return
-	}
-	vpc.DockerNetworkID = netID
-	vpc.NetworkStatus = vpcNetworkStatusOK
-	_ = s.h.store.putVPC(ctx, vpc)
+// SetInternal flips the network the VPC is on, sharers included: a shared
+// network is external while any VPC on it has a gateway, and every record
+// naming it follows it to the recreated one. The rule and the mechanics live
+// in Handler.setVPCNetworkInternal — this strategy contributes nothing the
+// others do not.
+func (s *sharedVPCStrategy) SetInternal(ctx context.Context, vpcID string, internal bool) error {
+	return s.h.setVPCNetworkInternal(ctx, vpcID, internal)
 }
 
 // findSharerForCIDR returns an existing VPC (other than excludeID) whose CIDR
@@ -888,19 +809,4 @@ func (s *sharedVPCStrategy) findSharerForCIDR(ctx context.Context, cidr, exclude
 		return v, true
 	}
 	return nil, false
-}
-
-// networkIsShared reports whether another stored VPC references the same
-// Docker network as vpc.
-func (s *sharedVPCStrategy) networkIsShared(ctx context.Context, vpc *VPC) bool {
-	vpcs, aerr := s.h.store.listVPCs(ctx)
-	if aerr != nil {
-		return false
-	}
-	for _, v := range vpcs {
-		if v.VpcID != vpc.VpcID && v.DockerNetworkID == vpc.DockerNetworkID {
-			return true
-		}
-	}
-	return false
 }

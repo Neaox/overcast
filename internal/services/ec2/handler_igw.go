@@ -221,6 +221,16 @@ func (h *Handler) AttachInternetGateway(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// The network is taken out of --internal before the attachment is
+	// recorded: a flip that cannot be completed fails the call and leaves
+	// nothing behind, so the same call can be retried — rather than recording
+	// a gateway the network does not reflect, which is what a 200 over a
+	// swallowed failure used to do (#1569).
+	if err := h.vpcStrategy.SetInternal(r.Context(), vpcID, false); err != nil {
+		protocol.WriteEC2QueryXMLError(w, r, vpcNetworkFlipError("attached to", vpcID, err))
+		return
+	}
+
 	igw.Attachments = append(igw.Attachments, IGWAttachment{
 		VpcID: vpcID,
 		State: "attached",
@@ -230,9 +240,6 @@ func (h *Handler) AttachInternetGateway(w http.ResponseWriter, r *http.Request) 
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
-
-	// Toggle Docker network to external (non-internal) mode.
-	h.vpcStrategy.SetInternal(r.Context(), vpcID, false)
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlAttachInternetGatewayResponse{
 		Xmlns:     ec2XMLNS,
@@ -263,16 +270,14 @@ func (h *Handler) DetachInternetGateway(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	found := false
+	found := -1
 	for i, att := range igw.Attachments {
 		if att.VpcID == vpcID {
-			igw.Attachments = append(igw.Attachments[:i], igw.Attachments[i+1:]...)
-			found = true
+			found = i
 			break
 		}
 	}
-
-	if !found {
+	if found < 0 {
 		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "Gateway.NotAttached",
 			Message:    fmt.Sprintf("The internetGateway '%s' is not attached to vpc '%s'", igwID, vpcID),
@@ -281,13 +286,19 @@ func (h *Handler) DetachInternetGateway(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Back to --internal first, for the same reason AttachInternetGateway
+	// flips before it records: a failed flip fails the call with the
+	// attachment still in place.
+	if err := h.vpcStrategy.SetInternal(r.Context(), vpcID, true); err != nil {
+		protocol.WriteEC2QueryXMLError(w, r, vpcNetworkFlipError("detached from", vpcID, err))
+		return
+	}
+
+	igw.Attachments = append(igw.Attachments[:found], igw.Attachments[found+1:]...)
 	if aerr := h.store.putInternetGateway(r.Context(), igw); aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
-
-	// Toggle Docker network back to internal mode.
-	h.vpcStrategy.SetInternal(r.Context(), vpcID, true)
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDetachInternetGatewayResponse{
 		Xmlns:     ec2XMLNS,
@@ -297,6 +308,21 @@ func (h *Handler) DetachInternetGateway(w http.ResponseWriter, r *http.Request) 
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+// vpcNetworkFlipError is the answer when the VPC's Docker network could not be
+// brought in line with the gateway change. AWS has no such failure — its
+// gateways are metadata — so the code is Overcast's own InternalError, and the
+// message says what Docker refused rather than hiding it behind the generic
+// wording, because the remedy (a container attached from outside Overcast,
+// a daemon out of address space) is on the user's side of the socket.
+func vpcNetworkFlipError(verb, vpcID string, err error) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code: protocol.ErrInternalError.Code,
+		Message: fmt.Sprintf("The internet gateway was not %s vpc '%s': its Docker network could not be recreated with the new isolation mode: %v",
+			verb, vpcID, err),
+		HTTPStatus: protocol.ErrInternalError.HTTPStatus,
+	}
+}
 
 func igwToXML(igw *InternetGateway, tags []Tag) xmlInternetGateway {
 	atts := make([]xmlIGWAttachment, 0, len(igw.Attachments))

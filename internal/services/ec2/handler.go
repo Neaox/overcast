@@ -44,6 +44,11 @@ type Handler struct {
 	// networks for litter. See docker.LabelInstance.
 	instances *serviceutil.InstanceDomain
 
+	// netProblems records, per VPC ID, a NetworkProblem: a VPC whose Docker
+	// network could not be brought to the isolation its gateway state calls
+	// for. Read by Service.NetworkProblems for the health advisories.
+	netProblems sync.Map // vpcID -> NetworkProblem
+
 	// defaultVPCLocks serialises default-VPC seeding per region, so two
 	// concurrent describes cannot both find none and both seed one.
 	defaultVPCLocks sync.Map // region → *sync.Mutex

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/services/ec2"
 	"github.com/overcast-sh/overcast/internal/state"
 )
 
@@ -610,3 +611,51 @@ func TestComputeAdvisories_threadsSQLiteAvailabilityIntoMemoryMode(t *testing.T)
 // containsDebugBody (defined in debug_test.go) is reused above for substring
 // assertions against Advisory.Detail — no need for a second copy of the same
 // helper in this file.
+
+// ---- vpc-network-isolation-stale ------------------------------------------
+
+func TestCheckVPCNetworkIsolation_firesPerRecordedProblem(t *testing.T) {
+	// Given: EC2 recorded two VPCs whose network it could not recreate with
+	// the isolation their gateway state calls for.
+	problems := []ec2.NetworkProblem{
+		{VpcID: "vpc-a", NetworkID: "net-a", Detail: "the Docker network should be external (an internet gateway is attached) but could not be recreated: boom"},
+		{VpcID: "vpc-b", NetworkID: "net-b", Detail: "the Docker network should be --internal (no internet gateway is attached) but could not be recreated: bang"},
+	}
+
+	// When: the rule evaluates them.
+	a := checkVPCNetworkIsolation(problems)
+
+	// Then: one warning names every VPC, with its own detail, and points at
+	// the EC2 limitations page.
+	if a == nil {
+		t.Fatal("expected an advisory, got nil")
+	}
+	if a.Severity != advisorySeverityWarning {
+		t.Errorf("severity = %q, want %q", a.Severity, advisorySeverityWarning)
+	}
+	if a.Code != advisoryCodeVPCNetworkIsolationStale {
+		t.Errorf("code = %q, want %q", a.Code, advisoryCodeVPCNetworkIsolationStale)
+	}
+	if !strings.HasPrefix(a.Title, "2 VPC networks") {
+		t.Errorf("title = %q, want it to count both VPCs", a.Title)
+	}
+	for _, want := range []string{"vpc-a: ", "boom", "vpc-b: ", "bang"} {
+		if !strings.Contains(a.Detail, want) {
+			t.Errorf("detail %q does not mention %q", a.Detail, want)
+		}
+	}
+	if a.DocsPath != vpcNetworkDocsPath {
+		t.Errorf("docs path = %q, want %q", a.DocsPath, vpcNetworkDocsPath)
+	}
+}
+
+func TestCheckVPCNetworkIsolation_absentWhenNothingRecorded(t *testing.T) {
+	// Given/When/Then: no problems (EC2 not wired, or every flip succeeded)
+	// means no advisory — the common case must stay silent.
+	if a := checkVPCNetworkIsolation(nil); a != nil {
+		t.Fatalf("expected no advisory, got %+v", a)
+	}
+	if a := checkVPCNetworkIsolation([]ec2.NetworkProblem{}); a != nil {
+		t.Fatalf("expected no advisory for an empty list, got %+v", a)
+	}
+}

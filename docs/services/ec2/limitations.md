@@ -19,7 +19,9 @@ How the VPC emulation actually works, and where it stops. The working set is on
 
 Each non-default VPC is backed by a real Docker bridge network. The VPC's CIDR
 becomes the Docker subnet, and the network's isolation mode (`--internal`)
-reflects whether an internet gateway is attached.
+reflects whether an internet gateway is attached — see
+[Internet gateways and isolation](#internet-gateways-and-isolation) for how
+that is kept true.
 
 That isolation only bites when Overcast's control plane is internal too, since
 every container sits on both. `OVERCAST_CONTROL_PLANE_INTERNAL` decides it, and
@@ -42,6 +44,39 @@ they appear on the console's activity feed.
 The default VPC is the exception: its backing network is the shared data plane
 (`OVERCAST_NETWORK`), which is where every container that named no VPC already
 sits.
+
+## Internet gateways and isolation
+
+A VPC's network is created `--internal` and stays that way until an internet
+gateway is attached. Docker fixes that flag when a network is created, so
+`AttachInternetGateway` and `DetachInternetGateway` recreate the network to
+change it — and they do so under whatever is already on it. Every container on
+the network (a Lambda function, an ECS task, an RDS instance) is disconnected,
+the network is recreated with the new flag, and each is reconnected with the
+address and DNS aliases it had. Their control-plane attachment is untouched, so
+an in-flight invocation keeps its Runtime API connection; only connections
+across the VPC bridge itself are dropped, as on AWS when routing changes under
+a live ENI.
+
+This matters because of the order every CloudFormation template produces:
+`AWS::EC2::VPC` first, `AWS::EC2::VPCGatewayAttachment` later, often after a
+function or task has already been placed in the VPC.
+
+A flip that cannot be completed fails the call with `InternalError`, naming
+what Docker refused, and records nothing: `DescribeInternetGateways` never
+reports a gateway the network does not reflect, and the same call can be
+retried. The usual cause is a container attached from outside Overcast
+(`docker run --network overcast-vpc-…`) — disconnect it first.
+
+On startup, reconcile checks every adopted network's flag against the gateway
+state and repairs a mismatch the same way. One it cannot repair is reported as
+the `vpc-network-isolation-stale` advisory on the console's Metrics & Health
+page (and in `GET /_overcast/debug/metrics`), naming the VPC and Docker's
+reason, until a later flip succeeds.
+
+The default VPC is the exception: its network is the shared data plane, which
+already has the internet, so a gateway change on it is recorded as metadata
+and the network is left alone.
 
 ## What the metadata does not do
 
@@ -116,9 +151,13 @@ or an RDS/ELB endpoint name is unaffected.
   API call still succeeds and the network is best-effort.
 - **`DeleteVpc`** tears the Docker network down only when the VPC being deleted
   was the last one using it.
-- **Internet gateway attach or detach** requires recreating the network, which
-  would affect every sharer, so it is refused with a warning and the existing
-  network is left in place.
+- **Internet gateway attach or detach** flips the network for every sharer at
+  once: a shared network is external while *any* VPC on it has a gateway
+  attached, and goes back to `--internal` only when the last gateway is
+  detached. Isolation between sharers is not enforced anyway, so the most
+  permissive one sets the mode — the alternative, one VPC's detach cutting off
+  another's internet, is a surprise nothing in the AWS model prepares a stack
+  for. Every sharer's record follows the recreated network.
 
 ### Inspecting network state
 

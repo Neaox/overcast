@@ -2,9 +2,11 @@ package router
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/services/ec2"
 	"github.com/overcast-sh/overcast/internal/state"
 )
 
@@ -33,6 +35,7 @@ const (
 	advisoryCodeReadPressureObserved      = "read-pressure-observed"
 	advisoryCodeMemoryMode                = "memory-mode"
 	advisoryCodeMemoryModeIgnoresExisting = "memory-mode-ignores-existing-database"
+	advisoryCodeVPCNetworkIsolationStale  = "vpc-network-isolation-stale"
 )
 
 // performanceDocsPath is the docs-browser-relative path (see
@@ -67,6 +70,12 @@ const storageDocsPath = "storage.md"
 // docs browser's heading slug for "Builds without SQLite" — see
 // dataDirDocsPath for how that slug is derived.
 const noSQLiteDocsPath = storageDocsPath + "#builds-without-sqlite"
+
+// vpcNetworkDocsPath deep-links the stale-isolation advisory to the section
+// of the EC2 limitations page that explains what a gateway does to a VPC's
+// Docker network and what a failed flip leaves behind. The fragment is the
+// docs browser's slug for that heading — see dataDirDocsPath.
+const vpcNetworkDocsPath = "services/ec2/limitations.md#internet-gateways-and-isolation"
 
 // Advisory is one actionable diagnostic surfaced alongside the storage
 // diagnostics in GET /_overcast/debug/metrics (see debugMetricsResponse.Advisories).
@@ -145,6 +154,12 @@ type advisoryInput struct {
 	// directory away that this run will neither read nor update is the sharp
 	// exception, and the one case worth an extra, stronger advisory for.
 	ExistingDatabase bool
+
+	// VPCNetworkProblems is ec2.Service.NetworkProblems(): the VPCs whose
+	// Docker network the EC2 service could not bring to the isolation their
+	// internet-gateway state calls for — drives vpc-network-isolation-stale.
+	// Nil whenever EC2 is not wired (a service subset) or nothing is wrong.
+	VPCNetworkProblems []ec2.NetworkProblem
 }
 
 // computeAdvisories is the single generator function behind the
@@ -183,7 +198,43 @@ func computeAdvisories(in advisoryInput) []Advisory {
 	if a := checkMemoryModeIgnoresExisting(in.StateBackend, in.ExistingDatabase); a != nil {
 		advisories = append(advisories, *a)
 	}
+	if a := checkVPCNetworkIsolation(in.VPCNetworkProblems); a != nil {
+		advisories = append(advisories, *a)
+	}
 	return advisories
+}
+
+// checkVPCNetworkIsolation is a warning: a VPC in this state works — its
+// containers run and reach the control plane — but with the internet
+// reachability of the gateway state before the one DescribeInternetGateways
+// reports, which is exactly the quiet divergence an emulator must not ship
+// silently. The EC2 service records an entry when a flip it attempted (on
+// Attach/DetachInternetGateway, or at startup for a network adopted with the
+// wrong flag) left the network wrong, and clears it when a later flip
+// succeeds. A flip that failed before changing anything records nothing: that
+// path fails the API call instead, and the network still matches the record.
+func checkVPCNetworkIsolation(problems []ec2.NetworkProblem) *Advisory {
+	if len(problems) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(problems))
+	for _, p := range problems {
+		lines = append(lines, p.VpcID+": "+p.Detail)
+	}
+	title := "A VPC's network does not match its internet gateway"
+	if len(problems) > 1 {
+		title = fmt.Sprintf("%d VPC networks do not match their internet gateways", len(problems))
+	}
+	return &Advisory{
+		Severity: advisorySeverityWarning,
+		Code:     advisoryCodeVPCNetworkIsolationStale,
+		Title:    title,
+		Detail: "Containers in these VPCs have the internet reachability of the previous gateway state, " +
+			"not the one DescribeInternetGateways reports. Overcast retries at the next restart; a " +
+			"container attached from outside Overcast (docker run --network overcast-vpc-...) must be " +
+			"disconnected first. " + strings.Join(lines, "; "),
+		DocsPath: vpcNetworkDocsPath,
+	}
 }
 
 // checkJournalModeNotWAL is critical: this project shipped with WAL mode

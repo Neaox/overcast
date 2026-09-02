@@ -16,6 +16,7 @@ import (
 
 	"github.com/overcast-sh/overcast/internal/boottime"
 	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/services/ec2"
 	"github.com/overcast-sh/overcast/internal/state"
 	"github.com/overcast-sh/overcast/internal/trace"
 )
@@ -25,6 +26,10 @@ import (
 // internal/services/ec2.
 type debugEC2Provider interface {
 	DebugVPCsHandler() http.HandlerFunc
+	// NetworkProblems feeds the vpc-network-isolation-stale advisory (see
+	// advisories.go): VPCs whose Docker network could not be brought to the
+	// isolation their internet-gateway state calls for.
+	NetworkProblems() []ec2.NetworkProblem
 }
 
 // DebugStateProvider is implemented by services with data outside the
@@ -68,7 +73,7 @@ func debugHandlers(cfg *config.Config, store state.Store, ec2 debugEC2Provider, 
 		r.Get("/config", debugConfig(cfg))
 		r.Get("/state", debugState(store, providers))
 		r.Get("/state/{namespace}", debugStateNamespace(store, providers))
-		r.Get("/metrics", debugMetrics(cfg, store))
+		r.Get("/metrics", debugMetrics(cfg, store, ec2))
 
 		// ---- Request tracing --------------------------------------------------
 		r.Get("/trace/{requestId}", debugTraceGet(traceBuf))
@@ -471,8 +476,12 @@ type debugMetricsResponse struct {
 	Advisories []Advisory           `json:"advisories"`
 }
 
-func debugMetrics(cfg *config.Config, store state.Store) http.HandlerFunc {
+func debugMetrics(cfg *config.Config, store state.Store, vpcs debugEC2Provider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var networkProblems []ec2.NetworkProblem
+		if vpcs != nil {
+			networkProblems = vpcs.NetworkProblems()
+		}
 		opts := state.DebugMetricsOptions{
 			IncludeNamespaceRowCounts: r.URL.Query().Get("includeRowCounts") == "true",
 		}
@@ -482,13 +491,14 @@ func debugMetrics(cfg *config.Config, store state.Store) http.HandlerFunc {
 		}
 		health, hasHealth := state.PersistentHealthSnapshot(store)
 		advisories := computeAdvisories(advisoryInput{
-			StateBackend:     cfg.State,
-			StateSource:      cfg.StateSource,
-			SQLiteAvailable:  config.SQLiteSupported(),
-			Stores:           snapshots,
-			Health:           health,
-			HasHealth:        hasHealth,
-			ExistingDatabase: config.HasExistingDatabase(cfg.DataDir),
+			StateBackend:       cfg.State,
+			StateSource:        cfg.StateSource,
+			SQLiteAvailable:    config.SQLiteSupported(),
+			Stores:             snapshots,
+			Health:             health,
+			HasHealth:          hasHealth,
+			ExistingDatabase:   config.HasExistingDatabase(cfg.DataDir),
+			VPCNetworkProblems: networkProblems,
 		})
 		if advisories == nil {
 			advisories = []Advisory{}

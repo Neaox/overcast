@@ -119,6 +119,13 @@ func (s *Service) VPCNetworkStatus(ctx context.Context, vpcID string) string {
 	return vpc.NetworkStatus
 }
 
+// NetworkProblems reports the VPCs whose Docker network could not be brought
+// to the isolation their internet-gateway state calls for, ordered by VPC ID.
+// The router renders them as a health advisory.
+func (s *Service) NetworkProblems() []NetworkProblem {
+	return s.handler.networkProblems()
+}
+
 // AllocatePrivateIPForSubnet returns the API-visible private IP for the given
 // subnet, applying remapped translation when needed. Empty string means the
 // subnet could not be resolved.

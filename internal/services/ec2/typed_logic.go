@@ -1818,12 +1818,17 @@ func (h *Handler) attachIGWTyped(ctx context.Context, req *attachIGWReq) (*attac
 			return nil, ec2err("Resource.AlreadyAssociated", fmt.Sprintf("The internetGateway '%s' is already attached to vpc '%s'", req.InternetGatewayID, req.VpcID), http.StatusBadRequest)
 		}
 	}
+	// Network first, record second: a flip that cannot be completed fails the
+	// call with nothing recorded, so it can be retried and DescribeInternetGateways
+	// never reports a gateway the network does not reflect (#1569).
+	if h.vpcStrategy != nil {
+		if err := h.vpcStrategy.SetInternal(ctx, req.VpcID, false); err != nil {
+			return nil, vpcNetworkFlipError("attached to", req.VpcID, err)
+		}
+	}
 	igw.Attachments = append(igw.Attachments, IGWAttachment{VpcID: req.VpcID, State: "attached"})
 	if aerr := h.store.putInternetGateway(ctx, igw); aerr != nil {
 		return nil, aerr
-	}
-	if h.vpcStrategy != nil {
-		h.vpcStrategy.SetInternal(ctx, req.VpcID, false)
 	}
 	return &attachIGWResp{
 		Xmlns:     ec2XMLNS,
@@ -1840,22 +1845,27 @@ func (h *Handler) detachIGWTyped(ctx context.Context, req *detachIGWReq) (*detac
 	if aerr != nil {
 		return nil, aerr
 	}
-	found := false
+	found := -1
 	for i, att := range igw.Attachments {
 		if att.VpcID == req.VpcID {
-			igw.Attachments = append(igw.Attachments[:i], igw.Attachments[i+1:]...)
-			found = true
+			found = i
 			break
 		}
 	}
-	if !found {
+	if found < 0 {
 		return nil, ec2err("Gateway.NotAttached", fmt.Sprintf("The internetGateway '%s' is not attached to vpc '%s'", req.InternetGatewayID, req.VpcID), http.StatusBadRequest)
 	}
+	// Back to --internal first, for the same reason attachIGWTyped flips
+	// before it records: a failed flip fails the call with the attachment
+	// still in place.
+	if h.vpcStrategy != nil {
+		if err := h.vpcStrategy.SetInternal(ctx, req.VpcID, true); err != nil {
+			return nil, vpcNetworkFlipError("detached from", req.VpcID, err)
+		}
+	}
+	igw.Attachments = append(igw.Attachments[:found], igw.Attachments[found+1:]...)
 	if aerr := h.store.putInternetGateway(ctx, igw); aerr != nil {
 		return nil, aerr
-	}
-	if h.vpcStrategy != nil {
-		h.vpcStrategy.SetInternal(ctx, req.VpcID, true)
 	}
 	return &detachIGWResp{
 		Xmlns:     ec2XMLNS,

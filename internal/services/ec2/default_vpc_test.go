@@ -295,4 +295,7 @@ func (s *recordingStrategy) Reconcile(_ context.Context, vpcs []*VPC, _ []docker
 
 func (s *recordingStrategy) OnDelete(context.Context, *VPC) { s.onDeleteCalls++ }
 
-func (s *recordingStrategy) SetInternal(context.Context, string, bool) { s.setInternalCalls++ }
+func (s *recordingStrategy) SetInternal(context.Context, string, bool) error {
+	s.setInternalCalls++
+	return nil
+}

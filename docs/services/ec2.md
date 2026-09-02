@@ -38,7 +38,7 @@ docker network ls --filter label=overcast.vpc-id="$VPC"
 | Area | Behaviour |
 | --- | --- |
 | Default VPC | Seeded per region on first read: `172.31.0.0/16`, `IsDefault: true`, a subnet per AZ, an attached internet gateway, a main route table and a `default` security group |
-| VPCs | Each non-default VPC gets a Docker bridge network whose subnet is the VPC's CIDR. Attaching an internet gateway takes the network out of `--internal` mode |
+| VPCs | Each non-default VPC gets a Docker bridge network whose subnet is the VPC's CIDR. Attaching an internet gateway takes the network out of `--internal` mode, moving any containers already on it; if Docker refuses, the call fails rather than recording a gateway the network does not reflect |
 | Lambda in a VPC | A function with a `VpcConfig` is attached to that VPC's network, alongside the control plane — so it can reach an RDS instance or an ECS task in the same VPC |
 | CDK lookups | `Vpc.fromLookup`, subnet `tagSet`, NAT gateway routes in `DescribeRouteTables`, and `MapPublicIpOnLaunch` are all present, so subnet-group classification works |
 | Instances | `RunInstances` records state with async `pending` → `running`, emitting `EC2 Instance State-change Notification` to the default EventBridge bus |
