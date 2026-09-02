@@ -193,7 +193,16 @@ RUN for marker in 'web/dist/index.html' '/_overcast/mcp'; do \
 # Both slim and console images share the same OS-level setup.
 FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS base
 
-RUN apk add --no-cache ca-certificates su-exec
+# bash is here for exactly one caller: the Java LocalStack Testcontainers
+# module (org.testcontainers.localstack.LocalStackContainer) replaces the
+# image's entrypoint with `sh -c` and then copies in a /testcontainers_start.sh
+# whose shebang is #!/bin/bash. With no real bash the kernel refuses the
+# shebang and the container dies with "sh: /testcontainers_start.sh: not found"
+# before the emulator starts. busybox cannot stand in — it dispatches on
+# argv[0] and has no "bash" applet — so this is a genuine package (~1 MB
+# compressed). See #1546 and docs/testcontainers.md. Overcast's own scripts are
+# /bin/sh and stay that way.
+RUN apk add --no-cache ca-certificates su-exec bash
 
 RUN addgroup -S overcast && adduser -S overcast -G overcast
 # /data is where Overcast keeps state. /var/lib/localstack is where
@@ -208,7 +217,14 @@ RUN mkdir -p /data /var/lib/localstack && chown overcast:overcast /data /var/lib
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 # Back-compat: the script was previously installed as entrypoint-slim.sh;
 # keep the old path working for anyone overriding --entrypoint explicitly.
-RUN ln -s entrypoint.sh /usr/local/bin/entrypoint-slim.sh
+#
+# docker-entrypoint.sh is LocalStack's name for the same thing, and the Java
+# Testcontainers module hard-codes it: its generated starter script exports the
+# *_DOCKER_FLAGS labels and then execs /usr/local/bin/docker-entrypoint.sh. The
+# alias is the same kind of compatibility surface as /etc/localstack/init and
+# /var/lib/localstack — LocalStack's path, answered by Overcast's own script.
+RUN ln -s entrypoint.sh /usr/local/bin/entrypoint-slim.sh \
+    && ln -s entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY docker/awslocal /usr/local/bin/awslocal
 
 # Init hook directories (LocalStack-compatible + Overcast-native).

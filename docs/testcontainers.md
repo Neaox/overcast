@@ -7,6 +7,7 @@ tags:
   - testing
   - docker
   - go
+  - localstack
   - overcast
 ---
 
@@ -204,19 +205,97 @@ your implementation's bind-mount option for `/var/run/docker.sock` — see the
 this guide (image choice, port-mapping caveats, configuration env vars)
 applies unchanged.
 
-## Using LocalStack's Testcontainers modules
+## Using the LocalStack Testcontainers modules
 
-Pointing an existing LocalStack Testcontainers module at the Overcast image
-(e.g. Java's `asCompatibleSubstituteFor`) is **not supported**: those modules
-parse the image tag as a LocalStack version to pick legacy behaviours, and
-wait for a log line Overcast does not emit. Use the
-[Go module](#go) or the
-[generic-container pattern](#other-languages-the-generic-container-pattern)
-instead. The [migration guide](./migration-from-localstack.md) covers the
-rest of a LocalStack switch-over.
+A suite already written against a LocalStack Testcontainers module runs on
+Overcast with the image name changed and nothing else. The tag you name is
+the one thing to get right, because three of the five modules read it as a
+LocalStack version number.
 
-A hand-written wait strategy pointed at `/_localstack/health` **does** work:
-Overcast serves that path in LocalStack's response shape, so only the modules'
-image-tag parsing and log-line wait stand in the way, not the endpoint. Prefer
-`/_overcast/health` in anything new — it carries per-service emulation tiers
-and the resolved storage backend, which LocalStack's shape has no field for.
+| Module                                    | Tag to name        | Why                                                                      |
+| ----------------------------------------- | ------------------ | ------------------------------------------------------------------------ |
+| Java `org.testcontainers:localstack`      | `:latest`          | any other tag is read as < 0.13 and demands a `withServices` list         |
+| Go `testcontainers-go/modules/localstack` | `:latest`          | any tag it cannot read as ≥ 0.11 is refused outright                     |
+| Node `@testcontainers/localstack`         | any                | no tag parsing                                                           |
+| Python `testcontainers[localstack]`       | any                | no tag parsing                                                           |
+| .NET `Testcontainers.LocalStack`          | a pinned version   | `:latest` throws unless `LOCALSTACK_AUTH_TOKEN` is set — any value will do |
+
+<!-- BEGIN overcast:code-tabs -->
+
+### Java
+
+```java
+LocalStackContainer overcast = new LocalStackContainer(
+    DockerImageName.parse("ghcr.io/overcast-sh/overcast-slim:latest")
+        .asCompatibleSubstituteFor("localstack/localstack"));
+overcast.start();
+
+URI endpoint = overcast.getEndpoint(); // http://127.0.0.1:<random>
+```
+
+### Node.js
+
+```typescript
+import { LocalstackContainer } from "@testcontainers/localstack";
+
+const overcast = await new LocalstackContainer("ghcr.io/overcast-sh/overcast-slim:latest").start();
+
+const endpoint = overcast.getConnectionUri();
+```
+
+### Python
+
+```python
+from testcontainers.community.localstack import LocalStackContainer
+
+with LocalStackContainer(image="ghcr.io/overcast-sh/overcast-slim:latest") as overcast:
+    s3 = overcast.get_client("s3", region_name="us-east-1")
+```
+
+### Go
+
+```go
+ctr, err := localstack.Run(ctx, "ghcr.io/overcast-sh/overcast-slim:latest")
+```
+
+### .NET
+
+```csharp
+var overcast = new LocalStackBuilder("ghcr.io/overcast-sh/overcast-slim:0.0.1-alpha.36").Build();
+await overcast.StartAsync();
+
+var endpoint = overcast.GetConnectionString();
+```
+
+<!-- END overcast:code-tabs -->
+
+### What makes this work
+
+- **`Ready.`** — Java, Node and Python block on LocalStack's readiness line.
+  Overcast prints it verbatim, on stderr, once every listener is bound. It is
+  preceded by an `overcast ready` line that says what it is, so a reader
+  grepping the logs is not left guessing.
+- **`/_localstack/health`** — Go and .NET probe it instead. Overcast has
+  served it in LocalStack's response shape since before this, so those two
+  needed nothing.
+- **`/usr/local/bin/docker-entrypoint.sh`** — the Java module replaces the
+  entrypoint and execs LocalStack's path. The image answers to it, and ships
+  `bash` for the module's generated start script.
+
+### What still differs
+
+- **Region and credentials.** Each module has its own defaults (`us-east-1`
+  and `test`/`test` for Java and Go, `us-west-1` and
+  `testcontainers-localstack` for Python). Overcast accepts any credentials
+  and any region, so all of them work — but read them from the container
+  object rather than hard-coding, as you would against LocalStack.
+- **`SERVICES`, `EAGER_SERVICE_LOADING`, `LAMBDA_DOCKER_FLAGS`.** Set by the
+  modules, recognised and inert here: every service is always on, and Overcast
+  labels the containers it starts itself. The startup log names each one it saw.
+- **Random ports.** Same caveat as above — see
+  [Port mapping caveats](#port-mapping-caveats).
+
+Overcast's own [Go module](#go) is still the better tool for a suite you are
+writing now: it waits on `/_overcast/health`, reads back the effective region
+and account, and has no tag parsing to work around. This section is for the
+suite you already have.

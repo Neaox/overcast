@@ -89,6 +89,8 @@ nothing.
 | Volume at `/var/lib/localstack` | Works | Adopted as the state directory when it is the only volume mounted |
 | Init hooks in `/etc/localstack/init/{stage}.d/` | Works | Both that tree and `/etc/overcast/init/` are scanned |
 | `awslocal` in the image | Works | Same wrapper; needs the `aws` CLI present |
+| `Ready.` readiness log line | Works | Printed verbatim once every listener is bound, after Overcast's own `overcast ready` line |
+| `/usr/local/bin/docker-entrypoint.sh` | Aliased | LocalStack's entrypoint path, symlinked to Overcast's — what the Java Testcontainers module execs |
 | `HEALTHCHECK` | Differs | Probes `/_overcast/health`; a compose healthcheck on `/_localstack/health` also works |
 | `VOLUME /var/lib/localstack` | No equivalent | Overcast declares no volume, so a volume-less run stays ephemeral by default |
 | `LOCALSTACK_AUTH_TOKEN` | Works | Recognised and inert: nothing here is auth-gated |
@@ -111,7 +113,7 @@ a wipe. Set `OVERCAST_STATE` explicitly to decide rather than infer — see
 | `samlocal` | Works | Sets `AWS_ENDPOINT_URL` and nothing else |
 | Overcast's Testcontainers module (Go) | Works | See [Testcontainers](./testcontainers.md) |
 | Generic-container recipe, any language | Works | Wait on `/_overcast/health` or `/_localstack/health` |
-| LocalStack Testcontainers modules | Gap | [#1546](https://github.com/overcast-sh/overcast/issues/1546). Go and .NET probe HTTP; Java, Node and Python wait for a `Ready.` log line |
+| LocalStack Testcontainers modules | Differs | All five start the Overcast image; each has its own rule about which tag you may name — see [Testcontainers](./testcontainers.md#using-the-localstack-testcontainers-modules) |
 
 ## Behavioural conventions
 

@@ -79,7 +79,7 @@ reason it does nothing — so you can drop it once you have seen it.
 | `DISABLE_CORS_CHECKS` and the other CORS knobs            | CORS is already unconditionally permissive      |
 | `LAMBDA_DOCKER_NETWORK`                                   | Adjacent concept, opposite default — see below  |
 | `LAMBDA_KEEPALIVE_MS`                                     | Idle-container lifetime is a fixed 15 minutes   |
-| `LAMBDA_DOCKER_FLAGS`, `LAMBDA_RUNTIME_EXECUTOR`          | No flag pass-through; Docker is the only executor |
+| `LAMBDA_DOCKER_FLAGS`, `ECS_DOCKER_FLAGS`, `EC2_DOCKER_FLAGS`, `BATCH_DOCKER_FLAGS`, `LAMBDA_RUNTIME_EXECUTOR` | No flag pass-through; Docker is the only executor |
 | `SNAPSHOT_*`                                              | Persistence here is incremental, not snapshot-based |
 | `PROVIDER_OVERRIDE_*`                                     | One implementation per service                  |
 | `MAIN_CONTAINER_NAME`, `DISABLE_EVENTS`, `SKIP_SSL_CERT_DOWNLOAD`, `ALLOW_NONSTANDARD_REGIONS`, `ENABLE_CONFIG_UPDATES` | Nothing to name, send, download, allow or update |
