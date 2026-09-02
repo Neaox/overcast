@@ -2242,20 +2242,64 @@ func TestLoad_vpcEgressAcceptsEachImplementedMode(t *testing.T) {
 	}
 }
 
-// `routed` is a real mode that is not built yet, and it fails startup naming
-// what is missing rather than silently becoming one of the other two. Every
-// fallback available is a different mode wearing this one's name: `open` grants
-// egress the route tables withhold, `none` withholds egress they grant.
-func TestLoad_vpcEgressRoutedFailsWithItsOwnReason(t *testing.T) {
+// `routed` is the third mode (#1571): accepted at load like the other two, with
+// the egress-network pool it carves from defaulted beside it.
+func TestLoad_vpcEgressRoutedIsAccepted(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("OVERCAST_VPC_EGRESS", "routed")
 
-	_, err := config.Load()
-	if err == nil {
-		t.Fatal("expected OVERCAST_VPC_EGRESS=routed to fail startup, got nil")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("OVERCAST_VPC_EGRESS=routed: %v", err)
 	}
-	if got := err.Error(); !containsAll(got, "routed", "not implemented", "route table", "issues/1571") {
-		t.Fatalf("the message must name what is missing and where to follow it: %q", got)
+	if cfg.VPCEgress != config.VPCEgressRouted {
+		t.Fatalf("VPCEgress = %q, want routed", cfg.VPCEgress)
+	}
+	if cfg.VPCEgressPool != config.DefaultVPCEgressPool {
+		t.Fatalf("VPCEgressPool = %q, want the default %q", cfg.VPCEgressPool, config.DefaultVPCEgressPool)
+	}
+	if got := cfg.VPCEgressNetwork("vpc-1"); got != "overcast-vpc-vpc-1-egress" {
+		t.Fatalf("VPCEgressNetwork = %q", got)
+	}
+}
+
+// The pool is validated whatever the mode, so a malformed one is not
+// discovered on the day `routed` is switched on. It has to hold at least one
+// /24, and a range wider than /8 is a typo.
+func TestLoad_vpcEgressPoolIsValidated(t *testing.T) {
+	for _, tc := range []struct {
+		pool string
+		ok   bool
+	}{
+		{"198.18.0.0/16", true},
+		{"10.200.0.0/24", true},
+		{"172.16.0.0/12", true},
+		{"198.18.0.0/25", false},
+		{"fd00::/64", false},
+		{"0.0.0.0/0", false},
+		{"not-a-cidr", false},
+	} {
+		t.Run(tc.pool, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("OVERCAST_VPC_EGRESS_POOL", tc.pool)
+
+			cfg, err := config.Load()
+			if tc.ok {
+				if err != nil {
+					t.Fatalf("expected %q to be accepted: %v", tc.pool, err)
+				}
+				if cfg.VPCEgressPool != tc.pool {
+					t.Fatalf("VPCEgressPool = %q, want %q", cfg.VPCEgressPool, tc.pool)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected %q to be rejected", tc.pool)
+			}
+			if !containsAll(err.Error(), "OVERCAST_VPC_EGRESS_POOL", tc.pool) {
+				t.Fatalf("unexpected error message: %q", err)
+			}
+		})
 	}
 }
 

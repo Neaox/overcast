@@ -363,6 +363,7 @@ your own — never the `AWS_*` ones, which Overcast owns and would overwrite.
 | Real calls need real credentials | The injected dummies are rejected by AWS with `InvalidClientTokenId` |
 | Costs are real | This is your account. A loop in a local function bills like a loop in a deployed one |
 | Not for CI | Set `OVERCAST_VPC_EGRESS=none` there, and the same code fails fast with `ENETUNREACH` instead of quietly reaching production |
+| Or make it match your template | `OVERCAST_VPC_EGRESS=routed` gives the function egress only where its subnet's route table does — so a `VpcConfig` in a private subnet with no NAT gateway fails locally exactly as it would deployed. See [`routed`](../../networking.md#routed-egress-from-your-route-tables) |
 
 If a call to real AWS returns `ENETUNREACH`, egress is off: check
 `overcast network status` and see

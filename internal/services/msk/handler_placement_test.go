@@ -134,7 +134,7 @@ func TestPlacementFor_usesTheVPCNetwork(t *testing.T) {
 	aliases := []string{"events.us-east-1.kafka.localhost"}
 
 	// When: the broker container is placed.
-	placement, err := h.placementFor(context.Background(), "vpc-abc", aliases)
+	placement, err := h.placementFor(context.Background(), "vpc-abc", nil, aliases)
 	if err != nil {
 		t.Fatalf("placementFor: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestPlacementFor_unlaunchableVPCIsAnError(t *testing.T) {
 
 	// When/Then: placing into it fails rather than quietly landing the brokers
 	// on the default plane, where nothing in the VPC could reach them anyway.
-	if _, err := h.placementFor(context.Background(), "vpc-abc", nil); err == nil {
+	if _, err := h.placementFor(context.Background(), "vpc-abc", nil, nil); err == nil {
 		t.Fatal("placementFor into an unbacked VPC: want an error, got nil")
 	}
 }
@@ -168,7 +168,7 @@ func TestPlacementFor_noVPCKeepsTheDefaultPlane(t *testing.T) {
 	aliases := []string{"events.us-east-1.kafka.localhost"}
 
 	// When: it is placed.
-	placement, err := h.placementFor(context.Background(), "", aliases)
+	placement, err := h.placementFor(context.Background(), "", nil, aliases)
 	if err != nil {
 		t.Fatalf("placementFor: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestPlacementFor_noVPCKeepsTheDefaultPlane(t *testing.T) {
 func TestPlacementFor_withoutAResolver(t *testing.T) {
 	h := newPlacementHandler(t, nil)
 
-	placement, err := h.placementFor(context.Background(), "vpc-abc", nil)
+	placement, err := h.placementFor(context.Background(), "vpc-abc", nil, nil)
 	if err != nil {
 		t.Fatalf("placementFor: %v", err)
 	}

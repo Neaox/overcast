@@ -645,7 +645,8 @@ func (h *Handler) startCacheContainer(ctx context.Context, c *CacheCluster) erro
 		// Re-attach: a container adopted from an earlier run predates the
 		// current alias set. Attaching is idempotent.
 		if err := h.attachAdoptedToDataPlane(ctx, existing.ID,
-			h.vpcForSubnetGroup(ctx, c.CacheSubnetGroupName), h.clusterEndpointAliases(c)); err != nil {
+			h.vpcForSubnetGroup(ctx, c.CacheSubnetGroupName), h.subnetGroupSubnets(ctx, c.CacheSubnetGroupName),
+			h.clusterEndpointAliases(c)); err != nil {
 			h.log.Warn("ElastiCache: reused container could not join the data plane — "+
 				"its endpoint name will not resolve for sibling containers",
 				zap.String("cluster", c.CacheClusterId), zap.Error(err))
@@ -696,7 +697,8 @@ func (h *Handler) startCacheContainer(ctx context.Context, c *CacheCluster) erro
 	// Join the data plane before starting, so the node answers to its endpoint
 	// names from the moment it accepts connections. Every name, on the plane
 	// every consumer shares — an ECS task included, which is what #872 was.
-	if err := h.attachToDataPlane(ctx, containerID, h.vpcForSubnetGroup(ctx, c.CacheSubnetGroupName), h.clusterEndpointAliases(c)); err != nil {
+	if err := h.attachToDataPlane(ctx, containerID, h.vpcForSubnetGroup(ctx, c.CacheSubnetGroupName),
+		h.subnetGroupSubnets(ctx, c.CacheSubnetGroupName), h.clusterEndpointAliases(c)); err != nil {
 		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
 		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
 		return fmt.Errorf("ElastiCache %s: %w", c.CacheClusterId, err)
@@ -720,8 +722,8 @@ func (h *Handler) startCacheContainer(ctx context.Context, c *CacheCluster) erro
 // A cache Overcast cannot place in a VPC — no subnet group, no subnets, or no
 // EC2 service to ask — lands on the default plane. That is the same plane
 // everything else without a VPC is on, so it stays reachable either way.
-func (h *Handler) attachToDataPlane(ctx context.Context, containerID, vpcID string, aliases []string) error {
-	placement, err := h.placementFor(ctx, vpcID, aliases)
+func (h *Handler) attachToDataPlane(ctx context.Context, containerID, vpcID string, subnetIDs, aliases []string) error {
+	placement, err := h.placementFor(ctx, vpcID, subnetIDs, aliases)
 	if err != nil {
 		return err
 	}
@@ -730,25 +732,41 @@ func (h *Handler) attachToDataPlane(ctx context.Context, containerID, vpcID stri
 
 // attachAdoptedToDataPlane is attachToDataPlane for a container reused after a
 // restart, which may predate the current plane layout entirely.
-func (h *Handler) attachAdoptedToDataPlane(ctx context.Context, containerID, vpcID string, aliases []string) error {
-	placement, err := h.placementFor(ctx, vpcID, aliases)
+func (h *Handler) attachAdoptedToDataPlane(ctx context.Context, containerID, vpcID string, subnetIDs, aliases []string) error {
+	placement, err := h.placementFor(ctx, vpcID, subnetIDs, aliases)
 	if err != nil {
 		return err
 	}
 	return dataplane.AttachAdopted(ctx, h.docker, h.cfg, containerID, placement)
 }
 
-func (h *Handler) placementFor(ctx context.Context, vpcID string, aliases []string) (dataplane.Placement, error) {
+// placementFor turns a resolved VPC and the subnets the cache named into the
+// Placement its container should take. The subnets matter under
+// OVERCAST_VPC_EGRESS=routed, where their route tables decide the route out.
+func (h *Handler) placementFor(ctx context.Context, vpcID string, subnetIDs, aliases []string) (dataplane.Placement, error) {
 	var resolver dataplane.VPCResolver
 	if h.vpcResolver != nil {
 		resolver = h.vpcResolver
 	}
-	placement, err := dataplane.PlaceInVPC(ctx, resolver, vpcID)
+	placement, err := dataplane.PlaceInSubnets(ctx, resolver, vpcID, subnetIDs)
 	if err != nil {
 		return placement, err
 	}
 	placement.Aliases = aliases
 	return placement, nil
+}
+
+// subnetGroupSubnets returns the subnets a cache subnet group names, or nil
+// for no group or one Overcast has no record of.
+func (h *Handler) subnetGroupSubnets(ctx context.Context, name string) []string {
+	if name == "" {
+		return nil
+	}
+	sg, aerr := h.store.getCacheSubnetGroup(ctx, name)
+	if aerr != nil || sg == nil {
+		return nil
+	}
+	return sg.SubnetIds
 }
 
 // setContainerEndpoint updates the cluster's ConfigurationEndpoint to reflect
@@ -893,7 +911,7 @@ func (h *Handler) startReplicationGroupContainer(ctx context.Context, rg *Replic
 		}
 		rg.DockerContainerID = existing.ID
 		rg.HostPort = hostPort
-		if err := h.attachAdoptedToDataPlane(ctx, existing.ID, "", h.replicationGroupEndpointAliases(rg)); err != nil {
+		if err := h.attachAdoptedToDataPlane(ctx, existing.ID, "", nil, h.replicationGroupEndpointAliases(rg)); err != nil {
 			h.log.Warn("ElastiCache: reused container could not join the data plane — "+
 				"its endpoint name will not resolve for sibling containers",
 				zap.String("rg", rg.ReplicationGroupId), zap.Error(err))
@@ -941,7 +959,7 @@ func (h *Handler) startReplicationGroupContainer(ctx context.Context, rg *Replic
 	// cluster is. A group created without one resolves to no VPC and stays on
 	// the default plane, which is where AWS puts a cache outside a VPC too.
 	if err := h.attachToDataPlane(ctx, containerID,
-		h.vpcForSubnetGroup(ctx, rg.CacheSubnetGroupName),
+		h.vpcForSubnetGroup(ctx, rg.CacheSubnetGroupName), h.subnetGroupSubnets(ctx, rg.CacheSubnetGroupName),
 		h.replicationGroupEndpointAliases(rg)); err != nil {
 		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
 		h.store.releasePort(ctx, hostPort)         //nolint:errcheck

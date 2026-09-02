@@ -434,7 +434,7 @@ func (h *Handler) startServerlessCacheContainer(ctx context.Context, c *Serverle
 		c.DockerContainerID = existing.ID
 		c.HostPort = hostPort
 		if err := h.attachAdoptedToDataPlane(ctx, existing.ID,
-			h.vpcForSubnets(ctx, c.SubnetIds), h.serverlessEndpointAliases(c)); err != nil {
+			h.vpcForSubnets(ctx, c.SubnetIds), c.SubnetIds, h.serverlessEndpointAliases(c)); err != nil {
 			h.log.Warn("ElastiCache: reused container could not join the data plane — "+
 				"its endpoint name will not resolve for sibling containers",
 				zap.String("cache", c.ServerlessCacheName), zap.Error(err))
@@ -476,7 +476,7 @@ func (h *Handler) startServerlessCacheContainer(ctx context.Context, c *Serverle
 	}
 	// A serverless cache carries subnet IDs rather than a subnet group, so the
 	// VPC is resolved from the first of them EC2 can name.
-	if err := h.attachToDataPlane(ctx, containerID, h.vpcForSubnets(ctx, c.SubnetIds), h.serverlessEndpointAliases(c)); err != nil {
+	if err := h.attachToDataPlane(ctx, containerID, h.vpcForSubnets(ctx, c.SubnetIds), c.SubnetIds, h.serverlessEndpointAliases(c)); err != nil {
 		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
 		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
 		return fmt.Errorf("ElastiCache %s: %w", c.ServerlessCacheName, err)

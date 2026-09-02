@@ -531,6 +531,9 @@ func debugMetrics(cfg *config.Config, store state.Store, vpcs debugEC2Provider, 
 			VPCNetworkProblems:       networkProblems,
 			LambdaInitVolumeProblems: initVolumeProblems,
 			RuntimeAPI:               runtimeAPI,
+			VPCEgress:                dataplane.EgressMode(cfg),
+			PlacementEnforced:        dataplane.PlacementEnforced(cfg),
+			ControlNetwork:           cfg.ControlNetwork(),
 		})
 		if advisories == nil {
 			advisories = []Advisory{}

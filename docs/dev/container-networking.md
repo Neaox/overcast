@@ -125,9 +125,23 @@ rather than silently applied.
 
 `OVERCAST_VPC_EGRESS` (`config.VPCEgressMode`) sets every network's isolation
 at once: `open` leaves all of them routable, `none` makes all of them
-`--internal`, `routed` is refused at startup (#1571). One setting rather than a
-flag per network, because a container sits on two networks and takes its
+`--internal`, `routed` makes every VPC plane and the control plane `--internal`
+and carries the route out on a second network per VPC. One setting rather than
+a flag per network, because a container sits on two networks and takes its
 default route from whichever is routable — so isolating one settles nothing.
+
+Under `routed` the *decision* moves to the subnet but the *carrier* stays one
+network per class: `dataplane.VPCEgressNetworkSpec` describes a routable,
+masquerading bridge named `config.VPCEgressNetwork(vpcID)`, pinned to a `/24`
+carved from `OVERCAST_VPC_EGRESS_POOL` so it never draws on Docker's own
+~31-network default address pools. `ec2.Handler.egressNetworkForSubnets` reads
+the route tables at placement time; `ec2.Handler.reconcileVPCEgress` revisits
+every recorded placement in a VPC when a route, an association, a NAT gateway
+or a gateway attachment changes, and connects or disconnects in place. A
+container on two routable networks takes its default route by
+`EndpointSettings.GwPriority` (Docker 28.0 / API 1.48), which
+`docker.Client.ConnectNetworkWithConfig` negotiates and drops, with a log line,
+on an older daemon.
 
 That is measured, not assumed. An end-to-end matrix over `shared`/`strict`/
 `remapped` and every VPC shape (no VPC, public+IGW, private+NAT, isolated)
@@ -155,13 +169,16 @@ every cell, including the isolated VPC whose own network was correctly
                                   │
                     EGRESS=open → every one routable
                     EGRESS=none → every one --internal
-                    EGRESS=routed → per subnet route table (#1571)
+                    EGRESS=routed → every plane --internal, plus
+                                    overcast-vpc-<id>-egress per VPC,
+                                    joined per subnet route table (#1571)
 ```
 
 The internet-gateway bit no longer decides a VPC network's isolation.
-`dataplane.VPCNetworkInternal` still takes it, because `routed` will need it —
-but reading it *alone* delivered only the withholding half of AWS's model, in
-which a private-with-NAT subnet and an isolated one are the same network.
+`dataplane.VPCNetworkInternal` still takes it, and `routed` still records it on
+the plane — but reading it *alone* delivered only the withholding half of AWS's
+model, in which a private-with-NAT subnet and an isolated one are the same
+network.
 
 ### 1d. Every network is verified against a full spec on every start
 

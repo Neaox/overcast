@@ -23,7 +23,9 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -35,7 +37,25 @@ type Client struct {
 	host       string // base URL for API requests
 	logger     *zap.Logger
 	sem        chan struct{} // bounds concurrent mutating Docker operations
+
+	// apiVersion is the daemon's highest supported API version, read once
+	// from GET /version and held for the life of the client â€” see
+	// APIVersionAtLeast. Empty until the first call that needs it.
+	apiVersionMu sync.Mutex
+	apiVersion   string
 }
+
+// apiVersionPinned is the API version every request path here carries. It is
+// the floor: a daemon older than this (Docker 26) is not supported, and a
+// request that needs something newer negotiates it â€” see APIVersionAtLeast â€”
+// rather than raising the floor for every call.
+const apiVersionPinned = "1.45"
+
+// apiVersionGatewayPriority is the first Docker API version whose network
+// connect accepts EndpointSettings.GwPriority (Docker 28.0). Sent under an
+// older path the field is dropped on the daemon side, so a connect that sets
+// it goes out under this version when the daemon speaks it.
+const apiVersionGatewayPriority = "1.48"
 
 // maxConcurrentOps limits how many container create/start/stop/remove
 // operations run concurrently.  Under high load (4 compat suites), the
@@ -259,6 +279,17 @@ type EndpointSettings struct {
 	// IPAMConfig pins the address the container gets on this network. Left nil,
 	// Docker's own IPAM picks one.
 	IPAMConfig *EndpointIPAMConfig `json:"IPAMConfig,omitempty"`
+
+	// GwPriority ranks this network as the source of the container's default
+	// route. A container on two routable networks takes its default route from
+	// the one with the highest priority; at equal priority Docker picks by
+	// network name, lexicographically, which is how a route out gets decided
+	// by an accident of naming. Zero is Docker's default.
+	//
+	// Honoured by Docker 28.0+ (API 1.48): ConnectNetworkWithConfig sends a
+	// non-zero value under that version when the daemon supports it and drops
+	// it, with a log line, when it does not â€” see APIVersionAtLeast.
+	GwPriority int `json:"GwPriority,omitempty"`
 }
 
 // EndpointIPAMConfig requests a specific address on a network. Docker rejects
@@ -565,6 +596,20 @@ func (n *NetworkSummary) ResourceID() string { return n.Labels[LabelResourceID] 
 // Instance returns the overcast.instance label value, or "" when the network
 // does not carry one. See LabelInstance.
 func (n *NetworkSummary) Instance() string { return n.Labels[LabelInstance] }
+
+// VPCRole returns the network's role within its VPC (LabelVPCRole), reading an
+// absent label as VPCRolePlane.
+func (n *NetworkSummary) VPCRole() string { return vpcRole(n.Labels) }
+
+// VPCRole is NetworkSummary.VPCRole for an inspected network.
+func (n *NetworkInspect) VPCRole() string { return vpcRole(n.Labels) }
+
+func vpcRole(labels map[string]string) string {
+	if role := labels[LabelVPCRole]; role != "" {
+		return role
+	}
+	return VPCRolePlane
+}
 
 // ContainerSummary is the lightweight container representation returned by
 // GET /containers/json (list endpoint), as opposed to the full ContainerInspect
@@ -1847,15 +1892,89 @@ func (d *Client) ConnectNetworkWithConfig(ctx context.Context, networkID, contai
 	}
 	defer d.releaseOp()
 
+	// The pinned version everywhere, except for a connect that ranks the
+	// network as a default-route source: that field only exists from 1.48, and
+	// a daemon that speaks it is asked under it. One that does not gets the
+	// same connect without the ranking, and Docker's name-order tie-break
+	// decides the route â€” said once here, since nothing else will say it.
+	version := apiVersionPinned
+	if cfg != nil && cfg.GwPriority != 0 {
+		if d.APIVersionAtLeast(ctx, apiVersionGatewayPriority) {
+			version = apiVersionGatewayPriority
+		} else {
+			d.logger.Info("this Docker daemon predates gateway priorities (API "+apiVersionGatewayPriority+
+				", Docker 28.0); the container's default route is chosen by network name instead",
+				zap.String("network", networkID), zap.String("container", containerID))
+			c := *cfg
+			c.GwPriority = 0
+			cfg = &c
+		}
+	}
+
 	body := struct {
 		Container      string            `json:"Container"`
 		EndpointConfig *EndpointSettings `json:"EndpointConfig,omitempty"`
 	}{Container: containerID, EndpointConfig: cfg}
-	err := d.doJSON(ctx, http.MethodPost, "/v1.45/networks/"+networkID+"/connect", &body, nil)
+	err := d.doJSON(ctx, http.MethodPost, "/v"+version+"/networks/"+networkID+"/connect", &body, nil)
 	if err != nil && isAlreadyConnected(err) {
 		return nil
 	}
 	return err
+}
+
+// APIVersionAtLeast reports whether the daemon supports API version want
+// ("1.48"). The daemon's version is read once, from GET /version, and kept; a
+// daemon that cannot be asked is taken to support nothing beyond the pinned
+// floor, so a caller that needs a newer feature degrades rather than sending a
+// request the daemon would refuse with "client version is too new".
+func (d *Client) APIVersionAtLeast(ctx context.Context, want string) bool {
+	return compareAPIVersions(d.daemonAPIVersion(ctx), want) >= 0
+}
+
+func (d *Client) daemonAPIVersion(ctx context.Context) string {
+	d.apiVersionMu.Lock()
+	defer d.apiVersionMu.Unlock()
+	if d.apiVersion != "" {
+		return d.apiVersion
+	}
+	var v struct {
+		APIVersion string `json:"ApiVersion"`
+	}
+	if err := d.doJSON(ctx, http.MethodGet, "/version", nil, &v); err != nil || v.APIVersion == "" {
+		d.logger.Debug("could not read the Docker API version; assuming the pinned floor",
+			zap.String("assumed", apiVersionPinned), zap.Error(err))
+		return apiVersionPinned // not cached: the next call may reach the daemon
+	}
+	d.apiVersion = v.APIVersion
+	return d.apiVersion
+}
+
+// compareAPIVersions orders two "major.minor" Docker API versions: negative
+// when a is older than b, zero when equal, positive when newer. A version that
+// does not parse is treated as the oldest possible.
+func compareAPIVersions(a, b string) int {
+	pa, pb := parseAPIVersion(a), parseAPIVersion(b)
+	for i := range 2 {
+		if pa[i] != pb[i] {
+			if pa[i] < pb[i] {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
+
+func parseAPIVersion(v string) [2]int {
+	var out [2]int
+	major, minor, _ := strings.Cut(strings.TrimPrefix(v, "v"), ".")
+	if n, err := strconv.Atoi(major); err == nil {
+		out[0] = n
+	}
+	if n, err := strconv.Atoi(minor); err == nil {
+		out[1] = n
+	}
+	return out
 }
 
 // isAlreadyConnected reports whether err is Docker refusing a connect because

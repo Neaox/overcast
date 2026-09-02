@@ -51,9 +51,15 @@ type Handler struct {
 
 	// netProblems records, per VPC ID, a dataplane.VPCNetworkProblem: a VPC
 	// whose Docker network could not be brought to the isolation its gateway
-	// state calls for. Read by Service.NetworkProblems for the health
-	// advisories; cleared when a later flip succeeds or the VPC is deleted.
-	netProblems sync.Map // vpcID -> dataplane.VPCNetworkProblem
+	// state calls for, or — under egressProblemKey — whose containers could
+	// not be given the egress their route tables call for. Read by
+	// Service.NetworkProblems for the health advisories; cleared when a later
+	// flip or move succeeds or the VPC is deleted.
+	netProblems sync.Map // vpcID, or vpcID+"/egress" -> dataplane.VPCNetworkProblem
+
+	// egressMu serialises egress-network CIDR allocation across VPCs. See
+	// ensureVPCEgressNetwork.
+	egressMu egressMuGuard
 
 	// reconcileMu serialises the network reconcile passes: the startup one
 	// over every region, and the per-region one a placement triggers

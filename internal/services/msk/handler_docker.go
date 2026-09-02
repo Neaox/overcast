@@ -35,7 +35,8 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 	containerName := "overcast-msk-" + clusterUUID
 	containerPort := "9092/tcp"
 	aliases := h.clusterEndpointAliases(clusterARN)
-	vpcID := h.vpcForCluster(ctx, clusterARN)
+	subnetIDs := h.clusterSubnets(ctx, clusterARN)
+	vpcID := h.vpcForSubnets(ctx, subnetIDs)
 
 	// Check for existing container (post-restart reuse).
 	if existing, err := h.docker.GetContainerByName(ctx, containerName); err == nil && existing != nil {
@@ -80,7 +81,7 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 		// current alias set, and predates VPC placement entirely — before this
 		// it was on the default plane whatever subnets the cluster named.
 		// Attaching is idempotent.
-		if placement, err := h.placementFor(ctx, vpcID, aliases); err != nil {
+		if placement, err := h.placementFor(ctx, vpcID, subnetIDs, aliases); err != nil {
 			h.log.Warn("MSK: reused container could not be placed in its VPC",
 				zap.String("cluster", clusterARN), zap.Error(err))
 		} else if err := dataplane.AttachAdopted(ctx, h.docker, h.cfg, existing.ID, placement); err != nil {
@@ -97,7 +98,7 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 	// Resolve the plane before anything is acquired: a VPC that cannot take
 	// containers should fail here, not after a port reservation and an image
 	// pull that then have to be unwound.
-	placement, err := h.placementFor(ctx, vpcID, aliases)
+	placement, err := h.placementFor(ctx, vpcID, subnetIDs, aliases)
 	if err != nil {
 		return fmt.Errorf("MSK %s: %w", clusterARN, err)
 	}
@@ -185,11 +186,17 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 // today's behaviour for those cases and it stays a working cluster, so it must
 // not become an error.
 func (h *Handler) vpcForCluster(ctx context.Context, clusterARN string) string {
+	return h.vpcForSubnets(ctx, h.clusterSubnets(ctx, clusterARN))
+}
+
+// clusterSubnets returns the client subnets a cluster was created with, or
+// nil for a cluster Overcast has no record of.
+func (h *Handler) clusterSubnets(ctx context.Context, clusterARN string) []string {
 	cluster, aerr := h.store.getCluster(ctx, clusterARN)
 	if aerr != nil || cluster == nil {
-		return ""
+		return nil
 	}
-	return h.vpcForSubnets(ctx, cluster.BrokerNodeGroupInfo.ClientSubnets)
+	return cluster.BrokerNodeGroupInfo.ClientSubnets
 }
 
 // vpcForSubnets resolves the first subnet that names a VPC, the same way RDS
@@ -208,12 +215,14 @@ func (h *Handler) vpcForSubnets(ctx context.Context, subnetIDs []string) string 
 
 // placementFor turns a resolved VPC into the Placement the broker container
 // should take, carrying the bootstrap aliases onto whichever plane it lands on.
-func (h *Handler) placementFor(ctx context.Context, vpcID string, aliases []string) (dataplane.Placement, error) {
+func (h *Handler) placementFor(ctx context.Context, vpcID string, subnetIDs, aliases []string) (dataplane.Placement, error) {
 	var resolver dataplane.VPCResolver
 	if h.vpcResolver != nil {
 		resolver = h.vpcResolver
 	}
-	placement, err := dataplane.PlaceInVPC(ctx, resolver, vpcID)
+	// The subnets go with the VPC: under OVERCAST_VPC_EGRESS=routed their
+	// route tables decide whether the broker gets a route out.
+	placement, err := dataplane.PlaceInSubnets(ctx, resolver, vpcID, subnetIDs)
 	if err != nil {
 		return placement, err
 	}

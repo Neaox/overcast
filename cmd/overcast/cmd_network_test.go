@@ -564,3 +564,53 @@ func TestNetworkReset_forceNeverRebuildsWhatItCannotJudge(t *testing.T) {
 		})
 	}
 }
+
+// Under OVERCAST_VPC_EGRESS=routed a VPC has two networks, and `status` has to
+// tell them apart: the plane is `--internal` however the gateway stands, and
+// the egress network beside it is routable by definition. A CLI that judged
+// the second by the first's rules would report a mismatch on every correctly
+// built egress network and offer to rebuild it into an isolated one.
+func TestNetworkStatus_routedReportsThePlaneAndItsEgressNetwork(t *testing.T) {
+	cleanNetworkEnv(t)
+	t.Setenv("OVERCAST_VPC_EGRESS", "routed")
+	cfg := mustConfig(t)
+	d := newCLIDaemon(t)
+
+	// The plane, exactly as the daemon made it under routed: internal, with a
+	// gateway attached — which decides nothing about the plane in this mode.
+	d.addNetwork(vpcNetwork(t, "vpc-r", true, ""))
+
+	// And the VPC's egress network, on its /24 from the pool.
+	egressOpts := dataplane.VPCEgressNetworkSpec(cfg, dataplane.VPCEgressNetwork{
+		VPCID: "vpc-r", Subnet: "198.18.0.0/24",
+	}).Resolve(context.Background(), nil).CreateOptions()
+	d.addNetwork(map[string]any{
+		"Id": "net-vpc-r-egress", "Name": egressOpts.Name, "Driver": egressOpts.Driver,
+		"Internal": egressOpts.Internal, "Scope": "local", "Labels": egressOpts.Labels,
+		"IPAM":    map[string]any{"Config": []map[string]any{{"Subnet": "198.18.0.0/24"}}},
+		"Options": egressOpts.Options,
+	})
+
+	var out bytes.Buffer
+	cmd := newNetworkCmd()
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"status"})
+	_ = cmd.Execute()
+
+	got := out.String()
+	for _, want := range []string{
+		"octest-vpc-vpc-r: ok",
+		"octest-vpc-vpc-r-egress: ok",
+		// The plane's line says where a container in it would get a route out.
+		"octest-vpc-vpc-r-egress (OVERCAST_VPC_EGRESS=routed)",
+		// The egress network's line says what it is for.
+		"the VPC's route out",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output does not contain %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "egress via octest_control") {
+		t.Errorf("routed's plane was described as taking egress from the control plane:\n%s", got)
+	}
+}

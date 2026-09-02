@@ -290,6 +290,21 @@ func (h *Handler) containerAliases(ctx context.Context, region string, inst *DBI
 		h.clusterAliasesForInstance(ctx, region, inst)...)
 }
 
+// instanceSubnets returns the subnets an instance's DB subnet group names, or
+// nil for an instance without one (which lands in the default VPC) or one
+// whose group Overcast has no record of. Under OVERCAST_VPC_EGRESS=routed the
+// subnets' route tables decide whether the engine gets a route out.
+func (h *Handler) instanceSubnets(ctx context.Context, inst *DBInstance) []string {
+	if inst == nil || inst.DBSubnetGroupName == "" {
+		return nil
+	}
+	sg, aerr := h.store.getDBSubnetGroup(ctx, inst.DBSubnetGroupName)
+	if aerr != nil || sg == nil {
+		return nil
+	}
+	return sg.SubnetIds
+}
+
 // adoptClusterEndpoints makes instanceID's engine container answer to the
 // cluster endpoints it has just been promoted to serve.
 //
@@ -318,7 +333,7 @@ func (h *Handler) adoptClusterEndpoints(ctx context.Context, instanceID string) 
 		return
 	}
 
-	placement, err := dataplane.PlaceInVPC(ctx, h.vpcResolver, inst.VpcID)
+	placement, err := dataplane.PlaceInSubnets(ctx, h.vpcResolver, inst.VpcID, h.instanceSubnets(ctx, inst))
 	if err != nil {
 		h.log.Warn("RDS: promoted instance could not be placed in its VPC — "+
 			"the cluster endpoints still resolve to the old writer",

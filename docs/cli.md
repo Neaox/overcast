@@ -209,9 +209,11 @@ overcast reset dynamodb --yes # skip the prompt
 
 ### `overcast network status`
 
-Compares every Docker network Overcast manages — the two planes and each
-per-VPC network — against the state your configuration would create, and
-reports each field that differs. Docker's create-network call returns an
+Compares every Docker network Overcast manages — the two planes, each per-VPC
+network, and under `OVERCAST_VPC_EGRESS=routed` each VPC's egress network
+beside it — against the state your configuration would create, and reports each
+field that differs. Each line also says where a container on that network gets
+its route out, which `docker network inspect` will not tell you. Docker's create-network call returns an
 existing network unchanged, so a network made by an older Overcast or a
 different `OVERCAST_VPC_EGRESS` keeps its original settings while looking
 present and correct. Reads only.

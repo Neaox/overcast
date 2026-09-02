@@ -137,16 +137,19 @@ const (
 	VPCEgressOpen VPCEgressMode = "open"
 
 	// VPCEgressRouted decides egress per subnet from its route table: a
-	// `0.0.0.0/0` route to an internet or NAT gateway grants it, no default
-	// route withholds it. The AWS-faithful answer, and where this setting is
-	// meant to end up.
+	// `0.0.0.0/0` route to an attached internet gateway or an available NAT
+	// gateway grants it, no default route (or a blackhole) withholds it. The
+	// AWS-faithful answer (#1571).
 	//
-	// **Not implemented.** Selecting it fails startup naming the reason rather
-	// than falling back, because every fallback available is a different mode
-	// wearing this one's name: open would grant egress the route tables
-	// withhold, none would withhold egress they grant, and either silently
-	// contradicts the template the operator pointed at. See #1571 for the
-	// design and what it needs first.
+	// Every VPC keeps its `--internal` plane, which every container in it
+	// joins, so resources in one VPC reach each other whatever their subnets
+	// route to. A container whose subnet grants egress also joins the VPC's
+	// egress network — a routable bridge named Config.VPCEgressNetwork, carved
+	// from VPCEgressPool — and takes its default route from there. The control
+	// plane is `--internal` too, as under `none`, since a routable one would
+	// hand every container a route out regardless of its route table; on a
+	// host where that cannot be delivered (Docker Desktop) the shortfall is
+	// warned about and reported, exactly as `none` does.
 	VPCEgressRouted VPCEgressMode = "routed"
 
 	// VPCEgressNone makes every network Overcast creates `--internal`, so no
@@ -589,12 +592,24 @@ type Config struct {
 
 	// VPCEgress decides whether the containers Overcast starts reach anything
 	// outside this machine: "open" (all of them do), "none" (none of them do),
-	// "routed" (per the template's route tables — not implemented, and refused
-	// at startup).
+	// "routed" (per subnet, from the template's route tables).
 	//
 	// Corresponds to env var OVERCAST_VPC_EGRESS. Defaults to "open". See
 	// VPCEgressMode and docs/networking.md § Egress modes.
 	VPCEgress VPCEgressMode
+
+	// VPCEgressPool is the IPv4 range the per-VPC egress networks are carved
+	// from under VPCEgress=routed, one /24 each. It exists so those networks
+	// never draw on Docker's own default address pools, which on a stock
+	// daemon stretch to about 31 networks in total and are shared with every
+	// other tool on the machine — see docs/networking.md § The address-pool
+	// ceiling.
+	//
+	// Corresponds to env var OVERCAST_VPC_EGRESS_POOL. Defaults to
+	// "198.18.0.0/16" — the benchmarking range (RFC 2544), which is never
+	// routed on the internet and which neither Docker nor the `remapped` VPC
+	// strategy (100.64.0.0/10) draws on. Must be a /24 or wider.
+	VPCEgressPool string
 
 	// ControlPlaneInternal pins whether ControlNetwork is created `--internal`,
 	// overriding what VPCEgress decided for that one network: "auto" (leave it
@@ -1360,9 +1375,49 @@ func (c *Config) VPCNetwork(vpcID string) string {
 
 // VPCNetworkPrefix is the leading fragment every VPCNetwork name shares — what
 // to match on when looking for this instance's VPC networks without a VPC id in
-// hand.
+// hand. VPCEgressNetwork names share it too.
 func (c *Config) VPCNetworkPrefix() string {
 	return c.Network + "-vpc-"
+}
+
+// VPCEgressNetworkSuffix is what VPCEgressNetwork appends to VPCNetwork.
+const VPCEgressNetworkSuffix = "-egress"
+
+// VPCEgressNetwork returns the name of the routable bridge that carries the
+// default route for containers in vpcID whose subnet's route table grants
+// egress, under OVERCAST_VPC_EGRESS=routed. It is the VPC's second network:
+// VPCNetwork is the `--internal` plane every container in the VPC joins, and
+// this is the one only the containers with a route out also join.
+//
+// Named from VPCNetwork so it shares the prefix every tool that looks for
+// this instance's VPC networks already matches on, and so the pair is
+// adjacent in `docker network ls`.
+func (c *Config) VPCEgressNetwork(vpcID string) string {
+	return c.VPCNetwork(vpcID) + VPCEgressNetworkSuffix
+}
+
+// DefaultVPCEgressPool is the VPCEgressPool default. See that field.
+const DefaultVPCEgressPool = "198.18.0.0/16"
+
+// ValidateVPCEgressPool reports whether pool is a range the egress networks
+// can be carved from: an IPv4 CIDR no narrower than /24 (one network's worth)
+// and no wider than /8.
+func ValidateVPCEgressPool(pool string) error {
+	ip, ipnet, err := net.ParseCIDR(pool)
+	if err != nil {
+		return err
+	}
+	if ip.To4() == nil {
+		return fmt.Errorf("must be an IPv4 range")
+	}
+	ones, _ := ipnet.Mask.Size()
+	if ones > 24 {
+		return fmt.Errorf("/%d is narrower than one /24 egress network", ones)
+	}
+	if ones < 8 {
+		return fmt.Errorf("/%d is wider than /8", ones)
+	}
+	return nil
 }
 
 // LegacyControlPlaneInternal reports the deprecated
@@ -1722,10 +1777,15 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	                                           starts reach anything outside this machine. open:
 //	                                           all of them do. none: none of them do (hermetic CI;
 //	                                           Overcast's own API and the Lambda Runtime API still
-//	                                           work). routed: per the template's route tables —
-//	                                           not implemented, refused at startup. The decision
+//	                                           work). routed: per subnet, from its route table — a
+//	                                           0.0.0.0/0 route to an internet or NAT gateway grants
+//	                                           egress, no default route withholds it. The decision
 //	                                           and its reason are logged at startup and reported by
 //	                                           /_overcast/health.)
+//	OVERCAST_VPC_EGRESS_POOL   198.18.0.0/16  (the range the per-VPC egress networks of `routed`
+//	                                           are carved from, one /24 each, so they never draw on
+//	                                           Docker's ~31-network default address pools. A /24
+//	                                           or wider.)
 //	OVERCAST_CONTROL_PLANE_INTERNAL    auto  (DEPRECATED — set OVERCAST_VPC_EGRESS instead.
 //	                                           auto|true|false, pinning the control plane network's
 //	                                           `--internal` flag on top of the mode above. Still
@@ -2092,26 +2152,24 @@ func Load() (*Config, error) {
 	// Container egress. Invalid values fail startup rather than falling back to
 	// the default — this decides whether a function reaches real AWS, and a typo
 	// that quietly restored the default answer is exactly the class of surprise
-	// this setting exists to end. `routed` is a valid *value* and is rejected
-	// later, by the code that would have to implement it, so the message can say
-	// what is missing rather than pretending the name is unknown.
+	// this setting exists to end.
 	rawVPCEgress := strings.ToLower(strings.TrimSpace(
 		envOr("OVERCAST_VPC_EGRESS", string(VPCEgressOpen))))
 	cfg.VPCEgress = VPCEgressMode(rawVPCEgress)
 	switch cfg.VPCEgress {
-	case VPCEgressOpen, VPCEgressNone:
-	case VPCEgressRouted:
-		return nil, fmt.Errorf(
-			"config: OVERCAST_VPC_EGRESS=routed is not implemented yet. It would decide egress per " +
-				"subnet from that subnet's route table, which Overcast does not read: route tables, " +
-				"their 0.0.0.0/0 entries and NAT gateways are stored and returned as metadata and " +
-				"consulted nowhere (docs/services/ec2/limitations.md). Use `open` (every container " +
-				"reaches the internet, the default) or `none` (no container does). Progress and " +
-				"design: https://github.com/overcast-sh/overcast/issues/1571")
+	case VPCEgressOpen, VPCEgressNone, VPCEgressRouted:
 	default:
 		return nil, fmt.Errorf(
 			"config: OVERCAST_VPC_EGRESS %q is invalid (expected open, routed, or none)",
 			rawVPCEgress)
+	}
+
+	// The egress-network pool for `routed`. Validated whatever the mode, so a
+	// pool written against a `routed` deployment is not found to be malformed
+	// only on the day the mode is switched.
+	cfg.VPCEgressPool = strings.TrimSpace(envOr("OVERCAST_VPC_EGRESS_POOL", DefaultVPCEgressPool))
+	if err := ValidateVPCEgressPool(cfg.VPCEgressPool); err != nil {
+		return nil, fmt.Errorf("config: OVERCAST_VPC_EGRESS_POOL %q is invalid: %w", cfg.VPCEgressPool, err)
 	}
 
 	// Control-plane isolation (#1564), now an override on top of the mode above

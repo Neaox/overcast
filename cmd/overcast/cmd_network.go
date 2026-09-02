@@ -348,6 +348,21 @@ func (nc *networkContext) specs(ctx context.Context) ([]networkSpecTarget, error
 		if !strings.HasPrefix(n.Name, prefix) {
 			continue
 		}
+		// A VPC's egress network (OVERCAST_VPC_EGRESS=routed) is routable by
+		// definition and pinned to the subnet it was carved with; nothing
+		// about it depends on a fact this command cannot read.
+		if n.VPCRole() == docker.VPCRoleEgress {
+			specs = append(specs, networkSpecTarget{
+				spec: dataplane.VPCEgressNetworkSpec(nc.cfg, dataplane.VPCEgressNetwork{
+					VPCID:  strings.TrimSuffix(strings.TrimPrefix(n.Name, prefix), config.VPCEgressNetworkSuffix),
+					Subnet: n.Subnet(),
+					Owner:  n.Instance(),
+				}).Resolve(ctx, nc.dc),
+				isolationKnown: true,
+				owner:          n.Instance(),
+			})
+			continue
+		}
 		gateway, known := gatewayAttached(n.Labels)
 		specs = append(specs, networkSpecTarget{
 			spec: dataplane.VPCNetworkSpec(nc.cfg, dataplane.VPCNetwork{
@@ -508,13 +523,24 @@ func (nc *networkContext) report(cmd *cobra.Command, targets []networkTarget) bo
 // confusion #1564 was about, and `docker network inspect` will not explain it,
 // so the place it gets read is the place it gets said.
 func (nc *networkContext) egressNote(t networkTarget) string {
-	if t.info == nil || !t.info.Internal || !strings.HasPrefix(t.spec.Name, nc.cfg.VPCNetworkPrefix()) {
+	if t.info == nil || !strings.HasPrefix(t.spec.Name, nc.cfg.VPCNetworkPrefix()) {
 		return ""
 	}
-	if egressModeName(nc.cfg) == config.VPCEgressNone {
-		return " — no egress (OVERCAST_VPC_EGRESS=none)"
+	if t.info.VPCRole() == docker.VPCRoleEgress {
+		return " — the VPC's route out, for containers whose subnet routes 0.0.0.0/0 to an internet or NAT gateway"
 	}
-	return " — egress via " + nc.cfg.ControlNetwork()
+	if !t.info.Internal {
+		return ""
+	}
+	switch egressModeName(nc.cfg) {
+	case config.VPCEgressNone:
+		return " — no egress (OVERCAST_VPC_EGRESS=none)"
+	case config.VPCEgressRouted:
+		return " — no route out of its own; a container whose subnet routes out also joins " +
+			t.spec.Name + config.VPCEgressNetworkSuffix + " (OVERCAST_VPC_EGRESS=routed)"
+	default:
+		return " — egress via " + nc.cfg.ControlNetwork()
+	}
 }
 
 // printPlan prints what a reset would do, which is also what --dry-run prints:

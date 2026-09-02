@@ -39,6 +39,7 @@ const (
 	advisoryCodeMemoryModeIgnoresExisting = "memory-mode-ignores-existing-database"
 	advisoryCodeNetworkStateMismatch      = "network-state-mismatch"
 	advisoryCodeVPCNetworkIsolationStale  = "vpc-network-isolation-stale"
+	advisoryCodeRoutedEgressNotEnforced   = "routed-egress-not-enforced"
 	advisoryCodeLambdaInitVolumeForeign   = "lambda-init-volume-foreign"
 	advisoryCodeRuntimeAPIUnreachable     = "lambda-runtime-api-unreachable"
 )
@@ -85,6 +86,11 @@ const noSQLiteDocsPath = storageDocsPath + "#builds-without-sqlite"
 // Docker network and what a failed flip leaves behind. The fragment is the
 // docs browser's slug for that heading — see dataDirDocsPath.
 const vpcNetworkDocsPath = "services/ec2/limitations.md#internet-gateways-and-isolation"
+
+// routedEgressDocsPath deep-links the routed-egress-not-enforced advisory to
+// the section of the networking page that explains what `routed` cannot
+// deliver on a host where the control plane or placement stays routable.
+const routedEgressDocsPath = "networking.md#egress-modes"
 
 // lambdaInitVolumeDocsPath deep-links the lambda-init-volume-foreign advisory
 // to the section of the Lambda limitations page explaining why a foreign
@@ -200,6 +206,23 @@ type advisoryInput struct {
 	// or startup still in flight — which is an absence rather than a problem
 	// and fires nothing.
 	RuntimeAPI containerendpoint.Listen
+
+	// VPCEgress is cfg.VPCEgress, the configured egress mode — drives
+	// routed-egress-not-enforced. Only `routed` fires anything: it is the one
+	// mode that promises to withhold egress from some containers and not
+	// others, and so the one that can fail to keep the promise.
+	VPCEgress config.VPCEgressMode
+
+	// PlacementEnforced is dataplane.PlacementEnforced(cfg): whether a
+	// VPC-placed container is held to its VPC network alone. False means it
+	// also sits on the shared data plane, which `routed` leaves routable, so
+	// its subnet's route table decides nothing.
+	PlacementEnforced bool
+
+	// ControlNetwork is cfg.ControlNetwork(), so the rule below can find that
+	// network's live isolation in Networks. A routable control plane is the
+	// other way `routed` fails to withhold.
+	ControlNetwork string
 }
 
 // computeAdvisories is the single generator function behind the
@@ -250,7 +273,61 @@ func computeAdvisories(in advisoryInput) []Advisory {
 	if a := checkRuntimeAPIUnreachable(in.RuntimeAPI); a != nil {
 		advisories = append(advisories, *a)
 	}
+	if a := checkRoutedEgressNotEnforced(in); a != nil {
+		advisories = append(advisories, *a)
+	}
 	return advisories
+}
+
+// checkRoutedEgressNotEnforced is warning-severity: OVERCAST_VPC_EGRESS=routed
+// is configured, but on this host a container has a route out that its
+// subnet's route table did not give it.
+//
+// Two things can do that, and both are properties of the host rather than of
+// the template:
+//
+//   - The control plane was left routable, because containers here reach the
+//     Lambda Runtime API at the host's own address and `--internal` would
+//     sever it. Every container is on that network.
+//   - VPC placement is not enforced, because Overcast's DNS resolver is not
+//     listening and a forbidden connection would hang rather than fail by
+//     name. Every VPC-placed container is then also on the shared data plane,
+//     which `routed` leaves routable for the resources that named no VPC.
+//
+// Either way the mode grants egress where the route tables grant it *and*
+// where they withhold it, so the missing NAT gateway it exists to catch goes
+// uncaught. It is said at startup too, once, in the network decision's
+// warnings — but that scrolls past, and the cost lands much later as a
+// function that reached the internet from a subnet that should not have.
+func checkRoutedEgressNotEnforced(in advisoryInput) *Advisory {
+	if in.VPCEgress != config.VPCEgressRouted {
+		return nil
+	}
+	var shortfalls []string
+	for _, n := range in.Networks {
+		if in.ControlNetwork != "" && n.Name == in.ControlNetwork && !n.Internal {
+			shortfalls = append(shortfalls, "the control plane "+n.Name+" was left routable, so every "+
+				"container takes a route out from it; containers on this host reach the Lambda Runtime API "+
+				"at the host's own address, which an internal network would sever")
+		}
+	}
+	if !in.PlacementEnforced {
+		shortfalls = append(shortfalls, "VPC placement is not enforced on this host — Overcast's DNS "+
+			"resolver is not listening, so a VPC-placed container also joins the routable data plane")
+	}
+	if len(shortfalls) == 0 {
+		return nil
+	}
+	return &Advisory{
+		Severity: advisorySeverityWarning,
+		Code:     advisoryCodeRoutedEgressNotEnforced,
+		Title:    "OVERCAST_VPC_EGRESS=routed cannot withhold egress on this host",
+		Detail: "Egress is decided per subnet from its route table, but here every container has a route " +
+			"out regardless: " + strings.Join(shortfalls, "; ") + ". A subnet with no 0.0.0.0/0 route still " +
+			"reaches the internet, so a missing NAT gateway is not caught. Run Overcast in a container, or " +
+			"against a native Linux Docker daemon, for the whole of `routed`.",
+		DocsPath: routedEgressDocsPath,
+	}
 }
 
 // checkNetworkStateMismatch is warning-severity: a Docker network that is not
@@ -345,17 +422,18 @@ func checkVPCNetworkIsolation(problems []dataplane.VPCNetworkProblem) *Advisory 
 	if rest := len(problems) - len(lines); rest > 0 {
 		listed += fmt.Sprintf("; and %d more", rest)
 	}
-	title := "A VPC's network does not match its internet gateway"
+	title := "A VPC's network does not match its internet gateway or route tables"
 	if len(problems) > 1 {
-		title = fmt.Sprintf("%d VPC networks do not match their internet gateways", len(problems))
+		title = fmt.Sprintf("%d VPC networks do not match their internet gateways or route tables", len(problems))
 	}
 	return &Advisory{
 		Severity: advisorySeverityWarning,
 		Code:     advisoryCodeVPCNetworkIsolationStale,
 		Title:    title,
 		Detail: "Containers in these VPCs do not have the internet reachability DescribeInternetGateways " +
-			"implies. Overcast retries the repair at its next restart; until then, check the Docker " +
-			"daemon for the reason quoted, then detach and re-attach the gateway. " + listed,
+			"and DescribeRouteTables imply. Overcast retries the repair at its next restart; until then, " +
+			"check the Docker daemon for the reason quoted, then detach and re-attach the gateway, or " +
+			"delete and recreate the route. " + listed,
 		DocsPath: vpcNetworkDocsPath,
 	}
 }

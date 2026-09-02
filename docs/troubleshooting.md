@@ -49,6 +49,8 @@ one actionable `WARN`, the moment the symptom appears, never on a healthy setup.
 | `this run is memory-only, but an existing Overcast database was found` | `OVERCAST_STATE=memory` — explicitly, or a build without SQLite resolving `auto` to memory — is ignoring a database that already holds data. Set `auto`, `hybrid` or `wal` to use it. |
 | `control plane network: internal=true while OVERCAST_VPC_EGRESS is not none` | The deprecated `OVERCAST_CONTROL_PLANE_INTERNAL=true` isolated one network while the mode says egress is open, so containers lose their route out anyway. Set `OVERCAST_VPC_EGRESS=none` if that is what you meant, or unset the deprecated variable. |
 | `OVERCAST_VPC_EGRESS=none asked for an isolated control plane, but ...` | This host (Docker Desktop) cannot isolate the control plane without stranding every invocation at INIT, so it was left routable and the stack is not hermetic. Run Overcast in a container, or against a native Linux daemon. See [Egress modes](./networking.md#egress-modes). |
+| `OVERCAST_VPC_EGRESS=routed asked for an isolated control plane, but ...`, or `... decides egress from each subnet's route table, but ...` | Same host limit, costing `routed` the other half of its job: every container has a route out whatever its route table says, so a subnet with no default route still reaches the internet. Run Overcast in a container, or against a native Linux daemon. See [`routed`](./networking.md#routed-egress-from-your-route-tables). |
+| `OVERCAST_VPC_EGRESS_POOL ... has no free /24 left for another VPC's egress network` | Under `routed`, every VPC with egress takes one `/24` from the pool, and 256 of them fit in the `198.18.0.0/16` default. Delete VPCs that no longer need one, or set a wider `OVERCAST_VPC_EGRESS_POOL`. See [The address-pool ceiling](./networking.md#the-address-pool-ceiling). |
 | `Docker network is not in the state this configuration asks for` | A network Overcast reuses differs from what this configuration would create, and has containers on it. `overcast network reset --dry-run`, then `overcast network reset` — see [Network state verification](./networking.md#network-state-verification). |
 
 A port Overcast wants that is already taken is not on this list because it needs
@@ -81,6 +83,7 @@ without a VPC — and works on LocalStack — fails here, usually as
 | | |
 | --- | --- |
 | `OVERCAST_VPC_EGRESS=none` | That is the mode working: no container Overcast starts reaches anything outside this machine. See [Egress modes](./networking.md#egress-modes) |
+| `OVERCAST_VPC_EGRESS=routed` and the container is in a subnet with no `0.0.0.0/0` route | That is the mode working too — the missing NAT gateway, caught locally. `overcast logs` names the subnet and route table that decided it. Add a NAT gateway and a route to grant egress; containers placed afterwards get it, and running ones are moved onto it. See [`routed`](./networking.md#routed-egress-from-your-route-tables) |
 | A network drifted | A network Overcast reuses kept a setting from an older version or a different mode, because Docker never applies `--internal` to an existing network. Overcast repairs one with nothing attached and warns about one with containers on it |
 
 A container with a `VpcConfig` joins exactly two networks — its VPC's network

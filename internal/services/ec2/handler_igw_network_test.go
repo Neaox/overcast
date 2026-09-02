@@ -55,6 +55,12 @@ type fakeVPCDocker struct {
 	// failList makes the list endpoint fail — a daemon the lazy pass cannot
 	// read, though the rest of it answers.
 	failList bool
+	// missing names containers the daemon reports as gone (404 on inspect),
+	// as one removed by GC or by hand is.
+	missing map[string]bool
+	// apiVersion is what GET /version reports; empty means 1.55 (Docker 29),
+	// which speaks gateway priorities.
+	apiVersion string
 }
 
 type fakeNetwork struct {
@@ -66,13 +72,21 @@ type fakeNetwork struct {
 	driver    string
 	subnet    string
 	labels    map[string]string
+	options   map[string]string       // echoed back for the same reason as driver
 	endpoints map[string]fakeEndpoint // by container ID
 }
 
 type fakeEndpoint struct {
 	ip      string
 	aliases []string
+	// gwPriority is the ranking the connect carried (docker.EndpointSettings.
+	// GwPriority), as a daemon at API 1.48+ would record it.
+	gwPriority int
 }
+
+// apiVersionPrefix strips the API version off a request path: the client
+// pins 1.45 everywhere except the one connect that negotiates a newer one.
+var apiVersionPrefix = regexp.MustCompile(`^/v1\.[0-9]+`)
 
 func newFakeVPCDocker(t *testing.T) *fakeVPCDocker {
 	t.Helper()
@@ -87,14 +101,22 @@ func (f *fakeVPCDocker) serve(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, r.Method+" "+r.URL.Path)
 
-	path := strings.TrimPrefix(r.URL.Path, "/v1.45")
+	path := apiVersionPrefix.ReplaceAllString(r.URL.Path, "")
 	switch {
+	case r.Method == http.MethodGet && path == "/version":
+		v := f.apiVersion
+		if v == "" {
+			v = "1.55"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"ApiVersion": v})
+
 	case r.Method == http.MethodPost && path == "/networks/create":
 		var req struct {
 			Name     string
 			Driver   string
 			Internal bool
 			Labels   map[string]string
+			Options  map[string]string
 			IPAM     *docker.NetworkIPAM
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
@@ -109,11 +131,15 @@ func (f *fakeVPCDocker) serve(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, `{"message":"Pool overlaps with other one on this address space"}`, http.StatusForbidden)
 				return
 			}
+			if n.name == req.Name {
+				http.Error(w, `{"message":"network with name `+req.Name+` already exists"}`, http.StatusConflict)
+				return
+			}
 		}
 		f.nextID++
 		n := &fakeNetwork{
 			id: fmt.Sprintf("net-%d", f.nextID), name: req.Name, internal: req.Internal,
-			driver: req.Driver, labels: req.Labels, endpoints: map[string]fakeEndpoint{},
+			driver: req.Driver, labels: req.Labels, options: req.Options, endpoints: map[string]fakeEndpoint{},
 		}
 		if req.IPAM != nil && len(req.IPAM.Config) > 0 {
 			n.subnet = req.IPAM.Config[0].Subnet
@@ -133,7 +159,16 @@ func (f *fakeVPCDocker) serve(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/networks/"):
 		rest := strings.TrimPrefix(path, "/networks/")
 		id, action, _ := strings.Cut(rest, "/")
+		// By ID or by name, as the daemon resolves either.
 		n := f.networks[id]
+		if n == nil {
+			for _, candidate := range f.networks {
+				if candidate.name == id {
+					n = candidate
+					break
+				}
+			}
+		}
 		if n == nil {
 			http.Error(w, `{"message":"network `+id+` not found"}`, http.StatusNotFound)
 			return
@@ -145,7 +180,7 @@ func (f *fakeVPCDocker) serve(w http.ResponseWriter, r *http.Request) {
 				containers[cid] = docker.NetworkEndpoint{Name: cid, IPv4Address: n.endpoints[cid].ip + "/16"}
 			}
 			_ = json.NewEncoder(w).Encode(docker.NetworkInspect{
-				ID: n.id, Name: n.name, Internal: n.internal, Labels: n.labels, Driver: n.driver,
+				ID: n.id, Name: n.name, Internal: n.internal, Labels: n.labels, Driver: n.driver, Options: n.options,
 				IPAM:       docker.NetworkIPAM{Config: []docker.NetworkIPAMConfig{{Subnet: n.subnet}}},
 				Containers: containers,
 			})
@@ -169,6 +204,7 @@ func (f *fakeVPCDocker) serve(w http.ResponseWriter, r *http.Request) {
 			ep := fakeEndpoint{}
 			if req.EndpointConfig != nil {
 				ep.aliases = req.EndpointConfig.Aliases
+				ep.gwPriority = req.EndpointConfig.GwPriority
 				if req.EndpointConfig.IPAMConfig != nil {
 					ep.ip = req.EndpointConfig.IPAMConfig.IPv4Address
 				}
@@ -193,6 +229,10 @@ func (f *fakeVPCDocker) serve(w http.ResponseWriter, r *http.Request) {
 
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/containers/") && strings.HasSuffix(path, "/json"):
 		cid := strings.TrimSuffix(strings.TrimPrefix(path, "/containers/"), "/json")
+		if f.missing[cid] {
+			http.Error(w, `{"message":"No such container: `+cid+`"}`, http.StatusNotFound)
+			return
+		}
 		var info docker.ContainerInspect
 		info.ID = cid
 		info.NetworkSettings.Networks = map[string]docker.ContainerNetwork{}
@@ -236,6 +276,19 @@ func (f *fakeVPCDocker) has(id string) bool {
 	return ok
 }
 
+// endpoint returns a container's attachment to a network, and whether it has
+// one.
+func (f *fakeVPCDocker) endpoint(netID, containerID string) (fakeEndpoint, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := f.networks[netID]
+	if n == nil {
+		return fakeEndpoint{}, false
+	}
+	ep, ok := n.endpoints[containerID]
+	return ep, ok
+}
+
 // summaries is the daemon-wide snapshot the router hands ReconcileNetworks:
 // every network the fake holds, as the list endpoint would report it.
 func (f *fakeVPCDocker) summaries() []docker.NetworkSummary {
@@ -254,6 +307,7 @@ func (f *fakeVPCDocker) summariesLocked() []docker.NetworkSummary {
 			IPAM: docker.NetworkIPAM{Config: []docker.NetworkIPAMConfig{{Subnet: n.subnet}}},
 		})
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 
@@ -304,6 +358,19 @@ func (f *fakeVPCDocker) countCalls(match func(string) bool) int {
 	return count
 }
 
+// countNetworks counts the networks whose name has the given suffix.
+func (f *fakeVPCDocker) countNetworks(suffix string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	count := 0
+	for _, n := range f.networks {
+		if strings.HasSuffix(n.name, suffix) {
+			count++
+		}
+	}
+	return count
+}
+
 // setFailList turns the list endpoint's failure on or off between calls.
 func (f *fakeVPCDocker) setFailList(fail bool) {
 	f.mu.Lock()
@@ -328,12 +395,19 @@ func (f *fakeVPCDocker) callIndex(prefix string) int {
 // strategy.
 func vpcDockerHandler(t *testing.T, f *fakeVPCDocker, strategy string) *Handler {
 	t.Helper()
+	return vpcDockerHandlerOn(t, f, strategy, state.NewMemoryStore())
+}
+
+// vpcDockerHandlerOn is vpcDockerHandler over a given store, so a test can
+// stand up a second handler over the first one's records — a restart.
+func vpcDockerHandlerOn(t *testing.T, f *fakeVPCDocker, strategy string, store state.Store) *Handler {
+	t.Helper()
 	origInContainer := runningInContainer
 	t.Cleanup(func() { runningInContainer = origInContainer })
 	runningInContainer = func() bool { return false }
 
 	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000", Network: "overcast", EC2VPCNetworkStrategy: strategy}
-	h := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.NewMock()).handler
+	h := New(cfg, store, zap.NewNop(), clock.NewMock()).handler
 	h.docker = docker.NewClient(strings.Replace(f.server.URL, "http://", "tcp://", 1), zap.NewNop())
 	h.dockerReady.Store(true)
 	return h

@@ -100,7 +100,7 @@ func (s *Service) startLiveCluster(ctx context.Context, region string, cluster *
 	// control plane on the default plane, where nothing inside the VPC could
 	// reach it.
 	placement, err := s.placementFor(ctx, s.vpcForCluster(ctx, cluster),
-		s.clusterEndpointAliases(region, cluster.Name))
+		clusterSubnetIDs(cluster.ResourcesVPCConfig), s.clusterEndpointAliases(region, cluster.Name))
 	if err != nil {
 		s.failLiveCluster(ctx, region, cluster.Name, issueConfigurationConflict, err)
 		return
@@ -265,12 +265,15 @@ func clusterSubnetIDs(vpcConfig map[string]any) []string {
 // placementFor turns a resolved VPC into the Placement the control-plane
 // container should take, carrying its endpoint aliases onto whichever plane it
 // lands on.
-func (s *Service) placementFor(ctx context.Context, vpcID string, aliases []string) (dataplane.Placement, error) {
+func (s *Service) placementFor(ctx context.Context, vpcID string, subnetIDs, aliases []string) (dataplane.Placement, error) {
 	var resolver dataplane.VPCResolver
 	if s.vpcResolver != nil {
 		resolver = s.vpcResolver
 	}
-	placement, err := dataplane.PlaceInVPC(ctx, resolver, vpcID)
+	// The subnets go with the VPC: under OVERCAST_VPC_EGRESS=routed their
+	// route tables decide whether the control plane gets a route out — which
+	// a k3s that has to pull images needs.
+	placement, err := dataplane.PlaceInSubnets(ctx, resolver, vpcID, subnetIDs)
 	if err != nil {
 		return placement, err
 	}

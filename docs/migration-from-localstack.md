@@ -151,7 +151,11 @@ release: egress on your machine may have been withheld and is not any more, and
 set it to `false` to restore LocalStack's behaviour, you can drop it — that is
 now the default.
 
-Overcast can also do what LocalStack cannot: `OVERCAST_VPC_EGRESS=none` gives
+Overcast can also do what LocalStack cannot. `OVERCAST_VPC_EGRESS=routed`
+decides egress per subnet from its route table, so a function in a private
+subnet with no NAT gateway fails with `ENETUNREACH` locally rather than in a
+deploy — see [`routed`](./networking.md#routed-egress-from-your-route-tables).
+And `OVERCAST_VPC_EGRESS=none` gives
 nothing it starts a route out of the machine, for deterministic CI or to prove
 a stack has no hidden external dependency. See
 [Egress modes](./networking.md#egress-modes).

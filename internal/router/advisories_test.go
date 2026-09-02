@@ -853,3 +853,94 @@ func TestComputeAdvisories_includesTheRuntimeAPIRule(t *testing.T) {
 		t.Fatalf("advisories = %+v, want %s among them", advisories, advisoryCodeRuntimeAPIUnreachable)
 	}
 }
+
+// ── routed-egress-not-enforced ───────────────────────────────────────────────
+
+func TestCheckRoutedEgressNotEnforced_namesEachShortfall(t *testing.T) {
+	// Given: routed is configured on a host that could neither isolate the
+	// control plane nor enforce placement — Docker Desktop on Windows.
+	in := advisoryInput{
+		VPCEgress:         config.VPCEgressRouted,
+		PlacementEnforced: false,
+		ControlNetwork:    "overcast_control",
+		Networks: []docker.NetworkStatus{
+			{Name: "overcast", Internal: false},
+			{Name: "overcast_control", Internal: false},
+		},
+	}
+
+	// When: the rule evaluates it.
+	a := checkRoutedEgressNotEnforced(in)
+
+	// Then: one warning names both reasons a container has a route out its
+	// route table did not give it, and points at the egress-modes section.
+	if a == nil {
+		t.Fatal("expected an advisory, got nil")
+	}
+	if a.Severity != advisorySeverityWarning || a.Code != advisoryCodeRoutedEgressNotEnforced {
+		t.Errorf("severity/code = %q/%q", a.Severity, a.Code)
+	}
+	for _, want := range []string{"overcast_control", "DNS", "0.0.0.0/0", "NAT gateway"} {
+		if !strings.Contains(a.Detail, want) {
+			t.Errorf("detail %q does not mention %q", a.Detail, want)
+		}
+	}
+	if a.DocsPath != routedEgressDocsPath {
+		t.Errorf("docsPath = %q, want %q", a.DocsPath, routedEgressDocsPath)
+	}
+}
+
+func TestCheckRoutedEgressNotEnforced_silentWhenTheModeCanKeepItsPromise(t *testing.T) {
+	// A host that isolated the control plane and enforces placement gets
+	// nothing: routed works there, and an advisory that always fires is noise.
+	enforced := advisoryInput{
+		VPCEgress:         config.VPCEgressRouted,
+		PlacementEnforced: true,
+		ControlNetwork:    "overcast_control",
+		Networks:          []docker.NetworkStatus{{Name: "overcast_control", Internal: true}},
+	}
+	if a := checkRoutedEgressNotEnforced(enforced); a != nil {
+		t.Fatalf("expected no advisory on a host routed can serve, got %+v", a)
+	}
+
+	// And every other mode is silent whatever the host: `open` grants egress
+	// on purpose, and `none`'s own shortfall is reported elsewhere.
+	for _, mode := range []config.VPCEgressMode{config.VPCEgressOpen, config.VPCEgressNone, ""} {
+		in := enforced
+		in.VPCEgress, in.PlacementEnforced = mode, false
+		in.Networks = []docker.NetworkStatus{{Name: "overcast_control", Internal: false}}
+		if a := checkRoutedEgressNotEnforced(in); a != nil {
+			t.Errorf("mode %q fired %+v", mode, a)
+		}
+	}
+}
+
+func TestCheckRoutedEgressNotEnforced_firesOnEitherShortfallAlone(t *testing.T) {
+	// A native Linux daemon with no resolver: the control plane is isolated,
+	// but a VPC-placed container still joins the routable data plane.
+	placementOnly := advisoryInput{
+		VPCEgress:         config.VPCEgressRouted,
+		PlacementEnforced: false,
+		ControlNetwork:    "overcast_control",
+		Networks:          []docker.NetworkStatus{{Name: "overcast_control", Internal: true}},
+	}
+	a := checkRoutedEgressNotEnforced(placementOnly)
+	if a == nil {
+		t.Fatal("an unenforced placement fired nothing")
+	}
+	if strings.Contains(a.Detail, "left routable") {
+		t.Errorf("detail blames the control plane, which was isolated: %q", a.Detail)
+	}
+
+	// And the other way round.
+	controlOnly := placementOnly
+	controlOnly.PlacementEnforced = true
+	controlOnly.Networks = []docker.NetworkStatus{{Name: "overcast_control", Internal: false}}
+	a = checkRoutedEgressNotEnforced(controlOnly)
+	if a == nil {
+		t.Fatal("a routable control plane fired nothing")
+	}
+	if strings.Contains(a.Detail, "DNS") {
+		t.Errorf("detail blames placement, which was enforced: %q", a.Detail)
+	}
+}

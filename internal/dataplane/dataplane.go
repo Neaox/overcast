@@ -51,6 +51,22 @@ type reconnector interface {
 	DisconnectNetwork(ctx context.Context, networkID, containerID string) error
 }
 
+// egressConnector is a connector that can rank a network as the container's
+// default-route source (docker.EndpointSettings.GwPriority), which joining an
+// egress network needs. Optional: a connector without it — a test fake — joins
+// the egress network unranked, and Docker's name-order tie-break decides.
+type egressConnector interface {
+	ConnectNetworkWithConfig(ctx context.Context, networkID, containerID string, cfg *docker.EndpointSettings) error
+}
+
+// EgressGatewayPriority is the docker.EndpointSettings.GwPriority a container
+// joins its VPC's egress network with. Any positive value beats the zero every
+// other attachment carries, so a container that is also on a routable plane —
+// the default plane, when its resource is Public; the control plane, on a host
+// where that could not be isolated — still takes its default route from the
+// egress network its subnet's route table chose. See Placement.EgressNetwork.
+const EgressGatewayPriority = 10
+
 // inspector is the slice of *docker.Client ContainerAddr needs.
 type inspector interface {
 	ConnectNetwork(ctx context.Context, networkID, containerID string) error
@@ -101,6 +117,32 @@ type Placement struct {
 	// such subdomain with Overcast's address, so the caller connects to the
 	// emulator on the engine's port and hangs.
 	Aliases []string
+
+	// EgressNetwork is the routable bridge that gives this container its
+	// default route, joined in addition to VPCNetwork. Set only under
+	// OVERCAST_VPC_EGRESS=routed, and only when the resource's subnet has a
+	// `0.0.0.0/0` route to an internet or NAT gateway; empty means the
+	// container has whatever route out its other networks give it — none, in
+	// `routed`, which is the mode's point.
+	//
+	// It is a second network rather than a routable VPCNetwork because the
+	// VPC's plane has to stay one network for every container in the VPC,
+	// whatever their subnets route to: an isolated database and a NAT-routed
+	// function in one VPC reach each other on AWS, and they could not if each
+	// egress class were its own bridge. So VPCNetwork carries the names and
+	// the intra-VPC traffic, and this carries only the route out. No aliases
+	// are registered on it.
+	EgressNetwork string
+
+	// VPCID and SubnetIDs are where the resource asked to be, kept on the
+	// placement so Attach can record it (see PlacementRecorder) and the EC2
+	// service can revisit the egress decision when a route table changes.
+	VPCID     string
+	SubnetIDs []string
+
+	// recorder is told which container this placement was applied to, when
+	// the resolver that made it wants to know. Set by PlaceInSubnets.
+	recorder PlacementRecorder
 }
 
 // Primary returns the network a managed container is *created* on
@@ -138,8 +180,15 @@ func Primary(cfg *config.Config) string {
 // on every startup.
 func ControlPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *docker.Client) docker.InternalDecision {
 	return func(ctx context.Context, dc *docker.Client) docker.InternalDecision {
+		// `none` and `routed` both isolate it. `routed` has to: a container
+		// takes its default route from whichever of its networks is routable,
+		// so a routable control plane would hand every container a route out
+		// whatever its route table says — measured end to end in #1571, where
+		// a function in an isolated subnet reached real AWS through exactly
+		// this network. Egress under `routed` comes from the per-VPC egress
+		// network instead (Placement.EgressNetwork).
 		d := docker.InternalDecision{
-			Internal: egressMode(cfg) == config.VPCEgressNone,
+			Internal: egressMode(cfg) == config.VPCEgressNone || egressMode(cfg) == config.VPCEgressRouted,
 			Reason:   "OVERCAST_VPC_EGRESS=" + string(egressMode(cfg)),
 		}
 
@@ -167,17 +216,21 @@ func ControlPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *dock
 		// is the only place the host probe is consulted, and it decides nothing
 		// about egress — see runtimeAPIReachableOnInternalPlane.
 		if !runtimeAPIReachableOnInternalPlane(ctx, dc) {
+			shortfall := ControlPlaneMustStayRoutableWarning
+			if egressMode(cfg) == config.VPCEgressRouted {
+				shortfall = RoutedControlPlaneMustStayRoutableWarning
+			}
 			return docker.InternalDecision{
 				Internal: false,
 				Reason:   d.Reason + ", overridden: an internal control plane would sever the Runtime API on this host",
-				Warnings: appendOnce(&shortfallSaid, d.Warnings, ControlPlaneMustStayRoutableWarning),
+				Warnings: appendOnce(&shortfallSaid, d.Warnings, shortfall),
 			}
 		}
 
 		// Isolation asked for by the mode is the mode working as documented and
 		// needs no warning. Isolation arrived at by the deprecated pin while the
 		// mode says `open` is a contradiction the operator should see.
-		if egressMode(cfg) != config.VPCEgressNone {
+		if egressMode(cfg) == config.VPCEgressOpen {
 			d.Warnings = appendOnce(&egressWarningSaid, d.Warnings, ControlPlaneEgressWarning)
 		}
 		return d
@@ -194,10 +247,22 @@ func ControlPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *dock
 // placement there is.
 func Internal(cfg *config.Config) func(ctx context.Context, dc *docker.Client) docker.InternalDecision {
 	return func(_ context.Context, _ *docker.Client) docker.InternalDecision {
-		return docker.InternalDecision{
+		d := docker.InternalDecision{
 			Internal: egressMode(cfg) == config.VPCEgressNone,
 			Reason:   "OVERCAST_VPC_EGRESS=" + string(egressMode(cfg)),
 		}
+		// `routed` leaves this plane routable — the resources that named no
+		// VPC, and those in a default VPC, have egress on AWS too. That is
+		// only safe while a VPC-placed container is held to its VPC network
+		// alone. Where it is not, this plane is a route out for every
+		// container in every subnet, and the mode cannot withhold. Said here
+		// because this is the network that carries it; cfg.DNSListening is
+		// settled before Docker is probed (router.New starts the resolver
+		// first), so the answer is the one that will hold.
+		if egressMode(cfg) == config.VPCEgressRouted && !enforceable(cfg) {
+			d.Warnings = appendOnce(&routedPlacementSaid, d.Warnings, RoutedPlacementNotEnforcedWarning)
+		}
+		return d
 	}
 }
 
@@ -219,16 +284,26 @@ func Internal(cfg *config.Config) func(ctx context.Context, dc *docker.Client) d
 // sts.us-east-1 — packets left the machine.
 //
 // So the flag stays honest about the template rather than being flattened, the
-// gateway machinery that keeps it true stays exercised (#1570), and `routed`
-// inherits a bit that already means something. What changed is that the flag no
+// gateway machinery that keeps it true stays exercised (#1570), and the flag no
 // longer *decides* egress on its own, which is what made a private-with-NAT
-// subnet indistinguishable from an isolated one: the mode decides, and today
-// both implemented modes answer for every network alike.
+// subnet indistinguishable from an isolated one: the mode decides.
+//
+// Under `routed` the VPC's plane is always `--internal`, gateway or not. It is
+// the network every container in the VPC shares, and a route out is not a
+// property of the VPC but of each subnet's route table — so egress is carried
+// by a second, per-VPC network that only the containers whose subnet grants it
+// join (VPCEgressNetworkSpec, Placement.EgressNetwork). The gateway fact is
+// still recorded on the plane, for the readers that compute this same
+// decision from labels alone.
 func VPCNetworkInternal(cfg *config.Config, hasInternetGateway bool) bool {
-	if egressMode(cfg) == config.VPCEgressNone {
+	switch egressMode(cfg) {
+	case config.VPCEgressNone, config.VPCEgressRouted:
 		return true
+	case config.VPCEgressOpen:
+		return !hasInternetGateway
+	default:
+		return !hasInternetGateway
 	}
-	return !hasInternetGateway
 }
 
 // VPCNetwork describes one VPC's Docker network to VPCNetworkSpec.
@@ -275,6 +350,7 @@ func VPCNetworkSpec(cfg *config.Config, n VPCNetwork) docker.NetworkSpec {
 	labels := docker.ManagedLabels("ec2", n.VPCID)
 	labels["overcast.vpc-id"] = n.VPCID
 	labels[docker.LabelGatewayAttached] = strconv.FormatBool(n.HasInternetGateway)
+	labels[docker.LabelVPCRole] = docker.VPCRolePlane
 	if n.Owner != "" {
 		labels[docker.LabelInstance] = n.Owner
 	}
@@ -282,6 +358,50 @@ func VPCNetworkSpec(cfg *config.Config, n VPCNetwork) docker.NetworkSpec {
 		Name:       cfg.VPCNetwork(n.VPCID),
 		Internal:   n.Internal,
 		Subnet:     n.Subnet,
+		Labels:     labels,
+		Owner:      n.Owner,
+		Version:    cfg.Version,
+		EgressMode: string(egressMode(cfg)),
+	}
+}
+
+// VPCEgressNetwork describes one VPC's egress network to VPCEgressNetworkSpec.
+type VPCEgressNetwork struct {
+	// VPCID names the VPC, and through cfg.VPCEgressNetwork the Docker network.
+	VPCID string
+
+	// Subnet is the /24 the EC2 service carved for it from
+	// config.VPCEgressPool. Always pinned: an egress network that drew on
+	// Docker's own address pools would count against the ~31-network ceiling
+	// that made this mode unsafe to ship (#1571).
+	Subnet string
+
+	// Owner is the EC2 service's instance identity, as on VPCNetwork.
+	Owner string
+}
+
+// VPCEgressNetworkSpec is the full desired state of the routable bridge that
+// carries the default route for the containers in one VPC whose subnet's route
+// table grants egress, under OVERCAST_VPC_EGRESS=routed.
+//
+// It is never `--internal` — that is its whole job — and it pins IP
+// masquerading on, because that option is what actually carries egress on a
+// bridge: a network with it off looks routable and behaves isolated, which is
+// the drift class docker.NetworkSpec exists to catch. It carries the same
+// resource and ownership labels as the VPC's plane plus docker.LabelVPCRole so
+// a reader can tell the two apart without parsing the name.
+func VPCEgressNetworkSpec(cfg *config.Config, n VPCEgressNetwork) docker.NetworkSpec {
+	labels := docker.ManagedLabels("ec2", n.VPCID)
+	labels["overcast.vpc-id"] = n.VPCID
+	labels[docker.LabelVPCRole] = docker.VPCRoleEgress
+	if n.Owner != "" {
+		labels[docker.LabelInstance] = n.Owner
+	}
+	return docker.NetworkSpec{
+		Name:       cfg.VPCEgressNetwork(n.VPCID),
+		Internal:   false,
+		Subnet:     n.Subnet,
+		Options:    map[string]string{docker.OptionIPMasquerade: "true"},
 		Labels:     labels,
 		Owner:      n.Owner,
 		Version:    cfg.Version,
@@ -304,6 +424,11 @@ func VPCNetworkEgressReason(cfg *config.Config, internal bool) string {
 	switch {
 	case mode == config.VPCEgressNone:
 		return "OVERCAST_VPC_EGRESS=none: no egress from this network or any other"
+	case mode == config.VPCEgressRouted:
+		return "OVERCAST_VPC_EGRESS=routed: this is the VPC's internal plane, which every container " +
+			"in the VPC joins; a container whose subnet has a 0.0.0.0/0 route to an internet or NAT " +
+			"gateway also joins the VPC's egress network (" + config.VPCEgressNetworkSuffix + ") and " +
+			"takes its default route from there — one with no such route has no route out"
 	case !internal:
 		return "OVERCAST_VPC_EGRESS=" + string(mode) + ": the VPC has an internet gateway, so this " +
 			"network is routable and its containers have egress directly"
@@ -341,6 +466,19 @@ const ControlPlaneMustStayRoutableWarning = "OVERCAST_VPC_EGRESS=none asked for 
 	"plane is isolated as asked. Run Overcast containerised, or against a native Linux Docker daemon, for " +
 	"the whole of `none`"
 
+// RoutedControlPlaneMustStayRoutableWarning is ControlPlaneMustStayRoutableWarning
+// for `routed`, whose shortfall is a different one: not a hermetic stack that
+// leaks, but a route-table decision that cannot withhold. With the control
+// plane routable, a container in a subnet with no default route still has one
+// — through this network — so `routed` grants everywhere it should withhold
+// and the missing NAT gateway it exists to catch goes uncaught on this host.
+const RoutedControlPlaneMustStayRoutableWarning = "OVERCAST_VPC_EGRESS=routed asked for an isolated control " +
+	"plane, but on this host containers reach the Lambda Runtime API at the host's own routable address, " +
+	"which `--internal` would sever — every invocation would strand at INIT. The control plane was left " +
+	"routable, so every container has a route out through it whatever its subnet's route table says: " +
+	"egress is granted where the template grants it AND where it withholds it. Run Overcast containerised, " +
+	"or against a native Linux Docker daemon, for `routed` to withhold egress from a subnet with no default route"
+
 // Each of these fires at most once per process.
 //
 // The control plane's InternalMode runs once per docker.Probe, and Probe is
@@ -350,9 +488,10 @@ const ControlPlaneMustStayRoutableWarning = "OVERCAST_VPC_EGRESS=none asked for 
 // notice seen twice is one being tuned out, which is the whole argument for
 // firing it only where it was actually set.
 var (
-	deprecationSaid   sync.Once
-	shortfallSaid     sync.Once
-	egressWarningSaid sync.Once
+	deprecationSaid     sync.Once
+	shortfallSaid       sync.Once
+	egressWarningSaid   sync.Once
+	routedPlacementSaid sync.Once
 )
 
 // resetWarningsOnce re-arms the once-per-process guards. Tests use it: they
@@ -363,6 +502,7 @@ func resetWarningsOnce() {
 	deprecationSaid = sync.Once{}
 	shortfallSaid = sync.Once{}
 	egressWarningSaid = sync.Once{}
+	routedPlacementSaid = sync.Once{}
 }
 
 // appendOnce adds warning to warnings the first time it is reached in this
@@ -391,14 +531,19 @@ func deprecationNotice(cfg *config.Config) string {
 		replacement + " instead. The setting is still honoured for now"
 }
 
-// egressMode is cfg.VPCEgress with the zero value read as the default, so a
+// EgressMode is cfg.VPCEgress with the zero value read as the default, so a
 // Config built directly in a test reports the mode Load would have given it.
-func egressMode(cfg *config.Config) config.VPCEgressMode {
+func EgressMode(cfg *config.Config) config.VPCEgressMode {
 	if cfg == nil || cfg.VPCEgress == "" {
 		return config.VPCEgressOpen
 	}
 	return cfg.VPCEgress
 }
+
+func egressMode(cfg *config.Config) config.VPCEgressMode { return EgressMode(cfg) }
+
+// Routed reports whether egress is decided per subnet from its route table.
+func Routed(cfg *config.Config) bool { return EgressMode(cfg) == config.VPCEgressRouted }
 
 // runtimeAPIReachableOnInternalPlane reports whether containers could still
 // reach Overcast — the Lambda Runtime API above all — if the control plane were
@@ -552,6 +697,28 @@ func enforceable(cfg *config.Config) bool {
 	return cfg.DNSListening
 }
 
+// PlacementEnforced reports whether a resource that named a VPC is held to it
+// — whether DataNetworks returns its VPC network alone rather than that
+// network *and* the shared data plane. See enforceable for what decides it.
+//
+// It matters beyond placement under OVERCAST_VPC_EGRESS=routed. The shared
+// data plane is routable in that mode, as it must be for the resources that
+// named no VPC, so a VPC-placed container that also sits on it takes a
+// default route from it whatever its subnet's route table says — `routed`
+// then grants egress everywhere and withholds it nowhere. The mode cannot
+// deliver its half of the bargain on such a host, and says so:
+// RoutedPlacementNotEnforcedWarning, and the routed-egress-not-enforced
+// health advisory.
+func PlacementEnforced(cfg *config.Config) bool { return enforceable(cfg) }
+
+// RoutedPlacementNotEnforcedWarning is what `routed` says on a host where a
+// VPC-placed container also joins the shared data plane, which is routable.
+const RoutedPlacementNotEnforcedWarning = "OVERCAST_VPC_EGRESS=routed decides egress from each subnet's " +
+	"route table, but on this host Overcast's DNS resolver is not listening, so every VPC-placed container " +
+	"also joins the routable data plane and takes a route out from it whatever its route table says. " +
+	"Egress is granted where the template grants it AND where it withholds it. Run Overcast containerised, " +
+	"or against a native Linux Docker daemon, for `routed` to withhold egress from a subnet with no default route"
+
 // AttachAdopted is Attach for a container Overcast did not create in this run —
 // one reused after a restart.
 //
@@ -594,6 +761,52 @@ func Attach(ctx context.Context, dc connector, cfg *config.Config, containerID s
 		if err := dc.ConnectNetworkWithAliases(ctx, network, containerID, p.Aliases); err != nil {
 			return fmt.Errorf("attach container to data plane %s: %w", network, err)
 		}
+	}
+	if err := attachEgress(ctx, dc, containerID, p); err != nil {
+		return err
+	}
+	// Recorded after the attachments, so a placement on record is one that
+	// was applied; a recorder that fails is logged by its owner and does not
+	// fail the attach, which already did the thing that matters.
+	if p.recorder != nil && p.VPCNetwork != "" {
+		p.recorder.RecordPlacement(ctx, containerID, p)
+	}
+	return nil
+}
+
+// AttachEgress is the egress half of Attach on its own, for the one caller
+// that joins the data plane by hand rather than through Attach — ECS's awsvpc
+// path, which pins the task's ENI address on the connect and reads back what
+// it got. It joins the egress network, when the placement has one, and
+// records the placement as Attach would. Safe to repeat.
+func AttachEgress(ctx context.Context, dc connector, containerID string, p Placement) error {
+	if dc == nil || containerID == "" {
+		return nil
+	}
+	if err := attachEgress(ctx, dc, containerID, p); err != nil {
+		return err
+	}
+	if p.recorder != nil && p.VPCNetwork != "" {
+		p.recorder.RecordPlacement(ctx, containerID, p)
+	}
+	return nil
+}
+
+// attachEgress joins the container to its egress network, ranked as its
+// default-route source. See Placement.EgressNetwork and EgressGatewayPriority.
+func attachEgress(ctx context.Context, dc connector, containerID string, p Placement) error {
+	if p.EgressNetwork == "" {
+		return nil
+	}
+	var err error
+	if ec, ok := dc.(egressConnector); ok {
+		err = ec.ConnectNetworkWithConfig(ctx, p.EgressNetwork, containerID,
+			&docker.EndpointSettings{GwPriority: EgressGatewayPriority})
+	} else {
+		err = dc.ConnectNetworkWithAliases(ctx, p.EgressNetwork, containerID, nil)
+	}
+	if err != nil {
+		return fmt.Errorf("attach container to egress network %s: %w", p.EgressNetwork, err)
 	}
 	return nil
 }
@@ -640,11 +853,16 @@ func isNotConnected(err error) bool {
 	return strings.Contains(err.Error(), "is not connected to network")
 }
 
-// Networks returns every plane a container placed by p sits on, control first.
-// Useful for diagnostics and for callers that need the full set rather than
-// the create-time/attach-time split Primary and Attach express.
+// Networks returns every network a container placed by p sits on: control
+// first, then its data planes, then its egress network when it has one. Useful
+// for diagnostics and for callers that need the full set rather than the
+// create-time/attach-time split Primary and Attach express.
 func Networks(cfg *config.Config, p Placement) []string {
-	return append([]string{Primary(cfg)}, DataNetworks(cfg, p)...)
+	networks := append([]string{Primary(cfg)}, DataNetworks(cfg, p)...)
+	if p.EgressNetwork != "" {
+		networks = append(networks, p.EgressNetwork)
+	}
+	return networks
 }
 
 // Hostnames builds the complete alias set for one container-backed resource:
@@ -736,18 +954,76 @@ func Launchable(status string) bool {
 	}
 }
 
+// SubnetPlacer is the part of the EC2 service a placement decision needs once
+// egress is decided per subnet (OVERCAST_VPC_EGRESS=routed). Optional: a
+// resolver without it places by VPC alone, and every container in the VPC gets
+// the same answer.
+type SubnetPlacer interface {
+	// EgressNetworkForSubnets returns the Docker network that carries the
+	// default route for a container in the given subnets of vpcID, or "" when
+	// none of them has a route out (or the mode is not `routed`). It may
+	// create the network, and an error is the network the template grants
+	// being unavailable — an exhausted pool, a daemon refusal — which fails
+	// the placement rather than quietly withholding what the template grants.
+	EgressNetworkForSubnets(ctx context.Context, vpcID string, subnetIDs []string) (string, error)
+}
+
+// PlacementRecorder is told which container a placement was applied to, so
+// the service that decided it can revisit the decision later — under
+// `routed`, when a route table changes and containers already running have to
+// be moved on or off their VPC's egress network. Optional, as SubnetPlacer is.
+type PlacementRecorder interface {
+	RecordPlacement(ctx context.Context, containerID string, p Placement)
+}
+
 // PlaceInVPC resolves vpcID to the Placement a container in it should take.
 //
 // A resource with no VPC, or no resolver to ask, lands on the default data
 // plane — the zero Placement. A VPC that cannot take containers is an error
 // rather than a silent fallback: quietly placing a resource somewhere other
 // than the VPC it asked for is how an unreachable endpoint gets minted.
+//
+// A placement made here names no subnets, so under `routed` it gets no egress
+// network: a resource that asked for a VPC without saying where in it has no
+// route table to read, and the answer that cannot be wrong in the direction
+// that fails on AWS is to withhold. Callers that know the subnets use
+// PlaceInSubnets.
 func PlaceInVPC(ctx context.Context, r VPCResolver, vpcID string) (Placement, error) {
+	return PlaceInSubnets(ctx, r, vpcID, nil)
+}
+
+// PlaceInSubnets is PlaceInVPC for a resource that named the subnets it wants
+// to be in — a function's VpcConfig, a task's awsvpcConfiguration, a subnet
+// group. The VPC decides the plane; under `routed` the subnets decide, through
+// their route tables, whether the container also gets an egress network.
+//
+// A container in several subnets gets egress when any of them grants it. On
+// AWS a function spread across a NAT-routed subnet and an isolated one reaches
+// the internet from some of its ENIs and not others, which is not a state one
+// container can be in; granting is the reading that does not make a working
+// stack fail locally, and the placement names the subnets so the log can say
+// which one decided.
+func PlaceInSubnets(ctx context.Context, r VPCResolver, vpcID string, subnetIDs []string) (Placement, error) {
 	if r == nil || vpcID == "" {
 		return Placement{}, nil
 	}
 	if status := r.VPCNetworkStatus(ctx, vpcID); !Launchable(status) {
 		return Placement{}, fmt.Errorf("VPC %s is not launchable (network status=%s)", vpcID, status)
 	}
-	return Placement{VPCNetwork: r.DockerNetworkForVpc(ctx, vpcID)}, nil
+	p := Placement{
+		VPCNetwork: r.DockerNetworkForVpc(ctx, vpcID),
+		VPCID:      vpcID,
+		SubnetIDs:  subnetIDs,
+	}
+	if sp, ok := r.(SubnetPlacer); ok && p.VPCNetwork != "" {
+		egress, err := sp.EgressNetworkForSubnets(ctx, vpcID, subnetIDs)
+		if err != nil {
+			return Placement{}, fmt.Errorf("VPC %s: %w", vpcID, err)
+		}
+		p.EgressNetwork = egress
+	}
+	if rec, ok := r.(PlacementRecorder); ok {
+		p.recorder = rec
+	}
+	return p, nil
 }
