@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -48,6 +49,9 @@ type fakeVPCDocker struct {
 	// failCreate makes every network create fail — the recreate half of a
 	// flip failing after the old network is gone.
 	failCreate bool
+	// failConnect names containers whose reconnect the daemon refuses — a
+	// recreate that succeeded but cannot take every container back.
+	failConnect map[string]bool
 }
 
 type fakeNetwork struct {
@@ -90,6 +94,14 @@ func (f *fakeVPCDocker) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"message":"could not find an available, non-overlapping IPv4 address pool"}`, http.StatusInternalServerError)
 			return
 		}
+		// As the daemon does: two bridges cannot claim one subnet. This is
+		// what a flip racing another flip of the same network runs into.
+		for _, n := range f.networks {
+			if req.IPAM != nil && len(req.IPAM.Config) > 0 && n.subnet == req.IPAM.Config[0].Subnet {
+				http.Error(w, `{"message":"Pool overlaps with other one on this address space"}`, http.StatusForbidden)
+				return
+			}
+		}
 		f.nextID++
 		n := &fakeNetwork{id: fmt.Sprintf("net-%d", f.nextID), name: req.Name, internal: req.Internal, labels: req.Labels, endpoints: map[string]fakeEndpoint{}}
 		if req.IPAM != nil && len(req.IPAM.Config) > 0 {
@@ -130,6 +142,10 @@ func (f *fakeVPCDocker) serve(w http.ResponseWriter, r *http.Request) {
 				EndpointConfig *docker.EndpointSettings
 			}
 			_ = json.NewDecoder(r.Body).Decode(&req)
+			if f.failConnect[req.Container] {
+				http.Error(w, `{"message":"cannot join network of a non running container: `+req.Container+`"}`, http.StatusForbidden)
+				return
+			}
 			ep := fakeEndpoint{}
 			if req.EndpointConfig != nil {
 				ep.aliases = req.EndpointConfig.Aliases
@@ -582,8 +598,8 @@ func TestNetworkProblems_orderedByVPC(t *testing.T) {
 	// Given: problems recorded in no particular order.
 	f := newFakeVPCDocker(t)
 	h := vpcDockerHandler(t, f, "shared")
-	h.noteNetworkProblem("vpc-b", "net-b", true, fmt.Errorf("bang"))
-	h.noteNetworkProblem("vpc-a", "net-a", false, fmt.Errorf("boom"))
+	h.noteNetworkProblem("vpc-b", "net-b", "bang")
+	h.noteNetworkProblem("vpc-a", "net-a", "boom")
 
 	// When/Then: they come back ordered, so the advisory reads the same on
 	// every refresh.
@@ -680,5 +696,220 @@ func TestDetachIGWTyped_dockerRefusesRemoval(t *testing.T) {
 	}
 	if got := f.network("overcast-vpc-" + vpcID); got == nil || got.internal {
 		t.Errorf("network = %+v, want it still external", got)
+	}
+}
+
+func TestAttachInternetGateway_containerCannotRejoinRecreatedNetwork(t *testing.T) {
+	// Given: two containers on the --internal network, one of which the
+	// daemon will refuse to reconnect.
+	f := newFakeVPCDocker(t)
+	h := vpcDockerHandler(t, f, "shared")
+	vpcID := createVPC(t, h, "10.9.0.0/16")
+	before := f.network("overcast-vpc-" + vpcID)
+	f.attach(before.id, "ctr-db", "10.9.0.5", "mydb.rds.local")
+	f.attach(before.id, "ctr-stuck", "10.9.0.9")
+	f.failConnect = map[string]bool{"ctr-stuck": true}
+	igwID := createIGW(t, h)
+
+	// When: the gateway is attached.
+	rec := ec2Call(t, h.AttachInternetGateway, gatewayParams(igwID, vpcID))
+
+	// Then: the recreate is the point of no return — the network is external,
+	// so the attachment is recorded and the call succeeds; the container that
+	// could not rejoin is what is reported, through the advisories.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("AttachInternetGateway: %d %s", rec.Code, rec.Body.String())
+	}
+	after := f.network("overcast-vpc-" + vpcID)
+	if after == nil || after.internal || after.id == before.id {
+		t.Fatalf("expected a recreated external network, got %+v", after)
+	}
+	if got := attachedVPCs(t, h, igwID); len(got) != 1 || got[0] != vpcID {
+		t.Errorf("gateway attachments = %v, want [%s] — the network is external, the record must say so", got, vpcID)
+	}
+	if _, ok := after.endpoints["ctr-db"]; !ok {
+		t.Error("the container that could rejoin should be on the new network")
+	}
+	if _, ok := after.endpoints["ctr-stuck"]; ok {
+		t.Error("the refused container cannot be on the new network")
+	}
+	problems := h.networkProblems()
+	if len(problems) != 1 || problems[0].VpcID != vpcID || problems[0].NetworkID != after.id ||
+		!strings.Contains(problems[0].Detail, "ctr-stuck") || !strings.Contains(problems[0].Detail, "recreated external") {
+		t.Errorf("network problems = %+v, want one naming ctr-stuck on the recreated external network", problems)
+	}
+
+	// And: once a later flip takes every container along, the entry clears.
+	f.failConnect = nil
+	if rec := ec2Call(t, h.DetachInternetGateway, gatewayParams(igwID, vpcID)); rec.Code != http.StatusOK {
+		t.Fatalf("detach: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := h.networkProblems(); len(got) != 0 {
+		t.Errorf("network problems = %+v, want none after a clean flip", got)
+	}
+}
+
+func TestChangeVPCGateway_concurrentSharersTakeTurns(t *testing.T) {
+	// Given: several VPCs sharing one Docker network under the shared
+	// strategy, with a container on it, and a gateway created for each.
+	f := newFakeVPCDocker(t)
+	h := vpcDockerHandler(t, f, "shared")
+	const sharers = 4
+	vpcIDs := make([]string, sharers)
+	igwIDs := make([]string, sharers)
+	for i := range sharers {
+		vpcIDs[i] = createVPC(t, h, "10.9.0.0/16")
+		igwIDs[i] = createIGW(t, h)
+	}
+	shared := f.network("overcast-vpc-" + vpcIDs[0])
+	f.attach(shared.id, "ctr-db", "10.9.0.5", "mydb.rds.local")
+
+	// When: every sharer attaches its gateway at once. Without serialisation
+	// each would disconnect the same endpoint, one would remove the network,
+	// the others' removes would read as success, and their recreates would
+	// collide on the subnet — marking every record unbacked.
+	var wg sync.WaitGroup
+	codes := make([]int, sharers)
+	for i := range sharers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes[i] = ec2Call(t, h.AttachInternetGateway, gatewayParams(igwIDs[i], vpcIDs[i])).Code
+		}()
+	}
+	wg.Wait()
+
+	// Then: every call succeeds, exactly one external network backs all of
+	// them, every record names it, the container is on it, and nothing is
+	// reported as broken.
+	for i, code := range codes {
+		if code != http.StatusOK {
+			t.Errorf("attach %d: status %d", i, code)
+		}
+	}
+	after := f.network("overcast-vpc-" + vpcIDs[0])
+	if after == nil || after.internal {
+		t.Fatalf("expected one external network, got %+v", after)
+	}
+	for _, id := range vpcIDs {
+		if got := storedVPC(t, h, id); got.DockerNetworkID != after.id || got.NetworkStatus == vpcNetworkStatusUnbacked {
+			t.Errorf("record %s = network %q status %q, want %q and not unbacked", id, got.DockerNetworkID, got.NetworkStatus, after.id)
+		}
+	}
+	if got := after.endpoints["ctr-db"]; got.ip != "10.9.0.5" {
+		t.Errorf("container after the concurrent flips = %+v, want it at 10.9.0.5", got)
+	}
+	if got := h.networkProblems(); len(got) != 0 {
+		t.Errorf("network problems = %+v, want none", got)
+	}
+
+	// When: every sharer detaches at once.
+	for i := range sharers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes[i] = ec2Call(t, h.DetachInternetGateway, gatewayParams(igwIDs[i], vpcIDs[i])).Code
+		}()
+	}
+	wg.Wait()
+
+	// Then: the last one out turns the light off, and only once.
+	for i, code := range codes {
+		if code != http.StatusOK {
+			t.Errorf("detach %d: status %d", i, code)
+		}
+	}
+	final := f.network("overcast-vpc-" + vpcIDs[0])
+	if final == nil || !final.internal {
+		t.Fatalf("expected one internal network after every gateway left, got %+v", final)
+	}
+	for _, id := range vpcIDs {
+		if got := storedVPC(t, h, id); got.DockerNetworkID != final.id {
+			t.Errorf("record %s names network %q, want %q", id, got.DockerNetworkID, final.id)
+		}
+	}
+}
+
+func TestChangeVPCGateway_reconcileWaitsForAnInFlightFlip(t *testing.T) {
+	// Given: a VPC whose network lock is held, as it is during a flip.
+	f := newFakeVPCDocker(t)
+	h := vpcDockerHandler(t, f, "shared")
+	vpcID := createVPC(t, h, "10.9.0.0/16")
+	vpc, unlock, aerr := h.lockVPCNetwork(context.Background(), vpcID)
+	if aerr != nil {
+		t.Fatal(aerr.Message)
+	}
+
+	// When: the startup isolation pass runs against that network.
+	done := make(chan struct{})
+	go func() {
+		h.reconcileVPCNetworkIsolation(context.Background())
+		close(done)
+	}()
+
+	// Then: it does not touch the network until the flip is over.
+	select {
+	case <-done:
+		t.Fatal("reconcile ran over a network whose flip lock was held")
+	case <-time.After(100 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reconcile never ran after the lock was released")
+	}
+	if got := storedVPC(t, h, vpcID); got.DockerNetworkID != vpc.DockerNetworkID {
+		t.Errorf("reconcile moved a network that matched its gateway state: %q -> %q", vpc.DockerNetworkID, got.DockerNetworkID)
+	}
+}
+
+func TestAttachInternetGateway_defaultVPCIsRecordedNotFlipped(t *testing.T) {
+	// Given: the region's default VPC, whose network is the shared data plane.
+	f := newFakeVPCDocker(t)
+	h := vpcDockerHandler(t, f, "shared")
+	vpc, aerr := h.ensureDefaultVPC(context.Background())
+	if aerr != nil {
+		t.Fatal(aerr.Message)
+	}
+	igwID := createIGW(t, h)
+	before := len(f.calls)
+
+	// When: a gateway is attached to it.
+	rec := ec2Call(t, h.AttachInternetGateway, gatewayParams(igwID, vpc.VpcID))
+
+	// Then: the attachment is recorded and the data plane is left alone —
+	// recreating it would take every container Overcast started with it.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("AttachInternetGateway: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := attachedVPCs(t, h, igwID); len(got) != 1 || got[0] != vpc.VpcID {
+		t.Errorf("gateway attachments = %v, want [%s]", got, vpc.VpcID)
+	}
+	f.mu.Lock()
+	extra := f.calls[before:]
+	f.mu.Unlock()
+	if len(extra) != 0 {
+		t.Errorf("expected no Docker calls for the default VPC, saw %v", extra)
+	}
+}
+
+func TestDeleteVpc_clearsItsRecordedProblem(t *testing.T) {
+	// Given: a VPC with a problem on record.
+	f := newFakeVPCDocker(t)
+	h := vpcDockerHandler(t, f, "shared")
+	vpcID := createVPC(t, h, "10.9.0.0/16")
+	h.noteNetworkProblem(vpcID, "net-x", "stuck")
+
+	// When: the VPC is deleted.
+	rec := ec2Call(t, h.DeleteVpc, url.Values{"VpcId": {vpcID}})
+
+	// Then: the entry goes with the record — a deleted VPC cannot keep an
+	// advisory alive.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DeleteVpc: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := h.networkProblems(); len(got) != 0 {
+		t.Errorf("network problems = %+v, want none after delete", got)
 	}
 }

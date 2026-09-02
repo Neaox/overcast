@@ -50,15 +50,12 @@ type vpcNetworkStrategy interface {
 	// the store. Strategies that share networks only tear down the Docker
 	// network when the deleted VPC was its last user.
 	OnDelete(ctx context.Context, vpc *VPC)
-
-	// SetInternal is called from AttachInternetGateway / DetachInternetGateway
-	// to bring the Docker network's --internal flag in line with the gateway
-	// state, before the attachment is persisted. An error means the network
-	// could not be made to match and the call must fail rather than record a
-	// gateway the network does not reflect. See Handler.setVPCNetworkInternal
-	// for the shared-network rule every strategy applies.
-	SetInternal(ctx context.Context, vpcID string, internal bool) error
 }
+
+// An internet gateway's effect on a network — the --internal flip — is not a
+// strategy concern: no strategy would do it differently, and it must hold the
+// network's lock across the flip and the record. It lives on the Handler; see
+// changeVPCGateway.
 
 // VPC network status values recorded on VPC.NetworkStatus. Empty string is
 // treated as vpcNetworkStatusOK for backwards compatibility with VPCs that
@@ -333,10 +330,6 @@ func (s *strictVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
 	}
 }
 
-func (s *strictVPCStrategy) SetInternal(ctx context.Context, vpcID string, internal bool) error {
-	return s.h.setVPCNetworkInternal(ctx, vpcID, internal)
-}
-
 // ─── remapped strategy ─────────────────────────────────────────────────────
 
 // remappedVPCStrategy gives every overlapping VPC a unique Docker subnet from
@@ -520,13 +513,6 @@ func (s *remappedVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
 			zap.String("vpc", vpc.VpcID),
 			zap.Error(err))
 	}
-}
-
-// SetInternal recreates the network under its shadow subnet when one is in
-// use — preferredDockerSubnet is what the recreate reads — and leaves the
-// record's status alone, so a remapped VPC stays remapped.
-func (s *remappedVPCStrategy) SetInternal(ctx context.Context, vpcID string, internal bool) error {
-	return s.h.setVPCNetworkInternal(ctx, vpcID, internal)
 }
 
 // ─── shared helpers ──────────────────────────────────────────────────────────
@@ -782,15 +768,6 @@ func (s *sharedVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
 			zap.String("vpc", vpc.VpcID),
 			zap.Error(err))
 	}
-}
-
-// SetInternal flips the network the VPC is on, sharers included: a shared
-// network is external while any VPC on it has a gateway, and every record
-// naming it follows it to the recreated one. The rule and the mechanics live
-// in Handler.setVPCNetworkInternal — this strategy contributes nothing the
-// others do not.
-func (s *sharedVPCStrategy) SetInternal(ctx context.Context, vpcID string, internal bool) error {
-	return s.h.setVPCNetworkInternal(ctx, vpcID, internal)
 }
 
 // findSharerForCIDR returns an existing VPC (other than excludeID) whose CIDR

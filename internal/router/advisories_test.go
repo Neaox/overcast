@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/overcast-sh/overcast/internal/config"
-	"github.com/overcast-sh/overcast/internal/services/ec2"
+	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/state"
 )
 
@@ -617,7 +617,7 @@ func TestComputeAdvisories_threadsSQLiteAvailabilityIntoMemoryMode(t *testing.T)
 func TestCheckVPCNetworkIsolation_firesPerRecordedProblem(t *testing.T) {
 	// Given: EC2 recorded two VPCs whose network it could not recreate with
 	// the isolation their gateway state calls for.
-	problems := []ec2.NetworkProblem{
+	problems := []dataplane.VPCNetworkProblem{
 		{VpcID: "vpc-a", NetworkID: "net-a", Detail: "the Docker network should be external (an internet gateway is attached) but could not be recreated: boom"},
 		{VpcID: "vpc-b", NetworkID: "net-b", Detail: "the Docker network should be --internal (no internet gateway is attached) but could not be recreated: bang"},
 	}
@@ -655,7 +655,33 @@ func TestCheckVPCNetworkIsolation_absentWhenNothingRecorded(t *testing.T) {
 	if a := checkVPCNetworkIsolation(nil); a != nil {
 		t.Fatalf("expected no advisory, got %+v", a)
 	}
-	if a := checkVPCNetworkIsolation([]ec2.NetworkProblem{}); a != nil {
+	if a := checkVPCNetworkIsolation([]dataplane.VPCNetworkProblem{}); a != nil {
 		t.Fatalf("expected no advisory for an empty list, got %+v", a)
+	}
+}
+
+func TestCheckVPCNetworkIsolation_capsTheListedVPCs(t *testing.T) {
+	// Given: more broken VPCs than the card can carry.
+	problems := make([]dataplane.VPCNetworkProblem, 0, vpcNetworkAdvisoryMaxListed+3)
+	for i := range cap(problems) {
+		problems = append(problems, dataplane.VPCNetworkProblem{VpcID: fmt.Sprintf("vpc-%02d", i), Detail: "docker said no"})
+	}
+
+	// When: the rule evaluates them.
+	a := checkVPCNetworkIsolation(problems)
+
+	// Then: the first few are spelled out, the rest are counted, and the
+	// title still carries the true total.
+	if a == nil {
+		t.Fatal("expected an advisory, got nil")
+	}
+	if !strings.Contains(a.Detail, "vpc-04: ") || strings.Contains(a.Detail, "vpc-05: ") {
+		t.Errorf("detail should list exactly %d VPCs: %s", vpcNetworkAdvisoryMaxListed, a.Detail)
+	}
+	if !strings.HasSuffix(a.Detail, "; and 3 more") {
+		t.Errorf("detail should count the rest: %s", a.Detail)
+	}
+	if !strings.HasPrefix(a.Title, "8 VPC networks") {
+		t.Errorf("title = %q, want the full count", a.Title)
 	}
 }

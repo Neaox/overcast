@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/overcast-sh/overcast/internal/config"
-	"github.com/overcast-sh/overcast/internal/services/ec2"
+	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/state"
 )
 
@@ -159,7 +159,7 @@ type advisoryInput struct {
 	// Docker network the EC2 service could not bring to the isolation their
 	// internet-gateway state calls for — drives vpc-network-isolation-stale.
 	// Nil whenever EC2 is not wired (a service subset) or nothing is wrong.
-	VPCNetworkProblems []ec2.NetworkProblem
+	VPCNetworkProblems []dataplane.VPCNetworkProblem
 }
 
 // computeAdvisories is the single generator function behind the
@@ -204,22 +204,34 @@ func computeAdvisories(in advisoryInput) []Advisory {
 	return advisories
 }
 
+// vpcNetworkAdvisoryMaxListed bounds how many VPCs the advisory spells out.
+// Each entry carries a Docker error string, and the Metrics & Health card
+// has to stay a card when twenty VPCs are broken at once.
+const vpcNetworkAdvisoryMaxListed = 5
+
 // checkVPCNetworkIsolation is a warning: a VPC in this state works — its
-// containers run and reach the control plane — but with the internet
+// containers run and reach the control plane — but either with the internet
 // reachability of the gateway state before the one DescribeInternetGateways
-// reports, which is exactly the quiet divergence an emulator must not ship
-// silently. The EC2 service records an entry when a flip it attempted (on
+// reports, or with containers left off the recreated network, which is
+// exactly the quiet divergence an emulator must not ship silently. The EC2
+// service records an entry when a flip it attempted (on
 // Attach/DetachInternetGateway, or at startup for a network adopted with the
-// wrong flag) left the network wrong, and clears it when a later flip
-// succeeds. A flip that failed before changing anything records nothing: that
-// path fails the API call instead, and the network still matches the record.
-func checkVPCNetworkIsolation(problems []ec2.NetworkProblem) *Advisory {
+// wrong flag) left the network or its containers wrong, and clears it when a
+// later flip succeeds or the VPC is deleted. A flip that failed before
+// changing anything records nothing: that path fails the API call instead,
+// and the network still matches the record.
+func checkVPCNetworkIsolation(problems []dataplane.VPCNetworkProblem) *Advisory {
 	if len(problems) == 0 {
 		return nil
 	}
-	lines := make([]string, 0, len(problems))
-	for _, p := range problems {
+	shown := min(len(problems), vpcNetworkAdvisoryMaxListed)
+	lines := make([]string, 0, shown)
+	for _, p := range problems[:shown] {
 		lines = append(lines, p.VpcID+": "+p.Detail)
+	}
+	listed := strings.Join(lines, "; ")
+	if rest := len(problems) - len(lines); rest > 0 {
+		listed += fmt.Sprintf("; and %d more", rest)
 	}
 	title := "A VPC's network does not match its internet gateway"
 	if len(problems) > 1 {
@@ -229,10 +241,9 @@ func checkVPCNetworkIsolation(problems []ec2.NetworkProblem) *Advisory {
 		Severity: advisorySeverityWarning,
 		Code:     advisoryCodeVPCNetworkIsolationStale,
 		Title:    title,
-		Detail: "Containers in these VPCs have the internet reachability of the previous gateway state, " +
-			"not the one DescribeInternetGateways reports. Overcast retries at the next restart; a " +
-			"container attached from outside Overcast (docker run --network overcast-vpc-...) must be " +
-			"disconnected first. " + strings.Join(lines, "; "),
+		Detail: "Containers in these VPCs do not have the internet reachability DescribeInternetGateways " +
+			"implies. Overcast retries the repair at its next restart; until then, check the Docker " +
+			"daemon for the reason quoted, then detach and re-attach the gateway. " + listed,
 		DocsPath: vpcNetworkDocsPath,
 	}
 }

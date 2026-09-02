@@ -7,11 +7,14 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 
 	"github.com/overcast-sh/overcast/internal/containerendpoint"
+	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // This file holds the low-level Docker-network primitives used by the VPC
@@ -267,79 +270,234 @@ type vpcNetworkEndpoint struct {
 	aliases     []string
 }
 
-// NetworkProblem is a VPC whose Docker network does not carry the isolation
-// its internet-gateway state calls for, and could not be made to. The router
-// reports the set as a health advisory (router.checkVPCNetworkIsolation), so
-// the condition is visible somewhere other than a log line that has scrolled
-// past. An entry is cleared the next time the network is brought into line.
-type NetworkProblem struct {
-	VpcID     string
-	NetworkID string
-	Detail    string
+// rejoinError is a flip that recreated the network but could not put every
+// container back on it. The network carries the flag that was asked for, so
+// the flip counts as done; the containers named are the problem.
+type rejoinError struct {
+	netID string
+	err   error
 }
 
-// setVPCNetworkInternal is what every strategy's SetInternal does: bring the
-// VPC's Docker network to the requested `--internal` state. The strategies
-// differ in how networks are allocated, not in what a gateway means for one.
+func (e *rejoinError) Error() string {
+	return fmt.Sprintf("containers could not rejoin the recreated network %s: %v", e.netID, e.err)
+}
+
+func (e *rejoinError) Unwrap() error { return e.err }
+
+// changeVPCGateway applies an internet-gateway attach or detach to vpcID's
+// Docker network and then records it, in that order and under the network's
+// lock, so the record never names a gateway the network does not reflect:
+// a flip that cannot be completed fails the call with nothing recorded, and
+// the same call can be retried.
 //
-// A network several VPCs share is external while any of them has a gateway.
-// The shared strategy enforces no isolation between sharers to begin with, so
-// the most permissive of them sets the mode for all — the alternative, one
-// VPC's detach cutting off another's internet, is a surprise nothing in the
-// AWS model prepares a stack for. Only the shared strategy can produce a
-// sharer, so for strict and remapped this is exactly a per-VPC flip.
-func (h *Handler) setVPCNetworkInternal(ctx context.Context, vpcID string, internal bool) error {
-	if !h.dockerReady.Load() {
-		return nil
+// record persists the attachment change. It runs under the same lock as the
+// flip, so a sharer's detach cannot read the store between this VPC's flip
+// and its record and undo it (#1569).
+//
+// Two VPCs are exempt from the flip and only recorded: one with no Docker
+// network (the flag is derived from the gateway state when the network is
+// eventually created), and the default VPC, whose network is the shared data
+// plane — it already has the internet, and recreating it would take every
+// container Overcast started with it.
+func (h *Handler) changeVPCGateway(ctx context.Context, vpcID string, attach bool, record func() *protocol.AWSError) *protocol.AWSError {
+	vpc, unlock, aerr := h.lockVPCNetwork(ctx, vpcID)
+	if aerr != nil {
+		return aerr
 	}
-	vpc, aerr := h.store.getVPC(ctx, vpcID)
-	if aerr != nil || vpc.DockerNetworkID == "" {
-		// An unbacked VPC has nothing to flip: the flag is derived from the
-		// gateway state when its network is eventually created.
-		return nil
+	defer unlock()
+
+	if vpc.IsDefault {
+		h.log.WithRecorder(ctx).Warn("ignoring an internet-gateway change on the default VPC's network — "+
+			"it is the shared data plane and cannot be recreated under running containers",
+			zap.String("vpc", vpcID), zap.Bool("attach", attach))
+		return record()
 	}
-	if internal && h.vpcNetworkHasGateway(ctx, vpc.DockerNetworkID, vpc.VpcID) {
-		h.log.WithRecorder(ctx).Info("vpc network: staying external — another VPC on the shared network still has an internet gateway",
-			zap.String("vpc", vpc.VpcID), zap.String("network", vpc.DockerNetworkID))
-		return nil
+	if !h.dockerReady.Load() || vpc.DockerNetworkID == "" {
+		return record()
 	}
-	return h.applyVPCNetworkInternal(ctx, vpc, internal)
+
+	// A network several VPCs share is external while any of them has a
+	// gateway. The shared strategy enforces no isolation between sharers to
+	// begin with, so the most permissive of them sets the mode for all — the
+	// alternative, one VPC's detach cutting off another's internet, is a
+	// surprise nothing in the AWS model prepares a stack for. Only the shared
+	// strategy can produce a sharer, so for strict and remapped this is a
+	// per-VPC flip.
+	internal := false
+	if !attach {
+		vpcs, attached, aerr := h.gatewayView(ctx)
+		if aerr != nil {
+			return aerr
+		}
+		internal = !networkHasGateway(vpcs, attached, vpc.DockerNetworkID, vpc.VpcID)
+		if !internal {
+			h.log.WithRecorder(ctx).Info("vpc network: staying external — another VPC on the shared network still has an internet gateway",
+				zap.String("vpc", vpc.VpcID), zap.String("network", vpc.DockerNetworkID))
+		}
+	}
+
+	if netID, err := h.applyVPCNetworkInternal(ctx, vpc, internal); err != nil {
+		// A flip that stopped before the removal changed nothing, and the
+		// record still describes the network; one that lost the network on
+		// the way is recorded for the advisories, since nothing about it
+		// heals on its own.
+		if netID != vpc.DockerNetworkID {
+			h.noteNetworkProblem(vpc.VpcID, netID,
+				fmt.Sprintf("the Docker network should be %s but could not be recreated: %v", isolationWord(internal), err))
+		}
+		return vpcNetworkFlipError(attach, vpcID, err)
+	}
+	return record()
+}
+
+// vpcNetworkFlipError is the answer when the VPC's Docker network could not be
+// brought in line with the gateway change. AWS has no such failure — its
+// gateways are metadata — so the code is Overcast's own InternalError, and the
+// message says what Docker refused rather than hiding it behind the generic
+// wording, because the remedy is on the user's side of the socket.
+func vpcNetworkFlipError(attach bool, vpcID string, err error) *protocol.AWSError {
+	verb := "attached to"
+	if !attach {
+		verb = "detached from"
+	}
+	return &protocol.AWSError{
+		Code: protocol.ErrInternalError.Code,
+		Message: fmt.Sprintf("The internet gateway was not %s vpc '%s': its Docker network could not be brought to the new isolation mode: %v",
+			verb, vpcID, err),
+		HTTPStatus: protocol.ErrInternalError.HTTPStatus,
+	}
+}
+
+// lockVPCNetwork returns vpcID's current record with its Docker network's
+// flip lock held. The lock is per network ID rather than per VPC because
+// sharers must contend with each other: two gateway calls on two VPCs of one
+// network, or a call racing the startup reconcile, would otherwise both
+// disconnect the same endpoints and both try to remove and recreate the same
+// subnet, with the loser marking every record on it unbacked. The record is
+// re-read after the lock is taken — the network the caller resolved may have
+// been replaced while it waited — and the acquisition restarts against the
+// new one when it has. A VPC with no network needs no lock; unlock is then a
+// no-op.
+func (h *Handler) lockVPCNetwork(ctx context.Context, vpcID string) (*VPC, func(), *protocol.AWSError) {
+	const attempts = 8
+	for range attempts {
+		vpc, aerr := h.store.getVPC(ctx, vpcID)
+		if aerr != nil {
+			return nil, func() {}, aerr
+		}
+		if vpc.DockerNetworkID == "" {
+			return vpc, func() {}, nil
+		}
+		mu, _ := h.netFlipLocks.LoadOrStore(vpc.DockerNetworkID, &sync.Mutex{})
+		lock := mu.(*sync.Mutex)
+		lock.Lock()
+		current, aerr := h.store.getVPC(ctx, vpcID)
+		if aerr != nil {
+			lock.Unlock()
+			return nil, func() {}, aerr
+		}
+		if current.DockerNetworkID == vpc.DockerNetworkID {
+			return current, lock.Unlock, nil
+		}
+		lock.Unlock() // moved under us: lock the network it is on now
+	}
+	return nil, func() {}, protocol.Wrap(protocol.ErrInternalError,
+		fmt.Errorf("vpc %s: its Docker network kept changing while waiting to lock it", vpcID))
+}
+
+// gatewayView reads, once, what a flip decision needs: every VPC record, and
+// the set of VPC IDs with an internet gateway attached.
+func (h *Handler) gatewayView(ctx context.Context) ([]*VPC, map[string]bool, *protocol.AWSError) {
+	vpcs, aerr := h.store.listVPCs(ctx)
+	if aerr != nil {
+		return nil, nil, aerr
+	}
+	igws, aerr := h.store.listInternetGateways(ctx)
+	if aerr != nil {
+		return nil, nil, aerr
+	}
+	attached := make(map[string]bool)
+	for _, igw := range igws {
+		for _, att := range igw.Attachments {
+			if att.State == "attached" {
+				attached[att.VpcID] = true
+			}
+		}
+	}
+	return vpcs, attached, nil
+}
+
+// networkHasGateway reports whether any VPC backed by netID, other than
+// excludeVpcID, has an internet gateway attached. Under the shared strategy
+// several VPCs can name one network; under the others this is one lookup.
+func networkHasGateway(vpcs []*VPC, attached map[string]bool, netID, excludeVpcID string) bool {
+	for _, v := range vpcs {
+		if v.VpcID != excludeVpcID && v.DockerNetworkID == netID && attached[v.VpcID] {
+			return true
+		}
+	}
+	return false
 }
 
 // applyVPCNetworkInternal flips vpc's network and brings every stored record
 // that named the old network — vpc and, under the shared strategy, its
-// sharers — to the one that replaced it.
+// sharers — to the one that replaced it. The caller holds the network's flip
+// lock (lockVPCNetwork). It returns the network that backs the VPC afterwards.
 //
-// The returned error is the flip's. When it left the VPC on a network other
-// than the one it started on (recreated with the wrong flag, or none at all),
-// the state is also recorded as a NetworkProblem, because nothing about it
-// rolls back on its own. A flip that failed before changing anything is only
-// an error: the network is as it was, and the record still describes it.
-func (h *Handler) applyVPCNetworkInternal(ctx context.Context, vpc *VPC, internal bool) error {
+// Three outcomes. Success: the records follow the network and any problem
+// recorded against them is cleared. A recreate whose containers could not all
+// rejoin (rejoinError): the network carries the flag that was asked for, so
+// the records follow it, the containers are recorded as a problem for the
+// advisories, and the caller sees success — the alternative, failing the call
+// over a network already in the requested state, is the inconsistency this
+// whole path exists to prevent. Any other failure is returned as is; the
+// caller decides whether it is worth recording, since the API path changes
+// nothing when the flip stops before the removal.
+func (h *Handler) applyVPCNetworkInternal(ctx context.Context, vpc *VPC, internal bool) (string, error) {
 	log := h.log.WithRecorder(ctx)
 
 	oldID := vpc.DockerNetworkID
 	netID, err := h.flipDockerVPCNetworkInternal(ctx, vpc, internal)
+	moved := []string{vpc.VpcID}
 	if netID != oldID {
-		h.renameVPCNetwork(ctx, oldID, netID)
+		moved = h.renameVPCNetwork(ctx, oldID, netID)
 	}
-	if err != nil {
-		if netID != oldID {
-			h.noteNetworkProblem(vpc.VpcID, netID, internal, err)
+
+	var rejoin *rejoinError
+	switch {
+	case err == nil:
+		for _, id := range moved {
+			h.netProblems.Delete(id)
 		}
+		if netID != oldID {
+			log.Info("vpc network: isolation changed",
+				zap.String("vpc", vpc.VpcID), zap.Bool("internal", internal),
+				zap.String("old_network", oldID), zap.String("network", netID))
+		}
+		return netID, nil
+	case errors.As(err, &rejoin):
+		detail := fmt.Sprintf("the Docker network was recreated %s, but %v", isolationWord(internal), rejoin.err)
+		for _, id := range moved {
+			h.noteNetworkProblem(id, netID, detail)
+		}
+		log.Error("vpc network: isolation changed, but containers could not rejoin the recreated network",
+			zap.String("vpc", vpc.VpcID), zap.String("network", netID), zap.Error(rejoin.err))
+		return netID, nil
+	default:
 		log.Error("vpc network: could not change the network's isolation — "+
 			"containers in this VPC keep the internet reachability they had",
 			zap.String("vpc", vpc.VpcID), zap.String("network", oldID),
 			zap.Bool("internal", internal), zap.Error(err))
-		return err
+		return netID, err
 	}
-	h.netProblems.Delete(vpc.VpcID)
-	if netID != oldID {
-		log.Info("vpc network: isolation changed",
-			zap.String("vpc", vpc.VpcID), zap.Bool("internal", internal),
-			zap.String("old_network", oldID), zap.String("network", netID))
+}
+
+// isolationWord names a flag in a problem or advisory.
+func isolationWord(internal bool) string {
+	if internal {
+		return "--internal (no internet gateway is attached)"
 	}
-	return nil
+	return "external (an internet gateway is attached)"
 }
 
 // flipDockerVPCNetworkInternal makes vpc's Docker network carry the given
@@ -348,20 +506,22 @@ func (h *Handler) applyVPCNetworkInternal(ctx context.Context, vpc *VPC, interna
 // doing, empty when the VPC has been left with none.
 //
 // Docker refuses to remove a network that still has endpoints, so the
-// containers on it — a Lambda function, an ECS task, a database — are moved
-// rather than being a reason to give up: each is disconnected, the network is
-// recreated, and each is reconnected with the address and DNS aliases it had,
-// so nothing that had resolved or dialled it has to notice. Their control-plane
-// attachment is untouched throughout (see internal/dataplane), so an in-flight
-// invocation keeps its Runtime API connection; only connections across the VPC
-// bridge itself are dropped, as they are on AWS when routing changes under a
-// live ENI.
+// containers on it are moved rather than being a reason to give up: each is
+// disconnected, the network is recreated, and each is reconnected with the
+// address and DNS aliases it had, so nothing that had resolved or dialled it
+// has to notice. Every container on the network is moved, including one a
+// user attached by hand — it is exactly what would otherwise block the
+// removal. Their control-plane attachment is untouched throughout (see
+// internal/dataplane), so an in-flight invocation keeps its Runtime API
+// connection; only connections across the VPC bridge itself are dropped, as
+// they are on AWS when routing changes under a live ENI.
 //
 // Failure leaves things as they were wherever there is a way back: a refused
 // disconnect or removal reconnects what had already been moved and returns
 // with the original network intact. A failed recreate is the case with none —
 // the containers are put on a network with the old flag if one can be made,
-// and the error says so.
+// and the error says so. A recreate that succeeded but could not take every
+// container back is a rejoinError: the caller treats the flip as done.
 func (h *Handler) flipDockerVPCNetworkInternal(ctx context.Context, vpc *VPC, internal bool) (string, error) {
 	log := h.log.WithRecorder(ctx)
 
@@ -396,9 +556,9 @@ func (h *Handler) flipDockerVPCNetworkInternal(ctx context.Context, vpc *VPC, in
 		return info.ID, err
 	}
 
-	netID, err := h.createDockerVPCNetworkInternal(ctx, vpc, internal)
+	netID, err := h.recreateDockerVPCNetwork(ctx, vpc, info, internal)
 	if err != nil {
-		fallbackID, ferr := h.createDockerVPCNetworkInternal(ctx, vpc, info.Internal)
+		fallbackID, ferr := h.recreateDockerVPCNetwork(ctx, vpc, info, info.Internal)
 		if ferr != nil {
 			return "", fmt.Errorf("recreate network for %s: %w (and could not restore the old one: %v)", vpc.VpcID, err, ferr)
 		}
@@ -409,8 +569,36 @@ func (h *Handler) flipDockerVPCNetworkInternal(ctx context.Context, vpc *VPC, in
 		return fallbackID, fmt.Errorf("recreate network for %s with internal=%t: %w (restored with internal=%t)", vpc.VpcID, internal, err, info.Internal)
 	}
 	if err := h.reconnectVPCNetworkEndpoints(ctx, netID, moved); err != nil {
-		return netID, fmt.Errorf("reconnect containers to the recreated network %s: %w", netID, err)
+		return netID, &rejoinError{netID: netID, err: err}
 	}
+	return netID, nil
+}
+
+// recreateDockerVPCNetwork creates the network that replaces info, with the
+// new flag and everything else as it was: the same name, the same labels
+// (the resource ID and the instance ownership stamp among them), the same
+// subnet. Under the shared strategy the network is named for the VPC that
+// created it, and whichever sharer flips it must not rename it out from
+// under the others; and a reconcile after a restart adopts by ID, then label,
+// then subnet, so the labels are what let it find the network again.
+func (h *Handler) recreateDockerVPCNetwork(ctx context.Context, vpc *VPC, info *docker.NetworkInspect, internal bool) (string, error) {
+	if info.Name == "" || len(info.Labels) == 0 {
+		return h.createDockerVPCNetworkInternal(ctx, vpc, internal)
+	}
+	labels := make(map[string]string, len(info.Labels))
+	for k, v := range info.Labels {
+		labels[k] = v
+	}
+	netID, err := h.docker.CreateNetworkWithOptions(ctx, docker.CreateNetworkOptions{
+		Name:     info.Name,
+		Labels:   labels,
+		Subnet:   preferredDockerSubnet(vpc),
+		Internal: internal,
+	})
+	if err != nil {
+		return "", err
+	}
+	h.joinVPCNetwork(ctx, netID)
 	return netID, nil
 }
 
@@ -492,18 +680,19 @@ func (h *Handler) restoreVPCNetworkEndpoints(ctx context.Context, netID string, 
 	}
 }
 
-// renameVPCNetwork moves every stored VPC record that names oldID onto newID.
-// Under the shared strategy that is the owner and every sharer; elsewhere it
-// is one record. An empty newID means the network is gone, and the records
-// say so.
-func (h *Handler) renameVPCNetwork(ctx context.Context, oldID, newID string) {
+// renameVPCNetwork moves every stored VPC record that names oldID onto newID
+// and returns the IDs of the VPCs it moved. Under the shared strategy that is
+// the owner and every sharer; elsewhere it is one record. An empty newID
+// means the network is gone, and the records say so.
+func (h *Handler) renameVPCNetwork(ctx context.Context, oldID, newID string) []string {
 	log := h.log.WithRecorder(ctx)
 
 	vpcs, aerr := h.store.listVPCs(ctx)
 	if aerr != nil {
 		log.Error("vpc network: list VPCs to record the recreated network", zap.String("error", aerr.Message))
-		return
+		return nil
 	}
+	var moved []string
 	for _, v := range vpcs {
 		if v.DockerNetworkID != oldID {
 			continue
@@ -515,89 +704,88 @@ func (h *Handler) renameVPCNetwork(ctx context.Context, oldID, newID string) {
 		if aerr := h.store.putVPC(ctx, v); aerr != nil {
 			log.Error("vpc network: record the recreated network",
 				zap.String("vpc", v.VpcID), zap.String("error", aerr.Message))
-		}
-	}
-}
-
-// vpcNetworkHasGateway reports whether any VPC backed by netID, other than
-// excludeVpcID, has an internet gateway attached. Under the shared strategy
-// several VPCs can name one network; under the others this is one lookup.
-func (h *Handler) vpcNetworkHasGateway(ctx context.Context, netID, excludeVpcID string) bool {
-	vpcs, aerr := h.store.listVPCs(ctx)
-	if aerr != nil {
-		return false
-	}
-	for _, v := range vpcs {
-		if v.VpcID == excludeVpcID || v.DockerNetworkID != netID {
 			continue
 		}
-		if h.vpcHasInternetGateway(ctx, v.VpcID) {
-			return true
-		}
+		moved = append(moved, v.VpcID)
 	}
-	return false
+	return moved
 }
 
 // reconcileVPCNetworkIsolation runs after the strategy has matched records to
 // networks: a network adopted from a previous run carries whatever flag it was
-// created with, and a gateway attached while that run could not act on it
-// leaves the two disagreeing. Each backed network is checked once — inspect is
-// the whole cost when they agree — and repaired when they do not. A repair
-// that fails is recorded as a NetworkProblem so it reaches the health
-// advisories rather than only the startup log.
+// created with, and a gateway attached or detached while that run could not
+// act on it leaves the two disagreeing. Each backed network is checked once,
+// under its flip lock — inspect is the whole cost when they agree — and
+// repaired when they do not. A repair that fails is recorded as a problem so
+// it reaches the health advisories rather than only the startup log.
 func (h *Handler) reconcileVPCNetworkIsolation(ctx context.Context) {
 	log := h.log.WithRecorder(ctx)
 
-	vpcs, aerr := h.store.listVPCs(ctx)
+	vpcs, attached, aerr := h.gatewayView(ctx)
 	if aerr != nil {
-		log.Error("reconcile networks: list VPCs for isolation check", zap.String("error", aerr.Message))
+		log.Error("reconcile networks: read VPCs and gateways for the isolation check", zap.String("error", aerr.Message))
 		return
 	}
 	sort.Slice(vpcs, func(i, j int) bool { return vpcs[i].VpcID < vpcs[j].VpcID })
 
 	checked := make(map[string]struct{}, len(vpcs))
-	for _, vpc := range vpcs {
+	for _, listed := range vpcs {
 		// The default VPC's network is the shared data plane, never a
 		// per-VPC bridge; its gateway is metadata (see defaultVPCGuard).
-		if vpc.IsDefault || vpc.DockerNetworkID == "" || vpc.DockerNetworkID == h.cfg.Network {
+		if listed.IsDefault || listed.DockerNetworkID == "" || listed.DockerNetworkID == h.cfg.Network {
 			continue
 		}
-		if _, done := checked[vpc.DockerNetworkID]; done {
+		if _, done := checked[listed.DockerNetworkID]; done {
+			continue
+		}
+		vpc, unlock, aerr := h.lockVPCNetwork(ctx, listed.VpcID)
+		if aerr != nil {
+			log.Error("reconcile networks: lock VPC network", zap.String("vpc", listed.VpcID), zap.String("error", aerr.Message))
+			continue
+		}
+		if _, done := checked[vpc.DockerNetworkID]; done || vpc.DockerNetworkID == "" {
+			unlock()
 			continue
 		}
 		checked[vpc.DockerNetworkID] = struct{}{}
 
-		internal := !h.vpcNetworkHasGateway(ctx, vpc.DockerNetworkID, "")
-		if err := h.applyVPCNetworkInternal(ctx, vpc, internal); err != nil {
-			netID := ""
-			if current, aerr := h.store.getVPC(ctx, vpc.VpcID); aerr == nil {
-				netID = current.DockerNetworkID
-			}
-			h.noteNetworkProblem(vpc.VpcID, netID, internal, err)
+		internal := !networkHasGateway(vpcs, attached, vpc.DockerNetworkID, "")
+		netID, err := h.applyVPCNetworkInternal(ctx, vpc, internal)
+		if err != nil {
+			h.noteNetworkProblem(vpc.VpcID, netID,
+				fmt.Sprintf("the Docker network should be %s but could not be recreated: %v", isolationWord(internal), err))
 		}
+		checked[netID] = struct{}{}
+		unlock()
 	}
 }
 
-// noteNetworkProblem records that vpc's network could not be brought to the
-// isolation wanted. One entry per VPC: a later failure replaces an earlier
-// one, and a later success clears it.
-func (h *Handler) noteNetworkProblem(vpcID, netID string, internal bool, err error) {
-	want := "external (an internet gateway is attached)"
-	if internal {
-		want = "--internal (no internet gateway is attached)"
+// noteNetworkProblem records that vpcID's network is not in the state its
+// gateway calls for, with what stood in the way. One entry per VPC: a later
+// failure replaces an earlier one, and a later success clears it.
+func (h *Handler) noteNetworkProblem(vpcID, netID, detail string) {
+	h.netProblems.Store(vpcID, dataplane.VPCNetworkProblem{VpcID: vpcID, NetworkID: netID, Detail: detail})
+}
+
+// forgetVPCNetwork is the network side of deleting a VPC: the strategy
+// decides what happens to the Docker network, and any problem recorded
+// against the VPC goes with the record, so a deleted VPC cannot keep an
+// advisory alive.
+func (h *Handler) forgetVPCNetwork(ctx context.Context, vpc *VPC) {
+	if vpc == nil {
+		return
 	}
-	h.netProblems.Store(vpcID, NetworkProblem{
-		VpcID:     vpcID,
-		NetworkID: netID,
-		Detail:    fmt.Sprintf("the Docker network should be %s but could not be recreated: %v", want, err),
-	})
+	h.netProblems.Delete(vpc.VpcID)
+	if h.vpcStrategy != nil {
+		h.vpcStrategy.OnDelete(ctx, vpc)
+	}
 }
 
 // networkProblems returns the recorded problems, ordered by VPC ID.
-func (h *Handler) networkProblems() []NetworkProblem {
-	var out []NetworkProblem
+func (h *Handler) networkProblems() []dataplane.VPCNetworkProblem {
+	var out []dataplane.VPCNetworkProblem
 	h.netProblems.Range(func(_, v any) bool {
-		out = append(out, v.(NetworkProblem))
+		out = append(out, v.(dataplane.VPCNetworkProblem))
 		return true
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].VpcID < out[j].VpcID })
