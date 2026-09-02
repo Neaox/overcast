@@ -42,23 +42,34 @@ look up.
 | `/_overcast/debug/traces/search`     | GET    | Free-text search over retained traces                 |
 | `/_overcast/debug/ec2/vpcs`          | GET    | EC2 VPC-to-Docker-network wiring, for debugging VPC-backed networking. Service-specific debug routes live under `/_overcast/debug/<service>/…`; this is the only one today |
 
-## Health-check aliases
+## Compatibility aliases
 
-`/_overcast/health` is the endpoint to point new tooling at. Two older URLs are
-served as well, because they are already written into healthchecks that predate
-this one:
+`/_overcast/*` is what to point new tooling at. Five older URLs are served as
+well, because they are already written into healthchecks, wait strategies and
+test suites that predate them:
 
-| Alias                 | Serves                            | Body                                                                    |
-| --------------------- | --------------------------------- | ----------------------------------------------------------------------- |
-| `/_health`            | Overcast's own path before v0.0.1-alpha.35 | Identical to `/_overcast/health`                              |
-| `/_localstack/health` | LocalStack's health endpoint      | LocalStack's shape — a `services` map plus `edition` and `version` |
+| Alias                           | Serves                            | Body                                                                    |
+| ------------------------------- | --------------------------------- | ----------------------------------------------------------------------- |
+| `/_health`                      | Overcast's own path before v0.0.1-alpha.35 | Identical to `/_overcast/health`                              |
+| `/_localstack/health`           | LocalStack's health endpoint      | LocalStack's shape — a `services` map plus `edition` and `version` |
+| `/_localstack/init`             | LocalStack's init-hook status     | Identical to `/_overcast/init` — the shapes already matched      |
+| `/_localstack/init/{stage}`     | One stage of the above            | Identical to `/_overcast/init/{stage}`                          |
+| `POST /_localstack/state/reset` | LocalStack's state reset          | `{"status":"reset"}`; LocalStack returns an empty body          |
 
-Both return 200 whenever `/_overcast/health` does. This matters more than it
-looks: a container healthcheck that 404s marks Overcast unhealthy, and an
-orchestrator restarts it — which, on the default in-memory state backend, wipes
-every resource a deploy in flight had created. Anything else under
-`/_localstack/` answers 404 with the Overcast endpoint that replaces it, rather
-than falling through to S3's `NoSuchBucket`.
+The health pair returns 200 whenever `/_overcast/health` does. This matters
+more than it looks: a container healthcheck that 404s marks Overcast unhealthy,
+and an orchestrator restarts it — which, on the default in-memory state
+backend, wipes every resource a deploy in flight had created.
+
+The init pair needs no translation because Overcast's status endpoint was built
+to LocalStack's contract: the same `BOOT`/`START`/`READY`/`SHUTDOWN` stage
+names, the same `UNKNOWN`/`RUNNING`/`SUCCESSFUL`/`ERROR` script states. Both
+paths run the same handler, so they cannot drift apart.
+
+Anything else under `/_localstack/` answers 404 with the Overcast endpoint that
+replaces it, rather than falling through to S3's `NoSuchBucket` — see
+[Migrating from LocalStack](./migration-from-localstack.md#endpoint-mapping)
+for the full table.
 
 ## Trace retention
 

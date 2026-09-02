@@ -144,24 +144,30 @@ func TestLocalStackHealthPath_answersInLocalStacksShape(t *testing.T) {
 // exists. Every /_localstack/* path used to answer S3's NoSuchBucket, which
 // tells the reader nothing about what is wrong — and is the shape that made a
 // misconfigured healthcheck so hard to recognise in the first place.
+//
+// The example is /_localstack/info: a path with a mapping but no Overcast
+// endpoint that could answer it, which is exactly what this 404 is for.
+// /_localstack/state/reset used to stand here and no longer can — it is served
+// now (see localstack_compat.go), which is a better outcome and a worse
+// example.
 func TestLocalStackNamespace_404sAsItselfNotAsS3(t *testing.T) {
 	srv := newHealthCompatServer(t)
 
-	status, body, raw := getJSON(t, srv.URL+"/_localstack/state/reset")
+	status, body, raw := getJSON(t, srv.URL+"/_localstack/info")
 	if status != http.StatusNotFound {
-		t.Fatalf("GET /_localstack/state/reset: status = %d, want 404 (body: %s)", status, raw)
+		t.Fatalf("GET /_localstack/info: status = %d, want 404 (body: %s)", status, raw)
 	}
 	message, _ := body["message"].(string)
 	if message == "" {
-		t.Fatalf("GET /_localstack/state/reset: no message; body: %s", raw)
+		t.Fatalf("GET /_localstack/info: no message; body: %s", raw)
 	}
 	// The 404 has to name the endpoint that replaces it, which is the whole
 	// difference between this and the catch-all.
-	if want := "/_overcast/reset"; !strings.Contains(message, want) {
-		t.Errorf("GET /_localstack/state/reset: message %q does not name %q", message, want)
+	if want := "/_overcast/debug/config"; !strings.Contains(message, want) {
+		t.Errorf("GET /_localstack/info: message %q does not name %q", message, want)
 	}
 	if raw == "" || strings.Contains(raw, "NoSuchBucket") || strings.Contains(raw, "NoSuchKey") {
-		t.Errorf("GET /_localstack/state/reset answered as S3: %s", raw)
+		t.Errorf("GET /_localstack/info answered as S3: %s", raw)
 	}
 }
 

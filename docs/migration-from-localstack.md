@@ -105,18 +105,36 @@ you deliberately want a non-default network.
 
 ## Endpoint mapping
 
+Four LocalStack paths are **served as-is** — leave those callers alone. The
+rest have an Overcast endpoint to point at.
+
 | LocalStack                       | Overcast                  | Availability                   |
 | -------------------------------- | ------------------------- | ------------------------------ |
 | `/_localstack/health`            | **served as-is**, or `/_overcast/health` | Always          |
+| `/_localstack/init`              | **served as-is**, or `/_overcast/init` | Always            |
+| `/_localstack/init/{stage}`      | **served as-is**, or `/_overcast/init/{stage}` | Always    |
+| `POST /_localstack/state/reset`  | **served as-is**, or `/_overcast/reset` | Always           |
 | `/_localstack/health` (detailed) | `/_overcast/debug/health` | Requires `OVERCAST_DEBUG=true` |
-| `/_localstack/init`              | `/_overcast/init`         | Always                         |
-| `/_localstack/init/{stage}`      | `/_overcast/init/{stage}` | Always                         |
-| `/_localstack/state/reset`       | `/_overcast/reset`        | Always                         |
 | `/_localstack/info`              | `/_overcast/debug/config` | Requires `OVERCAST_DEBUG=true` |
 | `/_localstack/state`             | `/_overcast/debug/state`  | Requires `OVERCAST_DEBUG=true` |
+| `/_localstack/diagnose`          | `/_overcast/debug/state` and `/_overcast/debug/config` | Requires `OVERCAST_DEBUG=true` |
+| `/_localstack/config`            | `/_overcast/debug/config` | Read-only: configuration is fixed for the process |
+| `/_localstack/usage`             | `/_overcast/metrics`      | Always                         |
+| `/_localstack/state/save`, `/load` | —                       | Persistence is incremental, not snapshot-based |
+
+The init pair needs no translation. Overcast's own status endpoint already
+answers in LocalStack's shape — the same `BOOT`/`START`/`READY`/`SHUTDOWN`
+stages, the same `UNKNOWN`/`RUNNING`/`SUCCESSFUL`/`ERROR` script states — so a
+`localstack wait` or an init-script poll reads what it expects. Reset answers
+`{"status":"reset"}` where LocalStack returns an empty body; nothing checking
+the status code notices.
 
 Every other path under `/_localstack/` answers 404 with the Overcast endpoint
 that replaces it, so a missed one says so instead of returning an S3 error.
+LocalStack's `/_aws/*` inspection endpoints — `/_aws/ses`,
+`/_aws/sqs/messages`, `/_aws/sns/platform-endpoint-messages` and the rest — are
+not served yet; Overcast's equivalents are in the
+[debug endpoints reference](./debug-endpoints.md).
 
 ---
 
