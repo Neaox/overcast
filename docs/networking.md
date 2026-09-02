@@ -432,6 +432,48 @@ how to opt out.
 **If you attach your own containers to Overcast's network** — a compose service
 that needs to reach a database Overcast started, say — join `overcast`.
 
+### Control-plane isolation
+
+The control plane is created `--internal` when Overcast can carry its own
+traffic without leaving the bridge. That is what makes a VPC with no internet
+gateway actually withhold the internet: every container sits on the control
+plane as well as on its VPC network, so if *this* one has egress, the VPC's
+isolation is decoration.
+
+`OVERCAST_CONTROL_PLANE_INTERNAL` decides it:
+
+| Value | What happens |
+| --- | --- |
+| `auto` (default) | Internal when Overcast is itself in a container, or is talking to a native Linux Docker daemon. Not internal otherwise — on Docker Desktop, containers reach Overcast at the host's own address, which `--internal` would cut off, stranding every invocation at INIT |
+| `true` | Always internal. Safe only on the hosts `auto` already detects |
+| `false` | Never internal. Compute in a gateway-less VPC reaches the internet, as it did before Overcast 0.0.1-alpha.37, and as it does on LocalStack |
+
+**`auto` is a property of the host, not of the version.** Two engineers on one
+pinned Overcast, one on Docker Desktop and one on native Linux, get different
+answers. Pin `true` or `false` when a team needs the same answer everywhere.
+
+Whichever applies is logged on every startup, and reported by
+`/_overcast/health` under `docker.networks`:
+
+```
+control plane network isolation  network=overcast_control internal=true
+                                 reason="auto: Overcast is containerised"
+```
+
+**Docker cannot change this on a network that already exists.** A plane created
+by an older Overcast keeps the isolation it was born with — which is how one
+version behaves differently on two machines that have simply been running for
+different lengths of time. Overcast recreates a drifted network at startup when
+nothing is attached to it. When containers *are* attached it warns and leaves
+the network alone, and the fix is to take them off it:
+
+```sh
+docker compose down          # or stop whatever is attached
+docker network rm overcast_control
+```
+
+The network is recreated on the next start.
+
 ## Lambda, ECS and VPCs
 
 Giving a function a `VpcConfig` (or a task an `awsvpc` configuration) puts the
@@ -446,7 +488,7 @@ means on AWS.
 | A function **with** a `VpcConfig` reaching a resource outside that VPC | ✗ no route | ✗ refused |
 | A function **without** a `VpcConfig` reaching a resource inside one | ✗ no route | ✗ refused |
 | Two resources in the same VPC reaching each other | ✓ | ✓ |
-| A function in a VPC with no NAT gateway reaching the internet | ✗ | ✓ — see [what is still not enforced](#what-is-still-not-enforced) |
+| A function in a VPC with no NAT gateway reaching the internet | ✗ | ✗ when the control plane is internal, ✓ when it is not — see [Control-plane isolation](#control-plane-isolation) |
 | Security groups restricting any of the above | ✓ enforced | ✗ stored, never applied |
 | A function in a VPC calling the AWS APIs without a NAT or VPC endpoint | ✗ | ✓ **deliberately** — see below |
 
@@ -506,10 +548,12 @@ what a VPC lets *through* is not modelled:
 - **Subnets within a VPC.** One flat network per VPC — no public/private
   distinction, no per-subnet routing. Everything in a VPC reaches everything
   else in it.
-- **Internet access.** A VPC with no internet gateway is created `--internal`,
-  but every container also sits on the control plane, which is not — so a
-  private subnet still reaches the internet. Closing that is a separate change
-  with its own risks; see the plan.
+- **Subnet-level internet access.** A VPC with no internet gateway is created
+  `--internal` and, when the control plane is internal too, that now holds —
+  see [Control-plane isolation](#control-plane-isolation) for when it is and
+  how to pin it. What is still not modelled is anything *within* a VPC that has
+  a gateway: a private subnet in an otherwise-connected VPC reaches the
+  internet, because there are no subnets to route differently.
 - **Two VPCs with the same CIDR**, under the default `shared` strategy, are one
   Docker network and therefore not isolated from each other. `strict` and
   `remapped` give real separation — see

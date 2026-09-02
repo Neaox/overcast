@@ -92,6 +92,28 @@ nothing.
 | `HEALTHCHECK` | Differs | Probes `/_overcast/health`; a compose healthcheck on `/_localstack/health` also works |
 | `VOLUME /var/lib/localstack` | No equivalent | Overcast declares no volume, so a volume-less run stays ephemeral by default |
 | `LOCALSTACK_AUTH_TOKEN` | Works | Recognised and inert: nothing here is auth-gated |
+| `LAMBDA_DOCKER_NETWORK`, `MAIN_DOCKER_NETWORK` | No equivalent | Both name the network containers join; Overcast puts everything it starts on `OVERCAST_NETWORK` and the control plane derived from it. Recognised and inert — see [why they are not aliased](./migration-from-localstack.md#why-lambda_docker_network-is-inert-rather-than-aliased) |
+| Egress from compute in a gateway-less VPC | Differs | LocalStack isolates no network, so a Lambda in a VPC with no NAT or internet gateway still reaches the internet. Overcast can withhold it, and on some hosts does by default — see below |
+
+**Network isolation is the divergence in this section most likely to surprise a
+migration.** LocalStack has no concept of it: `VpcConfig` is metadata, subnets
+and gateways are records, and every Lambda lands on the same shared network
+with the host's own egress. Overcast models the missing gateway for real by
+creating its control plane `--internal` — which it does by default on hosts
+where that is safe — so a stack that reached an external API under LocalStack
+can fail here with `ENETUNREACH`.
+
+That is deliberate: catching a missing NAT gateway locally rather than in a
+deploy is the point. To keep LocalStack's behaviour while you migrate, pin it:
+
+```
+OVERCAST_CONTROL_PLANE_INTERNAL=false
+```
+
+Overcast does **not** infer this from the presence of LocalStack variables. An
+alias maps one name to another; quietly changing a networking behaviour because
+some unrelated variable was set is the class of surprise this setting exists to
+remove. See [Control-plane isolation](./networking.md#control-plane-isolation).
 
 Persistence is the row worth reading twice. The published image defaults to
 **in-memory** state: `OVERCAST_STATE=auto` resolves to a durable backend only

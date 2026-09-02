@@ -33,10 +33,19 @@ type ServiceHealth struct {
 
 // Status is a snapshot of the Docker daemon state across all services.
 type Status struct {
-	Available   bool            `json:"available"`
-	Services    []ServiceHealth `json:"services"`
-	LastEvent   string          `json:"lastEvent,omitempty"`
-	LastEventAt string          `json:"lastEventAt,omitempty"`
+	Available bool            `json:"available"`
+	Services  []ServiceHealth `json:"services"`
+
+	// Networks is the planes Overcast ensured at startup and the isolation
+	// each ended up with. It is reported because "is the control plane
+	// internal, and why" is a runtime topology fact that decides whether
+	// compute in a gateway-less VPC reaches the internet — and until #1564 the
+	// only way to find out was `docker network inspect` plus a guess at the
+	// reason.
+	Networks []NetworkStatus `json:"networks,omitempty"`
+
+	LastEvent   string `json:"lastEvent,omitempty"`
+	LastEventAt string `json:"lastEventAt,omitempty"`
 }
 
 // Tracker holds the canonical Docker connectivity state. The Supervisor writes
@@ -61,7 +70,36 @@ func (t *Tracker) Snapshot() Status {
 	// Deep copy the services slice.
 	s.Services = make([]ServiceHealth, len(t.status.Services))
 	copy(s.Services, t.status.Services)
+	if len(t.status.Networks) > 0 {
+		s.Networks = make([]NetworkStatus, len(t.status.Networks))
+		copy(s.Networks, t.status.Networks)
+	}
 	return s
+}
+
+// RecordNetworks records the isolation each plane ended up with, as resolved
+// by Probe.
+//
+// Later calls merge by network name rather than replacing the slice: services
+// may be spread over more than one socket, so this is called once per daemon
+// probed, and the planes are the same set on each. Order is first-seen, which
+// is PlaneSpecs' order — data plane, then control plane.
+func (t *Tracker) RecordNetworks(networks []NetworkStatus) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, n := range networks {
+		replaced := false
+		for i, existing := range t.status.Networks {
+			if existing.Name == n.Name {
+				t.status.Networks[i] = n
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			t.status.Networks = append(t.status.Networks, n)
+		}
+	}
 }
 
 // RecordProbeResult records the result of a probe attempt for a set of

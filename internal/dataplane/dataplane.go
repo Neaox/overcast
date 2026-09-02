@@ -113,13 +113,48 @@ func Primary(cfg *config.Config) string {
 	return cfg.ControlNetwork()
 }
 
-// ControlPlaneInternal reports whether the control plane can be created
-// `--internal` — cut off from everything Docker did not put on it.
+// ControlPlaneInternal returns the decision function that says whether the
+// control plane is created `--internal` — cut off from everything Docker did
+// not put on it — and why.
 //
 // It should be, in principle: a container in a VPC with no internet gateway is
 // on an `--internal` VPC network, and if the control plane it also sits on has
 // egress then the VPC's isolation is decoration. Making it internal is what
 // makes a private subnet actually private.
+//
+// OVERCAST_CONTROL_PLANE_INTERNAL settles it when it is `true` or `false`, and
+// that is the point of the variable: the isolation of this one network decides
+// whether a Lambda in a gateway-less VPC reaches the internet, and a team that
+// pinned an Overcast version is entitled to the same answer on every machine.
+// `auto`, the default, is autoControlPlaneInternal's host probe — right for
+// most machines, but a property of the *host*, so two engineers on one image
+// can legitimately differ (#1564).
+//
+// The decision runs once, from inside Probe, after the client is dialled and
+// confirmed available but before any network is created — see
+// docker.NetworkSpec.InternalMode — and Probe logs it, reason included, at
+// info on every startup.
+func ControlPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *docker.Client) docker.InternalDecision {
+	return func(ctx context.Context, dc *docker.Client) docker.InternalDecision {
+		switch cfg.ControlPlaneInternal {
+		case config.ControlPlaneInternalTrue:
+			return docker.InternalDecision{
+				Internal: true,
+				Reason:   "OVERCAST_CONTROL_PLANE_INTERNAL=true",
+			}
+		case config.ControlPlaneInternalFalse:
+			return docker.InternalDecision{
+				Internal: false,
+				Reason:   "OVERCAST_CONTROL_PLANE_INTERNAL=false",
+			}
+		default:
+			return autoControlPlaneInternal(ctx, dc)
+		}
+	}
+}
+
+// autoControlPlaneInternal is OVERCAST_CONTROL_PLANE_INTERNAL=auto: the host
+// probe, which is what alpha.37 shipped and what the default still is.
 //
 // Decided by the same three-row table containerendpoint.ResolveListen uses to
 // pick the Runtime API's bind address (docs/plans/container-network-topology.md
@@ -137,20 +172,34 @@ func Primary(cfg *config.Config) string {
 //     sever exactly that path, and every invocation would strand at INIT.
 //   - Anything undetermined (no Docker client yet, no default network to
 //     probe): no. Getting this wrong does not degrade gracefully — the Runtime
-//     API rides this plane — so an inconclusive probe keeps today's safe
-//     answer rather than guessing.
+//     API rides this plane — so an inconclusive probe keeps the safe answer
+//     rather than guessing.
 //
-// The Docker call this makes happens once, from inside Probe, after the
-// client is dialled and confirmed available but before any network is
-// created — see docker.NetworkSpec.InternalMode. It cannot inspect the
-// control plane itself, which may not exist yet on a first run, so it asks
-// the same question of Docker's own always-present default network instead
-// (containerendpoint.NativeLinuxDaemon).
-func ControlPlaneInternal(ctx context.Context, dc *docker.Client) bool {
+// It cannot inspect the control plane itself, which may not exist yet on a
+// first run, so it asks the same question of Docker's own always-present
+// default network instead (containerendpoint.NativeLinuxDaemon).
+//
+// Every branch names itself in the reason. The last two rows are the same
+// answer for opposite causes — one probed and declined, one never got to
+// probe — and telling them apart is most of what makes a surprising `auto`
+// diagnosable.
+func autoControlPlaneInternal(ctx context.Context, dc *docker.Client) docker.InternalDecision {
 	if runningInContainer() {
-		return true
+		return docker.InternalDecision{
+			Internal: true,
+			Reason:   "auto: Overcast is containerised",
+		}
 	}
-	return nativeLinuxDaemon(ctx, dc)
+	if nativeLinuxDaemon(ctx, dc) {
+		return docker.InternalDecision{
+			Internal: true,
+			Reason:   "auto: native Linux Docker daemon",
+		}
+	}
+	return docker.InternalDecision{
+		Internal: false,
+		Reason:   "auto: Docker Desktop, or a daemon this host could not probe",
+	}
 }
 
 // PlaneSpecs is the set of networks the Docker supervisor ensures at startup:
@@ -166,7 +215,7 @@ func ControlPlaneInternal(ctx context.Context, dc *docker.Client) bool {
 func PlaneSpecs(cfg *config.Config) []docker.NetworkSpec {
 	return []docker.NetworkSpec{
 		{Name: cfg.Network},
-		{Name: Primary(cfg), InternalMode: ControlPlaneInternal},
+		{Name: Primary(cfg), InternalMode: ControlPlaneInternal(cfg)},
 	}
 }
 
