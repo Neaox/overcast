@@ -1,6 +1,6 @@
 ---
 title: "Secrets Manager — AWS Secrets Manager"
-description: "Versioned secrets with staging labels, and rotation that really invokes your rotation Lambda through all four steps. Values are stored in plaintext."
+description: "Quick start, versions and staging labels, the four rotation steps run against your Lambda, and the encryption, deletion window and resource policies that are not real."
 section: "Service Reference"
 tags:
   - docs
@@ -19,7 +19,7 @@ your rotation Lambda. Values are stored in plaintext.
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 
 aws secretsmanager create-secret --name app/db \
@@ -63,12 +63,14 @@ already on the secret — is `InvalidRequestException`, as on AWS.
 
 ## Differences from AWS
 
-| Behaviour         | On AWS                                          | Here                                                        |
-| ----------------- | ----------------------------------------------- | ------------------------------------------------------------- |
-| Encryption at rest | Envelope-encrypted under the named KMS key     | `KmsKeyId` is recorded as metadata; the value is stored in plaintext |
-| Deletion          | A recovery window, then `RestoreSecret`         | Always immediate; `RestoreSecret` returns `501 Not Implemented` |
-| Resource policies | Evaluated on every call                         | Stored and syntax-checked; never evaluated ([#496](https://github.com/overcast-sh/overcast/issues/496)) |
-| Replication       | `ReplicateSecretToRegions` and its counterpart  | Not implemented — `501 Not Implemented`                       |
+| Area               | On AWS                                         | Overcast                                                                                                |
+| ------------------ | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Encryption at rest | Envelope-encrypted under the named KMS key     | `KmsKeyId` is recorded as metadata; the value is stored in plaintext                                    |
+| Deletion           | A recovery window, then `RestoreSecret`        | Always immediate; `RestoreSecret` returns `501 Not Implemented`                                         |
+| Resource policies  | Evaluated on every call                        | Stored and syntax-checked; never evaluated ([#496](https://github.com/overcast-sh/overcast/issues/496)) |
+| Replication        | `ReplicateSecretToRegions` and its counterpart | Not implemented — `501 Not Implemented`                                                                 |
+
+## Gotchas
 
 > [!NOTE]
 > A version that exists but holds no value — the state a rotation leaves
@@ -88,8 +90,9 @@ Per-operation status, notes and AWS API links: [Secrets Manager operations](secr
 
 ## Related
 
-- [AWS API reference](https://docs.aws.amazon.com/secretsmanager/latest/apireference/Welcome.html)
-- [CloudFormation](cloudformation.md) — `GenerateSecretString` generates through `GetRandomPassword`
-- [SSM Parameter Store](ssm.md) — the simpler alternative
-- [All service pages](README.md)
+- [CloudFormation](./cloudformation.md) — `GenerateSecretString` generates through `GetRandomPassword`
+- [KMS](./kms.md) — the key `KmsKeyId` records but never encrypts through
+- [SSM Parameter Store](./ssm.md) — the simpler alternative
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/secretsmanager/latest/apireference/Welcome.html)

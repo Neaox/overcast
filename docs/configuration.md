@@ -65,8 +65,8 @@ top to bottom.
 | `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE` | `false`          | Reject API Gateway requests over their usage plan's throttle or quota with `429`. Off by default: the limits are measured and reported, never enforced — see [API Gateway](./services/apigateway.md#usage-plan-throttling-and-quotas) |
 | `OVERCAST_CFN_SYNC_WAIT_MS`      | `1000`                 | Milliseconds CloudFormation waits for fast stack provisioning before returning (`0` disables) |
 | `OVERCAST_STEPFUNCTIONS_EXECUTION_TIMEOUT` | `15m`        | Runaway guard on one execution, never on `StartExecution` itself. A state machine's own `TimeoutSeconds` can lower it but not raise it |
-| `OVERCAST_TLS`                   | —                      | `auto` = serve API **and** web UI over HTTPS with a certificate minted from the local overcast CA (unlocks browser HTTP/2) — see [HTTPS and HTTP/2](./https.md) |
-| `OVERCAST_TLS_CERT`              | —                      | Path to your own TLS certificate (enables HTTPS for API and web UI; mutually exclusive with `OVERCAST_TLS=auto`) |
+| `OVERCAST_TLS`                   | —                      | `auto` = serve API **and** web console over HTTPS with a certificate minted from the local Overcast CA (unlocks browser HTTP/2) — see [HTTPS and HTTP/2](./https.md) |
+| `OVERCAST_TLS_CERT`              | —                      | Path to your own TLS certificate (enables HTTPS for API and web console; mutually exclusive with `OVERCAST_TLS=auto`) |
 | `OVERCAST_TLS_KEY`               | —                      | Path to the matching TLS private key                                                 |
 | `OVERCAST_SHUTDOWN_TIMEOUT`      | `5s`                   | Graceful shutdown wait, which also budgets the final store flush. Nothing is lost when it runs out — unflushed writes replay from the pending log |
 | `OVERCAST_PROTOCOL_STRICT`       | `false`                | Return `415` when a request arrives in a protocol the target service does not declare, instead of attempting the decode anyway |
@@ -90,7 +90,7 @@ top to bottom.
 | `LAMBDA_INIT_TIMEOUT_SECONDS`    | `10`                   | Max seconds to wait for a Lambda runtime to finish INIT. LocalStack's `LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT` is an alias |
 | `LAMBDA_KEEP_CONTAINERS`         | `false`                | Keep stopped Lambda containers after expiry/delete (useful for debugging)            |
 | `LAMBDA_TAR_CACHE_MB`            | `256`                  | In-memory cache of pre-built cold-start code and layer tars; `0` disables it         |
-| `LAMBDA_PROACTIVE_INIT`          | `true`                 | Pre-initialize one execution environment once a function's configuration settles; set `false` to opt out |
+| `LAMBDA_PROACTIVE_INIT`          | `true`                 | Pre-initialise one execution environment once a function's configuration settles; set `false` to opt out |
 | `LAMBDA_FETCH_REMOTE_LAYERS`     | `false`                | Download layers missing locally from real AWS (needs the `LAMBDA_REMOTE_AWS_*` credentials) |
 | `LAMBDA_LAYER_CACHE_DIR`         | `$OVERCAST_DATA_DIR/layers` | Where layer zips are looked up and cached, named `{sha256(arn)}.zip`            |
 | `LAMBDA_REMOTE_AWS_ACCESS_KEY_ID` | —                     | AWS access key ID used by `LAMBDA_FETCH_REMOTE_LAYERS`                               |
@@ -254,7 +254,7 @@ For per-service endpoint coverage, follow the doc links in
 | ------- | --------------------------------------------------------------------------------------------------------- |
 | `info`  | **Default.** Lifecycle events (start, shutdown, migrations) and one line per AWS API call your app makes. |
 | `debug` | Everything in `info`, plus the reasoning behind each response — what to attach to a bug report.           |
-| `trace` | Everything in `debug`, plus emulator machinery: health-check probes, web UI polling, background flush/sweep ticks. Very high volume — use for a short capture window, not always-on. |
+| `trace` | Everything in `debug`, plus emulator machinery: health-check probes, web console polling, background flush/sweep ticks. Very high volume — use for a short capture window, not always-on. |
 | `warn`  | One-liners for handled-but-unexpected conditions (a malformed record was skipped, a slow filesystem was detected). |
 | `error` | One-liners for failures that need attention (storage degraded, a migration failed).                       |
 

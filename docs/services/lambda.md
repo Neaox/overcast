@@ -1,6 +1,6 @@
 ---
 title: "Lambda — AWS Lambda"
-description: "Real function execution in Docker containers built from the official AWS Lambda base images, with warm-environment reuse, provisioned concurrency and the Runtime, Logs and Telemetry APIs."
+description: "Quick start, the execution model and warm-environment reuse, provisioned concurrency, event source mappings, extensions and logging, and how function code reaches Overcast."
 section: "Service Reference"
 tags:
   - docs
@@ -43,7 +43,7 @@ aws lambda invoke --function-name hello --payload '{"hi":1}' \
 | --- | --- |
 | Execution | A container per execution environment, from the official base image for the function's runtime, driven over the Runtime API. |
 | Environment reuse | Containers are reused for sequential invocations and scaled out one per concurrent invocation. Surplus stays warm until a 15-minute idle sweep. |
-| Provisioned concurrency | `PutProvisionedConcurrencyConfig` really pre-initializes environments: held open regardless of the sweep, replenished when one is lost, rebuilt against a new code or config revision. |
+| Provisioned concurrency | `PutProvisionedConcurrencyConfig` really pre-initialises environments: held open regardless of the sweep, replenished when one is lost, rebuilt against a new code or config revision. |
 | Proactive init | Ten seconds after a function's configuration settles, one environment is created in the background so the next request lands warm. |
 | Versions, aliases, function URLs, layers | Full CRUD. Layers are expanded into `/opt` before the runtime starts, later layers overriding earlier ones. |
 | Event source mappings | SQS, Kinesis and DynamoDB Streams pollers, including `FunctionResponseTypes: ["ReportBatchItemFailures"]`. |
@@ -56,20 +56,20 @@ aws lambda invoke --function-name hello --payload '{"hi":1}' \
 
 ## Differences from AWS
 
-| Area | Overcast | AWS |
-| --- | --- | --- |
-| X-Ray tracing | `TracingConfig` stored and returned; no segment is ever recorded | Traces recorded |
-| `EphemeralStorage` | Stored; `/tmp` gets whatever the Docker host gives it | Size enforced |
-| `KMSKeyArn` | An association only — environment variables are stored in plaintext | Encrypted at rest |
-| Resource policies | `AddPermission` stores and validates statements; nothing is enforced at invoke time | Enforced |
-| Concurrency | Per-function reserved concurrency only. The instance and memory limits protect your machine; they are not AWS's account quota | Account-wide quotas and RPS limits |
-| Cold-start latency | Not simulated | Real |
-| SnapStart | Not emulated; no restore records | Supported |
-| Tagging | Functions and event source mappings only; other taggable resources return `501` | All taggable resources |
+| Area               | On AWS                             | Overcast                                                                                                                      |
+| ------------------ | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| X-Ray tracing      | Traces recorded                    | `TracingConfig` stored and returned; no segment is ever recorded                                                              |
+| `EphemeralStorage` | Size enforced                      | Stored; `/tmp` gets whatever the Docker host gives it                                                                         |
+| `KMSKeyArn`        | Encrypted at rest                  | An association only — environment variables are stored in plaintext                                                           |
+| Resource policies  | Enforced                           | `AddPermission` stores and validates statements; nothing is enforced at invoke time                                           |
+| Concurrency        | Account-wide quotas and RPS limits | Per-function reserved concurrency only. The instance and memory limits protect your machine; they are not AWS's account quota |
+| Cold-start latency | Real                               | Not simulated                                                                                                                 |
+| SnapStart          | Supported                          | Not emulated; no restore records                                                                                              |
+| Tagging            | All taggable resources             | Functions and event source mappings only; other taggable resources return `501`                                               |
 
 The full list — async-retry edge cases, `LoggingConfig: {}`, unqualified
 `DeleteFunction`, the reactive S3 code sync, the JSON log record vocabulary,
-runtime coverage and VPC placement — is in [Limitations](lambda/limitations.md).
+runtime coverage and VPC placement — is in [Limitations](./lambda/limitations.md).
 
 ## Gotchas
 
@@ -93,7 +93,7 @@ resources by name.
 
 It is **not** enough for SQS: AWS SDKs resolve the SQS endpoint from the
 `QueueUrl` rather than from client configuration, and `AWS_ENDPOINT_URL` loses to
-it — see [SQS: queue URLs and endpoint resolution](sqs.md#queue-urls-and-endpoint-resolution).
+it — see [SQS: queue URLs and endpoint resolution](./sqs.md#queue-urls-and-endpoint-resolution).
 Three things keep that working:
 
 | | How |
@@ -121,10 +121,10 @@ Per-operation status, notes and AWS API links: [Lambda operations](lambda/operat
 
 ## Related
 
-- [Limitations](lambda/limitations.md) — divergences, concurrency, runtimes, logging
-- [Examples](lambda/examples.md) — hot reload, layers, extensions
-- [Troubleshooting](lambda/troubleshooting.md) — throttles, layer errors, extension endpoints
-- [Configuration](../configuration.md) — every `LAMBDA_*` environment variable
+- [Lambda limitations](./lambda/limitations.md) — divergences, concurrency, runtimes, logging
+- [Lambda troubleshooting](./lambda/troubleshooting.md) — throttles, layer errors, extension endpoints
+- [Lambda examples](./lambda/examples.md) — hot reload, layers, extensions
+- [CloudWatch Logs](./cloudwatch-logs.md) — where function output lands
+- [All service pages](./README.md)
+- [Configuration reference](../configuration.md) — every `LAMBDA_*` environment variable
 - [AWS API reference](https://docs.aws.amazon.com/lambda/latest/api/welcome.html)
-- [All service pages](README.md)
-- [Service names and state overrides](../configuration.md#service-names)

@@ -45,34 +45,13 @@ command that runs it. Everything else is below.
 
 ---
 
-## Support level legend
+## Runtime emulation tiers
 
-Every endpoint in the service docs carries one of these statuses:
-
-| Status         | Meaning                                                        |
-| -------------- | -------------------------------------------------------------- |
-| ✅ Supported   | Fully implemented. AWS SDK calls work as expected.             |
-| ⚠️ Partial     | Implemented but with caveats. See the notes column for detail. |
-| 🚧 WIP         | Under active development. May be broken or incomplete.         |
-| ❌ Unsupported | Not implemented. Returns `501 Not Implemented`.                |
-
-An unsupported endpoint returns a well-formed AWS error, so SDKs surface a clear
-message rather than a connection failure:
-
-```
-HTTP 501 Not Implemented
-x-emulator-unsupported: true
-
-{
-  "__type": "NotImplemented",
-  "message": "This operation is not yet emulated. See https://github.com/overcast-sh/overcast/docs/services/<service>.md"
-}
-```
-
-### Service emulation tiers
-
-Each service also carries an overall tier, visible on `/_overcast/health` and in
-the web console:
+`GET /_overcast/health`, `overcast services` and the web console report a tier
+per running service. It answers "how much of this service is wired up", and is a
+different axis from the coverage tier in the index below — see
+[Service reference § Coverage tiers](./services/README.md#coverage-tiers) for
+that one and for the per-operation status tokens.
 
 | Tier        | Meaning                                                                                                                                                                           |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -179,13 +158,12 @@ screenshots is at [overcast.sh/console](https://overcast.sh/console/).
 | Topology map | Cross-service resource relationships |
 | Real-time updates | Server-sent events push changes as they happen |
 
+If the console stops responding to clicks while many Lambdas run or transfers are
+in flight, you are hitting the browser's 6-connection HTTP/1.1 limit — the live
+feed and progress streams hold the sockets. Serving the console over HTTPS
+unlocks HTTP/2 and fixes it: see [HTTPS and HTTP/2](./https.md).
+
 > [!TIP]
 > Request traces are the console's strongest debugging tool and the one thing it
 > cannot show by default. Start the daemon with `OVERCAST_DEBUG=true` and every
 > call gets a full trace — see [Debug endpoints](./debug-endpoints.md).
-
-> [!TIP]
-> If the console stops responding to clicks while many Lambdas run or transfers
-> are in flight, you are hitting the browser's 6-connection HTTP/1.1 limit — the
-> live feed and progress streams hold the sockets. Serving the console over
-> HTTPS unlocks HTTP/2 and fixes it: see [HTTPS and HTTP/2](./https.md).

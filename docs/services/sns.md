@@ -1,6 +1,6 @@
 ---
 title: "SNS — Simple Notification Service"
-description: "Fan-out to SQS, Lambda, email, SMS and webhooks, with filter policies and subscription dead-letter queues. Subscriptions confirm themselves; FIFO ordering is not emulated."
+description: "Quick start, the protocols and delivery behaviour, filter policies and per-subscription dead-letter queues, and where FIFO, mobile push and webhook delivery stop."
 section: "Service Reference"
 tags:
   - docs
@@ -16,11 +16,11 @@ tags:
 Fan-out to SQS, Lambda, email, SMS and webhooks, with filter policies and
 per-subscription dead-letter queues. Delivery is asynchronous, as on AWS.
 
-**Status:** ⚠️ Partial
+**Status:** ✅ Supported
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 
 TOPIC=$(aws sns create-topic --name orders --query TopicArn --output text)
@@ -52,16 +52,16 @@ Email, SMS and webhook deliveries all land in the console's
 
 ## Differences from AWS
 
-| Behaviour                | On AWS                                        | Here                                                          |
-| ------------------------ | --------------------------------------------- | --------------------------------------------------------------- |
-| `ConfirmSubscription`    | A token round-trip before delivery starts     | Auto-confirmed; any token is accepted                           |
-| FIFO topics              | Ordered, deduplicated, with a `SequenceNumber` | Parameters are validated, but ordering and dedup are not emulated ([#183](https://github.com/overcast-sh/overcast/issues/183)) |
-| Mobile push              | `application` protocol and platform endpoints  | `Subscribe` returns `400 InvalidParameter`; `Publish --target-arn` likewise |
-| Kinesis Data Firehose    | `firehose` protocol                            | `Subscribe` returns `400 InvalidParameter`                      |
-| `http`/`https` delivery  | POSTed to the endpoint                         | Captured in the Inbox; nothing is dialled                       |
+| Area                    | On AWS                                         | Overcast                                                                                                                       |
+| ----------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `ConfirmSubscription`   | A token round-trip before delivery starts      | Auto-confirmed; any token is accepted                                                                                          |
+| FIFO topics             | Ordered, deduplicated, with a `SequenceNumber` | Parameters are validated, but ordering and dedup are not emulated ([#183](https://github.com/overcast-sh/overcast/issues/183)) |
+| Mobile push             | `application` protocol and platform endpoints  | `Subscribe` returns `400 InvalidParameter`; `Publish --target-arn` likewise                                                    |
+| Kinesis Data Firehose   | `firehose` protocol                            | `Subscribe` returns `400 InvalidParameter`                                                                                     |
+| `http`/`https` delivery | POSTed to the endpoint                         | Captured in the Inbox; nothing is dialled                                                                                      |
 
 The full list, including CloudFormation and Lambda delivery semantics, is in
-[Limitations](sns/limitations.md).
+[Limitations](./sns/limitations.md).
 
 ## Gotchas
 
@@ -81,8 +81,8 @@ Per-operation status, notes and AWS API links: [SNS operations](sns/operations.m
 
 ## Related
 
-- [SNS limitations](sns/limitations.md)
-- [AWS API reference](https://docs.aws.amazon.com/sns/latest/api/welcome.html)
-- [SQS](sqs.md) · [Lambda](lambda.md) · [SES](ses.md) — the delivery targets
-- [All service pages](README.md)
+- [SNS limitations](./sns/limitations.md)
+- [SQS](./sqs.md), [Lambda](./lambda.md), [SES](./ses.md) — the delivery targets
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/sns/latest/api/welcome.html)

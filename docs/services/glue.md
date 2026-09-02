@@ -1,6 +1,6 @@
 ---
 title: "Glue — AWS Glue Data Catalog"
-description: "The Glue Data Catalog — databases, tables and their tags, stored as metadata. ETL jobs, crawlers, triggers, workflows and partitions are not emulated."
+description: "Quick start, the Data Catalog operations that work, the table and database fields dropped on write, and everything outside the catalog that is not emulated."
 section: "Service Reference"
 tags:
   - aws
@@ -41,14 +41,14 @@ aws glue get-tables --database-name analytics
 
 ## Differences from AWS
 
-| Difference | Detail |
-| --- | --- |
-| Data Catalog only | Jobs, crawlers, triggers, workflows, connections, the schema registry and Data Quality are not implemented |
-| Schemas are dropped | A table's `StorageDescriptor` — its columns, serde and `Location` — and its `PartitionKeys` and `Parameters` are accepted and discarded, so `GetTable` returns none of them |
-| Database input is dropped too | `LocationUri`, `Parameters` and `TargetDatabase` are not stored |
-| No partitions API | There are no partition rows and no `GetPartitions` |
-| No update operations | There is no `UpdateDatabase` or `UpdateTable`; re-create through `CreateTable` to change a definition |
-| One catalog | `CatalogId` is echoed, never used to separate catalogs |
+| Area                          | Overcast                                                                                                                                                                    |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Data Catalog only             | Jobs, crawlers, triggers, workflows, connections, the schema registry and Data Quality are not implemented                                                                  |
+| Schemas are dropped           | A table's `StorageDescriptor` — its columns, serde and `Location` — and its `PartitionKeys` and `Parameters` are accepted and discarded, so `GetTable` returns none of them |
+| Database input is dropped too | `LocationUri`, `Parameters` and `TargetDatabase` are not stored                                                                                                             |
+| No partitions API             | There are no partition rows and no `GetPartitions`                                                                                                                          |
+| No update operations          | There is no `UpdateDatabase` or `UpdateTable`; re-create through `CreateTable` to change a definition                                                                       |
+| One catalog                   | `CatalogId` is echoed, never used to separate catalogs                                                                                                                      |
 
 ## Gotchas
 
@@ -59,7 +59,7 @@ aws glue get-tables --database-name analytics
 > neither.
 
 > [!NOTE]
-> [Athena](athena.md) does not read this catalog. It records queries and
+> [Athena](./athena.md) does not read this catalog. It records queries and
 > returns empty result sets, so a table defined here changes nothing about
 > what a query answers.
 
@@ -74,7 +74,7 @@ Per-operation status, notes and AWS API links: [Glue operations](glue/operations
 
 ## Related
 
-- [Athena](athena.md)
-- [AWS API reference](https://docs.aws.amazon.com/glue/latest/webapi/)
-- [All service pages](README.md)
+- [Athena](./athena.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/glue/latest/webapi/)

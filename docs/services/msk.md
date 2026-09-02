@@ -49,14 +49,14 @@ aws kafka get-bootstrap-brokers --cluster-arn "$ARN"
 
 ## Differences from AWS
 
-| Difference | Detail |
-| --- | --- |
-| One broker, always | `NumberOfBrokerNodes` is recorded, not honoured; there is a single Redpanda node whatever the request asks for |
-| Redpanda, not Kafka | Wire-compatible with the Kafka protocol, but broker internals, JMX metrics and Kafka-specific admin behaviour differ |
-| `ListKafkaVersions` is fixed | It reports 3.6.0, 3.5.1, 3.4.0, 2.8.1 and 2.6.0 regardless of what the container runs |
-| No broker changes | `UpdateBrokerCount`, `UpdateBrokerStorage`, `UpdateBrokerType`, `UpdateMonitoring`, `UpdateSecurity` and `RebootBroker` return `501` |
-| No SCRAM | The secret-association operations return `501`; the broker is reachable without authentication |
-| No VPC connections | `CreateVpcConnection` and its siblings return `501` |
+| Area                            | Overcast                                                                                                                                                                                                                                    |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| One broker, always              | `NumberOfBrokerNodes` is recorded, not honoured; there is a single Redpanda node whatever the request asks for                                                                                                                              |
+| Redpanda, not Kafka             | Wire-compatible with the Kafka protocol, but broker internals, JMX metrics and Kafka-specific admin behaviour differ                                                                                                                        |
+| `ListKafkaVersions` is fixed    | It reports 3.6.0, 3.5.1, 3.4.0, 2.8.1 and 2.6.0 regardless of what the container runs                                                                                                                                                       |
+| No broker changes               | `UpdateBrokerCount`, `UpdateBrokerStorage`, `UpdateBrokerType`, `UpdateMonitoring`, `UpdateSecurity` and `RebootBroker` return `501`                                                                                                        |
+| No SCRAM                        | The secret-association operations return `501`; the broker is reachable without authentication                                                                                                                                              |
+| No VPC connections              | `CreateVpcConnection` and its siblings return `501`                                                                                                                                                                                         |
 | Encryption and auth are dropped | `encryptionInfo`, `clientAuthentication`, `loggingInfo`, `openMonitoring` and a broker group's `storageInfo` are accepted and discarded — a cluster keeps only `instanceType`, `clientSubnets`, `securityGroups` and `brokerAZDistribution` |
 
 ## Gotchas
@@ -81,8 +81,8 @@ Per-operation status, notes and AWS API links: [MSK operations](msk/operations.m
 
 ## Related
 
-- [Networking § Lambda, ECS and VPCs](../networking.md)
-- [Kinesis Data Streams](kinesis.md)
-- [AWS API reference](https://docs.aws.amazon.com/msk/latest/developerguide/what-is-msk.html)
-- [All service pages](README.md)
+- [Kinesis Data Streams](./kinesis.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [Networking § Lambda, ECS and VPCs](../networking.md)
+- [AWS API reference](https://docs.aws.amazon.com/msk/latest/developerguide/what-is-msk.html)

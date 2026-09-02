@@ -1,6 +1,6 @@
 ---
 title: "AppRegistry — Service Catalog AppRegistry"
-description: "Groups related resources into named applications, with CloudFormation stack and CDK awsApplication tag association wired through to the web console."
+description: "Quick start, the resource and CloudFormation coverage, how CDK awsApplication tags become associations, and why an AppRegistry call must be signed as servicecatalog."
 section: "Service Reference"
 tags:
   - appregistry
@@ -41,11 +41,11 @@ aws servicecatalog-appregistry list-associated-resources --application "$APP"
 
 ## Differences from AWS
 
-| Area | Overcast | AWS |
-| --- | --- | --- |
-| Enforcement | Associations are records. Nothing about an application governs, restricts or provisions anything | Integrated with Service Catalog governance |
-| `awsApplication` tag scan | Runs on resource **create** only, and a failure is logged rather than failing the stack | Continuous |
-| Application-scoped cost, resource groups, attribute-group syncing | Not modelled | Supported |
+| Area                                                              | On AWS                                     | Overcast                                                                                         |
+| ----------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| Enforcement                                                       | Integrated with Service Catalog governance | Associations are records. Nothing about an application governs, restricts or provisions anything |
+| `awsApplication` tag scan                                         | Continuous                                 | Runs on resource **create** only, and a failure is logged rather than failing the stack          |
+| Application-scoped cost, resource groups, attribute-group syncing | Supported                                  | Not modelled                                                                                     |
 
 ## Gotchas
 
@@ -69,6 +69,6 @@ Per-operation status, notes and AWS API links: [AppRegistry operations](appregis
 
 - [CloudFormation](./cloudformation.md) — what creates most associations
 - [AppConfig](./appconfig.md) — the other service on `/applications`
-- [AWS API reference](https://docs.aws.amazon.com/servicecatalog/latest/dg/applications.html)
-- [All service pages](README.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/servicecatalog/latest/dg/applications.html)

@@ -60,7 +60,7 @@ your own machine — cannot reach it.
 **Fix.** Put the caller in the same VPC, or create the instance with
 `PubliclyAccessible=true`, which keeps it on the default plane as well. See
 [Networking § Lambda, ECS and VPCs](../../networking.md) and the
-[reachability defaults](limitations.md#reachability-defaults).
+[reachability defaults](./limitations.md#reachability-defaults).
 
 ## The endpoint resolves but nothing answers
 
@@ -80,7 +80,7 @@ constraints; or the engine itself refused the `ALTER USER`, which fails the
 whole call so nothing partial is recorded.
 
 **Fix.** Start the instance first, and check the password against the
-[per-engine rules](limitations.md#password-rules) — in particular that
+[per-engine rules](./limitations.md#password-rules) — in particular that
 `GetRandomPassword` and CDK's `Credentials.fromGeneratedSecret` can generate
 characters RDS forbids.
 

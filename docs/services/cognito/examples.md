@@ -15,7 +15,7 @@ Worked examples past the [Cognito quick start](../cognito.md#quick-start).
 
 ## Import users from a real AWS pool
 
-```sh
+```bash
 overcast import cognito-users \
   --from-pool-id us-east-1_abc123 \
   --to-pool-id us-east-1_def456 \

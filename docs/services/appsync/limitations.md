@@ -75,5 +75,5 @@ survive a restart.
 ## Related
 
 - [AppSync](../appsync.md) — quick start and what works
-- [AppSync operations](operations.md) — per-operation status
+- [AppSync operations](./operations.md) — per-operation status
 - [Networking and host-based addressing](../../networking.md)

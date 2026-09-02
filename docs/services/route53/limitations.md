@@ -73,5 +73,5 @@ code behaves the same.
 ## Related
 
 - [Route 53](../route53.md) — quick start and DNS serving
-- [Route 53 operations](operations.md) — per-operation status
+- [Route 53 operations](./operations.md) — per-operation status
 - [Networking and host-based addressing](../../networking.md)

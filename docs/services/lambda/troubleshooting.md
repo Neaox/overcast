@@ -18,9 +18,9 @@ Back to [Lambda](../lambda.md).
 | `Invoke` returns a stub payload and the handler never runs | No Docker | Start Docker; bind-mount the socket when Overcast runs in a container |
 | `429 TooManyRequestsException`, `Reason: ConcurrentInvocationLimitExceeded` | The invocation waited for a container until the function's timeout | Raise `LAMBDA_MAX_INSTANCES` / `LAMBDA_MAX_INSTANCES_PER_FUNCTION`, or `LAMBDA_MAX_MEMORY_MB` |
 | `429`, `Reason: ReservedFunctionConcurrentInvocationLimitExceeded` | `ReservedConcurrentExecutions` is set — and `0` disables the function | Raise or remove the reservation |
-| `501 NotImplemented` from `CreateFunction` | The runtime is modeled and accepted by AWS, but Overcast has no execution image for it | Use a runtime AWS still accepts for `CreateFunction` |
+| `501 NotImplemented` from `CreateFunction` | The runtime is modelled and accepted by AWS, but Overcast has no execution image for it | Use a runtime AWS still accepts for `CreateFunction` |
 | `400 InvalidParameterValueException` naming a successor runtime | The runtime is past AWS's block-create or block-update date | Move to the named successor |
-| `Runtime.InitError`, "layer version not found" | The layer ARN is neither published locally nor in the cache | Publish it, or drop `{LayerName}_{Version}.zip` in the layer cache — see [Examples](examples.md#layers) |
+| `Runtime.InitError`, "layer version not found" | The layer ARN is neither published locally nor in the cache | Publish it, or drop `{LayerName}_{Version}.zip` in the layer cache — see [Examples](./examples.md#layers) |
 | A `PackageType=Image` function cannot pull its image | The registry is not running, so the ECR URI was left as written and resolves to real AWS | Start Docker and push the image — see [ECR](../ecr.md) |
 | Provisioned concurrency stuck at `Status: FAILED` | Nothing can be allocated without Docker | Start Docker; the `StatusReason` says so |
 | An extension still reaches real AWS or reports credential errors | The layer version predates endpoint-variable support, or the architecture is wrong | Use a recent layer version, matched to the **function's** architecture, and leave user-defined endpoint and credential variables unset |

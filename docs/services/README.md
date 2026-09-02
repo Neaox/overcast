@@ -15,7 +15,7 @@ One page per AWS service: a quick start, what works, and how it differs from
 AWS. Point any SDK or CLI at `http://localhost:4566` and pick your service
 below.
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 aws sqs create-queue --queue-name orders
 ```
@@ -65,16 +65,19 @@ aws sqs create-queue --queue-name orders
 
 ## Coverage tiers
 
-Each service has an overall tier; each operation carries its own status token.
-The full generated table, with operation counts and tiers, is on
-[Documentation § Services](../README.md#services).
+Each service has an overall tier, and it decides the **Status:** token at the top
+of that service's page. The full generated table, with operation counts and
+tiers, is on [Documentation § Services](../README.md#services).
 
-| Tier | Meaning |
-| --- | --- |
-| Comprehensive | Real SDK clients use it end to end. |
-| Core CRUD | Resources are created, stored and returned; common workflows work. |
-| Minimal | A targeted subset — enough for one or two workflows. |
-| Stub | Registered so discovery and IaC work; most operations return `501`. |
+| Tier | Meaning | Page status |
+| --- | --- | --- |
+| Comprehensive | Real SDK clients use it end to end. | ✅ Supported |
+| Core CRUD | Resources are created, stored and returned; common workflows work. | ⚠️ Partial |
+| Minimal | A targeted subset — enough for one or two workflows. | ⚠️ Partial |
+| Stub | Registered so discovery and IaC work; most operations return `501`. | ⚠️ Partial |
+
+Each operation carries its own status token, and the service pages use the same
+five words for anything they qualify:
 
 | Status | Meaning |
 | --- | --- |
@@ -84,10 +87,23 @@ The full generated table, with operation counts and tiers, is on
 | 🚧 WIP | Present, still moving. |
 | ❌ Unsupported | Modelled but not implemented. |
 
-> [!NOTE]
-> An unsupported operation returns an AWS-shaped `501 Not Implemented` with
-> `x-emulator-unsupported: true`, so an SDK raises a clear error instead of
-> hanging or failing to connect.
+An unsupported operation answers with an AWS-shaped error rather than hanging or
+failing to connect, so an SDK raises something you can read:
+
+```
+HTTP 501 Not Implemented
+x-emulator-unsupported: true
+
+{
+  "__type": "NotImplemented",
+  "message": "This operation is not yet emulated. See https://github.com/overcast-sh/overcast/docs/services/<service>.md"
+}
+```
+
+A running service also reports a **runtime emulation tier** — full, partial,
+inert or stub — on `/_overcast/health`, in `overcast services` and in the web
+console. That is a different axis, defined in
+[Documentation § Runtime emulation tiers](../README.md#runtime-emulation-tiers).
 
 ## Related
 

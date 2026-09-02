@@ -21,7 +21,7 @@ kept for about an hour.
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 aws cloudwatch put-metric-data --namespace demo --metric-data 'MetricName=Errors,Value=5'
 aws cloudwatch put-metric-alarm --alarm-name errors --namespace demo \
@@ -62,7 +62,7 @@ a datapoint to evaluate.
 | Unqualified datapoints | A datapoint published without a unit feeds an alarm that names one |
 
 The full list, with the defaults `PutMetricAlarm` applies and the ones it
-refuses to invent, is in [CloudWatch limitations](cloudwatch/limitations.md).
+refuses to invent, is in [CloudWatch limitations](./cloudwatch/limitations.md).
 
 ## Gotchas
 
@@ -89,8 +89,8 @@ Per-operation status, notes and AWS API links: [CloudWatch operations](cloudwatc
 
 ## Related
 
-- [CloudWatch limitations](cloudwatch/limitations.md) — evaluation rules, defaults and tagging
-- [CloudWatch Logs](cloudwatch-logs.md) — log groups, streams and retention
-- [Auto Scaling](autoscaling.md) — alarms that drive scaling policies
+- [CloudWatch limitations](./cloudwatch/limitations.md) — evaluation rules, defaults and tagging
+- [CloudWatch Logs](./cloudwatch-logs.md) — log groups, streams and retention
+- [Auto Scaling](./autoscaling.md) — alarms that drive scaling policies
+- [All service pages](./README.md)
 - [AWS API reference](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/)
-- [All service pages](README.md)

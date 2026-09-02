@@ -43,13 +43,13 @@ aws athena get-query-execution --query-execution-id <id>
 
 ## Differences from AWS
 
-| Difference | Detail |
-| --- | --- |
-| No query engine | The SQL string is stored, never parsed or run — a query over a Glue table returns nothing, not that table's rows |
-| No result objects | Nothing is written to `OutputLocation`; the bucket stays empty |
-| Never queues, never fails | There is no `QUEUED`, `RUNNING`, `FAILED` or `CANCELLED` state to observe |
-| No statistics | `Statistics`, `EngineVersion` and data-scanned figures are absent |
-| Workgroup config is inert | Result-location overrides and bytes-scanned cutoffs are echoed, not enforced |
+| Area                      | Overcast                                                                                                         |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| No query engine           | The SQL string is stored, never parsed or run — a query over a Glue table returns nothing, not that table's rows |
+| No result objects         | Nothing is written to `OutputLocation`; the bucket stays empty                                                   |
+| Never queues, never fails | There is no `QUEUED`, `RUNNING`, `FAILED` or `CANCELLED` state to observe                                        |
+| No statistics             | `Statistics`, `EngineVersion` and data-scanned figures are absent                                                |
+| Workgroup config is inert | Result-location overrides and bytes-scanned cutoffs are echoed, not enforced                                     |
 
 ## Gotchas
 
@@ -69,7 +69,7 @@ Per-operation status, notes and AWS API links: [Athena operations](athena/operat
 
 ## Related
 
-- [Glue Data Catalog](glue.md) — where Athena's table metadata lives
-- [AWS API reference](https://docs.aws.amazon.com/athena/latest/APIReference/)
-- [All service pages](README.md)
+- [Glue Data Catalog](./glue.md) — where Athena's table metadata lives
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/athena/latest/APIReference/)

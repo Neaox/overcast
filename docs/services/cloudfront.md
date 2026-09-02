@@ -15,11 +15,11 @@ A distribution is not metadata alone: a request through one is matched against
 the cache behaviours, proxied to the origin, cached, and passed through any
 CloudFront Function attached to it.
 
-**Status:** ⚠️ Partial
+**Status:** ✅ Supported
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 aws s3 mb s3://site && echo 'hello from the edge' > index.html
 aws s3 cp index.html s3://site/
@@ -80,7 +80,7 @@ name a stack output hands you is one you can dial. Set
 | Monitoring, real-time logs, field-level encryption | Metadata only |
 
 The full list, with what each unenforced feature means for a stack that relies
-on it, is in [CloudFront limitations](cloudfront/limitations.md).
+on it, is in [CloudFront limitations](./cloudfront/limitations.md).
 
 ## Gotchas
 
@@ -106,7 +106,7 @@ Per-operation status, notes and AWS API links: [CloudFront operations](cloudfron
 
 ## Related
 
-- [CloudFront limitations](cloudfront/limitations.md) — the full divergence list
-- [AWS API reference](https://docs.aws.amazon.com/cloudfront/latest/APIReference/Welcome.html)
-- [All service pages](README.md)
+- [CloudFront limitations](./cloudfront/limitations.md) — the full divergence list
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/cloudfront/latest/APIReference/Welcome.html)

@@ -19,7 +19,7 @@ subscriptions.
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 API=$(aws appsync create-graphql-api --name demo --authentication-type API_KEY \
   --query graphqlApi.apiId --output text)
@@ -83,7 +83,7 @@ it has nothing else to carry. `dns.REALTIME` deliberately repeats
 | Complex configs | `logConfig`, `userPoolConfig`, `openIDConnectConfig` and similar are stored as passthrough JSON |
 | `outErrors` | Never populated by either evaluator — `util.appendError` output is not collected |
 
-The full list is in [AppSync limitations](appsync/limitations.md).
+The full list is in [AppSync limitations](./appsync/limitations.md).
 
 ## Gotchas
 
@@ -109,7 +109,7 @@ Per-operation status, notes and AWS API links: [AppSync operations](appsync/oper
 
 ## Related
 
-- [AppSync limitations](appsync/limitations.md) — the full divergence list
-- [AWS API reference](https://docs.aws.amazon.com/appsync/latest/APIReference/Welcome.html)
-- [All service pages](README.md)
+- [AppSync limitations](./appsync/limitations.md) — the full divergence list
+- [All service pages](./README.md)
 - [Networking and host-based addressing](../networking.md)
+- [AWS API reference](https://docs.aws.amazon.com/appsync/latest/APIReference/Welcome.html)

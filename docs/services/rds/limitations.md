@@ -119,7 +119,7 @@ every version-specific reserved word. Code that depends on those administrative
 edges still needs testing against AWS.
 
 The container's maintenance account is separate: Overcast uses it during
-initialization and password recovery, its generated credential is never returned
+initialisation and password recovery, its generated credential is never returned
 by the API, and it is not an alternative application credential.
 
 `DBName` follows the engine's AWS behaviour. MySQL and MariaDB create no

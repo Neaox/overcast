@@ -1,6 +1,6 @@
 ---
 title: "Step Functions — AWS Step Functions"
-description: "A real Amazon States Language interpreter: executions run the definition, call other emulated services, and record a state-by-state history. What it cannot interpret fails loudly."
+description: "Quick start, the ASL the interpreter runs — states, data flow, error handling and task integrations — and what fails an execution loudly instead of pretending to work."
 section: "Service Reference"
 tags:
   - docs
@@ -42,17 +42,17 @@ aws stepfunctions get-execution-history --execution-arn "$EX"
 
 ## What works
 
-| Area | Interpreted |
-| --- | --- |
-| State types | All eight: `Pass`, `Task`, `Choice`, `Wait`, `Succeed`, `Fail`, `Parallel`, `Map` (inline) |
-| Data flow | `InputPath`, `OutputPath`, `ResultPath`, `Parameters`, `ResultSelector`, `ItemSelector`, `Result`, and the `$$` context object |
-| Choice | Every ASL comparison operator, `And`/`Or`/`Not`, `Default` |
-| Error handling | `Retry` (`ErrorEquals`, `IntervalSeconds`, `MaxAttempts`, `BackoffRate`, `MaxDelaySeconds`) and `Catch` (`ErrorEquals`, `ResultPath`, `Next`). `States.ALL` and `States.TaskFailed` are wildcards over every error but `States.Runtime` |
-| Task timeouts | `TimeoutSeconds` and `TimeoutSecondsPath` really bound the attempt and raise `States.Timeout`, which `Retry`/`Catch` can match |
-| Task integrations | A Lambda function ARN; `arn:aws:states:::lambda:invoke`; `sqs:sendMessage`; `sns:publish`; `dynamodb:putItem`/`getItem`/`updateItem`; `states:startExecution` and its `.sync` / `.sync:2` forms |
-| Map | Inline `ItemsPath` iteration with `ItemProcessor` or the legacy `Iterator` |
-| Execution model | `StartExecution` persists `RUNNING` and returns; the interpreter continues on a tracked goroutine, so nothing dispatching to Step Functions is held open for the length of the workflow |
-| History | AWS's event vocabulary with 1-based `id` and `previousEventId` linkage, so step-functions-local-style assertions work unmodified |
+| Area              | Behaviour                                                                                                                                                                                                                               |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| State types       | All eight: `Pass`, `Task`, `Choice`, `Wait`, `Succeed`, `Fail`, `Parallel`, `Map` (inline)                                                                                                                                              |
+| Data flow         | `InputPath`, `OutputPath`, `ResultPath`, `Parameters`, `ResultSelector`, `ItemSelector`, `Result`, and the `$$` context object                                                                                                          |
+| Choice            | Every ASL comparison operator, `And`/`Or`/`Not`, `Default`                                                                                                                                                                              |
+| Error handling    | `Retry` (`ErrorEquals`, `IntervalSeconds`, `MaxAttempts`, `BackoffRate`, `MaxDelaySeconds`) and `Catch` (`ErrorEquals`, `ResultPath`, `Next`). `States.ALL` and `States.TaskFailed` are wildcards over every error but `States.Runtime` |
+| Task timeouts     | `TimeoutSeconds` and `TimeoutSecondsPath` really bound the attempt and raise `States.Timeout`, which `Retry`/`Catch` can match                                                                                                          |
+| Task integrations | A Lambda function ARN; `arn:aws:states:::lambda:invoke`; `sqs:sendMessage`; `sns:publish`; `dynamodb:putItem`/`getItem`/`updateItem`; `states:startExecution` and its `.sync` / `.sync:2` forms                                         |
+| Map               | Inline `ItemsPath` iteration with `ItemProcessor` or the legacy `Iterator`                                                                                                                                                              |
+| Execution model   | `StartExecution` persists `RUNNING` and returns; the interpreter continues on a tracked goroutine, so nothing dispatching to Step Functions is held open for the length of the workflow                                                 |
+| History           | AWS's event vocabulary with 1-based `id` and `previousEventId` linkage, so step-functions-local-style assertions work unmodified                                                                                                        |
 
 Task states dispatch through Overcast's own router, so a workflow step runs
 exactly the handler an SDK call would — there is no second code path that could
@@ -60,16 +60,16 @@ drift from the service it targets.
 
 ## Differences from AWS
 
-| Area | Overcast | AWS |
-| --- | --- | --- |
-| Query language | JSONPath only; `QueryLanguage: JSONata` fails the execution, whether set on the definition or one state | JSONPath and JSONata |
-| Variables | `Assign` and the JSONata-only `Output` field fail the execution | Supported |
-| Intrinsics | `States.Format`, `States.Array`, `States.ArrayLength`, `States.StringToJson`, `States.JsonToString`, `States.MathAdd` — every other `States.*` fails | The full set |
-| JSONPath | Dotted members and array indices; wildcards, descendants, slices and filters fail | Full JSONPath |
-| Task integrations | The list above; every other service integration, all `aws-sdk:` integrations, `.waitForTaskToken` and activity ARNs fail | ~200 services |
-| Map | Inline only; `ProcessorConfig.Mode: DISTRIBUTED`, `ItemReader`, `ItemBatcher` and `ResultWriter` fail | Distributed Map |
-| `HeartbeatSeconds`, `Retry.JitterStrategy` | Parsed and never read | Honoured |
-| `GetExecutionHistory` | `reverseOrder`, `maxResults` and `includeExecutionData` are honoured; there is no pagination token | Paginated |
+| Area                                       | On AWS               | Overcast                                                                                                                                             |
+| ------------------------------------------ | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Query language                             | JSONPath and JSONata | JSONPath only; `QueryLanguage: JSONata` fails the execution, whether set on the definition or one state                                              |
+| Variables                                  | Supported            | `Assign` and the JSONata-only `Output` field fail the execution                                                                                      |
+| Intrinsics                                 | The full set         | `States.Format`, `States.Array`, `States.ArrayLength`, `States.StringToJson`, `States.JsonToString`, `States.MathAdd` — every other `States.*` fails |
+| JSONPath                                   | Full JSONPath        | Dotted members and array indices; wildcards, descendants, slices and filters fail                                                                    |
+| Task integrations                          | ~200 services        | The list above; every other service integration, all `aws-sdk:` integrations, `.waitForTaskToken` and activity ARNs fail                             |
+| Map                                        | Distributed Map      | Inline only; `ProcessorConfig.Mode: DISTRIBUTED`, `ItemReader`, `ItemBatcher` and `ResultWriter` fail                                                |
+| `HeartbeatSeconds`, `Retry.JitterStrategy` | Honoured             | Parsed and never read                                                                                                                                |
+| `GetExecutionHistory`                      | Paginated            | `reverseOrder`, `maxResults` and `includeExecutionData` are honoured; there is no pagination token                                                   |
 
 `CreateStateMachine` validates the ASL and returns `InvalidDefinition` for a
 structurally invalid definition, as AWS does. Definitions that are valid ASL but
@@ -109,6 +109,6 @@ Per-operation status, notes and AWS API links: [Step Functions operations](stepf
 
 - [Lambda](./lambda.md) — the most common `Task` target
 - [EventBridge](./eventbridge.md) and [Scheduler](./scheduler.md) — what starts executions on a schedule
-- [AWS API reference](https://docs.aws.amazon.com/step-functions/latest/apireference/Welcome.html)
-- [All service pages](README.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/step-functions/latest/apireference/Welcome.html)

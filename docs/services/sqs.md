@@ -1,6 +1,6 @@
 ---
 title: "SQS — Simple Queue Service"
-description: "Standard and FIFO queues with long polling, visibility timeouts, dead-letter redrive and CloudWatch metrics. Queue URLs are minted per request, on the origin you called."
+description: "Quick start, standard and FIFO coverage with visibility timeouts and redrive, why an SDK resolves the endpoint from the queue URL, and the permissions API that is missing."
 section: "Service Reference"
 tags:
   - docs
@@ -20,7 +20,7 @@ dead-letter redrive. Queue URLs are minted on whichever origin you called.
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 
 Q=$(aws sqs create-queue --queue-name orders --query QueueUrl --output text)
@@ -66,16 +66,16 @@ override.
 Queue URLs minted elsewhere are always accepted — only the queue name is read
 out of the URL. For a URL that crosses the boundary out of band, such as a CDK
 deploy baking `queue.queueUrl` into a function's environment, see
-[Lambda: reaching Overcast from function code](lambda.md#reaching-overcast-from-function-code).
+[Lambda: reaching Overcast from function code](./lambda.md#reaching-overcast-from-function-code).
 
 ## Differences from AWS
 
-| Behaviour                            | On AWS                                        | Here                                                    |
-| ------------------------------------ | --------------------------------------------- | --------------------------------------------------------- |
-| `AddPermission` / `RemovePermission` | Manage a queue's access policy                | Not implemented — `501 Not Implemented`                    |
-| `redrivePermission`                  | Restricts which queues may redrive from a DLQ | Accepted, validated and round-tripped, but not enforced    |
-| Message attribute types              | `Binary` and `Number` values are validated    | Stored as given; the `DataType` is not checked             |
-| Queue URL host                       | A fixed regional endpoint                     | The origin of the request that minted it                   |
+| Area                                 | On AWS                                        | Overcast                                                |
+| ------------------------------------ | --------------------------------------------- | ------------------------------------------------------- |
+| `AddPermission` / `RemovePermission` | Manage a queue's access policy                | Not implemented — `501 Not Implemented`                 |
+| `redrivePermission`                  | Restricts which queues may redrive from a DLQ | Accepted, validated and round-tripped, but not enforced |
+| Message attribute types              | `Binary` and `Number` values are validated    | Stored as given; the `DataType` is not checked          |
+| Queue URL host                       | A fixed regional endpoint                     | The origin of the request that minted it                |
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -88,8 +88,8 @@ Per-operation status, notes and AWS API links: [SQS operations](sqs/operations.m
 
 ## Related
 
-- [AWS API reference](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/Welcome.html)
-- [Lambda](lambda.md) — event source mappings poll these queues
-- [SNS](sns.md) — `sqs` subscriptions deliver into them
-- [All service pages](README.md)
+- [Lambda](./lambda.md) — event source mappings poll these queues
+- [SNS](./sns.md) — `sqs` subscriptions deliver into them
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/Welcome.html)

@@ -20,7 +20,7 @@ and run command all return `501 Not Implemented`.
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 
 aws ssm put-parameter --name /app/db/url --type String --value postgres://localhost/app
@@ -44,12 +44,14 @@ Every `PutParameter` — overwrite included — creates a new version, and
 
 ## Differences from AWS
 
-| Behaviour                   | On AWS                                                               | Here                                                                       |
-| --------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `SecureString`              | Encrypted with a KMS key                                             | Stored in plaintext; masked in the response unless `WithDecryption` is set   |
-| Version labels              | `LabelParameterVersion` / `UnlabelParameterVersion`                  | Not implemented — `501 Not Implemented`                                      |
-| `RemoveTagsFromResource`    | Removes tag keys                                                     | Not implemented — `501 Not Implemented`                                      |
-| The rest of Systems Manager | Documents, automation, run command, patch baselines, service settings | Not implemented — `501 Not Implemented`                                      |
+| Area                        | On AWS                                                                | Overcast                                                                   |
+| --------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `SecureString`              | Encrypted with a KMS key                                              | Stored in plaintext; masked in the response unless `WithDecryption` is set |
+| Version labels              | `LabelParameterVersion` / `UnlabelParameterVersion`                   | Not implemented — `501 Not Implemented`                                    |
+| `RemoveTagsFromResource`    | Removes tag keys                                                      | Not implemented — `501 Not Implemented`                                    |
+| The rest of Systems Manager | Documents, automation, run command, patch baselines, service settings | Not implemented — `501 Not Implemented`                                    |
+
+## Gotchas
 
 > [!CAUTION]
 > A `SecureString` is not secure here. `WithDecryption: true` returns the
@@ -66,7 +68,7 @@ Per-operation status, notes and AWS API links: [SSM operations](ssm/operations.m
 
 ## Related
 
-- [AWS API reference](https://docs.aws.amazon.com/systems-manager/latest/APIReference/Welcome.html)
-- [Secrets Manager](secretsmanager.md) — versioning, rotation and resource policies
-- [All service pages](README.md)
+- [Secrets Manager](./secretsmanager.md) — versioning, rotation and resource policies
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/systems-manager/latest/APIReference/Welcome.html)

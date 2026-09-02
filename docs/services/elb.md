@@ -24,7 +24,7 @@ deployed behind one reachable at the URL it was given.
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text)
 SUBNET=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC" --query 'Subnets[0].SubnetId' --output text)
@@ -96,7 +96,7 @@ Per-operation status, notes and AWS API links: [ELBv2 operations](elb/operations
 
 ## Related
 
-- [AWS API reference](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/Welcome.html)
-- [ECS](ecs.md) — services register their tasks as targets
-- [All service pages](README.md)
+- [ECS](./ecs.md) — services register their tasks as targets
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/Welcome.html)

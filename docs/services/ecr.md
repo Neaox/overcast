@@ -1,6 +1,6 @@
 ---
 title: "ECR — Elastic Container Registry"
-description: "AWS's ECR control-plane API in front of a real Docker registry, so docker push and pull work locally and ECS and Lambda can run what you pushed."
+description: "Quick start, the Docker registry behind the control plane, how images are reconciled and persisted, and why repositoryUri names localhost over plain HTTP."
 section: "Service Reference"
 tags:
   - container
@@ -46,17 +46,17 @@ aws ecr describe-images --repository-name my-app
 
 ## Differences from AWS
 
-| Area | Overcast | AWS |
-| --- | --- | --- |
-| Repository URI host | `localhost:<registryPort>` — the address startup proved the Docker daemon can reach | `{account}.dkr.ecr.{region}.amazonaws.com` |
-| Transport | Plain HTTP | HTTPS |
-| Image scanning | `DescribeImageScanFindings` always reports scanner-unavailable with empty findings | Real findings |
-| Replication, public registries | Not implemented | Supported |
-| Image storage | A Docker volume, reclaimed by Docker rather than by `OVERCAST_DATA_DIR` | Managed by AWS |
+| Area                           | On AWS                                     | Overcast                                                                            |
+| ------------------------------ | ------------------------------------------ | ----------------------------------------------------------------------------------- |
+| Repository URI host            | `{account}.dkr.ecr.{region}.amazonaws.com` | `localhost:<registryPort>` — the address startup proved the Docker daemon can reach |
+| Transport                      | HTTPS                                      | Plain HTTP                                                                          |
+| Image scanning                 | Real findings                              | `DescribeImageScanFindings` always reports scanner-unavailable with empty findings  |
+| Replication, public registries | Supported                                  | Not implemented                                                                     |
+| Image storage                  | Managed by AWS                             | A Docker volume, reclaimed by Docker rather than by `OVERCAST_DATA_DIR`             |
 
 Why the URI is re-minted on every read, why it says `localhost` rather than
 `OVERCAST_HOSTNAME`, and what happens when the fixed port is taken:
-[Limitations](ecr/limitations.md).
+[Limitations](./ecr/limitations.md).
 
 ## Gotchas
 
@@ -70,7 +70,7 @@ Why the URI is re-minted on every read, why it says `localhost` rather than
 > [!CAUTION]
 > Removing the storage volume discards every image pushed to that registry, with
 > no warning and nothing to rebuild them from. See
-> [Troubleshooting](ecr/troubleshooting.md).
+> [Troubleshooting](./ecr/troubleshooting.md).
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -83,8 +83,9 @@ Per-operation status, notes and AWS API links: [ECR operations](ecr/operations.m
 
 ## Related
 
-- [Limitations](ecr/limitations.md) — repository URIs, persistence, image inventory
-- [Troubleshooting](ecr/troubleshooting.md) — leaked containers, reclaiming storage, push failures
+- [ECR limitations](./ecr/limitations.md) — repository URIs, persistence, image inventory
+- [ECR troubleshooting](./ecr/troubleshooting.md) — leaked containers, reclaiming storage, push failures
 - [ECS](./ecs.md) and [Lambda](./lambda.md) — what runs the images
-- [All service pages](README.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/Welcome.html)

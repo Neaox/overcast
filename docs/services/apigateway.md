@@ -17,11 +17,11 @@ REST (v1) and HTTP (v2) APIs are deployed and invoked for real: a request
 routes through the matching method and integration to Lambda, an HTTP backend,
 or a mock response.
 
-**Status:** ⚠️ Partial
+**Status:** ✅ Supported
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 API=$(aws apigateway create-rest-api --name demo --query id --output text)
 ROOT=$(aws apigateway get-rest-api --rest-api-id "$API" --query rootResourceId --output text)
@@ -68,6 +68,18 @@ template, as CDK does, are re-hosted onto a reachable origin by
 | Stages and deployments | Deployments, stages, stage variables, and per-stage routing on both invoke forms |
 | Keys | API keys, usage plans, usage plan keys, and `GetUsage`'s daily `[used, remaining]` log |
 
+## Differences from AWS
+
+| Area | Overcast |
+| --- | --- |
+| Mapping templates | Not evaluated as VTL. A `MOCK` integration returns its integration response's `application/json` template verbatim; other values pass through as-is |
+| Lambda and IAM authorizers | `TOKEN`, `REQUEST` and IAM authorizers are stored but not enforced at request time |
+| Request validation | Request validators are stored but not enforced |
+| WebSocket APIs | `WEBSOCKET` is accepted on creation; execution is not implemented, and the connection-management route returns `501` |
+| Usage counters | In memory, so a restart resets them. Real API Gateway carries a quota across the whole period |
+| Usage plans on HTTP APIs | Nothing is measured — as on AWS, v2 has no API-key or usage-plan concept |
+| `GetUsage` range | A range wider than 400 days is refused with `BadRequestException`; AWS documents no such cap |
+
 ## Usage plan throttling and quotas
 
 A method with `apiKeyRequired: true` resolves the caller's `x-api-key` to an API
@@ -99,18 +111,6 @@ A rejected request consumes neither quota nor a token, matching AWS. A plan
 configuring neither a throttle nor a quota never rejects anything, whatever the
 flag says.
 
-## Differences from AWS
-
-| Area | Overcast |
-| --- | --- |
-| Mapping templates | Not evaluated as VTL. A `MOCK` integration returns its integration response's `application/json` template verbatim; other values pass through as-is |
-| Lambda and IAM authorizers | `TOKEN`, `REQUEST` and IAM authorizers are stored but not enforced at request time |
-| Request validation | Request validators are stored but not enforced |
-| WebSocket APIs | `WEBSOCKET` is accepted on creation; execution is not implemented, and the connection-management route returns `501` |
-| Usage counters | In memory, so a restart resets them. Real API Gateway carries a quota across the whole period |
-| Usage plans on HTTP APIs | Nothing is measured — as on AWS, v2 has no API-key or usage-plan concept |
-| `GetUsage` range | A range wider than 400 days is refused with `BadRequestException`; AWS documents no such cap |
-
 ## Gotchas
 
 > [!WARNING]
@@ -129,7 +129,7 @@ Per-operation status, notes and AWS API links: [API Gateway operations](apigatew
 
 ## Related
 
-- [AWS API reference](https://docs.aws.amazon.com/apigateway/latest/api/Welcome.html)
-- [All service pages](README.md)
-- [Networking and host-based addressing](../networking.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [Networking and host-based addressing](../networking.md)
+- [AWS API reference](https://docs.aws.amazon.com/apigateway/latest/api/Welcome.html)

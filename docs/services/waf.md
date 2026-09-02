@@ -1,6 +1,6 @@
 ---
 title: "WAF — AWS WAF v2"
-description: "Metadata-only WAFv2 Web ACL CRUD for SDK and CloudFormation workflows. Rules are stored and returned verbatim; no request is ever evaluated against them."
+description: "Quick start, the Web ACL and tag operations that work, and why no request is ever evaluated against a stored rule."
 section: "Service Reference"
 tags:
   - aws
@@ -18,7 +18,7 @@ verbatim and never evaluated — nothing is allowed or blocked.
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 
 aws wafv2 create-web-acl \
@@ -39,13 +39,15 @@ aws wafv2 list-web-acls --scope REGIONAL
 
 ## Differences from AWS
 
-| Behaviour        | On AWS                                                     | Here                                              |
-| ---------------- | ---------------------------------------------------------- | ------------------------------------------------- |
-| Rule evaluation  | Requests to API Gateway, CloudFront and ALBs are filtered   | Rules are stored metadata; no request is evaluated |
-| `UpdateWebACL`   | Edits rules and visibility config on an existing ACL         | Not implemented — `501 Not Implemented`            |
-| `LockToken`      | Rejects a stale token with `WAFOptimisticLockException`      | Accepted and ignored                               |
-| Association      | `AssociateWebACL` attaches an ACL to a resource              | Not implemented                                    |
-| WAF Classic      | The `AWSWAF_20150824` API is still served                    | Not implemented — `501 Not Implemented`            |
+| Area            | On AWS                                                    | Overcast                                           |
+| --------------- | --------------------------------------------------------- | -------------------------------------------------- |
+| Rule evaluation | Requests to API Gateway, CloudFront and ALBs are filtered | Rules are stored metadata; no request is evaluated |
+| `UpdateWebACL`  | Edits rules and visibility config on an existing ACL      | Not implemented — `501 Not Implemented`            |
+| `LockToken`     | Rejects a stale token with `WAFOptimisticLockException`   | Accepted and ignored                               |
+| Association     | `AssociateWebACL` attaches an ACL to a resource           | Not implemented                                    |
+| WAF Classic     | The `AWSWAF_20150824` API is still served                 | Not implemented — `501 Not Implemented`            |
+
+## Gotchas
 
 > [!NOTE]
 > Everything unlisted above returns `501 Not Implemented` rather than a
@@ -62,7 +64,7 @@ Per-operation status, notes and AWS API links: [WAF v2 operations](waf/operation
 
 ## Related
 
-- [AWS API reference](https://docs.aws.amazon.com/waf/latest/APIReference/Welcome.html)
-- [Shield](shield.md) — the other half of the same control plane
-- [All service pages](README.md)
+- [Shield](./shield.md) — the other half of the same control plane
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/waf/latest/APIReference/Welcome.html)

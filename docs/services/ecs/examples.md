@@ -124,7 +124,7 @@ Only a volume declared with a name and **no configuration** can be redirected �
 EFS, Docker or `host.sourcePath` volume already names its own storage, and
 overriding it would mean ignoring what the definition asked for. The container
 path and `readOnly` come from the container's own `mountPoints`, exactly as in
-production. Windows paths are normalized (`F:\dev\app` → `/f/dev/app`).
+production. Windows paths are normalised (`F:\dev\app` → `/f/dev/app`).
 
 Anything that cannot be honoured — the flag off, an ambiguous bare tag, an unknown
 or unredirectable volume, a relative path — leaves the task running on the plain

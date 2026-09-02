@@ -35,7 +35,7 @@ the CDK, and the Go, JavaScript, Python, Java, .NET, and Rust SDKs — via the
 
 > [!CAUTION]
 > Overcast is a local development and CI tool only. Never expose it on a public network,
-> use it as a staging environment, or make production go/no-go decisions based on its behavior.
+> use it as a staging environment, or make production go/no-go decisions based on its behaviour.
 > Details: [What Overcast is NOT](#what-overcast-is-not).
 
 ## Contents
@@ -81,7 +81,7 @@ releases once the first one ships. Pin the exact version in CI; use `:latest`
 or `:alpha` to track the newest build.
 
 ```bash
-# Full image (with web UI on :4567)
+# Full image (with web console on :4567)
 docker run --rm -p 4566:4566 -p 4567:4567 ghcr.io/overcast-sh/overcast:latest
 
 # Slim image (CI pipelines, no UI)
@@ -141,7 +141,7 @@ docker run --rm \
   -v ~/.overcast:/data \
   ghcr.io/overcast-sh/overcast:latest
 
-# Slim image (no web UI) — no Docker socket needed when only using
+# Slim image (no web console) — no Docker socket needed when only using
 # non-container services (S3, SQS, DynamoDB, SNS, etc.)
 #
 # The slim image has no SQLite, so "auto" always resolves to memory here and a
@@ -247,7 +247,7 @@ Two binaries are published for every release:
 | Binary      | Platforms                                           | Description                                                                        |
 | ----------- | --------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | `overcast`  | Linux amd64/arm64, macOS amd64/arm64, Windows amd64 | Full binary — emulator + embedded web console + Go BFF. All subcommands available. |
-| `overcastd` | Linux amd64/arm64, macOS amd64/arm64, Windows amd64 | Slim binary — emulator only, no web UI. Smaller footprint for CI and servers.      |
+| `overcastd` | Linux amd64/arm64, macOS amd64/arm64, Windows amd64 | Slim binary — emulator only, no web console. Smaller footprint for CI and servers.      |
 
 Both binaries share the same `overcast serve` entrypoint and respond identically to AWS SDK clients. The only difference is that `overcastd` returns `404` for web console requests.
 
@@ -275,7 +275,7 @@ Download `overcast-windows-amd64.exe` from the releases page and place it anywhe
 
 ```bash
 git clone https://github.com/overcast-sh/overcast.git && cd overcast
-# Full binary (builds web UI first)
+# Full binary (builds web console first)
 cd web && pnpm install --frozen-lockfile && pnpm run build && cd ..
 go build -trimpath -o overcast ./cmd/overcast
 
@@ -287,7 +287,7 @@ go build -trimpath -tags slim,nosqlite -o overcastd ./cmd/overcast
 
 ### Commands
 
-All subcommands are available in both `overcast` and `overcastd` (the web UI is simply absent in the slim binary). Run `overcast --help` or `overcast <command> --help` for the full flag reference, or see the [CLI reference](./docs/cli.md) for every command's flags, defaults, and examples in one place.
+All subcommands are available in both `overcast` and `overcastd` (the web console is simply absent in the slim binary). Run `overcast --help` or `overcast <command> --help` for the full flag reference, or see the [CLI reference](./docs/cli.md) for every command's flags, defaults, and examples in one place.
 
 | Command                       | Description                                                              |
 | ------------------------------ | ---------------------------------------------------------------------------- |
@@ -299,9 +299,9 @@ All subcommands are available in both `overcast` and `overcastd` (the web UI is 
 | `overcast services`           | List enabled services and their emulation tiers                          |
 | `overcast reset`              | Wipe emulated state, all or one service                                  |
 | `overcast config`             | Show the daemon's effective configuration (needs `OVERCAST_DEBUG=true`)  |
-| `overcast env`                | Print AWS environment exports for pointing tools at overcast             |
-| `overcast aws`                | Run the host AWS CLI against overcast, environment scrubbed first        |
-| `overcast import cognito-users` | Import Cognito users from real AWS into overcast                       |
+| `overcast env`                | Print AWS environment exports for pointing tools at Overcast             |
+| `overcast aws`                | Run the host AWS CLI against Overcast, environment scrubbed first        |
+| `overcast import cognito-users` | Import Cognito users from real AWS into Overcast                       |
 | `overcast bridge`             | Publish `.local` domains via mDNS and start a port-80 reverse proxy      |
 | `overcast https`              | One-shot browser-trusted HTTPS setup (CA + trust store + certificate)    |
 | `overcast trust`              | Manage the local trust store for self-signed TLS certificates            |
@@ -429,6 +429,6 @@ Overcast is a **work in progress**, provided **as-is** and on a
 surface, but it is not a perfect replica: there are compatibility gaps we know
 about (documented in the per-service [support matrices](docs/services/)) and
 inevitably some we haven't found yet. Fidelity improves all the time — and
-discrepancy reports are what drive that work. If you find behavior that
+discrepancy reports are what drive that work. If you find behaviour that
 differs from real AWS, please
 [open a compatibility issue](https://github.com/overcast-sh/overcast/issues/new?template=compat_review.md).

@@ -1,6 +1,6 @@
 ---
 title: "Scheduler — Amazon EventBridge Scheduler"
-description: "Schedules and schedule groups with a clock-driven engine that dispatches to the same eight target types EventBridge rules reach."
+description: "Quick start, the expressions and eight target types the engine fires, target parameters, retries and dead-lettering, and why an unfirable target is refused at create time."
 section: "Service Reference"
 tags:
   - docs
@@ -38,7 +38,7 @@ aws sqs receive-message --queue-url "$QUEUE" --wait-time-seconds 20
 | Area | Behaviour |
 | --- | --- |
 | Schedules and groups | Full CRUD and tagging. `default` is auto-seeded and cannot be deleted; deleting a group deletes the schedules in it, as AWS does. |
-| Expressions | `rate(...)`, `at(...)` and AWS's six-field `cron(...)` — the same parser EventBridge rules use, including `L`, `LW`, `<day>W`, `<day>L`, `<day>#<n>` and the three-letter month and day names. |
+| Expressions | `rate(...)`, `at(...)` and AWS's six-field `cron(...)` — the same parser [EventBridge rules](./eventbridge.md#gotchas) use, down to the refusal of the five-field Unix form. |
 | Engine | A 1-second ticker hands each due schedule to a pool of delivery workers, so a slow or retrying target delays only its own schedule. A schedule is never in flight twice, so its firings stay in order. |
 | Targets | Lambda, SQS, SNS, Step Functions, Kinesis, Firehose, ECS `RunTask` and EventBridge event buses — through the same dispatcher EventBridge rules and Pipes use, so a target ARN behaves identically wherever it is used. |
 | Target parameters | `SqsParameters.MessageGroupId`, `KinesisParameters.PartitionKey`, `EventBridgeParameters` (`Source`, `DetailType`), and `EcsParameters` (`TaskDefinitionArn`, `TaskCount`, `LaunchType`, `PlatformVersion`, `Group`, `NetworkConfiguration`). |
@@ -48,14 +48,14 @@ aws sqs receive-message --queue-url "$QUEUE" --wait-time-seconds 20
 
 ## Differences from AWS
 
-| Area | Overcast | AWS |
-| --- | --- | --- |
-| Target types | Eight, validated at `CreateSchedule`/`UpdateSchedule` | ~270, via templated and universal (`aws-sdk:`) targets |
-| Retries | Back to back, no backoff, capped at 6 total attempts. No `RetryPolicy` means **one** attempt | Up to 185 attempts with backoff |
-| `FlexibleTimeWindow` | Stored and returned; a schedule always fires at its exact due tick | Jittered across the window |
-| `ScheduleExpressionTimezone` | Stored and returned; expressions evaluate against the emulator's clock | Evaluated in the named zone |
-| `KmsKeyArn` | An association only; schedule data is held in plaintext | Encrypted |
-| List responses | Return the full stored object rather than AWS's summary shape — a superset, so an SDK deserialises it unchanged | `ScheduleSummary` / `ScheduleGroupSummary` |
+| Area                         | On AWS                                                 | Overcast                                                                                                        |
+| ---------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Target types                 | ~270, via templated and universal (`aws-sdk:`) targets | Eight, validated at `CreateSchedule`/`UpdateSchedule`                                                           |
+| Retries                      | Up to 185 attempts with backoff                        | Back to back, no backoff, capped at 6 total attempts. No `RetryPolicy` means **one** attempt                    |
+| `FlexibleTimeWindow`         | Jittered across the window                             | Stored and returned; a schedule always fires at its exact due tick                                              |
+| `ScheduleExpressionTimezone` | Evaluated in the named zone                            | Stored and returned; expressions evaluate against the emulator's clock                                          |
+| `KmsKeyArn`                  | Encrypted                                              | An association only; schedule data is held in plaintext                                                         |
+| List responses               | `ScheduleSummary` / `ScheduleGroupSummary`             | Return the full stored object rather than AWS's summary shape — a superset, so an SDK deserialises it unchanged |
 
 A target type Overcast cannot fire is **rejected at create and update** with a
 `ValidationException`, rather than accepted and dropped at fire time — as are an
@@ -74,11 +74,6 @@ expression the engine cannot evaluate is refused for the same reason.
 > Read the schedule, change what you mean to change, and send the result back.
 > Only the name, group, ARN and `CreationDate` survive regardless.
 
-> [!IMPORTANT]
-> `cron(...)` takes AWS's **six** fields, and day-of-week is 1-7 from Sunday, not
-> 0-6 — so `1` is Sunday and `7` is Saturday. The five-field Unix form is refused,
-> as it is on AWS: every five minutes is `cron(*/5 * * * ? *)`.
-
 <!-- BEGIN overcast:capabilities -->
 
 ## Operations
@@ -92,6 +87,7 @@ Per-operation status, notes and AWS API links: [Scheduler operations](scheduler/
 
 - [EventBridge](./eventbridge.md) — the same targets, driven by event patterns
 - [Pipes](./pipes.md) — the same targets, driven by a source
-- [AWS API reference](https://docs.aws.amazon.com/scheduler/latest/APIReference/Welcome.html)
-- [All service pages](README.md)
+- [Step Functions](./stepfunctions.md) — one of the eight target types
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/scheduler/latest/APIReference/Welcome.html)

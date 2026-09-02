@@ -12,7 +12,7 @@ tags:
 # Cognito limitations
 
 Divergences from AWS, in full. The summary is on the
-[Cognito service page](../cognito.md).
+[Cognito](../cognito.md).
 
 ## Lambda triggers
 

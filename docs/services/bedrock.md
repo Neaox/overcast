@@ -1,6 +1,6 @@
 ---
 title: "Bedrock — Amazon Bedrock Runtime"
-description: "Bedrock Runtime answers Converse and InvokeModel from a canned response. No model is emulated, so token counts and latency are zero and the text is fixed."
+description: "Quick start, the two Runtime operations and the modelId forms accepted, and what a canned response means for token counts, latency and streaming."
 section: "Service Reference"
 tags:
   - amazon
@@ -19,7 +19,7 @@ this exercises your wiring — not your prompts.
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 
 aws bedrock-runtime converse \
@@ -40,13 +40,15 @@ required, with fixed assistant text in `output.message.content[0].text`.
 
 ## Differences from AWS
 
-| Behaviour          | On AWS                                            | Here                                                     |
+| Area               | On AWS                                            | Overcast                                                 |
 | ------------------ | ------------------------------------------------- | -------------------------------------------------------- |
 | Inference          | The named model runs                              | Nothing runs; the text is fixed regardless of the prompt |
 | Usage metrics      | Real token counts and `metrics.latencyMs`         | All zero                                                 |
 | `InvokeModel` body | The model's own schema                            | One `overcastEmulator` field                             |
-| Streaming          | `InvokeModelWithResponseStream`, `ConverseStream` | Not implemented — `501 Not Implemented`                   |
-| `CountTokens`      | Counts tokens for a model                         | Not implemented — `501 Not Implemented`                   |
+| Streaming          | `InvokeModelWithResponseStream`, `ConverseStream` | Not implemented — `501 Not Implemented`                  |
+| `CountTokens`      | Counts tokens for a model                         | Not implemented — `501 Not Implemented`                  |
+
+## Gotchas
 
 > [!TIP]
 > `InvokeModel`'s body is opaque on AWS too — its schema belongs to the model,
@@ -64,6 +66,6 @@ Per-operation status, notes and AWS API links: [Bedrock operations](bedrock/oper
 
 ## Related
 
-- [AWS API reference](https://docs.aws.amazon.com/bedrock/latest/APIReference/)
-- [All service pages](README.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/bedrock/latest/APIReference/)

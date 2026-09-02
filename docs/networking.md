@@ -56,7 +56,7 @@ Real AWS splits addressing two ways, and Overcast supports both:
 | S3 (virtual-hosted style) | `{bucket}.s3[.{region}].{base}/...` or `{bucket}.{base}/...` | Both forms are supported. The second is what an AWS SDK emits against a custom endpoint with path-style disabled, and the only form CDK's asset publisher uses. See [sdk-cli.md](./sdk-cli.md#s3-addressing-styles) and [cdk.md](./cdk.md#s3-asset-upload-fails-on-windows). |
 
 Every Host-routed request is rewritten internally onto the same handlers
-path-style requests use, so behavior (authorizers, stage variables,
+path-style requests use, so behaviour (authorizers, stage variables,
 integration dispatch, event publishing) is identical either way — pick
 whichever addressing style your client/SDK produces.
 
@@ -90,6 +90,7 @@ hostname space, so Overcast resolves them with a single rule, applied in order:
 The order is fixed by this rule, not by internal configuration, so the same
 Host always resolves the same way.
 
+> [!IMPORTANT]
 > **Reserved service labels.** A bucket name whose **second or later**
 > dot-segment is `execute-api`, `lambda-url`, `appsync-api`,
 > `appsync-realtime-api` or `cloudfront` cannot be addressed by rule 2 — `my.execute-api.localhost` is an API Gateway invoke.
@@ -164,7 +165,7 @@ Overcast is a development tool and not a security boundary:
   `NONE`, regardless of what was configured.
 - **`Cors` is stored, returned, and reflected onto invoke responses**
   (`Access-Control-Allow-*` headers) — this is the one piece of CORS
-  behavior actually applied, since it's cheap and matters for
+  behaviour actually applied, since it's cheap and matters for
   browser-based testing against a function URL.
 - **`InvokeMode: RESPONSE_STREAM` is accepted but always behaves as
   `BUFFERED`** — there is no streaming function-URL invocation path in this
@@ -172,7 +173,7 @@ Overcast is a development tool and not a security boundary:
 - **`Qualifier` is stored for API-shape correctness but not enforced against
   invocation** — Overcast's Lambda emulator already treats aliases/versions
   as metadata rather than separate executable snapshots (see
-  `InvokeFunction`'s behavior), and function URLs follow the same rule.
+  `InvokeFunction`'s behaviour), and function URLs follow the same rule.
 
 ---
 
@@ -204,7 +205,8 @@ convenience vs. offline-friendliness:
    your own domain to `127.0.0.1`. More setup, but works fully offline, on
    every OS, and under restrictive network policies.
 
-> **Caveat: public wildcard DNS needs internet access, and may be blocked.**
+> [!WARNING]
+> **Public wildcard DNS needs internet access, and may be blocked.**
 >
 > - Option 1 needs a DNS lookup to a public resolver, so it will not work in
 >   an offline or air-gapped environment. Use option 2 (Linux/macOS only) or
@@ -550,7 +552,7 @@ that every running container is attached to.
 
 ---
 
-## See also
+## Related
 
 - [Using AWS SDKs and CLI](./sdk-cli.md) — endpoint configuration for every SDK
 - [Using AWS CDK](./cdk.md) — the S3-specific virtual-hosted-addressing / Windows DNS issue

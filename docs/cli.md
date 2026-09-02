@@ -272,7 +272,7 @@ overcast import cognito-users \
 ## Networking and TLS
 
 `https` and `trust` have a full guide of their own —
-[HTTPS and HTTP/2](./https.md). Summarized here:
+[HTTPS and HTTP/2](./https.md). Summarised here:
 
 ### `overcast bridge`
 
@@ -317,7 +317,7 @@ overcast serve --bridge           # or run it inline with the daemon
 ### `overcast https enable|disable|status`
 
 One-shot browser-trusted HTTPS setup: creates (or fetches, with `--endpoint`)
-the local overcast CA, installs it into the system trust store, and mints the
+the local Overcast CA, installs it into the system trust store, and mints the
 server certificate.
 
 ```bash
@@ -333,7 +333,7 @@ the remote host could then impersonate any TLS site to this machine).
 
 ### `overcast trust install|uninstall|status`
 
-Lower-level management of the overcast CA in the system trust store —
+Lower-level management of the Overcast CA in the system trust store —
 `https enable`/`disable` build on these. Useful when scripting the pieces
 separately.
 

@@ -1,6 +1,6 @@
 ---
 title: "AppConfig — AWS AppConfig"
-description: "The AppConfig control plane: applications, environments, configuration profiles and hosted configuration versions, served at AWS's own REST-JSON paths."
+description: "Quick start, the application/environment/profile/hosted-version hierarchy, the REST-JSON bindings and pagination, and why an AppConfig call must be signed as appconfig."
 section: "Service Reference"
 tags:
   - appconfig
@@ -45,13 +45,13 @@ aws appconfig create-hosted-configuration-version --application-id "$APP" \
 
 ## Differences from AWS
 
-| Area | Overcast | AWS |
-| --- | --- | --- |
-| Region scoping | Resources are not region-scoped — an application created in one region is visible in another | Region-scoped |
-| Deployments and deployment strategies | Not modelled. A hosted version is readable through [AppConfigData](./appconfigdata.md) as soon as it is created — nothing has to be deployed first | Percentage-based rollout over time |
-| Updating an environment or a profile | Only `UpdateApplication` exists; the other update operations answer `501` | Supported |
-| Hosted version size | Capped at 1 MB, answering `PayloadTooLargeException` | Same cap |
-| Other operations AWS models | A JSON `501 Not Implemented` | Implemented |
+| Area                                  | On AWS                             | Overcast                                                                                                                                           |
+| ------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Region scoping                        | Region-scoped                      | Resources are not region-scoped — an application created in one region is visible in another                                                       |
+| Deployments and deployment strategies | Percentage-based rollout over time | Not modelled. A hosted version is readable through [AppConfigData](./appconfigdata.md) as soon as it is created — nothing has to be deployed first |
+| Updating an environment or a profile  | Supported                          | Only `UpdateApplication` exists; the other update operations answer `501`                                                                          |
+| Hosted version size                   | Same cap                           | Capped at 1 MB, answering `PayloadTooLargeException`                                                                                               |
+| Other operations AWS models           | Implemented                        | A JSON `501 Not Implemented`                                                                                                                       |
 
 ## Gotchas
 
@@ -75,6 +75,6 @@ Per-operation status, notes and AWS API links: [AppConfig operations](appconfig/
 
 - [AppConfigData](./appconfigdata.md) — the runtime data plane that reads these configurations
 - [AppRegistry](./appregistry.md) — the other service on `/applications`
-- [AWS API reference](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/)
-- [All service pages](README.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/)

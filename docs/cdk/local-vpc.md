@@ -14,7 +14,7 @@ tags:
 
 CDK VPC lookups assume a stable environment, but Overcast's local VPCs get new `vpc-*`, `subnet-*`, and `rtb-*` IDs on every teardown — nothing outside CDK can track them without going stale. The fix is to stop importing: give the local environment its own stack that **creates** the VPC, so CDK owns the IDs and a teardown/redeploy cycle just produces new ones it already knows.
 
-## Recommended Pattern
+## The recommended pattern
 
 1. Put local-only resources in their own stack — a `LocalResourcesStack` that creates the VPC.
 2. Have the local stage create that stack and pass its VPC to the application stacks.
@@ -23,7 +23,7 @@ CDK VPC lookups assume a stable environment, but Overcast's local VPCs get new `
 
 The environment-specific decision lives in one place — which stack the stage creates — and every other stack is written once.
 
-## The Local Resources Stack
+## The local resources stack
 
 ```typescript
 import * as cdk from "aws-cdk-lib";
@@ -56,9 +56,10 @@ This is an ordinary CDK stack, deployed by `cdk deploy` like any other. It uses 
 
 Because the VPC is created rather than imported, CDK also emits the subnet metadata it later relies on: each subnet is tagged `aws-cdk:subnet-type` and `aws-cdk:subnet-name`, public subnets get a `0.0.0.0/0` route to the internet gateway, and private subnets get one to the NAT gateway. Constructs that default to private subnets — scheduled Fargate tasks, VPC-attached Lambda functions — find a private-with-egress subnet group without any extra tagging work.
 
+> [!NOTE]
 > Overcast stores NAT gateways and route tables as metadata. They are enough for CDK's subnet classification, but they do not imply real NAT data-plane routing. See [EC2 limitations](../services/ec2.md#differences-from-aws).
 
-## Wiring It Up In The Stage
+## Wiring it up in the stage
 
 The stage picks which stack supplies the VPC:
 
@@ -104,7 +105,7 @@ export class NetworkStack extends cdk.Stack {
 
 Passing a VPC between stacks in the same stage is ordinary CDK: the consuming stack references it through `Fn::ImportValue`, and CDK adds the stack dependency for you. Overcast's CloudFormation engine resolves cross-stack exports — see the [CloudFormation service reference](../services/cloudformation.md).
 
-## Application Stacks Stay Environment-Agnostic
+## Application stacks stay environment-agnostic
 
 ```typescript
 interface WorkerStackProps extends cdk.StackProps {
@@ -122,7 +123,7 @@ class WorkerStack extends cdk.Stack {
 
 No `isLocal` flag, no branch on account or region, no local metadata file to load. The stack is identical in every environment; only the stage differs.
 
-## Why Not Create The VPC At Stage Scope?
+## Why not create the VPC at stage scope?
 
 It is tempting to skip the extra stack and put the VPC directly in the stage:
 
@@ -147,7 +148,7 @@ Vpc2 at 'Local/LocalVpc' should be created in the scope of a Stack, but no Stack
 
 A stage is an orchestration boundary, not a CloudFormation stack. VPC constructs — created or imported — hold stack-scoped tokens and must live under a `Stack`. `Vpc.fromVpcAttributes` at stage scope fails the same way. That is what the local resources stack is for: the stage owns the local/prod decision, a stack owns the constructs.
 
-## Availability Zones
+## Availability zones
 
 `ec2.Vpc` reads its availability zones from the stack, and the stack answers differently depending on whether it has a concrete environment:
 
@@ -158,7 +159,7 @@ Leaving the local stage environment-agnostic is the smaller path. `cdk deploy` s
 
 If you do want a concrete `env` on the local stage, run synth against a bootstrapped Overcast so the lookup resolves: `DescribeAvailabilityZones` is supported and returns three zones per region. The resulting `availability-zones:*` context entry is stable across teardowns in a way `vpc-provider:*` entries are not.
 
-## Importing A VPC Created Outside CDK
+## Importing a VPC created outside CDK
 
 If something other than CDK creates the local VPC, the import options are:
 
@@ -221,9 +222,9 @@ npx cdk context --clear
 
 A local resources stack avoids the situation entirely: no lookup, so no cache to go stale.
 
-## Related Docs
+## Related
 
 - [Using AWS CDK](../cdk.md) — bootstrap and deploy CDK stacks against Overcast.
-- [EC2 / VPC service reference](../services/ec2.md) — VPC support, Docker-backed network behavior, and limitations.
+- [EC2 / VPC service reference](../services/ec2.md) — VPC support, Docker-backed network behaviour, and limitations.
 - [CloudFormation service reference](../services/cloudformation.md) — supported resource provisioning through CDK/CloudFormation.
 - [Using AWS SDKs and CLI](../sdk-cli.md) — endpoint and credential configuration for local AWS clients.

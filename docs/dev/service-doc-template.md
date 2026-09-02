@@ -36,11 +36,12 @@ constraint.>
 
 ## What works
 
-<Implemented behaviours that matter — not the operation list. Table or bullets.>
+<Implemented behaviours that matter — not the operation list. `| Area | Behaviour |`.>
 
 ## Differences from AWS
 
-<Divergences, as a table. Long list? Move it to <key>/limitations.md and link.>
+<Divergences, as `| Area | On AWS | Overcast |`. Long list? Move it to
+<key>/limitations.md and link.>
 
 ## Gotchas
 
@@ -59,6 +60,21 @@ constraint.>
 
 - <Links out.>
 ```
+
+**Quick start.** Open the code block with `export AWS_ENDPOINT_URL=http://localhost:4566`
+and nothing else — credentials, region and per-language client setup belong to
+[Using AWS SDKs and CLI](../sdk-cli.md). Shell blocks are ` ```bash `. End on the
+call that proves it worked.
+
+**Differences from AWS.** `| Area | On AWS | Overcast |`, AWS before Overcast.
+Drop the middle column when the rows genuinely have no AWS half to state —
+`| Area | Overcast |` — rather than inventing one.
+
+**Related.** One link per bullet, in this order: this page's own sub-pages
+(limitations, troubleshooting, examples), sibling service pages,
+`[All service pages](./README.md)`, `[Service names and state
+overrides](../configuration.md#service-names)`, guides, and the AWS API
+reference last. Same-directory targets carry a `./` prefix.
 
 **Required:** `Quick start`, `Operations`, `Related`. The rest are optional —
 write one when there is something to say, not to fill the outline. Sections you
@@ -90,14 +106,20 @@ which service they are looking at.
 
 **Status line.** One of these, exactly, directly under the opening sentence:
 
-| Token                       | Means                                               |
-| --------------------------- | --------------------------------------------------- |
-| `**Status:** ✅ Supported`   | Works for normal SDK and CLI use.                   |
-| `**Status:** ⚠️ Partial`     | Works with documented caveats or missing edge cases. |
-| `**Status:** 🚧 WIP`         | Present, still moving.                              |
-| `**Status:** ❌ Unsupported` | Modelled but not implemented.                        |
+| Token                       | Means                                                             |
+| --------------------------- | ----------------------------------------------------------------- |
+| `**Status:** ✅ Supported`   | Works for normal SDK and CLI use.                                 |
+| `**Status:** ⚠️ Partial`     | Works with documented caveats or missing edge cases.               |
+| `**Status:** 🧊 Inert`       | Accepted and answered correctly, but nothing happens as a result. |
+| `**Status:** 🚧 WIP`         | Present, still moving.                                            |
+| `**Status:** ❌ Unsupported` | Modelled but not implemented.                                      |
 
 Same vocabulary as the per-operation table, so a reader learns it once.
+
+The page-level choice is not a judgment call: it follows the service's coverage
+tier, which `cmd/capgen` declares and the generated service index renders.
+**Comprehensive → ✅ Supported; Core CRUD, Minimal and Stub → ⚠️ Partial.** A
+page whose status disagrees with its tier is a bug in one of the two.
 
 **Alerts.** GitHub alert syntax, rendered as callouts by both the console docs
 modal and the website. One or two per page — a page of callouts is a page with

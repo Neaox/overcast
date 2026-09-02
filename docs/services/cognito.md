@@ -1,6 +1,6 @@
 ---
 title: "Cognito — Amazon Cognito User Pools"
-description: "User pools with real RS256 JWTs, a JWKS endpoint, OIDC discovery, a browser hosted-UI, TOTP and WebAuthn MFA, and Lambda triggers. Identity pools are not emulated."
+description: "Quick start, the auth flows, challenges and MFA that work, how tokens and JWKS discovery are served, the managed login pages, and what identity pools and CUSTOM_AUTH triggers do not do."
 section: "Service Reference"
 tags:
   - amazon
@@ -20,7 +20,7 @@ endpoint. Identity pools (`cognito-identity`) are not emulated.
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 
 POOL=$(aws cognito-idp create-user-pool --pool-name app --query UserPool.Id --output text)
@@ -81,16 +81,16 @@ AWS's hosted-UI URLs.
 
 ## Differences from AWS
 
-| Behaviour            | On AWS                                          | Here                                                          |
-| -------------------- | ----------------------------------------------- | --------------------------------------------------------------- |
-| Identity pools       | `cognito-identity` federates to AWS credentials | Not emulated at all                                             |
-| Message delivery     | Email and SMS reach the user                    | Captured in the Inbox                                           |
+| Area                 | On AWS                                          | Overcast                                                            |
+| -------------------- | ----------------------------------------------- | ------------------------------------------------------------------- |
+| Identity pools       | `cognito-identity` federates to AWS credentials | Not emulated at all                                                 |
+| Message delivery     | Email and SMS reach the user                    | Captured in the Inbox                                               |
 | Password storage     | Never retrievable                               | Bcrypt at minimum cost, and an emulator route returns the plaintext |
-| Hosted-UI URL        | `{domain}.auth.{region}.amazoncognito.com`      | A path under the emulator's own origin                          |
-| CUSTOM_AUTH triggers | `DefineAuthChallenge` and friends run           | Not invoked — the flow works, the triggers do not               |
+| Hosted-UI URL        | `{domain}.auth.{region}.amazoncognito.com`      | A path under the emulator's own origin                              |
+| CUSTOM_AUTH triggers | `DefineAuthChallenge` and friends run           | Not invoked — the flow works, the triggers do not                   |
 
 The full list, including which trigger fires on which call, is in
-[Limitations](cognito/limitations.md).
+[Limitations](./cognito/limitations.md).
 
 ## Gotchas
 
@@ -101,7 +101,7 @@ The full list, including which trigger fires on which call, is in
 
 > [!TIP]
 > Moving off a real pool? `overcast import cognito-users` copies users across —
-> see [Examples](cognito/examples.md).
+> see [Examples](./cognito/examples.md).
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -114,8 +114,9 @@ Per-operation status, notes and AWS API links: [Cognito operations](cognito/oper
 
 ## Related
 
-- [Cognito limitations](cognito/limitations.md) · [Cognito examples](cognito/examples.md)
-- [AWS API reference](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/Welcome.html)
-- [SES](ses.md) — where pool mail lands
-- [All service pages](README.md)
+- [Cognito limitations](./cognito/limitations.md)
+- [Cognito examples](./cognito/examples.md)
+- [SES](./ses.md) — where pool mail lands
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/Welcome.html)

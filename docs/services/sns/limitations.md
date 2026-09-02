@@ -12,7 +12,7 @@ tags:
 # SNS limitations
 
 Divergences from AWS, in full. The summary is on the
-[SNS service page](../sns.md).
+[SNS](../sns.md).
 
 ## Subscriptions
 

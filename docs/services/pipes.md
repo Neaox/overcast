@@ -1,6 +1,6 @@
 ---
 title: "Pipes — Amazon EventBridge Pipes"
-description: "Point-to-point wiring from three source types through an optional Lambda enrichment to seven targets, with real polling, retries and dead-lettering."
+description: "Quick start, the source, enrichment and target combinations accepted, batching, transformation and partial batch failures, and the fields dropped on decode."
 section: "Service Reference"
 tags:
   - docs
@@ -57,16 +57,16 @@ do nothing.
 
 ## Differences from AWS
 
-| Area | Overcast | AWS |
-| --- | --- | --- |
-| `FilterCriteria` | Rejected outright rather than stored and ignored — filter inside a Lambda enrichment instead | Server-side filtering |
-| Stream retries | Capped at 5 retries (an explicit `0` means one attempt); unset means the cap, standing in for AWS's "retry until the record expires" | Retry until expiry |
-| Dead-letter payload | The source records themselves, which is what makes the batch replayable without a second read | A shard/sequence-range failure envelope |
-| DynamoDB Streams batching | Bus-driven one record at a time, so always a batch of one | `BatchSize` applies |
-| SQS dead-lettering | Left to the queue's own `RedrivePolicy`, as on AWS — `DeadLetterConfig` does not apply to an SQS source | Same |
-| `ParallelizationFactor` | Stored and never read | Honoured |
-| `LogConfiguration`, `KmsKeyIdentifier` | Not modelled — discarded on decode and absent from `DescribePipe` | Stored and honoured |
-| `RoleArn` | Required, as AWS requires it, but never evaluated | Enforced |
+| Area                                   | On AWS                                  | Overcast                                                                                                                             |
+| -------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `FilterCriteria`                       | Server-side filtering                   | Rejected outright rather than stored and ignored — filter inside a Lambda enrichment instead                                         |
+| Stream retries                         | Retry until expiry                      | Capped at 5 retries (an explicit `0` means one attempt); unset means the cap, standing in for AWS's "retry until the record expires" |
+| Dead-letter payload                    | A shard/sequence-range failure envelope | The source records themselves, which is what makes the batch replayable without a second read                                        |
+| DynamoDB Streams batching              | `BatchSize` applies                     | Bus-driven one record at a time, so always a batch of one                                                                            |
+| SQS dead-lettering                     | Same                                    | Left to the queue's own `RedrivePolicy`, as on AWS — `DeadLetterConfig` does not apply to an SQS source                              |
+| `ParallelizationFactor`                | Honoured                                | Stored and never read                                                                                                                |
+| `LogConfiguration`, `KmsKeyIdentifier` | Stored and honoured                     | Not modelled — discarded on decode and absent from `DescribePipe`                                                                    |
+| `RoleArn`                              | Enforced                                | Required, as AWS requires it, but never evaluated                                                                                    |
 
 Once a stream source's retries are exhausted the batch goes to the source's
 `DeadLetterConfig` SQS queue or SNS topic if one is configured, and is otherwise
@@ -100,6 +100,6 @@ Per-operation status, notes and AWS API links: [Pipes operations](pipes/operatio
 
 - [EventBridge](./eventbridge.md) — the same targets, driven by event patterns
 - [Scheduler](./scheduler.md) — the same targets, driven by a clock
-- [AWS API reference](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/Welcome.html)
-- [All service pages](README.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/Welcome.html)

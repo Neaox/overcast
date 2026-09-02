@@ -12,7 +12,7 @@ tags:
 # IAM troubleshooting
 
 The errors that stop a local run, and what to do about each. Back to the
-[IAM service page](../iam.md).
+[IAM](../iam.md).
 
 ## `DeleteConflict` (409) deleting a user, role, group or policy
 
@@ -68,7 +68,7 @@ order puts instance profiles before their roles. See
 **Cause.** Either the policy genuinely does not allow the action, or it names
 an action prefix Overcast does not evaluate under. The prefix is the one AWS
 uses, which differs from the service key for ten services — see
-[the table on the service page](../iam.md#request-time-enforcement-opt-in).
+[IAM § Request-time enforcement](../iam.md#request-time-enforcement-opt-in).
 
 Enforcement is fail-closed, so an unsigned request, an unparseable policy, or a
 policy construct the evaluator does not implement also denies. The reason is

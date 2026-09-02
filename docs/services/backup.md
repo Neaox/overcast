@@ -1,6 +1,6 @@
 ---
 title: "Backup — AWS Backup"
-description: "Backup vaults and plans as control-plane records, with tagging. No backup or restore job ever runs, so a vault holds no recovery points."
+description: "Quick start, the vault, plan and tag operations that work, and everything that never runs: no backup or restore jobs, no recovery points, no vault lock."
 section: "Service Reference"
 tags:
   - aws
@@ -45,15 +45,17 @@ aws backup list-backup-vaults
 
 ## Differences from AWS
 
-| Difference | Detail |
-| --- | --- |
-| Nothing is backed up | Rules are stored, never fired; there are no backup jobs, restore jobs or copy jobs |
-| No recovery points | A vault's `NumberOfRecoveryPoints` is always zero, and the recovery-point operations are not implemented |
-| No vault lock | `Locked` is always false and the retention members are absent |
-| No sharing | Every vault is a standard unshared vault, so `ListBackupVaults --shared` lists none |
-| One plan version | Only the current version is kept — `GetBackupPlan` with an older `VersionId` is a miss |
-| Plans delete outright | Nothing is tombstoned, so `ListBackupPlans --include-deleted` adds nothing |
-| `AdvancedBackupSettings` dropped | Neither stored nor returned |
+| Area                             | Overcast                                                                                                 |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Nothing is backed up             | Rules are stored, never fired; there are no backup jobs, restore jobs or copy jobs                       |
+| No recovery points               | A vault's `NumberOfRecoveryPoints` is always zero, and the recovery-point operations are not implemented |
+| No vault lock                    | `Locked` is always false and the retention members are absent                                            |
+| No sharing                       | Every vault is a standard unshared vault, so `ListBackupVaults --shared` lists none                      |
+| One plan version                 | Only the current version is kept — `GetBackupPlan` with an older `VersionId` is a miss                   |
+| Plans delete outright            | Nothing is tombstoned, so `ListBackupPlans --include-deleted` adds nothing                               |
+| `AdvancedBackupSettings` dropped | Neither stored nor returned                                                                              |
+
+## Gotchas
 
 > [!NOTE]
 > Tags are stored inline on the vault or plan record, so deleting the resource
@@ -70,6 +72,6 @@ Per-operation status, notes and AWS API links: [Backup operations](backup/operat
 
 ## Related
 
-- [AWS API reference](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_Reference.html)
-- [All service pages](README.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_Reference.html)
