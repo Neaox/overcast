@@ -252,17 +252,14 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [networking] a Docker network Overcast could not read, or that is no longer there, is no longer reported as correct.
   an inspect that failed for any reason other than "no such network" fell straight into the create, and Docker returns an existing network *unchanged* — so a drifted network stayed drifted while `/_overcast/health` showed no mismatch, no advisory, and the isolation this run asked for rather than the one the network had
-  a failed read is retried once, a blind create is verified rather than trusted, and a network that still cannot be read is reported as unverified: health degrades, the advisory fires, and the reason is quoted
+  a failed read is retried once, and a network that still cannot be read is reported as unverified: health degrades, the advisory fires, and the reason is quoted
+  every create is verified afterwards, whichever way it got there — a create issued after "no such network" was returned on without a second look, and Docker resolves a name conflict by handing back the existing network *unchanged*, so a network another process created between the two calls was reported as freshly built to this configuration, drift and all. It costs one inspect per network per start, and finds nothing on the ordinary path
   a destroyed network is dropped from the report when the Docker watcher sees it go, and a deleted VPC takes its network out with it — except where a sharer on the `shared` strategy still has it. The report used to keep the last thing Overcast knew about every network forever, so the advisory telling you to run `overcast network reset` outlived the reset that fixed it
   `overcast network reset` says when it could not judge a network instead of calling it already correct: a per-VPC network from before Overcast recorded the internet-gateway state is declined, rightly, and the repair for those is a restart, which it now says
 
 - [networking] a Docker network whose isolation disagrees with the configuration is recreated at startup, when nothing is attached to it.
   Docker never applies `--internal` retroactively, so a plane created before alpha.37 silently kept egress forever — the machine that "still worked" in the report that prompted this
   a network that still has containers attached is left alone and warned about at WARN, naming the `overcast network reset` that fixes it; both planes are checked, not just the control plane
-
-- [networking] a network Overcast creates is now verified afterwards, whichever way it got there.
-  a create issued after "no such network" was returned on without a second look, and Docker resolves a name conflict by handing back the existing network *unchanged* — so a network another process created between the two calls was reported as freshly built to this configuration, drift and all. The unreadable-inspect path was fixed in the previous release; this is the same hole reached by the other route
-  it costs one inspect per network per start, and finds nothing on the ordinary path
 
 - [ec2] one Overcast instance no longer deletes another's VPC networks.
   the reconcile sweep removed every network labelled `overcast.service=ec2` that its own store did not claim, which on a shared daemon is a neighbour's live VPC network. Every network now carries `overcast.instance`, the identity of the instance that created it, and an instance removes only its own
