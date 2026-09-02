@@ -1,0 +1,147 @@
+---
+title: "LocalStack compatibility matrix"
+description: "Every part of a LocalStack setup — ports, endpoints, hostnames, container conventions, client tooling and behavioural conventions — with its status against Overcast."
+section: "Reference"
+tags:
+  - docs
+  - localstack
+  - compatibility
+  - reference
+  - migration
+---
+
+# LocalStack compatibility matrix
+
+Everything a LocalStack setup touches, item by item, with what it does here.
+Start at [Migrating from LocalStack](./migration-from-localstack.md) if you want
+the short version; this page is the audit behind it.
+
+| Status | Means |
+| ------ | ----- |
+| **Works** | Carries over untouched |
+| **Aliased** | Overcast answers LocalStack's own name or URL |
+| **Differs** | Works, but not identically — the cell says how |
+| **Gap** | Does not work; the linked issue tracks it |
+| **No equivalent** | The concept does not exist here; the alternative is named |
+
+---
+
+## Ports
+
+| Item | Status | Notes |
+| ---- | ------ | ----- |
+| Edge port `4566` | Works | Same default. `AWS_ENDPOINT_URL` needs no change |
+| `EDGE_PORT`, `GATEWAY_LISTEN` | Aliased | `GATEWAY_LISTEN` takes one port; LocalStack's own default names two |
+| Gateway on `443` | Differs | TLS is served on the same port via `OVERCAST_TLS` — see [HTTPS](./https.md) |
+| External service ports `4510-4559` | Differs | Per-service bases instead of one pool. [#1548](https://github.com/overcast-sh/overcast/issues/1548) |
+| Web console `4567` | Works | Overcast-only; LocalStack has no equivalent |
+
+## Endpoints
+
+Full mapping in
+[Migrating from LocalStack § Endpoint mapping](./migration-from-localstack.md#endpoint-mapping).
+
+| Item | Status | Notes |
+| ---- | ------ | ----- |
+| `/_localstack/health` | Aliased | Served in LocalStack's shape, plus an `emulator` field |
+| `/_localstack/init`, `/init/{stage}` | Aliased | Byte-identical: the shapes already matched |
+| `POST /_localstack/state/reset` | Aliased | Returns `{"status":"reset"}`; LocalStack returns nothing |
+| `/_localstack/info`, `/diagnose`, `/config`, `/usage`, `/plugins` | No equivalent | The 404 names the `/_overcast/debug/*` endpoint to use instead |
+| `/_localstack/state/save`, `/load` | No equivalent | Persistence is incremental, not snapshot-based |
+| `/_aws/ses`, `/_aws/sqs/messages`, `/_aws/sns/*`, `/_aws/lambda/runtimes` | Gap | [#1545](https://github.com/overcast-sh/overcast/issues/1545). Overcast has the data under `/_overcast/` |
+| `/restapis/{id}/{stage}/_user_request_/` | Works | LocalStack's API Gateway invoke URL, served verbatim |
+| `/_aws/execute-api/{id}/{stage}/` | Gap | [#1545](https://github.com/overcast-sh/overcast/issues/1545). The host-routed form below usually makes it unnecessary |
+
+## Hostnames and DNS
+
+Every row here is verified against a running instance.
+
+| Item | Status | Notes |
+| ---- | ------ | ----- |
+| `localhost.localstack.cloud` | Works | A built-in wildcard base, alongside `localhost.overcast.sh` |
+| `*.localhost.localstack.cloud` | Works | Split-horizon: remapped inside containers Overcast starts |
+| `s3.localhost.localstack.cloud` | Works | Recognised as the service endpoint, not a bucket named `s3` |
+| `{bucket}.s3.localhost.localstack.cloud` | Works | Virtual-hosted S3 |
+| `{bucket}.localhost.localstack.cloud` | Works | The bare form too — no `s3.` label needed |
+| `{id}.execute-api.localhost.localstack.cloud` | Works | Region segment optional, as LocalStack omits it |
+| `{id}.lambda-url.{region}.localhost.localstack.cloud` | Works | |
+| `LOCALSTACK_HOST`, `HOSTNAME_EXTERNAL` | Aliased | Both map to `OVERCAST_HOSTNAME` |
+| Built-in DNS server on `53` | Works | `OVERCAST_DNS`; `DNS_ADDRESS=0` turns it off |
+| `DNS_RESOLVE_IP`, `DNS_SERVER` | No equivalent | Resolves to Overcast's own address; forwards to the system resolver |
+| Transparent `*.amazonaws.com` interception | No equivalent | Point `AWS_ENDPOINT_URL` at Overcast instead |
+
+## Environment variables
+
+The full table, alias by alias, is in
+[Migrating from LocalStack § Environment variables](./migration-from-localstack.md#environment-variables).
+In summary: the ones with a genuine Overcast equivalent are read directly as
+aliases, and every other documented LocalStack variable is recognised and inert
+— never rejected, and named in a startup log line with the reason it does
+nothing.
+
+## Container conventions
+
+| Item | Status | Notes |
+| ---- | ------ | ----- |
+| `ports: ["4566:4566"]` | Works | |
+| `/var/run/docker.sock` mount | Works | Needed for Lambda, ECS, RDS and the rest of the container-backed services |
+| `DOCKER_HOST` | Works | Read when `LAMBDA_DOCKER_SOCKET` is unset — Colima, Rancher Desktop, Podman, rootless |
+| Volume at `/var/lib/localstack` | Works | Adopted as the state directory when it is the only volume mounted |
+| Init hooks in `/etc/localstack/init/{stage}.d/` | Works | Both that tree and `/etc/overcast/init/` are scanned |
+| `awslocal` in the image | Works | Same wrapper; needs the `aws` CLI present |
+| `HEALTHCHECK` | Differs | Probes `/_overcast/health`; a compose healthcheck on `/_localstack/health` also works |
+| `VOLUME /var/lib/localstack` | No equivalent | Overcast declares no volume, so a volume-less run stays ephemeral by default |
+| `LOCALSTACK_AUTH_TOKEN` | Works | Recognised and inert: nothing here is auth-gated |
+
+Persistence is the row worth reading twice. The published image defaults to
+**in-memory** state: `OVERCAST_STATE=auto` resolves to a durable backend only
+when it finds a mounted volume, an explicitly configured data directory, or an
+existing database. A LocalStack compose file that mounts `/var/lib/localstack`
+gets persistence; one that mounts nothing does not, and a container restart is
+a wipe. Set `OVERCAST_STATE` explicitly to decide rather than infer — see
+[Storage and persistence](./storage.md).
+
+## Client tooling
+
+| Item | Status | Notes |
+| ---- | ------ | ----- |
+| `awslocal` | Works | Sets `--endpoint-url` to `localhost:4566` |
+| `cdklocal` | Works | See the [CDK guide](./cdk.md) for the asset-publishing caveat on Windows |
+| `tflocal` | Works | Its `S3_HOSTNAME` default resolves and is recognised |
+| `samlocal` | Works | Sets `AWS_ENDPOINT_URL` and nothing else |
+| Overcast's Testcontainers module (Go) | Works | See [Testcontainers](./testcontainers.md) |
+| Generic-container recipe, any language | Works | Wait on `/_overcast/health` or `/_localstack/health` |
+| LocalStack Testcontainers modules | Gap | [#1546](https://github.com/overcast-sh/overcast/issues/1546). Go and .NET probe HTTP; Java, Node and Python wait for a `Ready.` log line |
+
+## Behavioural conventions
+
+| Item | Status | Notes |
+| ---- | ------ | ----- |
+| Account `000000000000` | Works | |
+| Credentials `test`/`test` | Works | Any credentials are accepted; signatures are not verified unless you ask |
+| Default region `us-east-1` | Works | `DEFAULT_REGION` is an alias |
+| S3 path-style | Works | The default here, where LocalStack prefers virtual-hosted |
+| S3 virtual-hosted | Works | Both forms, with or without the `s3.` label |
+| S3 presigned URL host | Works | Signing is client-side; the host is whatever endpoint you configured |
+| SQS queue URLs | Differs | Minted on the origin the caller reached — LocalStack's `dynamic` strategy, not its `standard` default |
+| `SQS_ENDPOINT_STRATEGY` | No equivalent | Drop it; see the row above |
+| Lambda reaching the gateway | Works | Containers resolve the split-horizon names through Overcast's own resolver |
+| `x-amz-request-id` on every response | Differs | Always present here; LocalStack omits it on some errors |
+| `x-localstack` response header | No equivalent | |
+| SigV4 verification | Differs | Off by default, both here and there. `OVERCAST_SIGV4_VALIDATE=true` turns it on |
+| IAM enforcement | Works | `ENFORCE_IAM` is an alias of `OVERCAST_ENFORCE_IAM` |
+
+## Not in scope
+
+LocalStack restructured its editions in March 2026: the published image now
+requires an auth token, and the free tier is "Hobby" rather than "Community".
+Thirty-five services sit on that free tier and seventy-four behind a paid one —
+including ECS, ECR, RDS, ElastiCache, CloudFront, ELB, Cognito, EKS, AppSync,
+Athena, Glue and MSK, several of which Overcast emulates in its one build. So
+"drop-in for Community" is no longer a comparison against a fixed target.
+
+What that means here: this page measures Overcast against LocalStack's
+*interface* — the ports, URLs, variables and conventions your setup is written
+against — not against any edition's service list. For what Overcast actually
+emulates, use the [service index](./README.md#services), which is generated from
+the code and cannot drift.

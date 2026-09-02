@@ -36,7 +36,10 @@ services:
       DEBUG: 1
 ```
 
-`AWS_ENDPOINT_URL` does not change: Overcast listens on `4566` too.
+`AWS_ENDPOINT_URL` does not change: Overcast listens on `4566` too. For the
+item-by-item audit behind that — every port, URL, hostname, container
+convention and client tool, with its status — see the
+[compatibility matrix](./localstack-compatibility.md).
 
 ---
 
@@ -142,8 +145,9 @@ Every other path under `/_localstack/` answers 404 with the Overcast endpoint
 that replaces it, so a missed one says so instead of returning an S3 error.
 LocalStack's `/_aws/*` inspection endpoints — `/_aws/ses`,
 `/_aws/sqs/messages`, `/_aws/sns/platform-endpoint-messages` and the rest — are
-not served yet; Overcast's equivalents are in the
-[debug endpoints reference](./debug-endpoints.md).
+not served yet
+([#1545](https://github.com/overcast-sh/overcast/issues/1545)); Overcast's
+equivalents are in the [debug endpoints reference](./debug-endpoints.md).
 
 ---
 
