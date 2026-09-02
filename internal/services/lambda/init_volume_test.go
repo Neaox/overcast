@@ -93,6 +93,12 @@ func TestInitVolume_containerMountsTheSeededVolumeInsteadOfCopyingTheInit(t *tes
 	if !strings.Contains(mount.Source, labels[docker.LabelLambdaInitVersion]) {
 		t.Errorf("the volume's name %q does not carry its version label %q", mount.Source, labels[docker.LabelLambdaInitVersion])
 	}
+	if labels[docker.LabelInstance] == "" {
+		t.Error("the volume carries no owner label")
+	}
+	if labels[docker.LabelResourceID] == "" {
+		t.Error("the volume carries no resource-id label — seedInitVolume should be using cr.instances.ManagedLabels, which always sets one")
+	}
 
 	seeded, ok := daemon.seededArchive()
 	if !ok {
@@ -180,11 +186,16 @@ func TestInitVolume_unlabelledVolumeOfOurNameIsReplaced(t *testing.T) {
 	}
 }
 
-// An init volume from a previous build is removed when the current one is first
-// seeded, so a long-lived daemon does not accumulate one per Overcast version.
+// An init volume from a previous build is removed when the current one is
+// first seeded, so a long-lived daemon does not accumulate one per Overcast
+// version — but only when this instance is the one that created it (see
+// TestInitVolume_supersededVolumeOwnedByAnotherInstanceIsNotPruned): a stale
+// volume carries no proof either way until it is labelled as this instance's
+// own.
 func TestInitVolume_supersededVolumesArePruned(t *testing.T) {
 	daemon := newRecordingDaemon(t)
 	cr := newDaemonContainerRuntime(t, daemon.Server)
+	domain := cr.instances.Resolve(context.Background())
 
 	const stale = "overcast-lambda-init-deadbeef1234-amd64"
 	daemon.seedVolume(stale, map[string]string{
@@ -192,6 +203,7 @@ func TestInitVolume_supersededVolumesArePruned(t *testing.T) {
 		docker.LabelService:           "lambda",
 		docker.LabelLambdaInitVersion: "deadbeef1234",
 		docker.LabelLambdaInitArch:    "amd64",
+		docker.LabelInstance:          domain,
 	})
 	// A Lambda volume that is not an init volume — nothing here may touch it.
 	const unrelated = "overcast-lambda-something-else"
@@ -211,6 +223,391 @@ func TestInitVolume_supersededVolumesArePruned(t *testing.T) {
 	}
 	if !slices.Contains(held, unrelated) {
 		t.Errorf("a Lambda volume that is not an init volume was removed: %v", held)
+	}
+}
+
+// A stale init volume labelled for a different Overcast instance — or one
+// that predates docker.LabelInstance entirely and so carries no owner label
+// at all — is exactly the volume #1573 was filed about: this instance cannot
+// prove it created it, so pruneStaleInitVolumes must leave it alone rather
+// than guess. It is not swept, but it is reported (see InitVolumeProblems).
+func TestInitVolume_supersededVolumeOwnedByAnotherInstanceIsNotPruned(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		labels map[string]string
+	}{
+		{
+			name: "foreign instance",
+			labels: map[string]string{
+				docker.LabelManaged:           "true",
+				docker.LabelService:           "lambda",
+				docker.LabelLambdaInitVersion: "deadbeef1234",
+				docker.LabelLambdaInitArch:    "amd64",
+				docker.LabelInstance:          "some-other-overcast",
+			},
+		},
+		{
+			name: "no owner label at all",
+			labels: map[string]string{
+				docker.LabelManaged:           "true",
+				docker.LabelService:           "lambda",
+				docker.LabelLambdaInitVersion: "deadbeef1234",
+				docker.LabelLambdaInitArch:    "amd64",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			daemon := newRecordingDaemon(t)
+			cr := newDaemonContainerRuntime(t, daemon.Server)
+
+			const stale = "overcast-lambda-init-deadbeef1234-amd64"
+			daemon.seedVolume(stale, tc.labels)
+
+			fn := zipFunction(t)
+			if _, err := cr.acquireContainer(context.Background(), fn, func(string) {}, initTypeOnDemand, false); err == nil {
+				t.Fatal("expected the fake daemon's start failure")
+			}
+
+			if slices.Contains(daemon.removedVolumes(), stale) {
+				t.Errorf("a stale init volume this instance cannot prove it created was removed")
+			}
+			if !slices.Contains(daemon.volumeNames(), stale) {
+				t.Errorf("the stale volume is gone from the daemon")
+			}
+		})
+	}
+}
+
+// seedInitVolume stamps the same instance identity every other Overcast
+// resource carries, so a later prune (this process's own, or a future one
+// reading the same store) can tell this volume apart from another instance's
+// — see docker.LabelInstance and issue #1573.
+func TestInitVolume_seededVolumeCarriesOwnerLabel(t *testing.T) {
+	daemon := newRecordingDaemon(t)
+	create := acquireAgainstDaemon(t, daemon, zipFunction(t))
+
+	mount, ok := initVolumeMountOf(create)
+	if !ok {
+		t.Fatalf("the container has no mount at %s", initVolumeTarget)
+	}
+	labels, held := daemon.volumeLabels(mount.Source)
+	if !held {
+		t.Fatalf("the daemon holds no volume named %q", mount.Source)
+	}
+	if labels[docker.LabelInstance] == "" {
+		t.Error("the seeded init volume carries no owner label")
+	}
+}
+
+// Reuse is never gated on ownership: the init volume's own name already
+// carries the content hash of what is inside it, so mounting a volume another
+// instance seeded is exactly as safe as mounting one of this instance's
+// own — see ensureInitVolume. What ownership gates is deletion, tested
+// separately (TestInitVolume_supersededVolumeOwnedByAnotherInstanceIsNotPruned,
+// TestInitVolume_forgetInitVolumeLeavesAVolumeItDoesNotOwn).
+func TestInitVolume_reuseIgnoresOwnership(t *testing.T) {
+	daemon := newRecordingDaemon(t)
+	cr := newDaemonContainerRuntime(t, daemon.Server)
+
+	binary, err := lambdaInitBinary("x86_64")
+	if err != nil {
+		t.Fatalf("init binary: %v", err)
+	}
+	name := initVolumeName(binary, "amd64")
+	daemon.seedVolume(name, map[string]string{
+		docker.LabelManaged:           "true",
+		docker.LabelService:           "lambda",
+		docker.LabelLambdaInitVersion: initVolumeVersion(name),
+		docker.LabelLambdaInitArch:    "amd64",
+		docker.LabelInstance:          "some-other-overcast",
+	})
+
+	fn := zipFunction(t)
+	if _, err := cr.acquireContainer(context.Background(), fn, func(string) {}, initTypeOnDemand, false); err == nil {
+		t.Fatal("expected the fake daemon's start failure")
+	}
+
+	if _, seeded := daemon.seededArchive(); seeded {
+		t.Error("a volume seeded by another instance was reseeded instead of reused")
+	}
+
+	problems := cr.InitVolumeProblems()
+	if len(problems) != 1 || problems[0].Volume != name || problems[0].Owner != "some-other-overcast" {
+		t.Errorf("InitVolumeProblems() = %+v, want one entry for %q owned by \"some-other-overcast\"", problems, name)
+	}
+}
+
+// forgetInitVolume is called after a container fails to start because the
+// init was not where its entrypoint expects it — but the volume that
+// happened to be mounted may have been reused from another instance rather
+// than seeded by this process (see TestInitVolume_reuseIgnoresOwnership), and
+// a start failure this instance observed is not proof that volume is broken
+// for its actual owner too. Removing it anyway would be exactly the
+// cross-instance deletion issue #1573 is about.
+func TestInitVolume_forgetInitVolumeLeavesAVolumeItDoesNotOwn(t *testing.T) {
+	daemon := newRecordingDaemon(t)
+	cr := newDaemonContainerRuntime(t, daemon.Server)
+
+	const name = "overcast-lambda-init-deadbeef1234-amd64"
+	daemon.seedVolume(name, map[string]string{
+		docker.LabelManaged:           "true",
+		docker.LabelService:           "lambda",
+		docker.LabelLambdaInitVersion: "deadbeef1234",
+		docker.LabelLambdaInitArch:    "amd64",
+		docker.LabelInstance:          "some-other-overcast",
+	})
+
+	cr.forgetInitVolume(context.Background(), name)
+
+	if slices.Contains(daemon.removedVolumes(), name) {
+		t.Error("forgetInitVolume removed a volume owned by another instance")
+	}
+	problems := cr.InitVolumeProblems()
+	if len(problems) != 1 || problems[0].Volume != name {
+		t.Errorf("InitVolumeProblems() = %+v, want one entry for %q", problems, name)
+	}
+	// Not being allowed to delete it also means not being allowed to reuse
+	// it again — otherwise the next cold start mounts the same broken volume
+	// and fails the same way forever. See TestInitVolume_emptyForeignVolumeFallsBackAfterOneFailure.
+	if _, unusable := cr.initVolumeUnusable.Load(name); !unusable {
+		t.Error("a volume this instance could not delete was not marked unusable for future reuse")
+	}
+}
+
+// Ownership alone is not proof a volume can actually be removed: Docker
+// refuses to remove one any live container still references — `force`
+// included — and forgetInitVolume runs before the container that just failed
+// to start has necessarily been torn down from the daemon's point of view
+// (acquireContainer's cleanup() runs first specifically to avoid this, but
+// forgetInitVolume cannot assume every caller got that ordering right, and
+// this exercises the daemon's refusal directly rather than through that
+// ordering). A volume this instance owns, but that the daemon still refuses
+// to remove, must be marked unusable exactly like one it was never allowed to
+// touch at all — the earlier version of this fix cleared the mark
+// optimistically before attempting the removal, so a refused removal left the
+// mark cleared and the next cold start reused the same broken volume anyway.
+func TestInitVolume_forgetInitVolumeMarksUnusableWhenRemovalIsRefused(t *testing.T) {
+	daemon := newRecordingDaemon(t)
+	cr := newDaemonContainerRuntime(t, daemon.Server)
+	domain := cr.instances.Resolve(context.Background())
+
+	const name = "overcast-lambda-init-deadbeef1234-amd64"
+	daemon.seedVolume(name, map[string]string{
+		docker.LabelManaged:           "true",
+		docker.LabelService:           "lambda",
+		docker.LabelLambdaInitVersion: "deadbeef1234",
+		docker.LabelLambdaInitArch:    "amd64",
+		docker.LabelInstance:          domain,
+	})
+	// A container that still references the volume — the state a just-failed
+	// start leaves the daemon in until something actually removes it.
+	daemon.mu.Lock()
+	if daemon.containerVolumes == nil {
+		daemon.containerVolumes = map[string][]string{}
+	}
+	daemon.containerVolumes["still-created-container"] = []string{name}
+	daemon.mu.Unlock()
+
+	cr.forgetInitVolume(context.Background(), name)
+
+	if slices.Contains(daemon.removedVolumes(), name) {
+		t.Error("forgetInitVolume removed a volume a live container still references")
+	}
+	if _, held := daemon.volumeLabels(name); !held {
+		t.Fatal("the volume is gone from the daemon even though its removal was refused")
+	}
+	if _, unusable := cr.initVolumeUnusable.Load(name); !unusable {
+		t.Error("a volume this instance owns, but could not actually remove, was not marked unusable")
+	}
+}
+
+// The state a process killed between creating the init volume and filling it
+// leaves behind — labelled, empty, and indistinguishable from a good seed by
+// inspecting it alone — is exactly what ensureInitVolume's reuse branch would
+// otherwise hand straight to a container. When the failing cold start does
+// not own the volume it reused, it cannot fix or delete it (see
+// TestInitVolume_forgetInitVolumeLeavesAVolumeItDoesNotOwn), so the *next*
+// cold start must not try the same volume again: it falls back to copying
+// the init into the provisioning archive instead of failing forever.
+func TestInitVolume_emptyForeignVolumeFallsBackAfterOneFailure(t *testing.T) {
+	daemon := newRecordingDaemon(t)
+	daemon.startError = "OCI runtime create failed: exec: \"" + initproto.InitPath + "\": stat " + initproto.InitPath + ": no such file or directory"
+	cr := newDaemonContainerRuntime(t, daemon.Server)
+
+	binary, err := lambdaInitBinary("x86_64")
+	if err != nil {
+		t.Fatalf("init binary: %v", err)
+	}
+	name := initVolumeName(binary, "amd64")
+	daemon.seedVolume(name, map[string]string{
+		docker.LabelManaged:           "true",
+		docker.LabelService:           "lambda",
+		docker.LabelLambdaInitVersion: initVolumeVersion(name),
+		docker.LabelLambdaInitArch:    "amd64",
+		docker.LabelInstance:          "some-other-overcast",
+	})
+
+	// First cold start reuses the foreign, empty volume, fails to start, and
+	// cannot delete a volume it did not create.
+	if _, err := cr.acquireContainer(context.Background(), zipFunction(t), func(string) {}, initTypeOnDemand, false); err == nil {
+		t.Fatal("expected the fake daemon's start failure")
+	}
+	if slices.Contains(daemon.removedVolumes(), name) {
+		t.Fatal("a foreign volume was removed")
+	}
+
+	// Second cold start must not mount the same broken volume again.
+	if _, err := cr.acquireContainer(context.Background(), zipFunction(t), func(string) {}, initTypeOnDemand, false); err == nil {
+		t.Fatal("expected the fake daemon's start failure")
+	}
+	creates := daemon.recordedCreates()
+	if len(creates) != 2 {
+		t.Fatalf("expected 2 container creates across two cold starts, got %d", len(creates))
+	}
+	second := creates[1]
+	if _, mounted := initVolumeMountOf(second); mounted {
+		t.Error("the second cold start mounted the same volume already found broken, instead of falling back")
+	}
+	if got := second.ContainerConfig.Entrypoint; !slices.Equal(got, []string{initproto.InitPath}) {
+		t.Errorf("entrypoint = %v, want the init even on the fallback path", got)
+	}
+}
+
+// The same as TestInitVolume_emptyForeignVolumeFallsBackAfterOneFailure, but
+// for a volume carrying no owner label at all rather than a different
+// instance's — a pre-fix build's leftover, or one whose label was somehow
+// lost. "Absence is not permission" applies the same way either side of that
+// distinction: this instance still cannot prove it may delete it.
+func TestInitVolume_emptyUnlabelledVolumeFallsBackAfterOneFailure(t *testing.T) {
+	daemon := newRecordingDaemon(t)
+	daemon.startError = "OCI runtime create failed: exec: \"" + initproto.InitPath + "\": stat " + initproto.InitPath + ": no such file or directory"
+	cr := newDaemonContainerRuntime(t, daemon.Server)
+
+	binary, err := lambdaInitBinary("x86_64")
+	if err != nil {
+		t.Fatalf("init binary: %v", err)
+	}
+	name := initVolumeName(binary, "amd64")
+	daemon.seedVolume(name, map[string]string{
+		docker.LabelManaged:           "true",
+		docker.LabelService:           "lambda",
+		docker.LabelLambdaInitVersion: initVolumeVersion(name),
+		docker.LabelLambdaInitArch:    "amd64",
+		// No docker.LabelInstance — predates ownership labelling.
+	})
+
+	if _, err := cr.acquireContainer(context.Background(), zipFunction(t), func(string) {}, initTypeOnDemand, false); err == nil {
+		t.Fatal("expected the fake daemon's start failure")
+	}
+	if slices.Contains(daemon.removedVolumes(), name) {
+		t.Fatal("an unlabelled volume was removed")
+	}
+
+	if _, err := cr.acquireContainer(context.Background(), zipFunction(t), func(string) {}, initTypeOnDemand, false); err == nil {
+		t.Fatal("expected the fake daemon's start failure")
+	}
+	creates := daemon.recordedCreates()
+	if len(creates) != 2 {
+		t.Fatalf("expected 2 container creates across two cold starts, got %d", len(creates))
+	}
+	if _, mounted := initVolumeMountOf(creates[1]); mounted {
+		t.Error("the second cold start mounted the same volume already found broken, instead of falling back")
+	}
+}
+
+// The counterpart of the two tests above: when the empty volume this
+// instance reuses turns out to be its own — labelled with its own identity,
+// e.g. left behind by this same durable-identity instance crashing mid-seed
+// on a previous run — forgetInitVolume both can and does remove it, and,
+// unlike the foreign/unlabelled cases, the very next cold start re-seeds a
+// fresh copy rather than falling back to the archive: deleting a volume this
+// instance owns is not a reason to stop trusting that name.
+func TestInitVolume_ownPartialSeedIsDeletedAndReseeded(t *testing.T) {
+	daemon := newRecordingDaemon(t)
+	daemon.startError = "OCI runtime create failed: exec: \"" + initproto.InitPath + "\": stat " + initproto.InitPath + ": no such file or directory"
+	cr := newDaemonContainerRuntime(t, daemon.Server)
+	domain := cr.instances.Resolve(context.Background())
+
+	binary, err := lambdaInitBinary("x86_64")
+	if err != nil {
+		t.Fatalf("init binary: %v", err)
+	}
+	name := initVolumeName(binary, "amd64")
+	daemon.seedVolume(name, map[string]string{
+		docker.LabelManaged:           "true",
+		docker.LabelService:           "lambda",
+		docker.LabelLambdaInitVersion: initVolumeVersion(name),
+		docker.LabelLambdaInitArch:    "amd64",
+		docker.LabelInstance:          domain,
+	})
+
+	// First cold start reuses the empty volume it already owns, fails, and
+	// deletes it.
+	if _, err := cr.acquireContainer(context.Background(), zipFunction(t), func(string) {}, initTypeOnDemand, false); err == nil {
+		t.Fatal("expected the fake daemon's start failure")
+	}
+	if !slices.Contains(daemon.removedVolumes(), name) {
+		t.Fatal("an empty volume this instance owns was not removed")
+	}
+
+	// Second cold start must re-seed a fresh copy rather than give up on the
+	// name: nothing marks it unusable when this instance was the one that
+	// deleted it. It also fails to start (the fake daemon always fails
+	// start), and — being freshly seeded and so owned again — that copy is
+	// removed too at the end of this call; the point under test is that it
+	// gets a real, mounted reseed at all rather than silently falling back.
+	if _, err := cr.acquireContainer(context.Background(), zipFunction(t), func(string) {}, initTypeOnDemand, false); err == nil {
+		t.Fatal("expected the fake daemon's start failure")
+	}
+	daemon.mu.Lock()
+	seeds := len(daemon.seeds)
+	daemon.mu.Unlock()
+	if seeds != 1 {
+		t.Errorf("expected exactly 1 reseed (the second cold start's; the first reused the pre-seeded volume), got %d", seeds)
+	}
+	creates := daemon.recordedCreates()
+	if len(creates) != 2 {
+		t.Fatalf("expected 2 container creates, got %d", len(creates))
+	}
+	if _, mounted := initVolumeMountOf(creates[1]); !mounted {
+		t.Error("the second cold start fell back to the archive instead of reseeding the volume")
+	}
+}
+
+// pruneStaleInitVolumes runs once per architecture, not once per process:
+// seeding an amd64 init volume must never prune the current arm64 volume (or
+// vice versa), because the two are simultaneously-current, differently-named
+// volumes — initVolumeName hashes a different init binary per architecture —
+// not a build and its predecessor.
+func TestInitVolume_pruneIsScopedPerArchitecture(t *testing.T) {
+	daemon := newRecordingDaemon(t)
+	cr := newDaemonContainerRuntime(t, daemon.Server)
+	domain := cr.instances.Resolve(context.Background())
+
+	arm64Binary, err := lambdaInitBinary("arm64")
+	if err != nil {
+		t.Fatalf("init binary: %v", err)
+	}
+	arm64Name := initVolumeName(arm64Binary, "arm64")
+	// The current arm64 volume, as if an earlier cold start in this same
+	// process had already seeded it — own-labelled, so nothing but the
+	// architecture filter stops the amd64 seed below from pruning it.
+	daemon.seedVolume(arm64Name, map[string]string{
+		docker.LabelManaged:           "true",
+		docker.LabelService:           "lambda",
+		docker.LabelLambdaInitVersion: initVolumeVersion(arm64Name),
+		docker.LabelLambdaInitArch:    "arm64",
+		docker.LabelInstance:          domain,
+	})
+
+	// zipFunction targets x86_64/amd64; seeding it triggers
+	// pruneStaleInitVolumes scoped to "amd64" only.
+	if _, err := cr.acquireContainer(context.Background(), zipFunction(t), func(string) {}, initTypeOnDemand, false); err == nil {
+		t.Fatal("expected the fake daemon's start failure")
+	}
+
+	if !slices.Contains(daemon.volumeNames(), arm64Name) {
+		t.Error("seeding the amd64 init volume pruned the current arm64 volume")
 	}
 }
 

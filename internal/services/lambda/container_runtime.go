@@ -75,11 +75,24 @@ type ContainerRuntime struct {
 	// init_volume.go. initVolumes holds one seeding attempt per volume name,
 	// initVolumeWarned keeps the archive-fallback warning to one line, and
 	// initVolumePruned makes the sweep of superseded volumes a once-per-process
-	// job.
+	// job, gated per architecture (a mixed-arch deployment seeds two
+	// simultaneously-current volumes under entirely different names).
 	initVolumes      sync.Map // volume name → *initVolumeState
 	initVolumeWarned sync.Map // volume name → struct{}
-	initVolumePruned atomic.Bool
-	coldStartSem     chan struct{} // bounds concurrent container creation/INIT bursts
+	initVolumePruned sync.Map // goarch → struct{}
+	// initVolumeUnusable holds every init volume name this instance has
+	// reused, found empty after a start failure, and could not remove
+	// (foreign or unlabelled — see forgetInitVolume). ensureInitVolume
+	// refuses to reuse a name in this set again, falling back to the archive
+	// instead: without it, a labelled-but-empty volume this instance can
+	// neither fix nor delete would be reused, fail, and be reused again on
+	// every subsequent cold start.
+	initVolumeUnusable sync.Map // volume name → struct{}
+	// initVolumeProblems holds one docker.VolumeOwnershipProblem per init
+	// volume this instance has reused that carries a different (or absent)
+	// ownership label — see noteInitVolumeProblem and InitVolumeProblems.
+	initVolumeProblems sync.Map      // volume name → docker.VolumeOwnershipProblem
+	coldStartSem       chan struct{} // bounds concurrent container creation/INIT bursts
 	// instances stamps each runtime container with this instance's identity, so
 	// the GC's sweeps can tell them from another Overcast's on the same daemon.
 	// The same value must reach the GC — see NewContainerRuntime.
@@ -817,10 +830,18 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		// that error rather than run on every failed start: a start that failed
 		// for its own reasons has a perfectly good volume, and Docker names the
 		// path it could not exec.
+		//
+		// cleanup() runs first, deliberately: this container — created but
+		// never started — still holds a live reference to the volume, and
+		// Docker refuses to remove a volume any container references,
+		// `force` included (see forgetInitVolume's doc comment). Asking to
+		// forget the volume before the one thing referencing it is gone would
+		// make even a volume this instance owns undeletable, defeating the
+		// self-healing this exists for.
+		cleanup()
 		if initDeliv.volume != "" && strings.Contains(err.Error(), initproto.InitPath) {
 			cr.forgetInitVolume(ctx, initDeliv.volume)
 		}
-		cleanup()
 		return nil, fmt.Errorf("start container: %w", decorateHotReloadMountError(err, hotReloadPath))
 	}
 	// Init Duration is measured from here to the RIC's first GET /next. Only

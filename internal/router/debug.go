@@ -33,6 +33,19 @@ type debugEC2Provider interface {
 	NetworkProblems() []dataplane.VPCNetworkProblem
 }
 
+// debugLambdaProvider is the subset of the Lambda service needed by the
+// debug namespace, mirroring debugEC2Provider — including reading
+// docker.VolumeOwnershipProblem rather than a lambda-package type, the same
+// way debugEC2Provider reads dataplane.VPCNetworkProblem rather than one of
+// ec2's own, so this file depends only on the neutral, already-shared docker
+// package and never needs to import internal/services/lambda.
+type debugLambdaProvider interface {
+	// InitVolumeProblems feeds the lambda-init-volume-foreign advisory (see
+	// advisories.go): init volumes matching this build's content hash that
+	// this instance reused but does not own, per docker.LabelInstance.
+	InitVolumeProblems() []docker.VolumeOwnershipProblem
+}
+
 // DebugStateProvider is implemented by services with data outside the
 // generic kv store (a dedicated SQL table, e.g. DynamoDB items or CloudWatch
 // Logs events) that still needs to appear as a virtual namespace in
@@ -68,13 +81,13 @@ type DebugStateProvider interface {
 //   - Capturing traces and profiles
 //
 // A web UI for these endpoints is planned. For now they return JSON.
-func debugHandlers(cfg *config.Config, store state.Store, ec2Svc debugEC2Provider, providers []DebugStateProvider, traceBuf *trace.Buffer, dockerStatus func() *docker.Status) func(chi.Router) {
+func debugHandlers(cfg *config.Config, store state.Store, ec2Svc debugEC2Provider, lambdaSvc debugLambdaProvider, providers []DebugStateProvider, traceBuf *trace.Buffer, dockerStatus func() *docker.Status) func(chi.Router) {
 	return func(r chi.Router) {
 		r.Get("/health", debugHealth(cfg, store))
 		r.Get("/config", debugConfig(cfg))
 		r.Get("/state", debugState(store, providers))
 		r.Get("/state/{namespace}", debugStateNamespace(store, providers))
-		r.Get("/metrics", debugMetrics(cfg, store, ec2Svc, dockerStatus))
+		r.Get("/metrics", debugMetrics(cfg, store, ec2Svc, lambdaSvc, dockerStatus))
 
 		// ---- Request tracing --------------------------------------------------
 		r.Get("/trace/{requestId}", debugTraceGet(traceBuf))
@@ -477,11 +490,15 @@ type debugMetricsResponse struct {
 	Advisories []Advisory           `json:"advisories"`
 }
 
-func debugMetrics(cfg *config.Config, store state.Store, vpcs debugEC2Provider, dockerStatus func() *docker.Status) http.HandlerFunc {
+func debugMetrics(cfg *config.Config, store state.Store, vpcs debugEC2Provider, lambdaSvc debugLambdaProvider, dockerStatus func() *docker.Status) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var networkProblems []dataplane.VPCNetworkProblem
 		if vpcs != nil {
 			networkProblems = vpcs.NetworkProblems()
+		}
+		var initVolumeProblems []docker.VolumeOwnershipProblem
+		if lambdaSvc != nil {
+			initVolumeProblems = lambdaSvc.InitVolumeProblems()
 		}
 		opts := state.DebugMetricsOptions{
 			IncludeNamespaceRowCounts: r.URL.Query().Get("includeRowCounts") == "true",
@@ -492,15 +509,16 @@ func debugMetrics(cfg *config.Config, store state.Store, vpcs debugEC2Provider, 
 		}
 		health, hasHealth := state.PersistentHealthSnapshot(store)
 		advisories := computeAdvisories(advisoryInput{
-			StateBackend:       cfg.State,
-			StateSource:        cfg.StateSource,
-			SQLiteAvailable:    config.SQLiteSupported(),
-			Stores:             snapshots,
-			Health:             health,
-			HasHealth:          hasHealth,
-			ExistingDatabase:   config.HasExistingDatabase(cfg.DataDir),
-			Networks:           dockerNetworkStatuses(dockerStatus),
-			VPCNetworkProblems: networkProblems,
+			StateBackend:             cfg.State,
+			StateSource:              cfg.StateSource,
+			SQLiteAvailable:          config.SQLiteSupported(),
+			Stores:                   snapshots,
+			Health:                   health,
+			HasHealth:                hasHealth,
+			ExistingDatabase:         config.HasExistingDatabase(cfg.DataDir),
+			Networks:                 dockerNetworkStatuses(dockerStatus),
+			VPCNetworkProblems:       networkProblems,
+			LambdaInitVolumeProblems: initVolumeProblems,
 		})
 		if advisories == nil {
 			advisories = []Advisory{}

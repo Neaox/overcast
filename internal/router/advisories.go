@@ -38,6 +38,7 @@ const (
 	advisoryCodeMemoryModeIgnoresExisting = "memory-mode-ignores-existing-database"
 	advisoryCodeNetworkStateMismatch      = "network-state-mismatch"
 	advisoryCodeVPCNetworkIsolationStale  = "vpc-network-isolation-stale"
+	advisoryCodeLambdaInitVolumeForeign   = "lambda-init-volume-foreign"
 )
 
 // networkingDocsPath deep-links the network-state advisory at the section that
@@ -82,6 +83,13 @@ const noSQLiteDocsPath = storageDocsPath + "#builds-without-sqlite"
 // Docker network and what a failed flip leaves behind. The fragment is the
 // docs browser's slug for that heading — see dataDirDocsPath.
 const vpcNetworkDocsPath = "services/ec2/limitations.md#internet-gateways-and-isolation"
+
+// lambdaInitVolumeDocsPath deep-links the lambda-init-volume-foreign advisory
+// to the section of the Lambda limitations page explaining why a foreign
+// init volume is safe to reuse but only its own creating instance can prune
+// or remove it. The fragment is the docs browser's slug for that
+// heading — see dataDirDocsPath.
+const lambdaInitVolumeDocsPath = "services/lambda/limitations.md#init-delivery-is-shared-across-instances"
 
 // Advisory is one actionable diagnostic surfaced alongside the storage
 // diagnostics in GET /_overcast/debug/metrics (see debugMetricsResponse.Advisories).
@@ -176,6 +184,13 @@ type advisoryInput struct {
 	// internet-gateway state calls for — drives vpc-network-isolation-stale.
 	// Nil whenever EC2 is not wired (a service subset) or nothing is wrong.
 	VPCNetworkProblems []dataplane.VPCNetworkProblem
+
+	// LambdaInitVolumeProblems is lambda.Service.InitVolumeProblems(): init
+	// volumes matching this build's content hash that this instance reused
+	// but does not own, per docker.LabelInstance — drives
+	// lambda-init-volume-foreign. Nil whenever Lambda is not wired, Docker
+	// has not been probed yet, or nothing was found.
+	LambdaInitVolumeProblems []docker.VolumeOwnershipProblem
 }
 
 // computeAdvisories is the single generator function behind the
@@ -218,6 +233,9 @@ func computeAdvisories(in advisoryInput) []Advisory {
 		advisories = append(advisories, *a)
 	}
 	if a := checkVPCNetworkIsolation(in.VPCNetworkProblems); a != nil {
+		advisories = append(advisories, *a)
+	}
+	if a := checkLambdaInitVolumeOwnership(in.LambdaInitVolumeProblems); a != nil {
 		advisories = append(advisories, *a)
 	}
 	return advisories
@@ -327,6 +345,55 @@ func checkVPCNetworkIsolation(problems []dataplane.VPCNetworkProblem) *Advisory 
 			"implies. Overcast retries the repair at its next restart; until then, check the Docker " +
 			"daemon for the reason quoted, then detach and re-attach the gateway. " + listed,
 		DocsPath: vpcNetworkDocsPath,
+	}
+}
+
+// lambdaInitVolumeAdvisoryMaxListed bounds how many volumes the advisory
+// spells out, mirroring vpcNetworkAdvisoryMaxListed.
+const lambdaInitVolumeAdvisoryMaxListed = 5
+
+// checkLambdaInitVolumeOwnership is informational, not a warning: Overcast's
+// Lambda init volume is content-addressed (its name carries the init's own
+// hash — see internal/services/lambda/init_volume.go), so two instances
+// sharing a daemon and a build reusing one another's copy is expected and
+// safe, not itself a problem to fix.
+//
+// What it does mean is that this instance's own cleanup
+// (pruneStaleInitVolumes, forgetInitVolume — see docker.LabelInstance) will
+// never remove these volumes, because neither may touch a volume it cannot
+// prove it created: a volume here only goes away once the instance that
+// created it prunes it, or an operator removes it by hand. Surfacing that
+// here is the only way an operator learns these volumes exist at all —
+// otherwise they would only ever see a debug-level log line.
+func checkLambdaInitVolumeOwnership(problems []docker.VolumeOwnershipProblem) *Advisory {
+	if len(problems) == 0 {
+		return nil
+	}
+	shown := min(len(problems), lambdaInitVolumeAdvisoryMaxListed)
+	lines := make([]string, 0, shown)
+	for _, p := range problems[:shown] {
+		owner := p.Owner
+		if owner == "" {
+			owner = "no owner label"
+		}
+		lines = append(lines, p.Volume+" ("+owner+")")
+	}
+	listed := strings.Join(lines, "; ")
+	if rest := len(problems) - len(lines); rest > 0 {
+		listed += fmt.Sprintf("; and %d more", rest)
+	}
+	title := "A Lambda init volume belongs to another instance"
+	if len(problems) > 1 {
+		title = fmt.Sprintf("%d Lambda init volumes belong to other instances", len(problems))
+	}
+	return &Advisory{
+		Severity: advisorySeverityInfo,
+		Code:     advisoryCodeLambdaInitVolumeForeign,
+		Title:    title,
+		Detail: "These volumes hold this build's init and are safe for this instance to keep " +
+			"mounting read-only, but it did not create them, so its own cleanup will never remove " +
+			"them — only the instance that created each one, or `docker volume rm`, will. " + listed,
+		DocsPath: lambdaInitVolumeDocsPath,
 	}
 }
 

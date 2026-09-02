@@ -1520,6 +1520,30 @@ func (v *VolumeSummary) ResourceID() string { return v.Labels[LabelResourceID] }
 // labels, or "" when the volume does not carry one. See LabelInstance.
 func (v *VolumeSummary) Instance() string { return v.Labels[LabelInstance] }
 
+// VolumeOwnershipProblem is a Docker volume a service reused — its content
+// matched what was wanted, addressed by name (e.g. Lambda's init volume; see
+// internal/services/lambda/init_volume.go) — that turned out to be labelled
+// for a different Overcast instance, or not labelled with an owner at all.
+// Neutral home (mirrors NetworkProblem-shaped types living outside the
+// service package that raises them, e.g. dataplane.VPCNetworkProblem): a
+// router that surfaces these as an advisory reads this type instead of
+// depending on the raising service's own package.
+//
+// That is not itself a sign of trouble — reuse across instances is often
+// exactly what a content-addressed, read-only-mounted resource is for. What
+// it does mean is that the reusing instance's own cleanup will never remove
+// the volume, because it may only touch one it can prove it created (see
+// LabelInstance): it only goes away once its own creating instance removes
+// it, or an operator does by hand.
+type VolumeOwnershipProblem struct {
+	// Volume is the volume's name.
+	Volume string
+	// Owner is the value of LabelInstance on the volume, or "" when it
+	// carries no owner label at all — seeded before this label existed, or
+	// by a daemon-native volume operation Overcast never labelled.
+	Owner string
+}
+
 type createVolumeRequest struct {
 	Name       string            `json:"Name"`
 	Driver     string            `json:"Driver,omitempty"`

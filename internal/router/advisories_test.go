@@ -8,6 +8,7 @@ import (
 
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/dataplane"
+	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/state"
 )
 
@@ -682,6 +683,82 @@ func TestCheckVPCNetworkIsolation_capsTheListedVPCs(t *testing.T) {
 		t.Errorf("detail should count the rest: %s", a.Detail)
 	}
 	if !strings.HasPrefix(a.Title, "8 VPC networks") {
+		t.Errorf("title = %q, want the full count", a.Title)
+	}
+}
+
+// ---- lambda-init-volume-foreign ---------------------------------------------
+
+func TestCheckLambdaInitVolumeOwnership_firesInformationallyPerVolume(t *testing.T) {
+	// Given: this instance reused two init volumes it did not create — one
+	// labelled for another instance, one carrying no owner label at all.
+	problems := []docker.VolumeOwnershipProblem{
+		{Volume: "overcast-lambda-init-aaa111-amd64", Owner: "some-other-overcast"},
+		{Volume: "overcast-lambda-init-bbb222-arm64", Owner: ""},
+	}
+
+	// When: the rule evaluates them.
+	a := checkLambdaInitVolumeOwnership(problems)
+
+	// Then: an informational (not warning/critical) advisory names both
+	// volumes and explains why this instance's own cleanup will never touch
+	// them.
+	if a == nil {
+		t.Fatal("expected an advisory, got nil")
+	}
+	if a.Severity != advisorySeverityInfo {
+		t.Errorf("severity = %q, want %q — sharing a build's init volume across instances is expected, not a fault", a.Severity, advisorySeverityInfo)
+	}
+	if a.Code != advisoryCodeLambdaInitVolumeForeign {
+		t.Errorf("code = %q, want %q", a.Code, advisoryCodeLambdaInitVolumeForeign)
+	}
+	if !strings.HasPrefix(a.Title, "2 Lambda init volumes") {
+		t.Errorf("title = %q, want it to count both volumes", a.Title)
+	}
+	for _, want := range []string{"overcast-lambda-init-aaa111-amd64", "some-other-overcast", "overcast-lambda-init-bbb222-arm64", "no owner label"} {
+		if !strings.Contains(a.Detail, want) {
+			t.Errorf("detail %q does not mention %q", a.Detail, want)
+		}
+	}
+	if a.DocsPath != lambdaInitVolumeDocsPath {
+		t.Errorf("docs path = %q, want %q", a.DocsPath, lambdaInitVolumeDocsPath)
+	}
+}
+
+func TestCheckLambdaInitVolumeOwnership_absentWhenNothingRecorded(t *testing.T) {
+	// Given/When/Then: no problems (Lambda not wired, Docker not yet probed,
+	// or every reused volume was already this instance's own) means no
+	// advisory — the common case must stay silent.
+	if a := checkLambdaInitVolumeOwnership(nil); a != nil {
+		t.Fatalf("expected no advisory, got %+v", a)
+	}
+	if a := checkLambdaInitVolumeOwnership([]docker.VolumeOwnershipProblem{}); a != nil {
+		t.Fatalf("expected no advisory for an empty list, got %+v", a)
+	}
+}
+
+func TestCheckLambdaInitVolumeOwnership_capsTheListedVolumes(t *testing.T) {
+	// Given: more foreign volumes than the card can carry.
+	problems := make([]docker.VolumeOwnershipProblem, 0, lambdaInitVolumeAdvisoryMaxListed+2)
+	for i := range cap(problems) {
+		problems = append(problems, docker.VolumeOwnershipProblem{Volume: fmt.Sprintf("overcast-lambda-init-vol-%02d-amd64", i), Owner: "other"})
+	}
+
+	// When: the rule evaluates them.
+	a := checkLambdaInitVolumeOwnership(problems)
+
+	// Then: the first few are spelled out, the rest are counted, and the
+	// title still carries the true total.
+	if a == nil {
+		t.Fatal("expected an advisory, got nil")
+	}
+	if !strings.Contains(a.Detail, "vol-04-amd64") || strings.Contains(a.Detail, "vol-05-amd64") {
+		t.Errorf("detail should list exactly %d volumes: %s", lambdaInitVolumeAdvisoryMaxListed, a.Detail)
+	}
+	if !strings.HasSuffix(a.Detail, "; and 2 more") {
+		t.Errorf("detail should count the rest: %s", a.Detail)
+	}
+	if !strings.HasPrefix(a.Title, "7 Lambda init volumes") {
 		t.Errorf("title = %q, want the full count", a.Title)
 	}
 }
