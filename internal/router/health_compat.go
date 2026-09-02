@@ -69,13 +69,18 @@ const localStackServiceStatus = "running"
 
 // localStackEndpointMap names the Overcast endpoint that replaces each
 // LocalStack one, for the hint served in place of a bare 404. It mirrors the
-// table in docs/migration-from-localstack.md; health is absent because it is
-// answered rather than pointed at.
+// table in docs/migration-from-localstack.md.
+//
+// A path Overcast actually serves does not belong here — health, init and
+// state/reset are answered rather than pointed at (see localstack_compat.go),
+// so an entry for one would be dead text that could only ever go stale.
+// TestLocalStackEndpointMapNamesOnlyUnservedPaths enforces that.
 var localStackEndpointMap = map[string]string{
-	"init":        "/_overcast/init",
-	"state/reset": "/_overcast/reset",
-	"info":        "/_overcast/debug/config (requires OVERCAST_DEBUG=true)",
-	"state":       "/_overcast/debug/state (requires OVERCAST_DEBUG=true)",
+	"info":     "/_overcast/debug/config (requires OVERCAST_DEBUG=true)",
+	"state":    "/_overcast/debug/state (requires OVERCAST_DEBUG=true)",
+	"diagnose": "/_overcast/debug/state and /_overcast/debug/config (requires OVERCAST_DEBUG=true)",
+	"config":   "/_overcast/debug/config (requires OVERCAST_DEBUG=true); configuration is read-only at runtime",
+	"usage":    "/_overcast/metrics",
 }
 
 // aliasHinter logs at most one line per compatibility path, the first time

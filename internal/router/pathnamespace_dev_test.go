@@ -37,6 +37,15 @@ var nonManifestRoutes = map[string]string{
 	"/_localstack/health": "LocalStack's health endpoint — what a compose healthcheck or wait strategy carried over from LocalStack polls — served in LocalStack's own response shape. Same reason and same underscore guarantee as /_health above.",
 	"/_localstack/*":      "The remainder of LocalStack's operational namespace, answered with a 404 naming the Overcast endpoint instead of S3's NoSuchBucket. One route for the whole prefix, so the namespace is accounted for rather than only the paths that happen to be mapped today.",
 
+	// The three paths under that prefix Overcast answers rather than points
+	// elsewhere. Each is registered onto the same handler value as its
+	// /_overcast/ original, so there is no second implementation to drift —
+	// see internal/router/localstack_compat.go. Same underscore guarantee as
+	// /_localstack/health above.
+	"/_localstack/init":         "LocalStack's init-hook status endpoint, on the same handler as /_overcast/init. Overcast's status body was built to LocalStack's contract — same stage names, same script states — so this needs no translation.",
+	"/_localstack/init/{stage}": "The per-stage form of the above, on the same handler as /_overcast/init/{stage}.",
+	"/_localstack/state/reset":  "LocalStack's state-reset endpoint, on the same handler as /_overcast/reset. A test suite that resets between cases hard-codes this URL, and a 404 leaves the next case running against the previous one's resources.",
+
 	"/restapis/{restApiId}/{stageName}/_user_request_/*": "LocalStack URL compatibility for API Gateway execute-api. The underscore mid-path is deliberate and must not be tidied into the namespace: the point is byte-identical compatibility with a URL LocalStack documents, and host-addressed callers already have the namespaced route. See docs/plans/non-canonical-url-namespace.md section 3.",
 	"/restapis/{restApiId}/{stageName}/_user_request_":   "The stage root of the route above — LocalStack's URL with an empty path. Same reason, registered separately because chi's wildcard does not match the empty remainder.",
 

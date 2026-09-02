@@ -218,8 +218,14 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	if len(hookRunner) > 0 {
 		initRunner = hookRunner[0]
 	}
-	r.Get("/_overcast/init", initStatusHandler(initRunner))
-	r.Get("/_overcast/init/{stage}", initStageStatusHandler(initRunner))
+	// Held in variables so the /_localstack/init aliases registered further
+	// down are the same function value, not a second construction of it —
+	// which is what makes "alias" literal rather than approximate. See
+	// localstack_compat.go.
+	initStatus := initStatusHandler(initRunner)
+	initStageStatus := initStageStatusHandler(initRunner)
+	r.Get("/_overcast/init", initStatus)
+	r.Get("/_overcast/init/{stage}", initStageStatus)
 
 	// ---- Local CA certificate (always available) ---------------------------
 	// GET /_overcast/ca.pem — the daemon's CA certificate, so a host-side
@@ -309,7 +315,10 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// on r, matching /_overcast/health, /_overcast/metrics, etc. below rather
 	// than a chi sub-router — see the chi-subrouter-swallows-fallback gotcha
 	// noted throughout this package. See reset.go.
-	r.Post("/_overcast/reset", resetHandler(store, debugProviders))
+	// Held for the same reason as initStatus above: /_localstack/state/reset
+	// is registered onto this exact handler further down.
+	resetAll := resetHandler(store, debugProviders)
+	r.Post("/_overcast/reset", resetAll)
 	r.Post("/_overcast/reset/{service}", resetServiceHandler(store, debugProviders))
 	lambdaSvc := lambda.New(cfg, store, logger, clk)
 	prof.mark("  new: lambda")
@@ -1111,6 +1120,16 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	compatHinter := &aliasHinter{logger: logger}
 	r.Get(middleware.LegacyHealthPath, newLegacyHealthHandler(healthHandler, compatHinter))
 	r.Get(middleware.LocalStackHealthPath, newLocalStackHealthHandler(cfg, enabledServiceNames, compatHinter))
+
+	// The rest of LocalStack's operational namespace that Overcast already has
+	// an endpoint for, aliased onto that endpoint's own handler — see
+	// localstack_compat.go for what is deliberately left to the 404 below.
+	// Registered before the wildcard for readability only: chi's trie prefers
+	// a static segment over a wildcard whatever the registration order.
+	r.Get(localStackInitPath, newLocalStackInitHandler(initStatus, localStackInitPath, compatHinter))
+	r.Get(localStackInitStagePath, newLocalStackInitHandler(initStageStatus, localStackInitStagePath, compatHinter))
+	r.Post(localStackResetPath, newLocalStackResetHandler(resetAll, compatHinter))
+
 	r.HandleFunc(middleware.LocalStackPrefix+"*", newLocalStackNotFoundHandler(compatHinter))
 
 	// GET /_overcast/topology — full cross-region resource graph for the system map.
