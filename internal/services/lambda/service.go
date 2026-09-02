@@ -215,13 +215,27 @@ type Function struct {
 	// of CodeS3Key. Empty means "whatever is current", which is also what makes
 	// the function eligible for reactive S3 code sync — a pinned function must
 	// not be refreshed when a new version lands at its key.
-	CodeS3ObjectVersion string             `json:"code_s3_object_version,omitempty"`
-	ImageUri            string             `json:"image_uri,omitempty"` // PackageType=Image only
-	PackageType         string             `json:"package_type,omitempty"`
-	Architectures       []string           `json:"architectures,omitempty"`
-	State               string             `json:"state"` // "Active", "Pending", "Inactive", "Failed"
-	StateReason         string             `json:"state_reason,omitempty"`
-	StateReasonCode     string             `json:"state_reason_code,omitempty"` // e.g. "Creating", "Idle", "ImagePullError"
+	CodeS3ObjectVersion string   `json:"code_s3_object_version,omitempty"`
+	ImageUri            string   `json:"image_uri,omitempty"` // PackageType=Image only
+	PackageType         string   `json:"package_type,omitempty"`
+	Architectures       []string `json:"architectures,omitempty"`
+	State               string   `json:"state"` // "Active", "Pending", "Inactive", "Failed"
+	StateReason         string   `json:"state_reason,omitempty"`
+	StateReasonCode     string   `json:"state_reason_code,omitempty"` // e.g. "Creating", "Idle", "ImagePullError"
+	// LastUpdateStatus is the outcome of the most recent update to the
+	// function — "InProgress", "Successful" or "Failed" — and is what AWS's
+	// FunctionUpdated waiter polls. Empty only while creation is still
+	// running: AWS first sets it to Successful once the create completes. The
+	// update-lifecycle block in handler_functions.go says which updates pass
+	// through InProgress and which are already done when they answer.
+	LastUpdateStatus string `json:"last_update_status,omitempty"`
+	// LastUpdateStatusReason and LastUpdateStatusReasonCode explain a
+	// LastUpdateStatus that is not Successful, the way StateReason and
+	// StateReasonCode explain a State that is not Active. The code is one of
+	// AWS's own — ImageAccessDenied, InvalidImage, InternalError.
+	LastUpdateStatusReason     string `json:"last_update_status_reason,omitempty"`
+	LastUpdateStatusReasonCode string `json:"last_update_status_reason_code,omitempty"`
+
 	RevisionId          string             `json:"revision_id,omitempty"`
 	CreationID          string             `json:"creation_id,omitempty"`
 	LastModified        string             `json:"last_modified,omitempty"`
@@ -1146,10 +1160,18 @@ func (s *Service) seedPersistedFunctionImages(cr *ContainerRuntime) {
 					current.State = "Failed"
 					current.StateReason = "Failed to pull container image: " + pullErr.Error()
 					current.StateReasonCode = "ImagePullError"
+					current.LastUpdateStatus = lastUpdateFailed
+					current.LastUpdateStatusReason = current.StateReason
+					current.LastUpdateStatusReasonCode = imagePullReasonCode(pullErr)
 				} else {
 					current.State = "Active"
 					current.StateReason = ""
 					current.StateReasonCode = ""
+					// Creation completing is what first sets LastUpdateStatus,
+					// on this path as much as on CreateFunction's own.
+					current.LastUpdateStatus = lastUpdateSuccessful
+					current.LastUpdateStatusReason = ""
+					current.LastUpdateStatusReasonCode = ""
 				}
 				return true, nil
 			})

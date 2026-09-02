@@ -48,30 +48,38 @@ import (
 //
 // https://docs.aws.amazon.com/lambda/latest/api/API_FunctionConfiguration.html
 type functionConfiguration struct {
-	FunctionName        string                   `json:"FunctionName"`
-	FunctionArn         string                   `json:"FunctionArn"`
-	Runtime             string                   `json:"Runtime,omitempty"`
-	Handler             string                   `json:"Handler,omitempty"`
-	Role                string                   `json:"Role,omitempty"`
-	Description         string                   `json:"Description,omitempty"`
-	Timeout             int                      `json:"Timeout,omitempty"`
-	MemorySize          int                      `json:"MemorySize,omitempty"`
-	CodeSize            int64                    `json:"CodeSize,omitempty"`
-	LastModified        string                   `json:"LastModified,omitempty"`
-	RevisionId          string                   `json:"RevisionId,omitempty"`
-	PackageType         string                   `json:"PackageType,omitempty"`
-	Architectures       []string                 `json:"Architectures,omitempty"`
-	State               string                   `json:"State,omitempty"`
-	StateReason         string                   `json:"StateReason,omitempty"`
-	StateReasonCode     string                   `json:"StateReasonCode,omitempty"`
-	CodeSha256          string                   `json:"CodeSha256,omitempty"`
-	Environment         *functionEnvConf         `json:"Environment,omitempty"`
-	LoggingConfig       *loggingConfig           `json:"LoggingConfig,omitempty"`
-	Layers              []LayerVersionLink       `json:"Layers,omitempty"`
-	ImageUri            string                   `json:"ImageUri,omitempty"`
-	ImageConfigResponse *imageConfigResponseWire `json:"ImageConfigResponse,omitempty"`
-	VpcConfig           *vpcConfigResponse       `json:"VpcConfig,omitempty"`
-	FileSystemConfigs   []FileSystemConfig       `json:"FileSystemConfigs,omitempty"`
+	FunctionName    string   `json:"FunctionName"`
+	FunctionArn     string   `json:"FunctionArn"`
+	Runtime         string   `json:"Runtime,omitempty"`
+	Handler         string   `json:"Handler,omitempty"`
+	Role            string   `json:"Role,omitempty"`
+	Description     string   `json:"Description,omitempty"`
+	Timeout         int      `json:"Timeout,omitempty"`
+	MemorySize      int      `json:"MemorySize,omitempty"`
+	CodeSize        int64    `json:"CodeSize,omitempty"`
+	LastModified    string   `json:"LastModified,omitempty"`
+	RevisionId      string   `json:"RevisionId,omitempty"`
+	PackageType     string   `json:"PackageType,omitempty"`
+	Architectures   []string `json:"Architectures,omitempty"`
+	State           string   `json:"State,omitempty"`
+	StateReason     string   `json:"StateReason,omitempty"`
+	StateReasonCode string   `json:"StateReasonCode,omitempty"`
+	// LastUpdateStatus and its two reason members are the update half of the
+	// lifecycle AWS reports alongside State: `aws lambda wait function-updated`
+	// and the SDKs' FunctionUpdated waiters poll GetFunctionConfiguration for
+	// them. Omitted while the function is still being created, which is where
+	// AWS omits them too.
+	LastUpdateStatus           string                   `json:"LastUpdateStatus,omitempty"`
+	LastUpdateStatusReason     string                   `json:"LastUpdateStatusReason,omitempty"`
+	LastUpdateStatusReasonCode string                   `json:"LastUpdateStatusReasonCode,omitempty"`
+	CodeSha256                 string                   `json:"CodeSha256,omitempty"`
+	Environment                *functionEnvConf         `json:"Environment,omitempty"`
+	LoggingConfig              *loggingConfig           `json:"LoggingConfig,omitempty"`
+	Layers                     []LayerVersionLink       `json:"Layers,omitempty"`
+	ImageUri                   string                   `json:"ImageUri,omitempty"`
+	ImageConfigResponse        *imageConfigResponseWire `json:"ImageConfigResponse,omitempty"`
+	VpcConfig                  *vpcConfigResponse       `json:"VpcConfig,omitempty"`
+	FileSystemConfigs          []FileSystemConfig       `json:"FileSystemConfigs,omitempty"`
 	// TracingConfig and EphemeralStorage are always populated by
 	// functionToConfig, carrying AWS's defaults for a function that set
 	// neither, because AWS always returns both.
@@ -888,7 +896,12 @@ func functionToConfig(fn *Function) *functionConfiguration {
 		State:           fn.State,
 		StateReason:     fn.StateReason,
 		StateReasonCode: fn.StateReasonCode,
-		ImageUri:        fn.ImageUri,
+
+		LastUpdateStatus:           fn.LastUpdateStatus,
+		LastUpdateStatusReason:     fn.LastUpdateStatusReason,
+		LastUpdateStatusReasonCode: fn.LastUpdateStatusReasonCode,
+
+		ImageUri: fn.ImageUri,
 		LoggingConfig: &loggingConfig{
 			LogGroup:            fn.logGroupName(),
 			LogFormat:           fn.LogFormat,
@@ -1300,6 +1313,10 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 			current.State = "Active"
 			current.StateReason = ""
 			current.StateReasonCode = ""
+			// AWS sets LastUpdateStatus for the first time when creation
+			// completes; until then the field is absent, which is what the
+			// Pending response above carries.
+			current.LastUpdateStatus = lastUpdateSuccessful
 			return true, nil
 		})
 		if changed {
@@ -1378,10 +1395,18 @@ func (h *Handler) completeFunctionPrewarm(name, region string, generation functi
 	}()
 
 	nextState, nextReason, nextReasonCode := "Active", "", ""
+	// Creation is the first thing LastUpdateStatus reports on — AWS sets it to
+	// Successful once the create completes. A create that fails reports Failed
+	// there as well as on State, so a FunctionUpdated waiter aimed at a
+	// function that never came up fails out instead of polling to its budget.
+	nextUpdateStatus, nextUpdateReason, nextUpdateReasonCode := lastUpdateSuccessful, "", ""
 	if pullErr != nil {
 		nextState = "Failed"
 		nextReason = "Failed to pull container image: " + pullErr.Error()
 		nextReasonCode = "ImagePullError"
+		nextUpdateStatus = lastUpdateFailed
+		nextUpdateReason = nextReason
+		nextUpdateReasonCode = imagePullReasonCode(pullErr)
 		h.log.Warn("lambda: background image pull failed", zap.String("function", name), zap.Error(pullErr))
 	}
 	ctx := middleware.ContextWithRegion(context.Background(), region)
@@ -1394,6 +1419,9 @@ func (h *Handler) completeFunctionPrewarm(name, region string, generation functi
 			current.State = nextState
 			current.StateReason = nextReason
 			current.StateReasonCode = nextReasonCode
+			current.LastUpdateStatus = nextUpdateStatus
+			current.LastUpdateStatusReason = nextUpdateReason
+			current.LastUpdateStatusReasonCode = nextUpdateReasonCode
 			return true, nil
 		})
 		if aerr == nil {
@@ -1627,6 +1655,171 @@ func (h *Handler) GetFunctionConfiguration(w http.ResponseWriter, r *http.Reques
 	protocol.WriteRESTJSON(w, r, http.StatusOK, functionToConfig(fn))
 }
 
+// ─── Update lifecycle ────────────────────────────────────────────────────────
+//
+// Lambda reports the progress of an update on LastUpdateStatus, the update-side
+// counterpart of State, and ships a FunctionUpdated waiter over it:
+// `aws lambda wait function-updated`, the SDKs' FunctionUpdated/FunctionUpdatedV2,
+// CDK and SAM all poll GetFunctionConfiguration until it reads Successful and
+// give up on Failed. A response that omits the field leaves every one of them
+// polling to its own attempt budget (#1550).
+//
+// Real Lambda is asynchronous throughout, so every update there answers
+// InProgress. Overcast mostly is not: a zip deployment, and every configuration
+// change, is durably applied before the call returns. Those report Successful
+// straight away rather than an InProgress that was never true — a waiter's
+// first poll reads the same either way, and a caller that reads the update
+// response itself gets the fact instead of a status it has to poll away.
+//
+// One update genuinely is asynchronous. A PackageType=Image function pointed at
+// a new ImageUri starts a background pull, exactly as CreateFunction does, and
+// that update answers InProgress and settles to Successful — or to Failed with
+// the reason the pull gave — when the pull finishes. It is also the only window
+// in which a second update can collide with a running one, which is where
+// ResourceConflictException comes from below.
+const (
+	lastUpdateInProgress = "InProgress"
+	lastUpdateSuccessful = "Successful"
+	lastUpdateFailed     = "Failed"
+)
+
+// beginFunctionUpdate opens the update window on current. Called from inside
+// the store mutation that applies the update, so the marker and the change it
+// describes are written together or not at all.
+func beginFunctionUpdate(current *Function) {
+	current.LastUpdateStatus = lastUpdateInProgress
+	current.LastUpdateStatusReason = ""
+	current.LastUpdateStatusReasonCode = ""
+}
+
+// functionUpdateInProgress reports whether an update on fn has yet to settle.
+func functionUpdateInProgress(fn *Function) bool {
+	return fn != nil && fn.LastUpdateStatus == lastUpdateInProgress
+}
+
+// lambdaUpdateInProgressConflict is AWS's ResourceConflictException for a call
+// that arrives while an update is still running.
+// https://docs.aws.amazon.com/lambda/latest/dg/functions-states.html
+func lambdaUpdateInProgressConflict(arn string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ResourceConflictException",
+		Message:    "The operation cannot be performed at this time. An update is in progress for resource: " + arn,
+		HTTPStatus: http.StatusConflict,
+	}
+}
+
+// imagePullReasonCode maps a failed image pull onto the
+// LastUpdateStatusReasonCode AWS reports for it. AWS separates an image it
+// could not fetch — a missing repository or tag included — from one it fetched
+// and could not use, and falls back to InternalError for everything else.
+// https://docs.aws.amazon.com/lambda/latest/api/API_FunctionConfiguration.html
+func imagePullReasonCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "denied"),
+		strings.Contains(msg, "unauthorized"),
+		strings.Contains(msg, "authentication"),
+		strings.Contains(msg, "not found"),
+		strings.Contains(msg, "manifest unknown"),
+		strings.Contains(msg, "no such"):
+		return "ImageAccessDenied"
+	case strings.Contains(msg, "invalid"),
+		strings.Contains(msg, "unsupported"),
+		strings.Contains(msg, "no matching manifest"):
+		return "InvalidImage"
+	default:
+		return "InternalError"
+	}
+}
+
+// settleFunctionUpdate closes the window beginFunctionUpdate opened and returns
+// the settled record, or nil when the write did not apply. revision is the
+// RevisionId the update wrote: a later update supersedes this one and its own
+// settle owns the field from then on, so a pull that finishes after it must not
+// report over the top of it.
+func (h *Handler) settleFunctionUpdate(ctx context.Context, name, revision, status, reason, reasonCode string) *Function {
+	fresh, changed, aerr := h.ls.mutateFunction(ctx, name, func(current *Function) (bool, *protocol.AWSError) {
+		if current.RevisionId != revision || current.LastUpdateStatus != lastUpdateInProgress {
+			return false, nil
+		}
+		current.LastUpdateStatus = status
+		current.LastUpdateStatusReason = reason
+		current.LastUpdateStatusReasonCode = reasonCode
+		return true, nil
+	})
+	if aerr != nil {
+		h.log.Warn("lambda: failed to record function update status",
+			zap.String("function", name),
+			zap.String("status", status),
+			zap.String("error", aerr.Message))
+		return nil
+	}
+	if !changed {
+		return nil
+	}
+	return fresh
+}
+
+// startFunctionUpdatePull pulls a container image an update just pointed the
+// function at, in the background, and reports whether it started one. Only a
+// PackageType=Image function that actually changed image needs a pull — a zip
+// deployment and every configuration change run on an image the function
+// already has — and only when the container runtime is wired: without it
+// (tests, or Docker still starting) there is nothing to pull and nothing to
+// wait for.
+//
+// State is deliberately left alone. AWS keeps an updating function Active and
+// moves LastUpdateStatus alone; Pending is for a function that has never been
+// deployed, and demoting one here would make invokes fail for the length of the
+// pull, which is not what AWS does.
+func (h *Handler) startFunctionUpdatePull(fn *Function, previousImageUri string) bool {
+	if fn == nil || fn.PackageType != "Image" || fn.ImageUri == "" || fn.ImageUri == previousImageUri {
+		return false
+	}
+	h.prewarmMu.Lock()
+	prewarmer := h.prewarmer
+	h.prewarmMu.Unlock()
+	if prewarmer == nil {
+		return false
+	}
+	name, revision := fn.Name, fn.RevisionId
+	region := serviceutil.ARNRegion(fn.ARN)
+	prewarmer(fn, func(pullErr error) {
+		ctx := middleware.ContextWithRegion(context.Background(), region)
+		if pullErr == nil {
+			h.settleFunctionUpdate(ctx, name, revision, lastUpdateSuccessful, "", "")
+			return
+		}
+		h.log.Warn("lambda: image pull for updated function failed",
+			zap.String("function", name), zap.Error(pullErr))
+		h.settleFunctionUpdate(ctx, name, revision, lastUpdateFailed,
+			"Failed to pull container image: "+pullErr.Error(), imagePullReasonCode(pullErr))
+	})
+	return true
+}
+
+// finishFunctionUpdate settles an update that is already applied in full, and
+// returns the configuration to report — Successful, because it is.
+func (h *Handler) finishFunctionUpdate(ctx context.Context, fn *Function) *Function {
+	if settled := h.settleFunctionUpdate(ctx, fn.Name, fn.RevisionId, lastUpdateSuccessful, "", ""); settled != nil {
+		return settled
+	}
+	return fn
+}
+
+// finishFunctionCodeUpdate settles a code update: a new container image is
+// pulled in the background and the caller told InProgress, anything else is
+// already in place and settles here.
+func (h *Handler) finishFunctionCodeUpdate(ctx context.Context, fn *Function, previousImageUri string) *Function {
+	if h.startFunctionUpdatePull(fn, previousImageUri) {
+		return fn
+	}
+	return h.finishFunctionUpdate(ctx, fn)
+}
+
 // UpdateFunctionCode handles PUT /2015-03-31/functions/{name}/code.
 func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 	log := h.log.WithRecorder(r.Context())
@@ -1693,9 +1886,14 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 		s3Code = zip
 	}
 
-	var previousIdentity string
+	var previousIdentity, previousImageUri string
 	fn, changed, aerr := h.ls.mutateFunction(ctx, name, func(current *Function) (bool, *protocol.AWSError) {
+		if functionUpdateInProgress(current) {
+			return false, lambdaUpdateInProgressConflict(current.ARN)
+		}
 		previousIdentity = functionInstanceIdentity(current)
+		previousImageUri = current.ImageUri
+		beginFunctionUpdate(current)
 		// PackageType is immutable. Within that type, a successful update
 		// replaces the previous source instead of layering fields onto it.
 		switch current.PackageType {
@@ -1742,6 +1940,7 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.retireExecutionEnvironment(ctx, fn, previousIdentity)
+	fn = h.finishFunctionCodeUpdate(ctx, fn, previousImageUri)
 
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
@@ -1940,7 +2139,11 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 
 	var previousIdentity string
 	fn, changed, aerr := h.ls.mutateFunction(ctx, name, func(current *Function) (bool, *protocol.AWSError) {
+		if functionUpdateInProgress(current) {
+			return false, lambdaUpdateInProgressConflict(current.ARN)
+		}
 		previousIdentity = functionInstanceIdentity(current)
+		beginFunctionUpdate(current)
 		// Pointer members distinguish omission (no change) from explicit zero values.
 		if req.Description != nil {
 			current.Description = *req.Description
@@ -2016,6 +2219,9 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 	}
 
 	h.retireExecutionEnvironment(ctx, fn, previousIdentity)
+	// Configuration never changes the image, so this settles here: the new
+	// configuration is stored, and the next invocation is the one that reads it.
+	fn = h.finishFunctionUpdate(ctx, fn)
 
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
