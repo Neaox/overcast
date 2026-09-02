@@ -81,11 +81,14 @@ the function does:
 
 ### Other divergences
 
-- `LastUpdateStatus` is never reported, so **`aws lambda wait function-updated`
-  never returns** — it polls for a field no response carries and gives up after
-  its own attempt budget. Nothing is actually pending: an update is applied
-  before `UpdateFunctionCode` or `UpdateFunctionConfiguration` answers. Drop the
-  wait, or poll `State` until it is `Active`.
+- **An update that is already applied says so.** AWS answers every update
+  `LastUpdateStatus: InProgress` and settles a moment later; Overcast answers
+  `Successful`, because a zip deployment and every `UpdateFunctionConfiguration`
+  are durably applied before the call returns. `aws lambda wait function-updated`
+  returns on its first poll rather than never (#1550). The one update that really
+  is asynchronous — `UpdateFunctionCode` pointing a `PackageType=Image` function
+  at a new image — answers `InProgress` and settles to `Successful`, or `Failed`
+  with `ImageAccessDenied`/`InvalidImage`/`InternalError`, when the pull does.
 - Extension telemetry subscriptions — the Logs API (`PUT /2020-08-15/logs`) and
   the Telemetry API (`PUT /2022-07-01/telemetry`) — support HTTP destinations
   only. Buffering configuration is honoured with AWS's defaults; out-of-range
