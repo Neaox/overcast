@@ -8,7 +8,7 @@ import (
 
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/dataplane"
-	"github.com/overcast-sh/overcast/internal/services/lambda"
+	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/state"
 )
 
@@ -692,7 +692,7 @@ func TestCheckVPCNetworkIsolation_capsTheListedVPCs(t *testing.T) {
 func TestCheckLambdaInitVolumeOwnership_firesInformationallyPerVolume(t *testing.T) {
 	// Given: this instance reused two init volumes it did not create — one
 	// labelled for another instance, one carrying no owner label at all.
-	problems := []lambda.InitVolumeProblem{
+	problems := []docker.VolumeOwnershipProblem{
 		{Volume: "overcast-lambda-init-aaa111-amd64", Owner: "some-other-overcast"},
 		{Volume: "overcast-lambda-init-bbb222-arm64", Owner: ""},
 	}
@@ -720,6 +720,9 @@ func TestCheckLambdaInitVolumeOwnership_firesInformationallyPerVolume(t *testing
 			t.Errorf("detail %q does not mention %q", a.Detail, want)
 		}
 	}
+	if a.DocsPath != lambdaInitVolumeDocsPath {
+		t.Errorf("docs path = %q, want %q", a.DocsPath, lambdaInitVolumeDocsPath)
+	}
 }
 
 func TestCheckLambdaInitVolumeOwnership_absentWhenNothingRecorded(t *testing.T) {
@@ -729,16 +732,16 @@ func TestCheckLambdaInitVolumeOwnership_absentWhenNothingRecorded(t *testing.T) 
 	if a := checkLambdaInitVolumeOwnership(nil); a != nil {
 		t.Fatalf("expected no advisory, got %+v", a)
 	}
-	if a := checkLambdaInitVolumeOwnership([]lambda.InitVolumeProblem{}); a != nil {
+	if a := checkLambdaInitVolumeOwnership([]docker.VolumeOwnershipProblem{}); a != nil {
 		t.Fatalf("expected no advisory for an empty list, got %+v", a)
 	}
 }
 
 func TestCheckLambdaInitVolumeOwnership_capsTheListedVolumes(t *testing.T) {
 	// Given: more foreign volumes than the card can carry.
-	problems := make([]lambda.InitVolumeProblem, 0, lambdaInitVolumeAdvisoryMaxListed+2)
+	problems := make([]docker.VolumeOwnershipProblem, 0, lambdaInitVolumeAdvisoryMaxListed+2)
 	for i := range cap(problems) {
-		problems = append(problems, lambda.InitVolumeProblem{Volume: fmt.Sprintf("overcast-lambda-init-vol-%02d-amd64", i), Owner: "other"})
+		problems = append(problems, docker.VolumeOwnershipProblem{Volume: fmt.Sprintf("overcast-lambda-init-vol-%02d-amd64", i), Owner: "other"})
 	}
 
 	// When: the rule evaluates them.

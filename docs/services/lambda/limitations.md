@@ -251,12 +251,18 @@ overruns its CPU allocation is what Lambda does. It disappears entirely with mor
 memory (at 1769 MB, a full vCPU, there are no stalls at all) or any gap between
 invocations.
 
+### Init delivery is shared across instances
+
 That init binary reaches each container through a named Docker volume
 (`overcast-lambda-init-<hash>-<arch>`) rather than a fresh copy per cold start;
 its name is content-addressed, so any Overcast instance on the same daemon can
-safely reuse one seeded by another build's — but only the instance that seeded
-it prunes or removes it, so two Overcasts sharing a daemon never delete a
-volume the other is still using.
+safely reuse one seeded by another instance's build — but only the instance
+that seeded a volume prunes or removes it, so two Overcasts sharing a daemon
+never delete a volume the other is still using. A volume this instance reused
+but does not own, and then found empty and could not remove, is not reused
+again — the affected cold starts fall back to copying the init into the
+container instead, and it's surfaced as an informational advisory on
+`GET /_overcast/debug/metrics` rather than only a debug-level log line.
 
 ## Runtimes
 

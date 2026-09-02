@@ -17,7 +17,7 @@ import (
 	"github.com/overcast-sh/overcast/internal/boottime"
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/dataplane"
-	"github.com/overcast-sh/overcast/internal/services/lambda"
+	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/state"
 	"github.com/overcast-sh/overcast/internal/trace"
 )
@@ -34,12 +34,16 @@ type debugEC2Provider interface {
 }
 
 // debugLambdaProvider is the subset of the Lambda service needed by the
-// debug namespace, mirroring debugEC2Provider.
+// debug namespace, mirroring debugEC2Provider — including reading
+// docker.VolumeOwnershipProblem rather than a lambda-package type, the same
+// way debugEC2Provider reads dataplane.VPCNetworkProblem rather than one of
+// ec2's own, so this file depends only on the neutral, already-shared docker
+// package and never needs to import internal/services/lambda.
 type debugLambdaProvider interface {
 	// InitVolumeProblems feeds the lambda-init-volume-foreign advisory (see
 	// advisories.go): init volumes matching this build's content hash that
 	// this instance reused but does not own, per docker.LabelInstance.
-	InitVolumeProblems() []lambda.InitVolumeProblem
+	InitVolumeProblems() []docker.VolumeOwnershipProblem
 }
 
 // DebugStateProvider is implemented by services with data outside the
@@ -492,7 +496,7 @@ func debugMetrics(cfg *config.Config, store state.Store, vpcs debugEC2Provider, 
 		if vpcs != nil {
 			networkProblems = vpcs.NetworkProblems()
 		}
-		var initVolumeProblems []lambda.InitVolumeProblem
+		var initVolumeProblems []docker.VolumeOwnershipProblem
 		if lambdaSvc != nil {
 			initVolumeProblems = lambdaSvc.InitVolumeProblems()
 		}

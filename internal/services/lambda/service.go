@@ -550,13 +550,16 @@ func (s *Service) setRuntimeAPIListen(status listenstatus.Status) {
 // InitVolumeProblems returns every Lambda init volume this instance has
 // reused that turned out to be labelled for a different Overcast instance, or
 // not labelled with an owner at all — see ContainerRuntime.InitVolumeProblems
-// and issue #1573. Consumed by the router's debug/advisory endpoint, which is
-// why this returns the lambda package's own type rather than a router one —
-// see debugLambdaProvider in internal/router/debug.go.
+// and issue #1573. Consumed by the router's debug/advisory endpoint (see
+// debugLambdaProvider in internal/router/debug.go), which is why this returns
+// docker.VolumeOwnershipProblem — a neutral type outside this package,
+// mirroring how ec2.Service.NetworkProblems returns dataplane's type rather
+// than one of its own — instead of a lambda-only type the router would have
+// to import this package to read.
 //
 // Empty before Docker has been probed (there is no ContainerRuntime yet to
 // have reused anything), same as a genuinely clean instance.
-func (s *Service) InitVolumeProblems() []InitVolumeProblem {
+func (s *Service) InitVolumeProblems() []docker.VolumeOwnershipProblem {
 	s.mu.Lock()
 	cr := s.containerRuntime
 	s.mu.Unlock()

@@ -7,7 +7,7 @@ import (
 
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/dataplane"
-	"github.com/overcast-sh/overcast/internal/services/lambda"
+	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/state"
 )
 
@@ -78,6 +78,13 @@ const noSQLiteDocsPath = storageDocsPath + "#builds-without-sqlite"
 // Docker network and what a failed flip leaves behind. The fragment is the
 // docs browser's slug for that heading — see dataDirDocsPath.
 const vpcNetworkDocsPath = "services/ec2/limitations.md#internet-gateways-and-isolation"
+
+// lambdaInitVolumeDocsPath deep-links the lambda-init-volume-foreign advisory
+// to the section of the Lambda limitations page explaining why a foreign
+// init volume is safe to reuse but only its own creating instance can prune
+// or remove it. The fragment is the docs browser's slug for that
+// heading — see dataDirDocsPath.
+const lambdaInitVolumeDocsPath = "services/lambda/limitations.md#init-delivery-is-shared-across-instances"
 
 // Advisory is one actionable diagnostic surfaced alongside the storage
 // diagnostics in GET /_overcast/debug/metrics (see debugMetricsResponse.Advisories).
@@ -168,7 +175,7 @@ type advisoryInput struct {
 	// but does not own, per docker.LabelInstance — drives
 	// lambda-init-volume-foreign. Nil whenever Lambda is not wired, Docker
 	// has not been probed yet, or nothing was found.
-	LambdaInitVolumeProblems []lambda.InitVolumeProblem
+	LambdaInitVolumeProblems []docker.VolumeOwnershipProblem
 }
 
 // computeAdvisories is the single generator function behind the
@@ -277,7 +284,7 @@ const lambdaInitVolumeAdvisoryMaxListed = 5
 // created it prunes it, or an operator removes it by hand. Surfacing that
 // here is the only way an operator learns these volumes exist at all —
 // otherwise they would only ever see a debug-level log line.
-func checkLambdaInitVolumeOwnership(problems []lambda.InitVolumeProblem) *Advisory {
+func checkLambdaInitVolumeOwnership(problems []docker.VolumeOwnershipProblem) *Advisory {
 	if len(problems) == 0 {
 		return nil
 	}
@@ -305,6 +312,7 @@ func checkLambdaInitVolumeOwnership(problems []lambda.InitVolumeProblem) *Adviso
 		Detail: "These volumes hold this build's init and are safe for this instance to keep " +
 			"mounting read-only, but it did not create them, so its own cleanup will never remove " +
 			"them — only the instance that created each one, or `docker volume rm`, will. " + listed,
+		DocsPath: lambdaInitVolumeDocsPath,
 	}
 }
 
