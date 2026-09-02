@@ -94,8 +94,16 @@ func Probe(socketPath string, networks []NetworkSpec, logger *zap.Logger) (*Prob
 		for _, warning := range resolved.Warnings {
 			logger.Warn(warning, zap.String("network", spec.Name))
 		}
-		statuses = append(statuses, EnsureNetwork(ctx, dc, resolved, logger))
+		status, err := EnsureNetwork(ctx, dc, resolved, logger)
 		cancel()
+		if err != nil {
+			// A plane that could not be created at all is fatal, as it was
+			// before this verification existed. Starting without one produces a
+			// daemon that fails every container create with an error naming
+			// nothing about networks — see EnsureNetwork.
+			return nil, err
+		}
+		statuses = append(statuses, status)
 	}
 
 	return &ProbeResult{Client: dc, Networks: statuses}, nil

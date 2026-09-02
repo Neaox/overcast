@@ -8,7 +8,8 @@ deprecated [networking] `OVERCAST_CONTROL_PLANE_INTERNAL` — set `OVERCAST_VPC_
 + [networking] every Docker network Overcast reuses is verified field by field against the state this configuration would create, on every start.
   driver, isolation, IPv6, IPAM and driver options are all compared, not just the isolation flag — Docker's create-network call returns an existing network unchanged, so one made by an older version keeps every setting it was born with while looking correct
   a network with no `overcast.network.spec-hash` label is treated as mismatched: those are the networks that have actually been wrong
-  a mismatched network with nothing attached is recreated; one with containers attached is left alone, warned about by name and field, reported as degraded in `/_overcast/health`, and raised as a console advisory
+  a mismatched plane with nothing attached is recreated; one with containers attached is left alone, warned about by name and field, reported as degraded in `/_overcast/health`, and raised as a console advisory. A network another tool created is never rebuilt, whatever its name
+  on the first start after upgrading, every VPC network mismatches — none carries a spec-hash label yet — and each is rebuilt once under its containers, which drops open connections across that VPC bridge. Containers are reconnected at the address and aliases they had, and their control-plane connection is untouched, so an in-flight invocation keeps its Runtime API
 + [cli] `overcast network status` and `overcast network reset` report and rebuild the Docker networks Overcast manages.
   reset stops the containers Overcast started, disconnects containers it did not and leaves them running, then rebuilds the network to spec. `--dry-run` prints the plan and changes nothing
 * [ec2] one Overcast instance no longer deletes another's VPC networks.

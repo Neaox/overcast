@@ -273,21 +273,23 @@ func TestLockVPCNetwork_holdsAcrossTheSuccessorIDWindow(t *testing.T) {
 	h := hostHandler(t, daemon, "shared")
 	ctx := context.Background()
 
-	// Two VPCs sharing one Docker network, as the shared strategy produces.
+	// Two VPCs sharing one Docker network, as the shared strategy produces: both
+	// records name the *owner's* network name, which is what the lock keys on.
 	const netName = "overcast-vpc-vpc-a"
 	for _, id := range []string{"vpc-a", "vpc-b"} {
 		if aerr := h.store.putVPC(ctx, &VPC{
 			VpcID: id, CidrBlock: "10.1.0.0/16",
-			DockerNetworkID: "net-1", NetworkStatus: vpcNetworkStatusOK,
+			DockerNetworkID: "net-1", DockerNetworkName: netName,
+			NetworkStatus: vpcNetworkStatusOK,
 		}); aerr != nil {
 			t.Fatalf("putVPC: %v", aerr.Message)
 		}
 	}
-	daemon.mu.Lock()
-	for _, id := range []string{"net-1", "net-2"} {
-		daemon.inspects[id] = docker.NetworkInspect{ID: id, Name: netName, Driver: docker.DefaultNetworkDriver}
-	}
-	daemon.mu.Unlock()
+	// The network is deliberately absent from the daemon. That is the state
+	// during a flip — removed, successor not yet recorded — and it is the branch
+	// a Docker-resolved key got wrong: the inspect 404s, the fallback keys on
+	// the id, and the sharer takes a free mutex. Keying off the record needs no
+	// inspect, so the absence changes nothing.
 
 	_, unlock, aerr := h.lockVPCNetwork(ctx, "vpc-a")
 	if aerr != nil {
@@ -340,15 +342,11 @@ func TestLockVPCNetwork_differentNetworksDoNotContend(t *testing.T) {
 		netID := fmt.Sprintf("net-%d", i+1)
 		if aerr := h.store.putVPC(ctx, &VPC{
 			VpcID: id, CidrBlock: fmt.Sprintf("10.%d.0.0/16", i+1),
-			DockerNetworkID: netID, NetworkStatus: vpcNetworkStatusOK,
+			DockerNetworkID: netID, DockerNetworkName: "overcast-vpc-" + id,
+			NetworkStatus: vpcNetworkStatusOK,
 		}); aerr != nil {
 			t.Fatalf("putVPC: %v", aerr.Message)
 		}
-		daemon.mu.Lock()
-		daemon.inspects[netID] = docker.NetworkInspect{
-			ID: netID, Name: "overcast-vpc-" + id, Driver: docker.DefaultNetworkDriver,
-		}
-		daemon.mu.Unlock()
 	}
 
 	_, unlockA, aerr := h.lockVPCNetwork(ctx, "vpc-a")

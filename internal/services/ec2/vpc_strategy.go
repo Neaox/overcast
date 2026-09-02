@@ -116,6 +116,11 @@ func (s *sharedVPCStrategy) EnsureNetwork(ctx context.Context, vpc *VPC) *protoc
 	//nolint:gocritic // shadowing 'ok' here is intentional
 	if existing, ok := s.findSharerForCIDR(ctx, vpc.CidrBlock, vpc.VpcID); ok {
 		vpc.DockerNetworkID = existing.DockerNetworkID
+		// The owner's network *name* as well as its id. The flip lock keys on
+		// the name, and a sharer that fell back to deriving its own would take a
+		// different lock on the same network — which is exactly the collision
+		// the lock exists to prevent.
+		vpc.DockerNetworkName = existing.DockerNetworkName
 		vpc.NetworkStatus = vpcNetworkStatusShared
 		log.Info("vpc network: sharing existing Docker network",
 			zap.String("vpc", vpc.VpcID),
@@ -520,6 +525,10 @@ func (s *remappedVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
 // adoptExistingNetwork is the shared network-adoption logic used by both
 // strategies' Reconcile passes. It mutates the three index maps by removing
 // the matched entry so each network is adopted by at most one VPC.
+// adoptExistingNetwork also records the adopted network's name on the record.
+// The flip lock keys on that name and must not have to ask Docker for it — see
+// Handler.vpcNetworkLockKey — and under the shared strategy the name belongs to
+// whichever VPC created the network, which no sharer can derive.
 func adoptExistingNetwork(
 	vpc *VPC,
 	byID map[string]*docker.NetworkSummary,
@@ -531,6 +540,7 @@ func adoptExistingNetwork(
 			delete(byResourceID, n.ResourceID())
 			delete(bySubnet, n.Subnet())
 			delete(byID, n.ID)
+			vpc.DockerNetworkName = n.Name
 			return n.ID, true
 		}
 	}
@@ -538,12 +548,14 @@ func adoptExistingNetwork(
 		delete(byID, n.ID)
 		delete(bySubnet, n.Subnet())
 		delete(byResourceID, vpc.VpcID)
+		vpc.DockerNetworkName = n.Name
 		return n.ID, true
 	}
 	if n, ok := bySubnet[preferredDockerSubnet(vpc)]; ok {
 		delete(byID, n.ID)
 		delete(byResourceID, n.ResourceID())
 		delete(bySubnet, preferredDockerSubnet(vpc))
+		vpc.DockerNetworkName = n.Name
 		return n.ID, true
 	}
 	return "", false
@@ -700,8 +712,14 @@ func (s *sharedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing
 
 	for _, vpc := range vpcs {
 		if owner, ok := cidrOwner[vpc.CidrBlock]; ok && vpc != owner {
-			if vpc.DockerNetworkID != owner.DockerNetworkID || vpc.NetworkStatus != vpcNetworkStatusShared {
+			if vpc.DockerNetworkID != owner.DockerNetworkID ||
+				vpc.DockerNetworkName != owner.DockerNetworkName ||
+				vpc.NetworkStatus != vpcNetworkStatusShared {
 				vpc.DockerNetworkID = owner.DockerNetworkID
+				// The owner's *name*, not this VPC's: the flip lock keys on it,
+				// and two sharers that derived their own names would take two
+				// different locks on one network.
+				vpc.DockerNetworkName = owner.DockerNetworkName
 				vpc.NetworkStatus = vpcNetworkStatusShared
 				_ = s.h.store.putVPC(ctx, vpc)
 			}

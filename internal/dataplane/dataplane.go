@@ -29,6 +29,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/containerendpoint"
@@ -154,7 +155,7 @@ func ControlPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *dock
 		case config.ControlPlaneInternalAuto:
 		}
 		if pinSet {
-			d.Warnings = append(d.Warnings, deprecationNotice(cfg))
+			d.Warnings = appendOnce(&deprecationSaid, d.Warnings, deprecationNotice(cfg))
 		}
 
 		if !d.Internal {
@@ -169,7 +170,7 @@ func ControlPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *dock
 			return docker.InternalDecision{
 				Internal: false,
 				Reason:   d.Reason + ", overridden: an internal control plane would sever the Runtime API on this host",
-				Warnings: append(d.Warnings, ControlPlaneMustStayRoutableWarning),
+				Warnings: appendOnce(&shortfallSaid, d.Warnings, ControlPlaneMustStayRoutableWarning),
 			}
 		}
 
@@ -177,7 +178,7 @@ func ControlPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *dock
 		// needs no warning. Isolation arrived at by the deprecated pin while the
 		// mode says `open` is a contradiction the operator should see.
 		if egressMode(cfg) != config.VPCEgressNone {
-			d.Warnings = append(d.Warnings, ControlPlaneEgressWarning)
+			d.Warnings = appendOnce(&egressWarningSaid, d.Warnings, ControlPlaneEgressWarning)
 		}
 		return d
 	}
@@ -288,6 +289,31 @@ func VPCNetworkSpec(cfg *config.Config, n VPCNetwork) docker.NetworkSpec {
 	}
 }
 
+// VPCNetworkEgressReason says, in one line, what a VPC network's isolation
+// means for the containers on it.
+//
+// It exists because `Internal=true` beside a container that plainly has egress
+// is the confusion #1564 was about, and prose in the docs is not where anyone
+// meets it. Under `open` a VPC with no internet gateway keeps an `--internal`
+// bridge — honest about the template — while its containers reach the internet
+// through the routable control plane they are also on. Nothing in `docker
+// network inspect` will ever explain that, so Overcast says it where it is
+// read: here, in the startup log, and on `overcast network status`.
+func VPCNetworkEgressReason(cfg *config.Config, internal bool) string {
+	mode := egressMode(cfg)
+	switch {
+	case mode == config.VPCEgressNone:
+		return "OVERCAST_VPC_EGRESS=none: no egress from this network or any other"
+	case !internal:
+		return "OVERCAST_VPC_EGRESS=" + string(mode) + ": the VPC has an internet gateway, so this " +
+			"network is routable and its containers have egress directly"
+	default:
+		return "OVERCAST_VPC_EGRESS=" + string(mode) + ": the VPC has no internet gateway, so this " +
+			"network is internal — its containers still have egress, through the control plane (" +
+			Primary(cfg) + ") they are also on"
+	}
+}
+
 // ControlPlaneEgressWarning is what isolating this plane costs when the egress
 // mode did not ask for it, stated in full because the cost lands a long way
 // from its cause: a function that cannot reach an external API fails minutes
@@ -314,6 +340,42 @@ const ControlPlaneMustStayRoutableWarning = "OVERCAST_VPC_EGRESS=none asked for 
 	"routable, so containers still have a route out through it and this stack is NOT hermetic. Every data " +
 	"plane is isolated as asked. Run Overcast containerised, or against a native Linux Docker daemon, for " +
 	"the whole of `none`"
+
+// Each of these fires at most once per process.
+//
+// The control plane's InternalMode runs once per docker.Probe, and Probe is
+// called by the router's supervisor, again by Lambda's own probe, and again by
+// awaitDockerProbe after a reconnect — so an operator with the deprecated
+// variable set saw the notice at least twice on a normal boot. A deprecation
+// notice seen twice is one being tuned out, which is the whole argument for
+// firing it only where it was actually set.
+var (
+	deprecationSaid   sync.Once
+	shortfallSaid     sync.Once
+	egressWarningSaid sync.Once
+)
+
+// resetWarningsOnce re-arms the once-per-process guards. Tests use it: they
+// exercise the same decision many times in one process, and a guard whose whole
+// job is to fire once would otherwise make every case after the first assert
+// against a warning that was correctly withheld.
+func resetWarningsOnce() {
+	deprecationSaid = sync.Once{}
+	shortfallSaid = sync.Once{}
+	egressWarningSaid = sync.Once{}
+}
+
+// appendOnce adds warning to warnings the first time it is reached in this
+// process, and leaves the list alone afterwards. The decision itself is
+// unchanged — only whether it is said again.
+func appendOnce(once *sync.Once, warnings []string, warning string) []string {
+	said := false
+	once.Do(func() { said = true })
+	if !said {
+		return warnings
+	}
+	return append(warnings, warning)
+}
 
 // deprecationNotice names the mode that expresses what the deprecated variable
 // was set to mean, so the operator is told what to write instead rather than
@@ -385,6 +447,14 @@ func runtimeAPIReachableOnInternalPlane(ctx context.Context, dc *docker.Client) 
 // Per-VPC networks are absent here on purpose: EC2 creates those on demand, one
 // per VPC, from VPCNetworkSpec.
 //
+// Neither plane carries an owner. docker.LabelInstance is the EC2 service's
+// store-scoped identity, and Probe runs before any store is read — so a plane
+// is scoped by its *name*, which is what OVERCAST_NETWORK is for, and two
+// instances sharing that name share the plane deliberately. Stamping
+// cfg.Network into the same label a VPC network uses for a store identity would
+// make one label mean two unrelated things depending on which network you read
+// it off.
+//
 // One definition, used by both the supervisor and Lambda's independent probe,
 // so the two cannot disagree about what exists or how it is isolated.
 func PlaneSpecs(cfg *config.Config) []docker.NetworkSpec {
@@ -393,7 +463,6 @@ func PlaneSpecs(cfg *config.Config) []docker.NetworkSpec {
 			Name:         cfg.Network,
 			InternalMode: Internal(cfg),
 			Labels:       docker.ManagedLabels(docker.ServiceCore, cfg.Network),
-			Owner:        cfg.Network,
 			Version:      cfg.Version,
 			EgressMode:   string(egressMode(cfg)),
 		},
@@ -401,7 +470,6 @@ func PlaneSpecs(cfg *config.Config) []docker.NetworkSpec {
 			Name:         Primary(cfg),
 			InternalMode: ControlPlaneInternal(cfg),
 			Labels:       docker.ManagedLabels(docker.ServiceCore, Primary(cfg)),
-			Owner:        cfg.Network,
 			Version:      cfg.Version,
 			EgressMode:   string(egressMode(cfg)),
 		},

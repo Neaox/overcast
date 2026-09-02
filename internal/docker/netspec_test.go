@@ -33,6 +33,10 @@ type specDaemon struct {
 	// network is still there, because somebody else removed and recreated it
 	// between our inspect and our remove.
 	removeSucceedsWithoutRemoving bool
+
+	// refuseCreate models a daemon that will not create the network at all —
+	// address-pool exhaustion being the common cause.
+	refuseCreate bool
 }
 
 func newSpecDaemon(t *testing.T, seed ...*NetworkInspect) (*Client, *specDaemon) {
@@ -57,6 +61,14 @@ func (d *specDaemon) handle(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 
 	case r.Method == http.MethodPost && r.URL.Path == "/v1.45/networks/create":
+		d.mu.Lock()
+		refuse := d.refuseCreate
+		d.mu.Unlock()
+		if refuse {
+			http.Error(w, `{"message":"could not find an available, non-overlapping IPv4 address pool"}`,
+				http.StatusInternalServerError)
+			return
+		}
 		var req createNetworkRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		d.mu.Lock()
@@ -315,7 +327,7 @@ func TestEnsureNetwork_createsWhenAbsent(t *testing.T) {
 	dc, d := newSpecDaemon(t)
 	spec := testSpec()
 
-	status := EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
+	status, _ := EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
 
 	if !status.OK() {
 		t.Errorf("status = %+v, want ok — an absent network is created, not drifted", status)
@@ -337,7 +349,7 @@ func TestEnsureNetwork_leavesAMatchingNetworkAlone(t *testing.T) {
 	spec := testSpec()
 	dc, d := newSpecDaemon(t, asCreated(spec))
 
-	status := EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
+	status, _ := EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
 
 	if !status.OK() {
 		t.Errorf("status = %+v, want ok", status)
@@ -358,7 +370,7 @@ func TestEnsureNetwork_recreatesADriftedNetworkWithNothingAttached(t *testing.T)
 	stale.Labels[LabelSpecHash] = "stale00000000"
 	dc, d := newSpecDaemon(t, stale)
 
-	status := EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
+	status, _ := EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
 
 	if !status.OK() {
 		t.Errorf("status = %+v, want ok — the drift was repaired, and reporting a healed drift "+
@@ -388,7 +400,7 @@ func TestEnsureNetwork_reportsRatherThanBreakingAttachedContainers(t *testing.T)
 	}
 	dc, d := newSpecDaemon(t, stale)
 
-	status := EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
+	status, _ := EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
 
 	if status.OK() {
 		t.Fatal("status is ok, want a reported mismatch")
@@ -422,7 +434,7 @@ func TestEnsureNetwork_neverTouchesAnotherInstancesNetwork(t *testing.T) {
 	theirs.Labels[LabelInstance] = "instance-b"
 	dc, d := newSpecDaemon(t, theirs)
 
-	status := EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
+	status, _ := EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
 
 	if d.removeCount(spec.Name) != 0 {
 		t.Fatal("another instance's network was removed")
@@ -447,7 +459,7 @@ func TestEnsureNetwork_refusesToRebuildASwarmScopedNetwork(t *testing.T) {
 	swarm.Scope = "swarm"
 	dc, d := newSpecDaemon(t, swarm)
 
-	status := EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
+	status, _ := EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
 
 	if d.removeCount(spec.Name) != 0 {
 		t.Fatal("a swarm-scoped network was removed")
@@ -479,7 +491,7 @@ func TestEnsureNetwork_doesNotCreateOverANetworkItDidNotRemove(t *testing.T) {
 	d.removeSucceedsWithoutRemoving = true
 	d.mu.Unlock()
 
-	status := EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
+	status, _ := EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
 
 	if d.createCount(spec.Name) != 0 {
 		t.Fatalf("created over a network this call did not remove (%d creates)", d.createCount(spec.Name))
@@ -503,7 +515,7 @@ func TestEnsureNetwork_serialisesConcurrentRepairs(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
+			_, _ = EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
 		}()
 	}
 	wg.Wait()
@@ -518,5 +530,86 @@ func TestEnsureNetwork_serialisesConcurrentRepairs(t *testing.T) {
 	}
 	if live := d.network(spec.Name); live == nil || live.Internal {
 		t.Errorf("network = %+v, want one present and repaired", live)
+	}
+}
+
+// A network that is absent and cannot be created is fatal. "A wrong-but-usable
+// network is not a reason to refuse to start" is right; *no* network is a
+// different case — the daemon would start and then fail every container create
+// with an error naming nothing about networks.
+func TestEnsureNetwork_absentAndUncreatableIsFatal(t *testing.T) {
+	dc, d := newSpecDaemon(t)
+	d.mu.Lock()
+	d.refuseCreate = true
+	d.mu.Unlock()
+
+	status, err := EnsureNetwork(context.Background(), dc, testSpec(), zap.NewNop())
+	if err == nil {
+		t.Fatal("EnsureNetwork returned no error for a network that could not be created")
+	}
+	if !strings.Contains(status.Drift, "could not create") {
+		t.Errorf("Drift = %q, want it to say the create failed", status.Drift)
+	}
+}
+
+// A declined *repair* is still only a warning: the network exists and works,
+// it is merely not in the state asked for.
+func TestEnsureNetwork_declinedRepairIsNotFatal(t *testing.T) {
+	spec := testSpec()
+	stale := asCreated(spec)
+	stale.Internal = true
+	stale.Containers = map[string]NetworkEndpoint{"c1": {Name: "busy"}}
+	dc, _ := newSpecDaemon(t, stale)
+
+	if _, err := EnsureNetwork(context.Background(), dc, spec, zap.NewNop()); err != nil {
+		t.Fatalf("a declined repair returned a fatal error: %v", err)
+	}
+}
+
+// An unlabelled network under one of our names is not automatically ours. A
+// Compose network called `overcast` is byte-for-byte indistinguishable from a
+// plane an older Overcast made, if the only thing checked is the absence of our
+// label — so the ownership marks other tools stamp are checked too, and
+// "absence is not permission" is applied the way the VPC sweep applies it.
+func TestEnsureNetwork_neverDestroysAnotherToolsNetwork(t *testing.T) {
+	spec := testSpec()
+	theirs := asCreated(spec)
+	theirs.Internal = true
+	theirs.Labels = map[string]string{
+		"com.docker.compose.project": "my-stack",
+		"com.docker.compose.network": "overcast",
+	}
+	dc, d := newSpecDaemon(t, theirs)
+
+	status, err := EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
+	if err != nil {
+		t.Fatalf("EnsureNetwork: %v", err)
+	}
+	if d.removeCount(spec.Name) != 0 {
+		t.Fatal("a docker compose network was removed")
+	}
+	if status.OK() {
+		t.Error("status is ok, want the collision reported")
+	}
+	if !strings.Contains(status.Drift, "docker compose") {
+		t.Errorf("Drift = %q, want it to name the tool that owns the network", status.Drift)
+	}
+}
+
+// An Overcast network that is also part of a Compose project is still
+// Overcast's: our own managed label settles it, whatever else is stamped on.
+func TestEnsureNetwork_stillRepairsOurOwnNetworkUnderComposeLabels(t *testing.T) {
+	spec := testSpec()
+	ours := asCreated(spec)
+	ours.Internal = true
+	ours.Labels["com.docker.compose.project"] = "my-stack"
+	dc, d := newSpecDaemon(t, ours)
+
+	if _, err := EnsureNetwork(context.Background(), dc, spec, zap.NewNop()); err != nil {
+		t.Fatalf("EnsureNetwork: %v", err)
+	}
+	if d.removeCount(spec.Name) != 1 {
+		t.Errorf("removes = %d, want the network repaired: our own managed label settles ownership",
+			d.removeCount(spec.Name))
 	}
 }

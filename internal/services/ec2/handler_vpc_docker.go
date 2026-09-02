@@ -208,6 +208,16 @@ func (h *Handler) selfContainer() (string, bool) {
 //
 // Returns the Docker network ID on success.
 func (h *Handler) createDockerVPCNetwork(ctx context.Context, vpc *VPC) (string, error) {
+	// The last mutation path that did not serialise: CreateVpc, and the
+	// strategies' reconcile, raced `overcast network reset` and each other on
+	// the same name.
+	//
+	// The lock is taken here and not in createDockerVPCNetworkInternal, which is
+	// the primitive the gateway flip and the startup isolation pass call *while
+	// already holding it* — a sync.Mutex is not reentrant, and taking it twice
+	// deadlocks the reconcile.
+	defer docker.LockNetwork(h.cfg.VPCNetwork(vpc.VpcID))()
+
 	return h.createDockerVPCNetworkInternal(ctx, vpc,
 		dataplane.VPCNetworkInternal(h.cfg, h.vpcHasInternetGateway(ctx, vpc.VpcID)))
 }
@@ -222,11 +232,31 @@ func (h *Handler) createDockerVPCNetwork(ctx context.Context, vpc *VPC) (string,
 // hash of the state it was created in (docker.LabelSpecHash, so the next start
 // can tell whether it still holds). See vpcNetworkSpec.
 func (h *Handler) createDockerVPCNetworkInternal(ctx context.Context, vpc *VPC, internal bool) (string, error) {
-	netID, err := h.docker.CreateNetworkWithOptions(ctx,
-		h.vpcNetworkSpec(ctx, vpc, internal).CreateOptions())
+	spec := h.vpcNetworkSpec(ctx, vpc, internal)
+	netID, err := h.docker.CreateNetworkWithOptions(ctx, spec.CreateOptions())
 	if err != nil {
 		return "", err
 	}
+	// Recorded on the record, not resolved from Docker later: the flip lock
+	// keys on it, and the one moment it would need resolving is the moment the
+	// network does not exist. See Handler.vpcNetworkLockKey.
+	vpc.DockerNetworkName = spec.Name
+	// The same reasoned line the planes get from docker.Probe. A VPC network is
+	// not in PlaneSpecs and its spec has no InternalMode, so without this it is
+	// the one network class whose isolation is never explained anywhere — and
+	// the one where `Internal=true` beside a container with egress most needs
+	// explaining.
+	h.log.WithRecorder(ctx).Info("vpc network isolation",
+		zap.String("vpc", vpc.VpcID),
+		zap.String("network", spec.Name),
+		zap.Bool("internal", internal),
+		zap.String("reason", dataplane.VPCNetworkEgressReason(h.cfg, internal)))
+	h.recordNetworkStatus(docker.NetworkStatus{
+		Name:     spec.Name,
+		Internal: internal,
+		Reason:   dataplane.VPCNetworkEgressReason(h.cfg, internal),
+		SpecHash: spec.SpecHash(),
+	})
 	h.joinVPCNetwork(ctx, netID)
 	return netID, nil
 }
@@ -439,15 +469,14 @@ func (h *Handler) lockVPCNetwork(ctx context.Context, vpcID string) (*VPC, func(
 			// made purely to lock something that is never touched.
 			return vpc, func() {}, nil
 		}
-		key := h.vpcNetworkLockKey(ctx, vpc.DockerNetworkID)
+		key := h.vpcNetworkLockKey(vpc)
 		unlock := docker.LockNetwork(key)
 		current, aerr := h.store.getVPC(ctx, vpcID)
 		if aerr != nil {
 			unlock()
 			return nil, func() {}, aerr
 		}
-		if current.DockerNetworkID == vpc.DockerNetworkID ||
-			h.vpcNetworkLockKey(ctx, current.DockerNetworkID) == key {
+		if current.DockerNetworkID == vpc.DockerNetworkID || h.vpcNetworkLockKey(current) == key {
 			return current, unlock, nil
 		}
 		unlock() // a different network now: lock the one it is actually on
@@ -456,28 +485,25 @@ func (h *Handler) lockVPCNetwork(ctx context.Context, vpcID string) (*VPC, func(
 		fmt.Errorf("vpc %s: its Docker network kept changing while waiting to lock it", vpcID))
 }
 
-// vpcNetworkLockKey is the name of the network with this ID — the key
-// lockVPCNetwork serialises on.
+// vpcNetworkLockKey is the name lockVPCNetwork serialises on, taken from the
+// record rather than from Docker.
 //
-// Falls back to the ID when the network cannot be inspected. That is the
-// degenerate case in both directions: a network the daemon will not describe is
-// one the flip is about to fail on anyway, and keying by ID is still correct
-// exclusion for as long as that ID is what the records name.
-//
-// An empty ID has no network to lock and gets a key of its own that nothing
-// else will collide with.
-func (h *Handler) vpcNetworkLockKey(ctx context.Context, netID string) string {
-	if netID == "" {
+// Asking Docker would reintroduce the race the name-keying exists to close:
+// during a flip the network is removed before the successor id is written, so a
+// sharer reading the old id in that window would get a 404 from the inspect,
+// fall back to keying on the id, and take a different and free mutex. It also
+// put an inspect on every acquisition, and on each of the eight retries.
+func (h *Handler) vpcNetworkLockKey(vpc *VPC) string {
+	if vpc == nil {
 		return ""
 	}
-	if h.docker == nil {
-		return netID
+	if vpc.DockerNetworkName != "" {
+		return vpc.DockerNetworkName
 	}
-	info, err := h.docker.InspectNetwork(ctx, netID)
-	if err != nil || info == nil || info.Name == "" {
-		return netID
-	}
-	return info.Name
+	// A record from before the name was written down. The derivable name is
+	// right under `strict` and `remapped`, and right under `shared` for the VPC
+	// that created the network — which is the one whose name it carries.
+	return h.cfg.VPCNetwork(vpc.VpcID)
 }
 
 // gatewayView reads, once, what a flip decision needs: every VPC record, and
@@ -620,6 +646,15 @@ func (h *Handler) flipDockerVPCNetworkInternal(ctx context.Context, vpc *VPC, in
 	spec := h.vpcNetworkSpec(ctx, vpc, internal)
 	diffs := spec.Diff(info)
 	if len(diffs) == 0 {
+		// Reported even when nothing changed: a health endpoint that lists only
+		// the networks it had to touch cannot distinguish a healthy one from one
+		// nobody looked at.
+		h.recordNetworkStatus(docker.NetworkStatus{
+			Name:     info.Name,
+			Internal: info.Internal,
+			Reason:   dataplane.VPCNetworkEgressReason(h.cfg, info.Internal),
+			SpecHash: spec.SpecHash(),
+		})
 		return info.ID, nil
 	}
 	log.Info("vpc network: not in the state this configuration asks for — recreating it",
@@ -673,30 +708,40 @@ func (h *Handler) recreateDockerVPCNetwork(ctx context.Context, vpc *VPC, info *
 	if info.Name == "" || len(info.Labels) == 0 {
 		return h.createDockerVPCNetworkInternal(ctx, vpc, internal)
 	}
-	// The original labels are kept — under the shared strategy the network is
-	// named and labelled for the VPC that created it, and a sharer flipping it
-	// must not relabel it out from under the others — but the spec labels are
-	// refreshed from the state being created, or a rebuilt network would carry
-	// the hash of the state it used to be in and read as drifted forever.
+	// The create call comes from the spec, not hand-built from a few of its
+	// fields. Anything the spec pins — driver, IPv6, gateway, driver options —
+	// is created *and* hashed together, so a network cannot end up carrying a
+	// spec hash asserting a setting it was never given. That is the exact bug
+	// class this whole change exists to close, and hand-copying four fields
+	// reintroduces it the moment a fifth is pinned.
 	opts := h.vpcNetworkSpec(ctx, vpc, internal).CreateOptions()
+
+	// Two things are taken from the live network rather than the spec. Its
+	// name, and its identity labels: under the shared strategy the network is
+	// named and labelled for the VPC that created it, and a sharer flipping it
+	// must not rename or relabel it out from under the others. The spec's own
+	// labels win where they overlap, so the refreshed hash lands.
+	opts.Name = info.Name
 	labels := make(map[string]string, len(info.Labels)+len(opts.Labels))
 	for k, v := range info.Labels {
 		labels[k] = v
 	}
-	for _, k := range []string{docker.LabelSpecHash, docker.LabelSpecVersion, docker.LabelEgressMode} {
-		if v, ok := opts.Labels[k]; ok {
+	for k, v := range opts.Labels {
+		labels[k] = v
+	}
+	// ...except the ones that name the owner, which stay the owner's.
+	for _, k := range []string{docker.LabelResourceID, "overcast.vpc-id", docker.LabelInstance} {
+		if v, ok := info.Labels[k]; ok {
 			labels[k] = v
 		}
 	}
-	netID, err := h.docker.CreateNetworkWithOptions(ctx, docker.CreateNetworkOptions{
-		Name:     info.Name,
-		Labels:   labels,
-		Subnet:   preferredDockerSubnet(vpc),
-		Internal: internal,
-	})
+	opts.Labels = labels
+
+	netID, err := h.docker.CreateNetworkWithOptions(ctx, opts)
 	if err != nil {
 		return "", err
 	}
+	vpc.DockerNetworkName = opts.Name
 	h.joinVPCNetwork(ctx, netID)
 	return netID, nil
 }

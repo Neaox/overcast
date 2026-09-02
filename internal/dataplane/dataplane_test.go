@@ -357,6 +357,7 @@ func TestControlPlaneInternal_neverStrandsTheRuntimeAPI(t *testing.T) {
 	})
 	runningInContainer = func() bool { return false }
 	nativeLinuxDaemon = func(context.Context, *docker.Client) bool { return false }
+	resetWarningsOnce()
 
 	cfg := testConfig()
 	cfg.VPCEgress = config.VPCEgressNone
@@ -407,6 +408,7 @@ func TestControlPlaneInternal_deprecatedPinStillWins(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
+			resetWarningsOnce()
 			cfg := testConfig()
 			cfg.VPCEgress = tc.mode
 			setLegacyPin(cfg, tc.pin, true)
@@ -476,6 +478,7 @@ func TestControlPlaneInternal_warnsOnlyWhenIsolationContradictsTheMode(t *testin
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
+			resetWarningsOnce()
 			cfg := testConfig()
 			cfg.VPCEgress = tc.mode
 			setLegacyPin(cfg, tc.pin, false)
@@ -610,8 +613,14 @@ func TestPlaneSpecs_defersEveryDecisionToInternalMode(t *testing.T) {
 		if spec.Labels[docker.LabelManaged] != "true" || spec.Labels[docker.LabelService] != docker.ServiceCore {
 			t.Errorf("%s labels = %v, want the managed/core identity labels", spec.Name, spec.Labels)
 		}
-		if spec.Owner != cfg.Network {
-			t.Errorf("%s Owner = %q, want %q", spec.Name, spec.Owner, cfg.Network)
+		// A plane carries no instance identity: it is scoped by its name, and
+		// docker.LabelInstance means the EC2 store's identity everywhere else.
+		// One label, one meaning.
+		if spec.Owner != "" {
+			t.Errorf("%s Owner = %q, want no owner — planes are scoped by name", spec.Name, spec.Owner)
+		}
+		if _, ok := spec.Labels[docker.LabelInstance]; ok {
+			t.Errorf("%s carries an instance label; that label is the EC2 store identity", spec.Name)
 		}
 	}
 
@@ -821,5 +830,44 @@ func TestReattach_toleratesAContainerThatIsNotOnThePlane(t *testing.T) {
 	}
 	if f.calls != 1 {
 		t.Errorf("connect calls = %d, want the rejoin to happen anyway", f.calls)
+	}
+}
+
+// S7: the control plane's InternalMode runs once per docker.Probe, and Probe
+// runs at least twice on a normal boot — the router's supervisor, Lambda's own
+// probe, and again after a reconnect. An operator who set the deprecated
+// variable should not be told about it three times.
+func TestControlPlaneInternal_saysEachThingOncePerProcess(t *testing.T) {
+	restoreContainer := runningInContainer
+	restoreDaemon := nativeLinuxDaemon
+	t.Cleanup(func() {
+		runningInContainer = restoreContainer
+		nativeLinuxDaemon = restoreDaemon
+	})
+	runningInContainer = func() bool { return true }
+	nativeLinuxDaemon = func(context.Context, *docker.Client) bool { return true }
+	resetWarningsOnce()
+
+	cfg := testConfig()
+	cfg.VPCEgress = config.VPCEgressOpen
+	setLegacyPin(cfg, config.ControlPlaneInternalTrue, true)
+	decide := ControlPlaneInternal(cfg)
+
+	first := decide(context.Background(), nil)
+	if len(first.Warnings) == 0 {
+		t.Fatal("the first probe said nothing, want the deprecation notice and the egress warning")
+	}
+	for _, again := range []docker.InternalDecision{
+		decide(context.Background(), nil),
+		decide(context.Background(), nil),
+	} {
+		if len(again.Warnings) != 0 {
+			t.Errorf("a later probe repeated %q — a notice seen three times is one being tuned out",
+				again.Warnings)
+		}
+		// The decision itself is unchanged; only whether it is said again.
+		if again.Internal != first.Internal || again.Reason != first.Reason {
+			t.Errorf("a later probe decided differently: %+v vs %+v", again, first)
+		}
 	}
 }

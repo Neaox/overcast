@@ -20,6 +20,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mattn/go-isatty"
@@ -146,12 +147,37 @@ type networkContext struct {
 	cfg *config.Config
 	dc  *docker.Client
 	log *zap.Logger
+
+	// managedOnce memoizes the one listing of Overcast-managed containers.
+	// classifyAttached needs it per network and runs twice per network (once to
+	// plan, once under the lock to act); the answer is the same every time.
+	managedOnce sync.Once
+	managed     map[string]docker.ContainerSummary
+}
+
+// managedContainers is every container Overcast created, by id, listed once.
+//
+// An error is not fatal here: a caller that cannot list them treats every
+// attached container as somebody else's, which is the conservative direction —
+// it disconnects rather than stops.
+func (nc *networkContext) managedContainers(ctx context.Context) map[string]docker.ContainerSummary {
+	nc.managedOnce.Do(func() {
+		nc.managed = map[string]docker.ContainerSummary{}
+		all, err := nc.dc.ListContainers(ctx, "")
+		if err != nil {
+			return
+		}
+		for _, c := range all {
+			nc.managed[c.ID] = c
+		}
+	})
+	return nc.managed
 }
 
 // runNetwork resolves the configuration and Docker client once, and hands them
 // to fn. The configuration is loaded exactly as `overcast serve` loads it, so
 // the state this command rebuilds towards is the state the daemon would.
-func runNetwork(cmd *cobra.Command, fn func(*networkContext) error) error {
+func runNetwork(_ *cobra.Command, fn func(*networkContext) error) error {
 	log := zap.NewNop()
 	cfg, err := loadDataDir()
 	if err != nil {
@@ -162,7 +188,6 @@ func runNetwork(cmd *cobra.Command, fn func(*networkContext) error) error {
 		return fmt.Errorf("Docker is not reachable at %s — the networks this command manages "+
 			"live on that daemon", cfg.LambdaDockerSocket)
 	}
-	_ = cmd
 	return fn(&networkContext{cfg: cfg, dc: dc, log: log})
 }
 
@@ -383,13 +408,7 @@ func (nc *networkContext) classifyAttached(ctx context.Context, info *docker.Net
 	if len(info.Containers) == 0 {
 		return nil, nil
 	}
-	all, err := nc.dc.ListContainers(ctx, "")
-	ours := make(map[string]docker.ContainerSummary, len(all))
-	if err == nil {
-		for _, c := range all {
-			ours[c.ID] = c
-		}
-	}
+	ours := nc.managedContainers(ctx)
 	var managed []docker.ContainerSummary
 	var foreign []string
 	for id, ep := range info.Containers {

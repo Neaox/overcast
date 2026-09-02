@@ -456,6 +456,18 @@ flag stays honest about your template instead of being flattened. What changed
 is that it no longer *decides* egress on its own — which is what used to make a
 private subnet behind a NAT gateway indistinguishable from an isolated one.
 
+So `docker network inspect` can show `Internal: true` for a network whose
+containers plainly reach the internet. When that surprises you, three places say
+why, and all three say the same thing:
+
+```sh
+overcast network status     # "… — egress via overcast_control"
+docker network inspect overcast-vpc-<id> --format '{{index .Labels "overcast.network.egress"}}'
+```
+
+and the startup log's `vpc network isolation` line, which names the mode and the
+route out for every VPC network as it is created.
+
 **Invocations keep working in `none`.** The Lambda Runtime API and
 `AWS_ENDPOINT_URL` calls back into the emulator are not egress — they reach a
 server on this machine — so functions still run, and only what leaves the
@@ -507,18 +519,32 @@ every field:
 | Driver options | `enable_icc`, `enable_ip_masquerade`. A network with masquerading off looks routable and behaves isolated |
 | `overcast.network.spec-hash` | The identity of the whole desired state. **A network with no such label is treated as mismatched** — it predates this check, and those are the networks that have actually been wrong |
 
-What happens next depends on what is attached:
+What happens next depends on the network. **The two planes** (`overcast` and
+`overcast_control`) and **per-VPC networks** are repaired differently, because
+only one of them can move its containers across:
 
-- **Nothing attached** → the network is removed and recreated to match, logged
-  at info. Free by construction: there is no connection to sever.
-- **Containers attached** → the network is left exactly as it is, and Overcast
-  warns at startup naming every differing field and every attached container,
-  marks `/_overcast/health` **degraded**, and raises a console advisory.
-  Recreating under running containers would drop every one of them off the
-  network mid-run.
-- **Owned by another Overcast instance** → left alone, always. Every network
-  Overcast creates carries the identity of the instance that created it, and an
-  instance never removes a network it cannot prove it created.
+| | The planes | Per-VPC networks |
+| --- | --- | --- |
+| Nothing attached | Removed and recreated to match | Removed and recreated to match |
+| Containers attached | **Left alone.** Warned at startup naming every differing field and every attached container, `/_overcast/health` marked **degraded**, console advisory raised, `overcast network reset` named as the fix | **Rebuilt under them.** Each container is disconnected, the network is recreated, and each is reconnected at the address and DNS aliases it had. Connections across the VPC bridge drop; the control-plane connection does not, so an in-flight invocation keeps its Runtime API |
+| Owned by another Overcast instance | Left alone, always | Left alone, always |
+| Owned by another tool (`docker compose` and friends) | Left alone, always | Left alone, always |
+
+A plane carries every container Overcast has started, so rebuilding it under
+them would sever the Runtime API mid-invocation — the repair has to wait for a
+moment somebody chose. A VPC network carries only that VPC's resources and
+Overcast knows how to put them back, which is what makes the automatic rebuild
+safe there.
+
+> **On the first start after upgrading**, every VPC network on the machine
+> mismatches — none carries a spec-hash label yet — so each is rebuilt once,
+> dropping open connections across its VPC bridge. Stop your stack before
+> upgrading if that matters, or expect one reconnect.
+
+An instance never removes a network it cannot prove it created: every network
+Overcast creates carries the identity of the instance that created it, and a
+network carrying another tool's ownership labels is left alone whatever its
+name.
 
 ### `overcast network status` and `overcast network reset`
 

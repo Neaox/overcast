@@ -1319,12 +1319,22 @@ func (c *Config) ControlNetwork() string {
 // VPCNetwork returns the Docker network name backing one VPC.
 //
 // Derived from Network for the same reason ControlNetwork is, and for one more:
-// it is what makes two Overcast instances on one daemon leave each other's VPC
-// networks alone. Every Overcast-created network carries an owner label
-// (docker.LabelInstance) set to Network, and reconcile only ever removes a
-// network whose owner is its own — but a network is also *adopted* by name, and
-// a name shared between instances is a collision no label can untangle. One
-// OVERCAST_NETWORK per instance separates both.
+// a name shared between two Overcast instances on one daemon is a collision no
+// label can untangle, so one OVERCAST_NETWORK per instance separates them by
+// name before ownership is even asked about.
+//
+// Ownership itself is a separate question with a separate answer, and the two
+// network classes answer it differently:
+//
+//   - **The planes** (Network and ControlNetwork) are scoped by *name*. They
+//     carry no docker.LabelInstance: they are created by docker.Probe, before
+//     any state store has been read, and two instances sharing an
+//     OVERCAST_NETWORK share the plane deliberately.
+//   - **Per-VPC networks** are scoped by *label*. Their names come from an
+//     emulated resource id rather than from configuration, so two instances can
+//     mint the same one; docker.LabelInstance carries the EC2 service's
+//     store-scoped identity (serviceutil.InstanceDomain) and decides who may
+//     remove them.
 //
 // The default value reproduces the historical name exactly (`overcast-vpc-…`),
 // so an installation that never set OVERCAST_NETWORK keeps adopting the
@@ -1338,18 +1348,6 @@ func (c *Config) VPCNetwork(vpcID string) string {
 // hand.
 func (c *Config) VPCNetworkPrefix() string {
 	return c.Network + "-vpc-"
-}
-
-// InstanceID names this Overcast instance on a Docker daemon that may be
-// hosting several.
-//
-// It is OVERCAST_NETWORK, because that is already the one setting an operator
-// changes to run a second instance beside the first, and inventing a second
-// identity to keep in step with it would only create a way for the two to
-// disagree. Every network Overcast creates is labelled with it, and reconcile
-// and `overcast network reset` remove nothing labelled with anybody else's.
-func (c *Config) InstanceID() string {
-	return c.Network
 }
 
 // LegacyControlPlaneInternal reports the deprecated

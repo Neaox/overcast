@@ -191,6 +191,10 @@ type ResolvedNetworkSpec struct {
 	// whose isolation is a constant.
 	Reason   string
 	Warnings []string
+
+	// hash memoizes SpecHash for the duration of one EnsureNetwork call. Unset
+	// is not a valid hash, so an unmemoized copy simply computes it.
+	hash string
 }
 
 // Resolve settles the spec's isolation, calling InternalMode exactly once.
@@ -223,6 +227,9 @@ func (r ResolvedNetworkSpec) driver() string {
 // too: a release that did not change the spec must not invalidate every network
 // on the machine.
 func (r ResolvedNetworkSpec) SpecHash() string {
+	if r.hash != "" {
+		return r.hash
+	}
 	keys := make([]string, 0, len(r.Options))
 	for k := range r.Options {
 		keys = append(keys, k)
@@ -415,15 +422,19 @@ func (s NetworkStatus) OK() bool { return len(s.Mismatch) == 0 }
 // Never returns an error for a network it declined to repair. A wrong-but-usable
 // network is not a reason to refuse to start — it is a reason to say so loudly,
 // which is what the returned NetworkStatus carries into `/_overcast/health`.
-func EnsureNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, logger *zap.Logger) NetworkStatus {
+func EnsureNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, logger *zap.Logger) (NetworkStatus, error) {
+	// Hashed once and reused: Diff and CreateOptions both want it, and this is
+	// the function whose selling point is that it is cheap enough to run on
+	// every startup for every network.
+	spec.hash = spec.SpecHash()
 	status := NetworkStatus{
 		Name:     spec.Name,
 		Internal: spec.Internal,
 		Reason:   spec.Reason,
-		SpecHash: spec.SpecHash(),
+		SpecHash: spec.hash,
 	}
 	if dc == nil || spec.Name == "" {
-		return status
+		return status, nil
 	}
 
 	// Everything below either reads a network in order to decide whether to
@@ -439,17 +450,22 @@ func EnsureNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, lo
 		// it is idempotent, and if the inspect failed for some other reason the
 		// create will report it.
 		if _, createErr := dc.CreateNetworkWithOptions(ctx, spec.CreateOptions()); createErr != nil {
+			// Fatal, and deliberately not downgraded to a warning like a
+			// declined repair is. A wrong-but-usable network is something to
+			// start alongside and say loudly; *no* network is a daemon that
+			// starts and then fails every container create with an error that
+			// says nothing about networks. Address-pool exhaustion is the
+			// common way to get here.
 			status.Drift = "could not create: " + createErr.Error()
-			logger.Warn("could not create Docker network",
-				zap.String("network", spec.Name), zap.Error(createErr))
+			return status, fmt.Errorf("create network %s: %w", spec.Name, createErr)
 		}
-		return status
+		return status, nil
 	}
 
 	diffs := spec.Diff(info)
 	if len(diffs) == 0 {
 		status.Internal = info.Internal
-		return status
+		return status, nil
 	}
 
 	// Ownership before anything destructive. A network labelled for another
@@ -471,17 +487,44 @@ func EnsureNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, lo
 			zap.String("owner", owner),
 			zap.String("this_instance", spec.Owner),
 			zap.Strings("differs", DiffStrings(diffs)))
-		return status
+		return status, nil
+	}
+
+	// A network somebody else's tooling created is never destroyed, even empty
+	// and even under one of our names. `docker compose` stamps its own
+	// ownership labels, and a compose network that happens to be called
+	// `overcast` is byte-for-byte indistinguishable from a plane an older
+	// Overcast made if the only thing checked is the absence of our label. The
+	// VPC sweep already takes this line ("absence is not permission",
+	// ec2.removeOrphanedNetworks); this aligns with it.
+	if tool := foreignTool(info.Labels); tool != "" {
+		status.Internal = info.Internal
+		status.Mismatch = diffs
+		status.Owner = tool
+		status.Drift = fmt.Sprintf("a network created by %s already has this name and does not match "+
+			"this configuration; it was left alone (%s)", tool, strings.Join(DiffStrings(diffs), "; "))
+		status.Fix = "rename that network, or set OVERCAST_NETWORK to a name it does not use"
+		logger.Warn("a Docker network created by another tool already has a name Overcast manages, and "+
+			"does not match this configuration — it was left alone rather than removed. Rename it, or "+
+			"give Overcast a different OVERCAST_NETWORK",
+			zap.String("network", spec.Name),
+			zap.String("created_by", tool),
+			zap.Strings("differs", DiffStrings(diffs)))
+		return status, nil
 	}
 
 	attached := info.AttachedNames()
 	if len(attached) == 0 && !strings.EqualFold(info.Scope, "swarm") {
 		if repaired := recreateToSpec(ctx, dc, spec, info, logger); repaired {
-			logger.Info("recreated Docker network to match its configuration — it differed and had "+
-				"nothing attached",
+			// Warn, not Info: this destroyed and rebuilt a network, and on the
+			// first start after an upgrade it destroys one nobody labelled. The
+			// operator should be able to find out afterwards what went.
+			logger.Warn("removed and recreated a Docker network to match this configuration — it "+
+				"differed and had nothing attached",
 				zap.String("network", spec.Name),
+				zap.String("removed_id", info.ID),
 				zap.Strings("differed", DiffStrings(diffs)))
-			return status
+			return status, nil
 		}
 		// Fall through to the warning: the rebuild did not happen, and saying
 		// so beats reporting a state that was never applied.
@@ -504,7 +547,7 @@ func EnsureNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, lo
 		zap.Strings("differs", DiffStrings(diffs)),
 		zap.Strings("attached_containers", attached),
 		zap.Int("attached", len(attached)))
-	return status
+	return status, nil
 }
 
 // recreateToSpec removes the network described by info and creates it again to
@@ -553,4 +596,34 @@ func recreateToSpec(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, i
 		return false
 	}
 	return true
+}
+
+// foreignToolLabels are ownership marks other tools stamp on the networks they
+// create. A network carrying one is that tool's, whatever its name.
+//
+// The list is deliberately short and specific. It is not trying to identify
+// every possible creator — it cannot — but to catch the collision that actually
+// happens: a Compose project with a service or network called `overcast`,
+// sitting on the name Overcast's data plane wants.
+var foreignToolLabels = map[string]string{
+	"com.docker.compose.network": "docker compose",
+	"com.docker.compose.project": "docker compose",
+	"com.docker.stack.namespace": "docker stack",
+	"io.podman.compose.project":  "podman compose",
+}
+
+// foreignTool names the tool that created a network, or "" when nothing on it
+// claims one. A network Overcast labelled as its own is never foreign, whatever
+// else it carries — an Overcast network attached to a Compose project is still
+// Overcast's.
+func foreignTool(labels map[string]string) string {
+	if labels[LabelManaged] == "true" {
+		return ""
+	}
+	for key, tool := range foreignToolLabels {
+		if _, ok := labels[key]; ok {
+			return tool
+		}
+	}
+	return ""
 }

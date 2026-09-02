@@ -41,6 +41,22 @@ type VPC struct {
 	IsDefault       bool   `json:"IsDefault,omitempty"`
 	DockerNetworkID string `json:"DockerNetworkId,omitempty"`
 
+	// DockerNetworkName is the name of that network, recorded so the flip lock
+	// can be keyed without asking Docker.
+	//
+	// The name is the lock's key because it survives a recreate, which is
+	// exactly what the id does not (docker.LockNetwork). Resolving it by
+	// inspecting the id would defeat that: during a flip the network is removed
+	// before the successor id is written, so a sharer reading the old id in that
+	// window gets a 404, falls back to keying on the id, and takes a different
+	// and free mutex — the very race the name-keying closes.
+	//
+	// Under `strict` and `remapped` the name is cfg.VPCNetwork(VpcID); under
+	// `shared` it is the *owner* VPC's name, which no other VPC can derive. So
+	// it is written down rather than computed. Empty on a record from before
+	// this field, which falls back to the derivable name.
+	DockerNetworkName string `json:"DockerNetworkName,omitempty"`
+
 	// DhcpOptionsId is the DHCP options set associated with this VPC. Real AWS
 	// assigns every VPC the account's default set (a `dopt-` ID) at creation and
 	// reports it stably thereafter; AssociateDhcpOptions is the only way it
