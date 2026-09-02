@@ -825,12 +825,24 @@ function VpcConfigSection({ fn }: { fn: LambdaFunction }) {
  * VpcNotEnforcedNotice explains where Lambda VPC configuration diverges from
  * AWS here.
  *
- * Placement itself is enforced: `dataplane.DataNetworks` puts a VPC-attached
- * container on that VPC's network and nothing else, and Overcast's resolver
- * refuses a name it may not reach, naming both sides. What is not enforced is
- * everything finer than "in this VPC or not" — security groups, NACLs, and the
- * public/private subnet distinction — which is the direction that makes a local
- * test pass when the deployed function will fail.
+ * The headline states only what is true on every host: nothing finer than "in
+ * this VPC or not" is enforced — security groups, NACLs, and the public/private
+ * subnet distinction — which is the direction that makes a local test pass when
+ * the deployed function will fail.
+ *
+ * Placement itself is enforced *conditionally*, and the condition is the reason
+ * this is not the headline. `dataplane.DataNetworks` puts a VPC-attached
+ * container on that VPC's network alone only where `dataplane.enforceable` —
+ * `cfg.DNSListening` — holds, because the restriction is only safe where a
+ * forbidden connection fails by name rather than hanging. On a native Windows
+ * or macOS host the resolver never starts, the container joins the shared plane
+ * too, and a headline claiming enforcement would be false on the platform most
+ * of this console's readers are on.
+ *
+ * The console cannot ask: `DNSListening` is not in any payload it reads. PR
+ * #1594 adds `dataplane.PlacementEnforced` and the plumbing for it; when that
+ * lands, the headline can become conditional and the body's host clause can
+ * shrink to the case that applies. Until then the body carries both.
  *
  * Shown only when a VPC is actually configured. That is when someone is relying
  * on VPC semantics and stands to be misled; on the majority of functions, which
@@ -847,14 +859,15 @@ function VpcNotEnforcedNotice() {
     <div className="mb-3 flex gap-3 rounded-lg border border-warning/40 bg-warning-muted p-4 text-sm text-warning">
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
       <div>
-        <p className="font-semibold">Placement is enforced — filtering is not</p>
+        <p className="font-semibold">Security groups and subnets are not enforced</p>
         <p className="mt-1 text-fg-muted">
-          The container joins this VPC&apos;s Docker network and reaches what is in it; a call to a
-          resource outside the VPC is refused by name. Security groups, NACLs and the
-          public/private subnet distinction are stored and returned but never applied. Whether the
-          function reaches the internet is decided by OVERCAST_VPC_EGRESS, not by the VPC&apos;s
-          internet gateway. On a native Windows or macOS host the restriction is withheld — the DNS
-          resolver cannot run there, so the container joins the shared network too.
+          The container joins this VPC&apos;s Docker network and reaches what is in it. Security
+          groups, NACLs and the public/private subnet distinction are stored and returned but never
+          applied. Whether a call <em>out</em> of the VPC is refused depends on the host: Overcast
+          enforces that through its DNS resolver, which does not run on a native Windows or macOS
+          host — there the container joins the shared network too and reaches everything on it.
+          Whether it reaches the internet is decided by OVERCAST_VPC_EGRESS, not by the VPC&apos;s
+          internet gateway.
         </p>
         <Link
           to="/docs"

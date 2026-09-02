@@ -257,8 +257,15 @@ overcast network reset overcast_control   # just that one
 ```
 
 Restart Overcast afterwards, along with anything that was stopped — containers
-rejoin on their next start. `/_overcast/health` keeps reporting the old state
-until the daemon notices the rebuild, which it does when the network is removed.
+rejoin on their next start.
+
+**The daemon stops reporting the network rather than reporting the new state.**
+It sees the removal and drops the entry, so the drift and its advisory clear —
+but nothing re-inspects, so the network is simply absent from
+`/_overcast/health` until the next startup or Docker reconnect. Absence there
+means "nothing to say", not "nothing is wrong": `overcast network status`
+confirms the rebuild in the meantime. Reporting a positive result instead is
+[#1599](https://github.com/overcast-sh/overcast/issues/1599).
 
 **One class of network it will not rebuild:** a per-VPC network created before
 Overcast recorded the internet-gateway state on it (`overcast.network.gateway`).

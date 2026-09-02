@@ -205,7 +205,7 @@ network (`dataplane.PlaneSpecs`, `dataplane.VPCNetworkSpec`).
 | Differs, nothing attached | Removed and recreated, logged at **WARN** — it destroyed a network, and on the first start after an upgrade it destroys one nobody labelled |
 | Differs, containers attached — **a plane** | Left alone; WARN naming every differing field and every attached container, `/_overcast/health` degraded, console advisory, `overcast network reset` as the fix |
 | Differs, containers attached — **a VPC network** | Recreated *under* them: each container is disconnected, the network is rebuilt, and each is reconnected with the address and aliases it had. Only connections across that VPC bridge drop; the control-plane attachment is untouched, so an in-flight invocation keeps its Runtime API (`ec2.flipDockerVPCNetworkInternal`) |
-| Could not be read | Left alone and reported as **unverified** — a `Drift` naming the reason, `/_overcast/health` degraded. "I did not look" is not "I looked and it was right" (#1582) |
+| Could not be read | The read is retried once. Still unreadable, the create runs anyway — a daemon with no network at all fails every container create with an error naming nothing about networks — and is then **verified rather than trusted**, because Docker resolves a name conflict by returning the existing network unchanged. What that verification cannot establish is reported as **unverified**: a `Drift` naming the reason, `/_overcast/health` degraded. "I did not look" is not "I looked and it was right" (#1582) |
 | Owned by another instance, or by another tool | Left alone, always |
 
 Two labels carry the rules. `overcast.network.spec-hash` is the first 12 hex
