@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"net"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -133,6 +134,41 @@ func TestEmitReady_markerIsNotSatisfiedByStructuredLogging(t *testing.T) {
 		}
 		if m.pattern.MatchString(jsonLine) {
 			t.Errorf("%s: %q unexpectedly matched — the plain marker may no longer be necessary, re-check the module source", m.module, jsonLine)
+		}
+	}
+}
+
+// The readiness marker has to be out before anything can answer a request,
+// because two callers use two different signals for the same fact: the
+// LocalStack Testcontainers modules block on the "Ready." line, everything else
+// polls /_overcast/health. If health can return ok first, a caller that greps
+// the logs at that moment finds nothing and gives up — which is exactly what a
+// slim-image smoke test caught, with `Ready.` arriving on the line after the
+// health response.
+//
+// This reads cmd_serve.go rather than booting a daemon: the ordering is a
+// property of the source, one goroutine start away from being wrong again, and
+// a runtime test for it would be the same race it is guarding against.
+func TestServe_emitsReadinessBeforeAnyListenerIsServed(t *testing.T) {
+	src, err := os.ReadFile("cmd_serve.go")
+	if err != nil {
+		t.Fatalf("read cmd_serve.go: %v", err)
+	}
+	body := string(src)
+
+	ready := strings.Index(body, "emitReady(logger, os.Stderr, lns)")
+	if ready < 0 {
+		t.Fatal("emitReady call not found in cmd_serve.go")
+	}
+	for _, serve := range []string{"srv.Serve(listener)", "srv.ServeTLS(listener,"} {
+		at := strings.Index(body, serve)
+		if at < 0 {
+			t.Fatalf("%s not found in cmd_serve.go", serve)
+		}
+		if at < ready {
+			t.Errorf("%s appears before emitReady: a request can be answered, and health can report "+
+				"ok, before the readiness marker is written — the LocalStack Testcontainers modules "+
+				"block on that line and would race it", serve)
 		}
 	}
 }
