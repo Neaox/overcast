@@ -305,6 +305,24 @@ func Validate(docs []Doc) error {
 	return nil
 }
 
+// HasStrayFrontmatter reports whether body — a document's source *after* its
+// real frontmatter has been stripped — begins with another `---` block.
+//
+// Only the first block is ever parsed. A second one renders as a literal
+// horizontal rule followed by raw `title:` and `tags:` text at the top of the
+// published page, and the page silently keeps the first block's metadata rather
+// than the authored one. Both happen quietly: nothing else in this linter reads
+// past the first block, which is how two pages shipped with stacked stubs after
+// a merge.
+func HasStrayFrontmatter(body string) bool {
+	trimmed := strings.TrimLeft(body, "\n\r \t")
+	if !strings.HasPrefix(trimmed, FrontmatterSep+"\n") {
+		return false
+	}
+	rest := trimmed[len(FrontmatterSep)+1:]
+	return strings.Contains(rest, "\n"+FrontmatterSep+"\n")
+}
+
 // SplitFrontmatter separates a doc's YAML frontmatter from its body. The third
 // result reports whether frontmatter was present and well formed.
 func SplitFrontmatter(raw string) (Meta, string, bool) {

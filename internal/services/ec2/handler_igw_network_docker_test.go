@@ -9,6 +9,7 @@ package ec2
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -18,11 +19,22 @@ import (
 	"github.com/overcast-sh/overcast/internal/clock"
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/docker/dockertest"
 	"github.com/overcast-sh/overcast/internal/protocol"
 	"github.com/overcast-sh/overcast/internal/state"
 )
 
 func TestFlipDockerVPCNetworkInternal_realDaemonMovesContainers(t *testing.T) {
+	// Opt-in. This one creates real bridge networks and a real container, so on
+	// a host that already holds enough networks it fails with "Pool overlaps
+	// with other one on this address space" — a fact about the machine rather
+	// than about the code, and one that made `-tags slim` runs fail for
+	// reviewers. Docker being *reachable* is not consent to consume its address
+	// pool.
+	if os.Getenv("OVERCAST_DOCKER_NETWORK_TESTS") == "" {
+		t.Skip("set OVERCAST_DOCKER_NETWORK_TESTS=1 to run the real-daemon gateway flip test " +
+			"(it creates bridge networks and consumes Docker address-pool space)")
+	}
 	dc := docker.NewClient(config.DefaultDockerSocket(), zap.NewNop())
 	if !dc.Available(5 * time.Second) {
 		t.Skip("Docker not available, skipping the real-daemon gateway flip test")
@@ -52,15 +64,19 @@ func TestFlipDockerVPCNetworkInternal_realDaemonMovesContainers(t *testing.T) {
 	octet := 200 + int(suffix[0]%40)
 	vpc := &VPC{VpcID: "vpc-igw" + suffix[:8], CidrBlock: cidrFor(octet)}
 	address := addressFor(octet, 10)
-	name := "overcast-vpc-" + vpc.VpcID
+	name := cfg.VPCNetwork(vpc.VpcID)
+	// Exact names through the shared helper, as the ECS and RDS data-plane
+	// tests do (#1567): it evicts whatever is left on each network before
+	// removing it, so a container the test failed to clean up does not leave
+	// the network behind too. The planes are listed as well as the VPC network
+	// — this handler creates all three under a per-run OVERCAST_NETWORK.
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cleanupCancel()
-		if err := dc.RemoveNetwork(cleanupCtx, name); err != nil && !docker.IsNotFound(err) {
-			t.Logf("cleanup: remove network %s: %v", name, err)
-		}
+		dockertest.RemoveOwned(cleanupCtx, dc,
+			[]string{name, cfg.ControlNetwork(), cfg.Network}, t.Logf)
 	})
-	netID, err := h.createDockerVPCNetworkInternal(ctx, vpc, true)
+	netID, err := h.createDockerVPCNetworkInternal(ctx, vpc, true, false)
 	if err != nil {
 		t.Fatalf("create internal VPC network: %v", err)
 	}
@@ -91,7 +107,7 @@ func TestFlipDockerVPCNetworkInternal_realDaemonMovesContainers(t *testing.T) {
 	}
 
 	// When: the network is flipped to external.
-	newID, err := h.flipDockerVPCNetworkInternal(ctx, vpc, false)
+	newID, err := h.flipDockerVPCNetworkInternal(ctx, vpc, false, true)
 
 	// Then: a new, external network backs the VPC; the old one is gone; and
 	// the container is on the new one at the same address, still answering

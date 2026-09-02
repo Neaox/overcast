@@ -139,19 +139,22 @@ you deliberately want a non-default network.
 network LocalStack itself is on, which it also falls back to for Lambda — and
 is inert here for the same reason.
 
-### One networking behaviour that is not the same
+### Egress works the same, and is now a setting
 
-LocalStack never isolates a Docker network, so a Lambda in a VPC with no NAT or
-internet gateway still reaches the internet there. Overcast models that missing
-gateway for real, and on some hosts does so by default — the same call can come
-back `ENETUNREACH`.
+LocalStack never isolates a Docker network, so a Lambda in a VPC reaches the
+internet there whatever its subnets look like. Overcast's default,
+`OVERCAST_VPC_EGRESS=open`, is the same — so a migration needs nothing here.
 
-Pin `OVERCAST_CONTROL_PLANE_INTERNAL=false` to keep LocalStack's behaviour, or
-read [Control-plane isolation](./networking.md#control-plane-isolation) for what
-it costs either way. It is deliberately a setting rather than something inferred
-from the LocalStack variables you have set: an alias maps a name to a name, and
-a networking behaviour that changes because of an unrelated variable is exactly
-what this setting exists to prevent.
+Two notes if you are moving from an Overcast between 0.0.1-alpha.37 and this
+release: egress on your machine may have been withheld and is not any more, and
+`OVERCAST_CONTROL_PLANE_INTERNAL` is deprecated in favour of the mode. If you
+set it to `false` to restore LocalStack's behaviour, you can drop it — that is
+now the default.
+
+Overcast can also do what LocalStack cannot: `OVERCAST_VPC_EGRESS=none` gives
+nothing it starts a route out of the machine, for deterministic CI or to prove
+a stack has no hidden external dependency. See
+[Egress modes](./networking.md#egress-modes).
 
 ---
 

@@ -55,8 +55,12 @@ type fakeVPCDocker struct {
 }
 
 type fakeNetwork struct {
-	id, name  string
-	internal  bool
+	id, name string
+	internal bool
+	// driver is echoed back by inspect because the isolation check compares the
+	// whole spec, not just the isolation flag — a fake that reported no driver
+	// would make every network look drifted and every test recreate one.
+	driver    string
 	subnet    string
 	labels    map[string]string
 	endpoints map[string]fakeEndpoint // by container ID
@@ -85,6 +89,7 @@ func (f *fakeVPCDocker) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && path == "/networks/create":
 		var req struct {
 			Name     string
+			Driver   string
 			Internal bool
 			Labels   map[string]string
 			IPAM     *docker.NetworkIPAM
@@ -103,7 +108,10 @@ func (f *fakeVPCDocker) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		f.nextID++
-		n := &fakeNetwork{id: fmt.Sprintf("net-%d", f.nextID), name: req.Name, internal: req.Internal, labels: req.Labels, endpoints: map[string]fakeEndpoint{}}
+		n := &fakeNetwork{
+			id: fmt.Sprintf("net-%d", f.nextID), name: req.Name, internal: req.Internal,
+			driver: req.Driver, labels: req.Labels, endpoints: map[string]fakeEndpoint{},
+		}
 		if req.IPAM != nil && len(req.IPAM.Config) > 0 {
 			n.subnet = req.IPAM.Config[0].Subnet
 		}
@@ -125,7 +133,7 @@ func (f *fakeVPCDocker) serve(w http.ResponseWriter, r *http.Request) {
 				containers[cid] = docker.NetworkEndpoint{Name: cid, IPv4Address: n.endpoints[cid].ip + "/16"}
 			}
 			_ = json.NewEncoder(w).Encode(docker.NetworkInspect{
-				ID: n.id, Name: n.name, Internal: n.internal, Labels: n.labels,
+				ID: n.id, Name: n.name, Internal: n.internal, Labels: n.labels, Driver: n.driver,
 				IPAM:       docker.NetworkIPAM{Config: []docker.NetworkIPAMConfig{{Subnet: n.subnet}}},
 				Containers: containers,
 			})

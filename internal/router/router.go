@@ -305,8 +305,19 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// below) needs it regardless of cfg.Debug, and it's used again for the
 	// debug-gated block right after.
 	debugProviders := []DebugStateProvider{ddbSvc, logsSvc, sqsSvc}
+	// dockerStatusFn is assigned further down, once the Docker supervisor and
+	// its tracker exist. Handlers registered before then are handed a closure
+	// over the variable rather than its current (nil) value, so the debug
+	// namespace and the health endpoint read one snapshot source between them.
+	var dockerStatusFn func() *docker.Status
+	dockerStatusNow := func() *docker.Status {
+		if dockerStatusFn == nil {
+			return nil
+		}
+		return dockerStatusFn()
+	}
 	if cfg.Debug {
-		r.Route("/_overcast/debug", debugHandlers(cfg, store, ec2Svc, debugProviders, traceBuf))
+		r.Route("/_overcast/debug", debugHandlers(cfg, store, ec2Svc, debugProviders, traceBuf, dockerStatusNow))
 	}
 	// ---- Reset (always available) ------------------------------------------
 	// Unlike the rest of the /_overcast/debug namespace above, reset is not
@@ -873,7 +884,6 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		dockerServices["efs"] = docker.ServiceConfig{Name: "efs", Socket: cfg.EFSDockerSocket}
 		dockerSetters["efs"] = efsSvc.SetDocker
 	}
-	var dockerStatusFn func() *docker.Status
 	if len(dockerServices) > 0 {
 		dockerTracker := docker.NewTracker()
 		dockerStatusFn = func() *docker.Status {
@@ -882,6 +892,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		}
 		dockerSup := docker.NewSupervisorWithTracker(bus, logger, dockerTracker)
 		cleanups = append(cleanups, dockerSup.Close)
+		// EC2's networks are created on demand, one per VPC, long after the
+		// probe that ensures the two planes — and only EC2 can resolve the
+		// instance identity that says whose they are. Both reach health
+		// through the same tracker.
+		ec2Svc.SetNetworkReporter(dockerTracker)
 
 		go func() {
 			// Collect configs in deterministic order.

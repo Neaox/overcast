@@ -984,8 +984,21 @@ jobs:
           # entrypoint and execs LocalStack's path from a #!/bin/bash script.
           # Checked on slim only — stage 5 of the Dockerfile is shared, so the
           # console image cannot differ.
-          if ! docker logs oc-smoke 2>&1 | grep -qx 'Ready\.'; then
-            echo "image did not print the LocalStack-compatible readiness line 'Ready.' — see cmd/overcast/readiness.go and docs/testcontainers.md" >&2
+          # Polled rather than grepped once. cmd/overcast/cmd_serve.go emits the
+          # marker before any listener is served, so it is out before health can
+          # answer — but a loaded runner can still interleave the container's
+          # stderr with docker's log fetch, and a single grep turns that into a
+          # red build for a line that arrives a moment later.
+          ready=false
+          for _ in $(seq 1 20); do
+            if docker logs oc-smoke 2>&1 | grep -qx 'Ready\.'; then
+              ready=true
+              break
+            fi
+            sleep 0.5
+          done
+          if [[ "$ready" != "true" ]]; then
+            echo "image did not print the LocalStack-compatible readiness line 'Ready.' within 10s — see cmd/overcast/readiness.go and docs/testcontainers.md" >&2
             docker logs oc-smoke 2>&1 | tail -20 >&2
             exit 1
           fi

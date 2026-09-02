@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -161,6 +162,17 @@ const (
 	// LabelLambdaInitArch is the GOARCH the init in the volume was built for.
 	LabelLambdaInitArch = "overcast.lambda.init.arch"
 )
+
+// ServiceCore is the LabelService value for resources that belong to Overcast
+// itself rather than to any one emulated service — the two planes
+// (`overcast` and `overcast_control`).
+//
+// They are labelled at all so that `docker network ls` and `overcast network
+// reset` can find them: an unlabelled network is one nothing can verify,
+// account for, or safely rebuild, which is the state that made #1564 invisible.
+// The value is deliberately not any service's name, so a service's own
+// reconcile can never see a plane among the networks it is asked to sweep.
+const ServiceCore = "core"
 
 // ManagedLabels returns the standard Overcast labels for a Docker resource.
 // All services should use this instead of constructing the map inline.
@@ -420,6 +432,11 @@ func (c *ContainerInspect) labels() map[string]string {
 }
 
 // NetworkInspect holds Docker network details.
+//
+// The field set is everything a NetworkSpec compares a live network against,
+// which is why it is this wide: verification that checks only the fields
+// somebody happened to think of reports "matches" for a network that does not.
+// See VerifyNetwork.
 type NetworkInspect struct {
 	ID       string            `json:"Id"`
 	Name     string            `json:"Name"`
@@ -428,12 +445,72 @@ type NetworkInspect struct {
 	Labels   map[string]string `json:"Labels"`
 	IPAM     NetworkIPAM       `json:"IPAM"`
 
+	// Driver is the network driver — "bridge" for everything Overcast creates.
+	// A network of the right name under the wrong driver behaves nothing like
+	// the one that was asked for, and after Internal it is the most
+	// consequential field here.
+	Driver string `json:"Driver"`
+
+	// Scope is "local" for everything on a single daemon. "swarm" or "global"
+	// means the network is not this daemon's alone to recreate, and a repair
+	// must not be attempted on it.
+	Scope string `json:"Scope"`
+
+	// EnableIPv6 changes which addresses containers get, and which of them
+	// Overcast's own resolver can answer with.
+	EnableIPv6 bool `json:"EnableIPv6"`
+
+	// Options are the driver options. `com.docker.network.bridge.enable_icc`
+	// and `...enable_ip_masquerade` are the two that decide whether containers
+	// on the bridge may talk to each other and whether their egress is
+	// source-NATed — both settings a network can silently disagree on while
+	// looking correct in every other field.
+	Options map[string]string `json:"Options"`
+
 	// Containers is the endpoints currently attached, keyed by container ID.
-	// Only its emptiness is load-bearing today: a network with nothing on it
-	// can be removed and recreated to apply a setting Docker will not change in
-	// place, and one with something on it cannot — see
-	// docker.reconcileInternalDrift.
+	// Emptiness decides whether a mismatched network can be repaired in place:
+	// one with nothing on it is removed and recreated to apply a setting Docker
+	// will not change in place, and one with something on it cannot be. The
+	// names are reported to the operator so a warning can say what has to be
+	// stopped rather than leaving them to find out.
 	Containers map[string]NetworkEndpoint `json:"Containers"`
+}
+
+// Instance returns the overcast.instance label value — the Overcast instance
+// that created this network — or "" when it carries none. See LabelInstance:
+// absence is not permission.
+func (n *NetworkInspect) Instance() string { return n.Labels[LabelInstance] }
+
+// Subnet returns the first IPAM subnet, or "" when IPAM was left to Docker.
+func (n *NetworkInspect) Subnet() string {
+	if len(n.IPAM.Config) == 0 {
+		return ""
+	}
+	return n.IPAM.Config[0].Subnet
+}
+
+// Gateway returns the first IPAM gateway, or "" when IPAM was left to Docker.
+func (n *NetworkInspect) Gateway() string {
+	if len(n.IPAM.Config) == 0 {
+		return ""
+	}
+	return n.IPAM.Config[0].Gateway
+}
+
+// AttachedNames lists the containers currently on the network, sorted, for a
+// message that has to say what is in the way. Falls back to the container ID
+// for an endpoint the daemon reported without a name.
+func (n *NetworkInspect) AttachedNames() []string {
+	names := make([]string, 0, len(n.Containers))
+	for id, ep := range n.Containers {
+		if ep.Name != "" {
+			names = append(names, ep.Name)
+			continue
+		}
+		names = append(names, id)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // NetworkEndpoint is one container's attachment to a network, as reported by
@@ -462,6 +539,13 @@ type NetworkSummary struct {
 	Created time.Time         `json:"Created"`
 	Labels  map[string]string `json:"Labels"`
 	IPAM    NetworkIPAM       `json:"IPAM"`
+
+	// Internal is reported by the list endpoint as well as by inspect, which
+	// saves an inspect per network when all a caller wants is the isolation.
+	Internal bool `json:"Internal"`
+
+	// Driver is the network driver, as on NetworkInspect.
+	Driver string `json:"Driver"`
 }
 
 // Subnet returns the first IPAM subnet for the network, or empty if unset.
@@ -1606,12 +1690,19 @@ func (d *Client) listVolumes(ctx context.Context, service string, unusedOnly boo
 
 // ─── Network operations ────────────────────────────────────────────────────
 
+// DefaultNetworkDriver is the driver every network Overcast creates uses.
+// Named rather than repeated so the create path and the verification that
+// compares a live network against what was asked for cannot drift apart.
+const DefaultNetworkDriver = "bridge"
+
 type createNetworkRequest struct {
 	Name           string            `json:"Name"`
 	Driver         string            `json:"Driver"`
 	CheckDuplicate bool              `json:"CheckDuplicate"`
 	Internal       bool              `json:"Internal,omitempty"`
+	EnableIPv6     bool              `json:"EnableIPv6,omitempty"`
 	Labels         map[string]string `json:"Labels,omitempty"`
+	Options        map[string]string `json:"Options,omitempty"`
 	IPAM           *NetworkIPAM      `json:"IPAM,omitempty"`
 }
 
@@ -1622,11 +1713,22 @@ func (d *Client) CreateNetwork(ctx context.Context, name string) (string, error)
 }
 
 // CreateNetworkOptions configures a Docker network.
+//
+// Every field here is also a field NetworkSpec verifies a pre-existing network
+// against, and that pairing is deliberate: a setting Overcast can ask for but
+// cannot check is a setting that drifts silently.
 type CreateNetworkOptions struct {
 	Name     string
+	Driver   string            // empty = "bridge"
 	Labels   map[string]string // nil = no labels
 	Subnet   string            // CIDR, e.g. "10.0.0.0/16"; empty = Docker default
+	Gateway  string            // empty = Docker picks; ignored without Subnet
 	Internal bool              // true = no outbound internet access
+	IPv6     bool              // true = allocate IPv6 addresses too
+
+	// Options are driver options passed through verbatim, e.g.
+	// "com.docker.network.bridge.enable_icc". Left nil, Docker's defaults apply.
+	Options map[string]string
 }
 
 // CreateNetworkWithOptions creates a Docker network with full control over
@@ -1638,16 +1740,22 @@ func (d *Client) CreateNetworkWithOptions(ctx context.Context, opts CreateNetwor
 	}
 	defer d.releaseOp()
 
+	driver := opts.Driver
+	if driver == "" {
+		driver = DefaultNetworkDriver
+	}
 	req := createNetworkRequest{
 		Name:           opts.Name,
-		Driver:         "bridge",
+		Driver:         driver,
 		CheckDuplicate: true,
 		Internal:       opts.Internal,
+		EnableIPv6:     opts.IPv6,
 		Labels:         opts.Labels,
+		Options:        opts.Options,
 	}
 	if opts.Subnet != "" {
 		req.IPAM = &NetworkIPAM{
-			Config: []NetworkIPAMConfig{{Subnet: opts.Subnet}},
+			Config: []NetworkIPAMConfig{{Subnet: opts.Subnet, Gateway: opts.Gateway}},
 		}
 	}
 	var resp struct {

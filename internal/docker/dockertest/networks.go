@@ -40,7 +40,15 @@ type Logf func(format string, args ...any)
 // minted per run, and "control" is not an id. A suite that mints a new shape
 // extends this, and does not give a long-lived instance a name of this shape —
 // the sweep would take its planes the moment they were idle.
-var testNetworkName = regexp.MustCompile(`^overcast(?:_[a-z0-9]+)+_test_[0-9a-f]{8,}(?:_control)?$`)
+//
+// The `-vpc-<id>` tail is EC2's per-VPC network under a test-scoped
+// OVERCAST_NETWORK (config.VPCNetwork). It is derived from the plane name
+// rather than minted, so a suite that sets a per-run OVERCAST_NETWORK gets
+// these for free and had no way to name them into the pattern; four of them
+// survived a sweep before this. A long-lived instance is still safe: its
+// networks are `overcast-vpc-…` with no `_test_` segment at all.
+var testNetworkName = regexp.MustCompile(
+	`^overcast(?:_[a-z0-9]+)+_test_[0-9a-f]{8,}(?:_control|-vpc-[a-z0-9-]+)?$`)
 
 // IsTestNetwork reports whether name is one a test suite minted for itself,
 // and so one the sweep may consider. It answers no for every shared plane.

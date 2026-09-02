@@ -69,6 +69,13 @@ func (s *Service) SetDocker(dc *docker.Client) {
 	s.handler.dockerReady.Store(true)
 }
 
+// SetNetworkReporter wires the health tracker, so the networks EC2 creates on
+// demand — and the identity that says whose they are — are reported beside the
+// two planes the Docker probe ensures at startup.
+func (s *Service) SetNetworkReporter(r docker.NetworkReporter) {
+	s.handler.SetNetworkReporter(r)
+}
+
 // ReconcileNetworks satisfies router.NetworkReconciler. Called once after
 // Docker becomes available to sync stored VPC state against actual Docker
 // networks (recreate missing networks, update stale Docker network IDs).

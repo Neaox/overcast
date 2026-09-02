@@ -7,6 +7,7 @@ import (
 
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/dataplane"
+	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/state"
 )
 
@@ -35,8 +36,13 @@ const (
 	advisoryCodeReadPressureObserved      = "read-pressure-observed"
 	advisoryCodeMemoryMode                = "memory-mode"
 	advisoryCodeMemoryModeIgnoresExisting = "memory-mode-ignores-existing-database"
+	advisoryCodeNetworkStateMismatch      = "network-state-mismatch"
 	advisoryCodeVPCNetworkIsolationStale  = "vpc-network-isolation-stale"
 )
+
+// networkingDocsPath deep-links the network-state advisory at the section that
+// explains what is verified and what `overcast network reset` does.
+const networkingDocsPath = "networking.md#network-state-verification"
 
 // performanceDocsPath is the docs-browser-relative path (see
 // web/src/routes/docs.tsx's `path` search param, and internal/bff/bff.go's
@@ -155,6 +161,16 @@ type advisoryInput struct {
 	// exception, and the one case worth an extra, stronger advisory for.
 	ExistingDatabase bool
 
+	// Networks is the verified state of every Docker network Overcast manages
+	// — the two planes and each per-VPC network — exactly as
+	// /_overcast/health reports it. Drives network-state-mismatch, and is the
+	// first advisory input that is not about storage.
+	//
+	// Empty means Docker is not wired, not that everything is well. The rule
+	// below therefore fires on a mismatch and never on an absence: "no
+	// networks reported" is indistinguishable from "no containers on this
+	// machine", and an advisory that cannot tell them apart is noise.
+	Networks []docker.NetworkStatus
 	// VPCNetworkProblems is ec2.Service.NetworkProblems(): the VPCs whose
 	// Docker network the EC2 service could not bring to the isolation their
 	// internet-gateway state calls for — drives vpc-network-isolation-stale.
@@ -198,10 +214,76 @@ func computeAdvisories(in advisoryInput) []Advisory {
 	if a := checkMemoryModeIgnoresExisting(in.StateBackend, in.ExistingDatabase); a != nil {
 		advisories = append(advisories, *a)
 	}
+	if a := checkNetworkStateMismatch(in.Networks); a != nil {
+		advisories = append(advisories, *a)
+	}
 	if a := checkVPCNetworkIsolation(in.VPCNetworkProblems); a != nil {
 		advisories = append(advisories, *a)
 	}
 	return advisories
+}
+
+// checkNetworkStateMismatch is warning-severity: a Docker network that is not
+// in the state this configuration asks for.
+//
+// It is here rather than only in the startup log because of where its cost
+// lands. Docker's create-network call returns an existing network unchanged, so
+// a network created by an older version, a different egress mode, or by hand
+// keeps every setting it was born with — and the failure that produces is a
+// function that cannot reach the internet, or cannot reach a database, minutes
+// later inside application code, with nothing connecting it back to a warning
+// that scrolled past at boot. That is #1564 exactly.
+//
+// One advisory for the whole set rather than one per network: they share a
+// single cause and a single fix, and a list of four cards saying the same thing
+// is a list nobody reads.
+func checkNetworkStateMismatch(networks []docker.NetworkStatus) *Advisory {
+	var bad []docker.NetworkStatus
+	for _, n := range networks {
+		if !n.OK() {
+			bad = append(bad, n)
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+
+	var b strings.Builder
+	for i, n := range bad {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		fmt.Fprintf(&b, "%s (%s).", n.Name, strings.Join(docker.DiffStrings(n.Mismatch), "; "))
+		if len(n.Attached) > 0 {
+			fmt.Fprintf(&b, " Attached: %s.", strings.Join(n.Attached, ", "))
+		}
+		if n.Owner != "" {
+			fmt.Fprintf(&b, " Owned by another Overcast instance (%s).", n.Owner)
+		}
+	}
+
+	names := make([]string, 0, len(bad))
+	fix := ""
+	for _, n := range bad {
+		names = append(names, n.Name)
+		if fix == "" && n.Fix != "" {
+			fix = n.Fix
+		}
+	}
+	detail := "Docker cannot change these settings on an existing network, and the networks below have " +
+		"containers attached or belong to another instance, so Overcast left them as they are. " +
+		"Until they are rebuilt, what a container can reach is not what this configuration says. " +
+		b.String()
+	if fix != "" {
+		detail += " Fix: `" + fix + "` (add --dry-run to see what it would do first)."
+	}
+	return &Advisory{
+		Severity: advisorySeverityWarning,
+		Code:     advisoryCodeNetworkStateMismatch,
+		Title:    "Docker network is not in its configured state: " + strings.Join(names, ", "),
+		Detail:   detail,
+		DocsPath: networkingDocsPath,
+	}
 }
 
 // vpcNetworkAdvisoryMaxListed bounds how many VPCs the advisory spells out.

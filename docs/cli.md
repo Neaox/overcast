@@ -207,6 +207,54 @@ overcast reset s3             # wipe only S3 state
 overcast reset dynamodb --yes # skip the prompt
 ```
 
+### `overcast network status`
+
+Compares every Docker network Overcast manages — the two planes and each
+per-VPC network — against the state your configuration would create, and
+reports each field that differs. Docker's create-network call returns an
+existing network unchanged, so a network made by an older Overcast or a
+different `OVERCAST_VPC_EGRESS` keeps its original settings while looking
+present and correct. Reads only.
+
+```bash
+overcast network status
+```
+
+```text
+overcast: ok (internal=false, spec a1b2c3d4e5f6)
+overcast_control: NOT in the configured state
+    internal: want false, got true
+    overcast.network.spec-hash: want a1b2c3d4e5f6, got (absent — created before Overcast labelled its networks, or not by Overcast)
+    stop       overcast-lambda-orders (running)
+    disconnect my-compose-db (not Overcast's — left running)
+```
+
+### `overcast network reset [network...]`
+
+Rebuilds each network that differs, because Docker cannot change isolation,
+driver, addressing or driver options on an existing network. Containers
+**Overcast** started are stopped first; containers it did not start are
+disconnected and left running. A network already in the right state is left
+alone unless `--force`. Name one or more networks to narrow it.
+
+In an interactive terminal you are asked to confirm unless `--yes`/`-y` is
+given; a non-interactive caller proceeds without prompting.
+
+| Flag | Effect |
+| --- | --- |
+| `--dry-run` | Print what would be stopped, disconnected and rebuilt, and change nothing |
+| `--force` | Rebuild a network even though it already matches |
+| `--yes`, `-y` | Skip the confirmation prompt |
+
+```bash
+overcast network reset --dry-run          # see the plan first
+overcast network reset                    # rebuild whatever differs
+overcast network reset overcast_control   # just that one
+```
+
+Restart Overcast afterwards, along with anything that was stopped — containers
+rejoin on their next start. Background: [Network state verification](./networking.md#network-state-verification).
+
 ---
 
 ## AWS environment helpers
