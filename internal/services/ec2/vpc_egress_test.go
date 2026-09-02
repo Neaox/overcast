@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/dataplane"
@@ -630,13 +632,13 @@ func TestAllocateEgressCIDR_skipsTakenAndOverlappingRanges(t *testing.T) {
 	// A VPC whose own range sits in the pool: the next /24 must step over it.
 	put(&VPC{VpcID: "vpc-b", CidrBlock: "198.18.1.0/24"})
 
-	got, err := h.allocateEgressCIDR(ctx)
+	got, err := h.allocateEgressCIDRLocked(ctx)
 	if err != nil || got != "198.18.2.0/24" {
-		t.Errorf("allocateEgressCIDR = %q, %v; want 198.18.2.0/24", got, err)
+		t.Errorf("allocateEgressCIDRLocked = %q, %v; want 198.18.2.0/24", got, err)
 	}
 
 	h.cfg.VPCEgressPool = "198.18.0.0/24"
-	if got, err := h.allocateEgressCIDR(ctx); err == nil || !strings.Contains(err.Error(), "OVERCAST_VPC_EGRESS_POOL") {
+	if got, err := h.allocateEgressCIDRLocked(ctx); err == nil || !strings.Contains(err.Error(), "OVERCAST_VPC_EGRESS_POOL") {
 		t.Errorf("exhausted pool = %q, %v; want an error naming the setting", got, err)
 	}
 }
@@ -981,4 +983,178 @@ func TestRecordPlacement_settlesAContainerAgainstARouteThatChangedMidPlacement(t
 			t.Errorf("gwPriority = %d, want %d", ep.gwPriority, dataplane.EgressGatewayPriority)
 		}
 	})
+}
+
+// ── the reservation is the allocation (#1594 review, N1) ─────────────────────
+
+// vpcScanBarrier holds the first `want` scans of the VPC namespace until all
+// of them have arrived, then lets every later one straight through.
+//
+// It widens the window between reading what is taken and writing what was
+// picked, so a test can decide the question rather than the scheduler — and it
+// times out rather than blocking forever, because the fix makes the second
+// arrival impossible: the goroutine that holds egressMu is the only one that
+// can be scanning, so the barrier is *meant* to expire. Both outcomes are
+// exercised by the same object.
+type vpcScanBarrier struct {
+	state.Store
+	timeout time.Duration
+
+	mu      sync.Mutex
+	armed   bool
+	waiting int
+	want    int
+	ch      chan struct{}
+}
+
+func newVPCScanBarrier(inner state.Store, want int, timeout time.Duration) *vpcScanBarrier {
+	return &vpcScanBarrier{Store: inner, want: want, timeout: timeout, ch: make(chan struct{})}
+}
+
+func (b *vpcScanBarrier) arm() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.armed = true
+}
+
+func (b *vpcScanBarrier) Scan(ctx context.Context, namespace, prefix string) ([]state.KV, error) {
+	if namespace == nsVPCs {
+		b.arrive()
+	}
+	return b.Store.Scan(ctx, namespace, prefix)
+}
+
+func (b *vpcScanBarrier) arrive() {
+	b.mu.Lock()
+	if !b.armed {
+		b.mu.Unlock()
+		return
+	}
+	b.waiting++
+	if b.waiting >= b.want {
+		b.armed = false
+		close(b.ch)
+	}
+	ch := b.ch
+	b.mu.Unlock()
+	select {
+	case <-ch:
+	case <-time.After(b.timeout):
+	}
+}
+
+// Two VPCs whose first egress placement overlaps must not be handed the same
+// /24. Reading what is taken and writing what was picked have to be one step
+// under egressMu: with the write deferred until after the network was created,
+// both callers read the same records, both chose the lowest free range, and
+// Docker refused the second network for an overlapping pool. Different VPCs
+// take different lockVPCNetwork keys, so nothing else kept them apart.
+func TestEnsureVPCEgressNetwork_concurrentVPCsGetDistinctRanges(t *testing.T) {
+	f := newFakeVPCDocker(t)
+	store := newVPCScanBarrier(state.NewMemoryStore(), 2, 2*time.Second)
+	h := vpcDockerHandlerOn(t, f, "shared", store)
+	h.cfg.VPCEgress = config.VPCEgressRouted
+	ctx := context.Background()
+	first := createVPC(t, h, "10.9.0.0/16")
+	second := createVPC(t, h, "10.10.0.0/16")
+
+	// Both allocate at once, each blocked in the scan that decides what is
+	// free until the other has reached it too.
+	store.arm()
+	var wg sync.WaitGroup
+	got := make([]string, 2)
+	errs := make([]error, 2)
+	for i, vpcID := range []string{first, second} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := h.ensureVPCEgressNetwork(ctx, vpcID); err != nil {
+				errs[i] = err
+				return
+			}
+			vpc, aerr := h.store.getVPC(ctx, vpcID)
+			if aerr != nil {
+				errs[i] = errors.New(aerr.Message)
+				return
+			}
+			got[i] = vpc.EgressCidrBlock
+		}()
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("VPC %d: %v", i, err)
+		}
+	}
+	if got[0] == "" || got[1] == "" {
+		t.Fatalf("ranges = %q, %q; both VPCs should hold one", got[0], got[1])
+	}
+	if got[0] == got[1] {
+		t.Errorf("both VPCs were given %s — the pick and the reservation are not one step, so the "+
+			"second read the store before the first had written to it", got[0])
+	}
+	// And the daemon holds one network per VPC, on the range its record names.
+	for i, vpcID := range []string{first, second} {
+		n := f.network(h.cfg.VPCEgressNetwork(vpcID))
+		if n == nil {
+			t.Errorf("no egress network for VPC %d", i)
+			continue
+		}
+		if n.subnet != got[i] {
+			t.Errorf("network for VPC %d is on %s, record says %s", i, n.subnet, got[i])
+		}
+	}
+}
+
+// The mechanism, asserted directly: a reservation is visible to the next
+// caller the moment it is returned, not once the network exists.
+func TestReserveEgressCIDR_persistsBeforeReturning(t *testing.T) {
+	f := newFakeVPCDocker(t)
+	h := routedHandler(t, f)
+	ctx := context.Background()
+	vpcID := createVPC(t, h, "10.9.0.0/16")
+
+	cidr, reserved, err := h.reserveEgressCIDR(ctx, vpcID)
+	if err != nil || cidr == "" || !reserved {
+		t.Fatalf("reserveEgressCIDR = %q, %t, %v", cidr, reserved, err)
+	}
+	if got := storedVPC(t, h, vpcID).EgressCidrBlock; got != cidr {
+		t.Errorf("record holds %q, want the %q just handed out — an unwritten pick is invisible "+
+			"to the next allocation", got, cidr)
+	}
+
+	// A second call for the same VPC finds the reservation rather than making
+	// another, and says it did not make this one.
+	again, reservedAgain, err := h.reserveEgressCIDR(ctx, vpcID)
+	if err != nil || again != cidr || reservedAgain {
+		t.Errorf("second reserve = %q, %t, %v; want the existing %q and false", again, reservedAgain, err, cidr)
+	}
+}
+
+// A range reserved for a network the daemon then refused is given back, so the
+// next attempt picks a different one instead of retrying forever on a range
+// Docker has already rejected.
+func TestEnsureVPCEgressNetwork_releasesTheRangeWhenTheNetworkCannotBeCreated(t *testing.T) {
+	f := newFakeVPCDocker(t)
+	h := routedHandler(t, f)
+	ctx := context.Background()
+	vpcID := createVPC(t, h, "10.9.0.0/16")
+
+	f.failCreate = true
+	if _, err := h.ensureVPCEgressNetwork(ctx, vpcID); err == nil {
+		t.Fatal("ensureVPCEgressNetwork: want an error from a daemon refusing the create")
+	}
+	if got := storedVPC(t, h, vpcID).EgressCidrBlock; got != "" {
+		t.Errorf("record still reserves %s for a network that was never created", got)
+	}
+
+	// And the VPC can be given one once the daemon takes it.
+	f.failCreate = false
+	if _, err := h.ensureVPCEgressNetwork(ctx, vpcID); err != nil {
+		t.Fatalf("ensureVPCEgressNetwork after the daemon recovered: %v", err)
+	}
+	if got := storedVPC(t, h, vpcID).EgressCidrBlock; got == "" {
+		t.Errorf("no range reserved after a successful create")
+	}
 }

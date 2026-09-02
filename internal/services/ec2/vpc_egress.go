@@ -383,12 +383,13 @@ func (h *Handler) ensureVPCEgressNetwork(ctx context.Context, vpcID string) (str
 	}
 	name := h.cfg.VPCEgressNetwork(vpc.VpcID)
 	cidr := vpc.EgressCidrBlock
+	reserved := false
 	if cidr == "" {
-		allocated, err := h.allocateEgressCIDR(ctx)
+		allocated, mine, err := h.reserveEgressCIDR(ctx, vpc.VpcID)
 		if err != nil {
 			return "", err
 		}
-		cidr, vpc.EgressCidrBlock = allocated, allocated
+		cidr, reserved, vpc.EgressCidrBlock = allocated, mine, allocated
 	}
 	spec := dataplane.VPCEgressNetworkSpec(h.cfg, dataplane.VPCEgressNetwork{
 		VPCID:  vpc.VpcID,
@@ -397,6 +398,7 @@ func (h *Handler) ensureVPCEgressNetwork(ctx context.Context, vpcID string) (str
 	}).Resolve(ctx, h.docker)
 	status, err := docker.EnsureNetwork(ctx, h.docker, spec, h.log.ZapLogger())
 	if err != nil {
+		h.releaseEgressCIDR(ctx, vpc.VpcID, cidr, reserved)
 		return "", err
 	}
 	status.Reason = egressNetworkReason
@@ -404,6 +406,7 @@ func (h *Handler) ensureVPCEgressNetwork(ctx context.Context, vpcID string) (str
 
 	info, err := h.docker.InspectNetwork(ctx, name)
 	if err != nil {
+		h.releaseEgressCIDR(ctx, vpc.VpcID, cidr, reserved)
 		return "", fmt.Errorf("inspect egress network %s after ensuring it: %w", name, err)
 	}
 	if vpc.EgressNetworkID != info.ID || vpc.EgressNetworkName != name || vpc.EgressCidrBlock != cidr {
@@ -418,22 +421,79 @@ func (h *Handler) ensureVPCEgressNetwork(ctx context.Context, vpcID string) (str
 	return info.ID, nil
 }
 
-// allocateEgressCIDR picks the lowest /24 in config.VPCEgressPool that no
+// reserveEgressCIDR picks a free /24 for vpcID and writes it to the VPC's
+// record before returning, both under egressMu. It reports the range and
+// whether this call is the one that reserved it.
+//
+// The pick and the write are one step on purpose, and separating them is a bug
+// this had. allocateEgressCIDRLocked reads every VPC's EgressCidrBlock to know
+// what is taken, so a pick that is not yet written is invisible to the next
+// one: with the write left until after the network was created, two VPCs whose
+// first egress placement overlapped both read the same records, both chose the
+// lowest free /24, and Docker refused the second network for an overlapping
+// pool. Different VPCs take different lockVPCNetwork keys, so nothing else was
+// keeping them apart.
+//
+// A VPC that already has a range keeps it — a concurrent caller for the same
+// VPC that lost the race finds the winner's reservation here rather than
+// allocating a second one.
+func (h *Handler) reserveEgressCIDR(ctx context.Context, vpcID string) (cidr string, reserved bool, err error) {
+	h.egressMu.Lock()
+	defer h.egressMu.Unlock()
+
+	vpc, aerr := h.store.getVPC(ctx, vpcID)
+	if aerr != nil {
+		return "", false, errors.New(aerr.Message)
+	}
+	if vpc.EgressCidrBlock != "" {
+		return vpc.EgressCidrBlock, false, nil
+	}
+	allocated, err := h.allocateEgressCIDRLocked(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	vpc.EgressCidrBlock = allocated
+	if aerr := h.store.putVPC(ctx, vpc); aerr != nil {
+		return "", false, errors.New(aerr.Message)
+	}
+	return allocated, true, nil
+}
+
+// releaseEgressCIDR gives a reservation back when the network it was made for
+// could not be built, so the next attempt picks a different range rather than
+// retrying forever on one the daemon has already refused. A no-op unless this
+// call is the one that made the reservation, and best-effort: a release that
+// cannot be written costs one /24 of a pool of 256, which is not worth failing
+// a placement that has already failed for another reason.
+func (h *Handler) releaseEgressCIDR(ctx context.Context, vpcID, cidr string, reserved bool) {
+	if !reserved || cidr == "" {
+		return
+	}
+	h.egressMu.Lock()
+	defer h.egressMu.Unlock()
+
+	vpc, aerr := h.store.getVPC(ctx, vpcID)
+	if aerr != nil || vpc.EgressCidrBlock != cidr {
+		return // gone, or somebody has since made a reservation of their own
+	}
+	vpc.EgressCidrBlock = ""
+	if aerr := h.store.putVPC(ctx, vpc); aerr != nil {
+		h.log.WithRecorder(ctx).Warn("vpc egress: could not release the range reserved for a network that was not created",
+			zap.String("vpc", vpcID), zap.String("subnet", cidr), zap.String("error", aerr.Message))
+	}
+}
+
+// allocateEgressCIDRLocked picks the lowest /24 in config.VPCEgressPool that no
 // VPC's egress network holds and that overlaps no VPC's own range, in any
 // region: a VPC is regional, but the daemon and its address space are not.
 //
 // The pool's size is the ceiling on VPCs with egress — 256 for the default
 // /16 — and running into it is the one failure this mode has that `open` does
 // not. The error names the pool and how to widen it.
-func (h *Handler) allocateEgressCIDR(ctx context.Context) (string, error) {
-	// One allocation at a time across VPCs, and no wider: two placements in
-	// two VPCs that both allocate would otherwise read the same records and
-	// pick the same /24. Everything after the allocation — the Docker work
-	// that dominates the cost — is per-VPC and serialised by the VPC's own
-	// network lock, so it does not belong under a process-global one.
-	h.egressMu.Lock()
-	defer h.egressMu.Unlock()
-
+// The caller holds egressMu — see reserveEgressCIDR, which is the only one,
+// and which holds it across the write that makes this pick visible to the
+// next caller.
+func (h *Handler) allocateEgressCIDRLocked(ctx context.Context) (string, error) {
 	pool := h.cfg.VPCEgressPool
 	if pool == "" {
 		pool = config.DefaultVPCEgressPool

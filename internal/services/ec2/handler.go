@@ -58,7 +58,7 @@ type Handler struct {
 	netProblems sync.Map // vpcID, or vpcID+"/egress" -> dataplane.VPCNetworkProblem
 
 	// egressMu serialises egress-network CIDR allocation across VPCs, and
-	// nothing else. See allocateEgressCIDR.
+	// nothing else. See reserveEgressCIDR.
 	egressMu sync.Mutex
 
 	// reconcileMu serialises the network reconcile passes: the startup one
