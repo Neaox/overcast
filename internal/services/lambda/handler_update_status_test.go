@@ -228,6 +228,38 @@ func TestUpdateFunctionCode_newImagePullReportsInProgressThenSuccessful(t *testi
 	}
 }
 
+func TestUpdateFunctionCode_pullsOnlyWhenTheImageActuallyChanges(t *testing.T) {
+	// Given: a container runtime is wired, so a pull is possible.
+	pulls := 0
+	h, ls := updateStatusHandler(t, func(_ *Function, ready func(error)) {
+		pulls++
+		ready(nil)
+	})
+	seedActiveImageFunction(t, ls, "same-img-fn", "000000000000.dkr.ecr.us-east-1.amazonaws.com/demo:v1")
+	seedActiveZipFunction(t, ls, "zip-with-runtime-fn")
+
+	// When: an image function is redeployed onto the image it already runs, and
+	// a zip function has its package replaced.
+	same := decodeConfig(t, updateFunctionCode(t, h, "same-img-fn", map[string]any{
+		"ImageUri": "000000000000.dkr.ecr.us-east-1.amazonaws.com/demo:v1",
+	}), http.StatusOK)
+	zip := decodeConfig(t, updateFunctionCode(t, h, "zip-with-runtime-fn", map[string]any{
+		"ZipFile": []byte("new deployment package"),
+	}), http.StatusOK)
+
+	// Then: neither had anything to fetch, so neither opened a window — nothing
+	// is ever written InProgress that no pull is going to settle.
+	if pulls != 0 {
+		t.Errorf("started %d image pulls, want 0", pulls)
+	}
+	if same.LastUpdateStatus != lastUpdateSuccessful {
+		t.Errorf("same-image update LastUpdateStatus = %q, want %q", same.LastUpdateStatus, lastUpdateSuccessful)
+	}
+	if zip.LastUpdateStatus != lastUpdateSuccessful {
+		t.Errorf("zip update LastUpdateStatus = %q, want %q", zip.LastUpdateStatus, lastUpdateSuccessful)
+	}
+}
+
 func TestUpdateFunctionCode_imagePullFailureReportsFailed(t *testing.T) {
 	// Given: an image function whose next pull will be refused by the registry.
 	var onReady func(error)

@@ -1683,13 +1683,40 @@ const (
 	lastUpdateFailed     = "Failed"
 )
 
-// beginFunctionUpdate opens the update window on current. Called from inside
-// the store mutation that applies the update, so the marker and the change it
-// describes are written together or not at all.
+// beginFunctionUpdate opens the update window on current, and
+// markFunctionUpdateSettled records an update that needed no window at all.
+// Both are called from inside the store mutation that applies the update, so
+// the status and the change it describes are written together or not at all.
+// That is also why the settled case is not a second write closing a window: a
+// settle that failed would leave the function InProgress with no pull behind
+// it, refusing every later update for ever.
 func beginFunctionUpdate(current *Function) {
 	current.LastUpdateStatus = lastUpdateInProgress
 	current.LastUpdateStatusReason = ""
 	current.LastUpdateStatusReasonCode = ""
+}
+
+func markFunctionUpdateSettled(current *Function) {
+	current.LastUpdateStatus = lastUpdateSuccessful
+	current.LastUpdateStatusReason = ""
+	current.LastUpdateStatusReasonCode = ""
+}
+
+// hasPrewarmer reports whether the container runtime is wired. Read before
+// entering a store mutation, never from inside one.
+func (h *Handler) hasPrewarmer() bool {
+	h.prewarmMu.Lock()
+	defer h.prewarmMu.Unlock()
+	return h.prewarmer != nil
+}
+
+// updateStartsImagePull reports whether an UpdateFunctionCode has to pull an
+// image before its change is really in place — the one asynchronous update.
+// Without a container runtime (tests, or Docker still starting) there is
+// nothing to pull, and so nothing to wait for.
+func updateStartsImagePull(current *Function, nextImageUri string, prewarmerWired bool) bool {
+	return prewarmerWired && current.PackageType == "Image" &&
+		nextImageUri != "" && nextImageUri != current.ImageUri
 }
 
 // functionUpdateInProgress reports whether an update on fn has yet to settle.
@@ -1763,27 +1790,21 @@ func (h *Handler) settleFunctionUpdate(ctx context.Context, name, revision, stat
 	return fresh
 }
 
-// startFunctionUpdatePull pulls a container image an update just pointed the
-// function at, in the background, and reports whether it started one. Only a
-// PackageType=Image function that actually changed image needs a pull — a zip
-// deployment and every configuration change run on an image the function
-// already has — and only when the container runtime is wired: without it
-// (tests, or Docker still starting) there is nothing to pull and nothing to
-// wait for.
+// startFunctionUpdatePull pulls, in the background, the container image an
+// update just pointed the function at, and settles the update on the result.
+// Called only when updateStartsImagePull said so from inside the mutation, so
+// the record it settles is the one that was marked InProgress.
 //
 // State is deliberately left alone. AWS keeps an updating function Active and
 // moves LastUpdateStatus alone; Pending is for a function that has never been
 // deployed, and demoting one here would make invokes fail for the length of the
 // pull, which is not what AWS does.
-func (h *Handler) startFunctionUpdatePull(fn *Function, previousImageUri string) bool {
-	if fn == nil || fn.PackageType != "Image" || fn.ImageUri == "" || fn.ImageUri == previousImageUri {
-		return false
-	}
+func (h *Handler) startFunctionUpdatePull(fn *Function) {
 	h.prewarmMu.Lock()
 	prewarmer := h.prewarmer
 	h.prewarmMu.Unlock()
-	if prewarmer == nil {
-		return false
+	if fn == nil || prewarmer == nil {
+		return
 	}
 	name, revision := fn.Name, fn.RevisionId
 	region := serviceutil.ARNRegion(fn.ARN)
@@ -1798,26 +1819,6 @@ func (h *Handler) startFunctionUpdatePull(fn *Function, previousImageUri string)
 		h.settleFunctionUpdate(ctx, name, revision, lastUpdateFailed,
 			"Failed to pull container image: "+pullErr.Error(), imagePullReasonCode(pullErr))
 	})
-	return true
-}
-
-// finishFunctionUpdate settles an update that is already applied in full, and
-// returns the configuration to report — Successful, because it is.
-func (h *Handler) finishFunctionUpdate(ctx context.Context, fn *Function) *Function {
-	if settled := h.settleFunctionUpdate(ctx, fn.Name, fn.RevisionId, lastUpdateSuccessful, "", ""); settled != nil {
-		return settled
-	}
-	return fn
-}
-
-// finishFunctionCodeUpdate settles a code update: a new container image is
-// pulled in the background and the caller told InProgress, anything else is
-// already in place and settles here.
-func (h *Handler) finishFunctionCodeUpdate(ctx context.Context, fn *Function, previousImageUri string) *Function {
-	if h.startFunctionUpdatePull(fn, previousImageUri) {
-		return fn
-	}
-	return h.finishFunctionUpdate(ctx, fn)
 }
 
 // UpdateFunctionCode handles PUT /2015-03-31/functions/{name}/code.
@@ -1886,14 +1887,22 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 		s3Code = zip
 	}
 
-	var previousIdentity, previousImageUri string
+	var previousIdentity string
+	var pullsImage bool
+	prewarmerWired := h.hasPrewarmer()
 	fn, changed, aerr := h.ls.mutateFunction(ctx, name, func(current *Function) (bool, *protocol.AWSError) {
 		if functionUpdateInProgress(current) {
 			return false, lambdaUpdateInProgressConflict(current.ARN)
 		}
 		previousIdentity = functionInstanceIdentity(current)
-		previousImageUri = current.ImageUri
-		beginFunctionUpdate(current)
+		// A new container image is fetched after this commits, so the update
+		// opens a window; everything else is in place the moment it commits.
+		pullsImage = updateStartsImagePull(current, req.ImageUri, prewarmerWired)
+		if pullsImage {
+			beginFunctionUpdate(current)
+		} else {
+			markFunctionUpdateSettled(current)
+		}
 		// PackageType is immutable. Within that type, a successful update
 		// replaces the previous source instead of layering fields onto it.
 		switch current.PackageType {
@@ -1940,7 +1949,9 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.retireExecutionEnvironment(ctx, fn, previousIdentity)
-	fn = h.finishFunctionCodeUpdate(ctx, fn, previousImageUri)
+	if pullsImage {
+		h.startFunctionUpdatePull(fn)
+	}
 
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
@@ -2143,7 +2154,9 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 			return false, lambdaUpdateInProgressConflict(current.ARN)
 		}
 		previousIdentity = functionInstanceIdentity(current)
-		beginFunctionUpdate(current)
+		// Configuration never changes the image, so there is nothing to fetch:
+		// the update is in place the moment this commits.
+		markFunctionUpdateSettled(current)
 		// Pointer members distinguish omission (no change) from explicit zero values.
 		if req.Description != nil {
 			current.Description = *req.Description
@@ -2219,9 +2232,6 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 	}
 
 	h.retireExecutionEnvironment(ctx, fn, previousIdentity)
-	// Configuration never changes the image, so this settles here: the new
-	// configuration is stored, and the next invocation is the one that reads it.
-	fn = h.finishFunctionUpdate(ctx, fn)
 
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
