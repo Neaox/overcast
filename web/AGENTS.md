@@ -136,6 +136,8 @@ Follow the canonical class rules and v4 syntax in the [root AGENTS.md](../AGENTS
 
 Custom design tokens (colours, spacing) are defined in `web/src/styles/`. Use `text-fg`, `text-fg-muted`, `bg-bg`, `bg-bg-elevated`, `border-border`, `text-accent` etc. — never hardcode hex values.
 
+- Service iconography is a trademark rule, not a taste: icons stay lucide (or original) glyphs and colours come from the `--cat-*` ramp via `service-registry.ts`. Never AWS Architecture Icons, AWS logos, or lookalikes, not even behind an opt-in — see [brand guidelines § third-party marks](https://brand.overcast.sh/brand-guidelines.html#third-party-marks).
+
 ---
 
 ## Component conventions
