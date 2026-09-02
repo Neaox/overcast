@@ -38,6 +38,11 @@ type Handler struct {
 	docker      *docker.Client
 	dockerReady atomic.Bool
 	vpcStrategy vpcNetworkStrategy
+	// instances is the sweep domain a VPC network is stamped with at creation
+	// and checked against before the reconcile's orphan pass removes it, so an
+	// instance sharing a daemon with another cannot take the other's VPC
+	// networks for litter. See docker.LabelInstance.
+	instances *serviceutil.InstanceDomain
 
 	// defaultVPCLocks serialises default-VPC seeding per region, so two
 	// concurrent describes cannot both find none and both seed one.
@@ -63,6 +68,7 @@ func newHandler(cfg *config.Config, store state.Store, log *serviceutil.ServiceL
 		log:       log,
 		clk:       clk,
 		scheduler: lifecycle.NewScheduler(clk),
+		instances: serviceutil.NewInstanceDomain(store, nsInstance),
 	}
 	h.keyMaterialFor = func() (string, string) { return randomFingerprint(), dummyKeyMaterial() }
 	// The guard wraps whichever strategy is configured: the default VPC's
