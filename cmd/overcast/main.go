@@ -14,6 +14,7 @@
 //   - overcast status       — check a running daemon is reachable
 //   - overcast wait         — block until a daemon reports healthy
 //   - overcast services     — list enabled services and emulation tiers
+//   - overcast network      — inspect and rebuild the Docker networks Overcast manages
 //   - overcast reset        — wipe emulated state, all or one service
 //   - overcast config       — show the daemon's effective configuration
 //   - overcast env          — print AWS environment exports for the daemon
@@ -61,6 +62,7 @@ func main() {
 	root.AddCommand(newStopCmd())
 	root.AddCommand(newRestartCmd())
 	root.AddCommand(newLogsCmd())
+	root.AddCommand(newNetworkCmd())
 	root.AddCommand(newResetCmd())
 	root.AddCommand(newConfigCmd())
 

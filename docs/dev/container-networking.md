@@ -45,7 +45,8 @@ The API is small on purpose:
 | `dataplane.AttachAdopted(...)` | The same for a container reused after a restart — joins the control plane too, since one adopted from an earlier version was never created there |
 | `dataplane.Hostnames(cfg, name, advertised...)` | The alias set: `name` applied to every base an endpoint could be minted under, plus what the record already advertises |
 | `dataplane.ContainerAddr(ctx, dc, cfg, id)` | The address *Overcast itself* dials a managed container on, or `""` meaning "use the published port on loopback" |
-| `dataplane.ControlPlaneInternal(cfg)` | Returns the function that decides whether the control plane is created `--internal`, **and the reason** — see § 1a; wired in as `docker.NetworkSpec.InternalMode` so it runs once `docker.Probe` has a live client, before either plane is created |
+| `dataplane.PlaneSpecs(cfg)` | The complete desired state of both planes — isolation, driver, IPAM, options and labels. Handed to `docker.Probe`, which brings each network into exactly that state; the isolation decisions run as `InternalMode` once there is a live client. See § 1c and § 1d |
+| `dataplane.VPCNetworkSpec(cfg, vpcID, subnet, owner, hasIGW)` | The same for one VPC's network, including the ownership label that stops one instance removing another's |
 
 **Historical note, because the shape of the old bug is instructive.** There used
 to be one network per emulator service — `overcast_lambda`, `overcast_rds`,
@@ -101,27 +102,95 @@ resolves, it binds the wildcard and logs that it did — a Runtime API nobody ca
 reach fails worse than one bound too widely, and every invocation would hang at
 INIT.
 
-This exact table also decides whether the control plane can be created
-`--internal` (docs/plans/container-network-topology.md § 5):
-`dataplane.ControlPlaneInternal` answers **yes** for the first two rows —
-Overcast's own address, and a native daemon's gateway, both stay on-link on an
-`--internal` bridge, since only routing *beyond* it is cut — and **no** for
-Desktop, where the host's routable address sits beyond the bridge. It cannot
-inspect the control plane itself to decide this, since a first run has not
-created it yet, so it asks the same bindability question of Docker's
-always-present default `bridge` network instead
-(`containerendpoint.NativeLinuxDaemon`).
+This same table decides one thing and one thing only: whether an `--internal`
+control plane would still carry the Runtime API. `dataplane.runtimeAPIReachableOnInternalPlane`
+answers **yes** for the first two rows — Overcast's own address, and a native
+daemon's gateway, both stay on-link on an `--internal` bridge, since only
+routing *beyond* it is cut — and **no** for Desktop, where the host's routable
+address sits beyond the bridge. It cannot inspect the control plane itself to
+decide this, since a first run has not created it yet, so it asks the same
+bindability question of Docker's always-present default `bridge` network
+instead (`containerendpoint.NativeLinuxDaemon`).
 
-That whole probe is `OVERCAST_CONTROL_PLANE_INTERNAL=auto`, the default.
-`true` and `false` skip it, because a probe of the *host* is the wrong shape
-for a decision a team needs to be identical across hosts — see
-[docs/networking.md § Control-plane isolation](../networking.md#control-plane-isolation)
-and issue #1564. Whichever branch fires names itself: the decision carries a
-reason string, which `docker.Probe` logs at info on every startup and reports
-under `docker.networks` in `/_overcast/health`. `docker.Probe` also repairs a
-pre-existing plane whose isolation disagrees, when nothing is attached to it —
-Docker will not change the flag in place, so an old network otherwise pins an
-answer forever.
+**It does not decide egress, and that separation is the whole of #1564.** Until
+`OVERCAST_VPC_EGRESS` existed, this probe was also what decided whether any
+container could reach the internet: a fact about the host answering a question
+about the deployment. Two engineers on one pinned image got different network
+behaviour with nothing anywhere saying which they had. Now the mode decides
+egress and this decides only whether the isolation the mode asked for can be
+delivered on this host — and when it cannot, the shortfall is warned about
+rather than silently applied.
+
+### 1c. Egress is one decision for the whole topology
+
+`OVERCAST_VPC_EGRESS` (`config.VPCEgressMode`) sets every network's isolation
+at once: `open` leaves all of them routable, `none` makes all of them
+`--internal`, `routed` is refused at startup (#1571). One setting rather than a
+flag per network, because a container sits on two networks and takes its
+default route from whichever is routable — so isolating one settles nothing.
+
+That is measured, not assumed. An end-to-end matrix over `shared`/`strict`/
+`remapped` and every VPC shape (no VPC, public+IGW, private+NAT, isolated)
+found identical full egress in all of them with the control plane routable:
+HTTP 200 from `checkip.amazonaws.com` and 403 from real `sts.us-east-1` in
+every cell, including the isolated VPC whose own network was correctly
+`Internal=true`.
+
+```
+                 ┌──────────────────────────────────────┐
+   Overcast ─────┤  overcast_control                    │  Runtime API and
+                 │  internal only under EGRESS=none,    │  AWS_ENDPOINT_URL
+                 │  and only where the probe above      │  calls back in
+                 │  says the Runtime API survives it    │
+                 └──────────────────────────────────────┘
+                                  │
+        ┌─────────────────────────┼─────────────────────────┐
+        │                         │                         │
+┌───────────────┐   ┌──────────────────────┐   ┌──────────────────────┐
+│   overcast    │   │ overcast-vpc-A       │   │ overcast-vpc-B       │
+│ default plane │   │ (IGW attached)       │   │ (no IGW)             │
+└───────────────┘   └──────────────────────┘   └──────────────────────┘
+        │                         │                         │
+        └─────────────────────────┴─────────────────────────┘
+                                  │
+                    EGRESS=open → every one routable
+                    EGRESS=none → every one --internal
+                    EGRESS=routed → per subnet route table (#1571)
+```
+
+The internet-gateway bit no longer decides a VPC network's isolation.
+`dataplane.VPCNetworkInternal` still takes it, because `routed` will need it —
+but reading it *alone* delivered only the withholding half of AWS's model, in
+which a private-with-NAT subnet and an isolated one are the same network.
+
+### 1d. Every network is verified against a full spec on every start
+
+Docker's create-network call returns an existing network unchanged: no
+isolation, no subnet, no driver options. So `docker.NetworkSpec` describes the
+complete desired state — driver, `Internal`, IPv6, IPAM subnet and gateway,
+driver options, labels — and `docker.EnsureNetwork` compares a live network
+against it field by field, on every start, for the two planes and every per-VPC
+network (`dataplane.PlaneSpecs`, `dataplane.VPCNetworkSpec`).
+
+| Outcome | What happens |
+| --- | --- |
+| Absent | Created to spec |
+| Matches | Left alone |
+| Differs, nothing attached | Removed and recreated, logged at info |
+| Differs, containers attached | Left alone; WARN naming every differing field and every attached container, `/_overcast/health` degraded, console advisory, `overcast network reset` as the fix |
+| Owned by another instance | Left alone, always |
+
+Two labels carry the rules. `overcast.network.spec-hash` is the SHA-256 of the
+behavioural fields; **a network without one is treated as mismatched**, because
+every network created before this code has none and those are the ones that have
+actually been wrong. `overcast.instance` names the instance that created the
+network, and nothing removes a network carrying somebody else's — the sweep in
+`ec2.reconcileNetworks` used to remove every `overcast.service=ec2` network its
+own store did not claim, which on a shared daemon deleted a neighbour's live VPC
+network (#1569).
+
+The full decision record, including the measured evidence and the alternatives
+rejected, is in [the container-networking egress plan](../plans/container-networking-egress.md).
 
 ### 1b. …and a container's source address is not its identity
 

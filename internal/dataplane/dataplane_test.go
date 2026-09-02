@@ -40,6 +40,15 @@ func (f fakeVPCResolver) DockerNetworkForVpc(context.Context, string) string { r
 // listening, so a connection a VPC forbids fails by name. That is the normal
 // containerised setup and the one most of these cases care about; the host
 // deployment where it does not hold has its own case below.
+// setLegacyPin writes the deprecated OVERCAST_CONTROL_PLANE_INTERNAL pin.
+// The tests still have to exercise it — it is still honoured — and routing
+// every write through one helper keeps the deprecation suppression in one line
+// rather than one per test.
+func setLegacyPin(cfg *config.Config, mode config.ControlPlaneInternalMode, set bool) {
+	//nolint:staticcheck // SA1019: the deprecated pin is still honoured where set (#1566), so it is still tested.
+	cfg.ControlPlaneInternal, cfg.ControlPlaneInternalSet = mode, set
+}
+
 func testConfig() *config.Config {
 	return &config.Config{Network: "overcast", Hostname: "localhost", DNSListening: true}
 }
@@ -247,49 +256,42 @@ func TestAttach_wrapsTheDaemonError(t *testing.T) {
 	}
 }
 
-// TestControlPlaneInternal_auto covers the three-row table of
-// docs/plans/container-network-topology.md § 5: containerised is always
-// on-link and safe, a native Linux host's gateway stays on-link on an
-// `--internal` bridge, and Docker Desktop's host address does not — plus the
-// case the table does not name, where the daemon probe cannot tell.
+// The egress mode decides every network's isolation, and the control plane is
+// not an exception to that — it was the *only* thing deciding it before, which
+// is why a VPC's own `--internal` network isolated nothing (measured
+// end-to-end: an isolated-subnet Lambda reached checkip.amazonaws.com and got a
+// 403 from real sts.us-east-1, because it took its default route from the
+// routable control plane).
 //
 // Every row also has to name itself. The reason is the reportable half of
 // #1564: two engineers on one pinned version got different isolation, and
 // nothing anywhere said which probe had fired.
-func TestControlPlaneInternal_auto(t *testing.T) {
+func TestControlPlaneInternal_followsTheEgressMode(t *testing.T) {
 	restoreContainer := runningInContainer
 	restoreDaemon := nativeLinuxDaemon
 	t.Cleanup(func() {
 		runningInContainer = restoreContainer
 		nativeLinuxDaemon = restoreDaemon
 	})
+	// A host where an internal control plane is deliverable, so the mode is
+	// the only thing being tested here.
+	runningInContainer = func() bool { return true }
+	nativeLinuxDaemon = func(context.Context, *docker.Client) bool { return true }
 
 	cases := map[string]struct {
-		containerised bool
-		native        bool
-		want          bool
-		wantReason    string
+		mode       config.VPCEgressMode
+		want       bool
+		wantReason string
 	}{
-		"containerised is always internal, even if the daemon probe would say no": {
-			containerised: true, native: false,
-			want: true, wantReason: "auto: Overcast is containerised",
-		},
-		"native Linux host: the gateway stays on-link": {
-			containerised: false, native: true,
-			want: true, wantReason: "auto: native Linux Docker daemon",
-		},
-		"Docker Desktop host: the daemon probe declines": {
-			containerised: false, native: false,
-			want: false, wantReason: "auto: Docker Desktop, or a daemon this host could not probe",
-		},
+		"open leaves it routable":               {config.VPCEgressOpen, false, "OVERCAST_VPC_EGRESS=open"},
+		"none isolates it":                      {config.VPCEgressNone, true, "OVERCAST_VPC_EGRESS=none"},
+		"the zero value is read as the default": {"", false, "OVERCAST_VPC_EGRESS=open"},
 	}
 
-	cfg := testConfig()
-	cfg.ControlPlaneInternal = config.ControlPlaneInternalAuto
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			runningInContainer = func() bool { return tc.containerised }
-			nativeLinuxDaemon = func(context.Context, *docker.Client) bool { return tc.native }
+			cfg := testConfig()
+			cfg.VPCEgress = tc.mode
 
 			got := ControlPlaneInternal(cfg)(context.Background(), nil)
 			if got.Internal != tc.want {
@@ -302,14 +304,11 @@ func TestControlPlaneInternal_auto(t *testing.T) {
 	}
 }
 
-// TestControlPlaneInternal_pinnedOverridesTheHostProbe is the point of #1564:
-// an explicit OVERCAST_CONTROL_PLANE_INTERNAL settles the answer whatever the
-// host looks like, so one pinned version behaves the same on every machine.
-//
-// Both pinned values are exercised against *both* hosts the probe can tell
-// apart, since a setting that only won on the host that already agreed with it
-// would be no setting at all.
-func TestControlPlaneInternal_pinnedOverridesTheHostProbe(t *testing.T) {
+// The host probe no longer decides egress — that is the decoupling #1564 asked
+// for. Whatever the host looks like, `open` leaves the plane routable and
+// `none` asks for it to be isolated; only whether `none` can be *delivered*
+// depends on the host, and that is the next test.
+func TestControlPlaneInternal_egressDoesNotDependOnTheHost(t *testing.T) {
 	restoreContainer := runningInContainer
 	restoreDaemon := nativeLinuxDaemon
 	t.Cleanup(func() {
@@ -322,87 +321,173 @@ func TestControlPlaneInternal_pinnedOverridesTheHostProbe(t *testing.T) {
 		containerised bool
 		native        bool
 	}{
-		{"containerised, where auto would say internal", true, false},
-		{"Docker Desktop, where auto would say not internal", false, false},
+		{"containerised", true, false},
+		{"native Linux daemon", false, true},
 	}
-	pins := []struct {
-		mode       config.ControlPlaneInternalMode
-		want       bool
-		wantReason string
-	}{
-		{config.ControlPlaneInternalTrue, true, "OVERCAST_CONTROL_PLANE_INTERNAL=true"},
-		{config.ControlPlaneInternalFalse, false, "OVERCAST_CONTROL_PLANE_INTERNAL=false"},
-	}
-
 	for _, host := range hosts {
-		for _, pin := range pins {
-			t.Run(host.name+"/"+string(pin.mode), func(t *testing.T) {
-				runningInContainer = func() bool { return host.containerised }
-				nativeLinuxDaemon = func(context.Context, *docker.Client) bool { return host.native }
+		t.Run(host.name, func(t *testing.T) {
+			runningInContainer = func() bool { return host.containerised }
+			nativeLinuxDaemon = func(context.Context, *docker.Client) bool { return host.native }
 
-				cfg := testConfig()
-				cfg.ControlPlaneInternal = pin.mode
+			cfg := testConfig()
+			cfg.VPCEgress = config.VPCEgressOpen
+			if got := ControlPlaneInternal(cfg)(context.Background(), nil); got.Internal {
+				t.Errorf("open on a %s host = %+v, want the plane left routable", host.name, got)
+			}
 
-				got := ControlPlaneInternal(cfg)(context.Background(), nil)
-				if got.Internal != pin.want {
-					t.Errorf("Internal = %v, want %v", got.Internal, pin.want)
-				}
-				if got.Reason != pin.wantReason {
-					t.Errorf("Reason = %q, want %q", got.Reason, pin.wantReason)
-				}
-			})
-		}
+			cfg.VPCEgress = config.VPCEgressNone
+			if got := ControlPlaneInternal(cfg)(context.Background(), nil); !got.Internal {
+				t.Errorf("none on a %s host = %+v, want the plane isolated", host.name, got)
+			}
+		})
 	}
 }
 
-// Isolating the plane costs egress, and the cost lands a long way from its
-// cause — ENETUNREACH inside somebody's application code, minutes later. The
-// decision is the only place that knows it is coming, so every path that comes
-// out internal has to carry the warning, and no path that comes out routable
-// may carry it.
-//
-// Measured on a Docker Desktop host: a container on an `--internal` VPC
-// network plus a routable control plane takes its default route from the
-// control plane and reaches the internet; make the control plane internal too
-// and it has no default route at all.
-func TestControlPlaneInternal_warnsWheneverItIsolatesThePlane(t *testing.T) {
+// A Docker Desktop host cannot have an isolated control plane at all:
+// containers there dial the host's own routable address, which `--internal`
+// severs, so every invocation would strand at INIT. `none` is downgraded rather
+// than applied, and says so — refusing to start would turn a partly-achievable
+// mode into no mode at all on the most common developer platform.
+func TestControlPlaneInternal_neverStrandsTheRuntimeAPI(t *testing.T) {
 	restoreContainer := runningInContainer
 	restoreDaemon := nativeLinuxDaemon
 	t.Cleanup(func() {
 		runningInContainer = restoreContainer
 		nativeLinuxDaemon = restoreDaemon
 	})
+	runningInContainer = func() bool { return false }
+	nativeLinuxDaemon = func(context.Context, *docker.Client) bool { return false }
+	resetWarningsOnce()
+
+	cfg := testConfig()
+	cfg.VPCEgress = config.VPCEgressNone
+
+	got := ControlPlaneInternal(cfg)(context.Background(), nil)
+	if got.Internal {
+		t.Fatalf("decision = %+v, want the plane left routable on a host that cannot reach an "+
+			"internal one", got)
+	}
+	if !strings.Contains(got.Reason, "overridden") {
+		t.Errorf("Reason = %q, want it to say the mode was overridden", got.Reason)
+	}
+	if !slices.Contains(got.Warnings, ControlPlaneMustStayRoutableWarning) {
+		t.Errorf("Warnings = %q, want the shortfall warning — a `none` that silently is not `none` "+
+			"is the bug this whole change exists to end", got.Warnings)
+	}
+}
+
+// The deprecated pin still wins where it is set, so a configuration written
+// against #1566 keeps its answer — and setting it earns a notice naming the
+// mode that means the same thing.
+func TestControlPlaneInternal_deprecatedPinStillWins(t *testing.T) {
+	restoreContainer := runningInContainer
+	restoreDaemon := nativeLinuxDaemon
+	t.Cleanup(func() {
+		runningInContainer = restoreContainer
+		nativeLinuxDaemon = restoreDaemon
+	})
+	runningInContainer = func() bool { return true }
+	nativeLinuxDaemon = func(context.Context, *docker.Client) bool { return true }
 
 	cases := map[string]struct {
-		mode          config.ControlPlaneInternalMode
-		containerised bool
-		native        bool
-		wantWarning   bool
+		mode            config.VPCEgressMode
+		pin             config.ControlPlaneInternalMode
+		want            bool
+		wantReason      string
+		wantReplacement string
 	}{
-		"pinned true":                  {config.ControlPlaneInternalTrue, false, false, true},
-		"pinned false":                 {config.ControlPlaneInternalFalse, true, true, false},
-		"auto on a containerised host": {config.ControlPlaneInternalAuto, true, false, true},
-		"auto on a native Linux host":  {config.ControlPlaneInternalAuto, false, true, true},
-		"auto on Docker Desktop":       {config.ControlPlaneInternalAuto, false, false, false},
+		"true isolates a plane the mode left routable": {
+			config.VPCEgressOpen, config.ControlPlaneInternalTrue,
+			true, "OVERCAST_CONTROL_PLANE_INTERNAL=true", "OVERCAST_VPC_EGRESS=none",
+		},
+		"false routes a plane the mode isolated": {
+			config.VPCEgressNone, config.ControlPlaneInternalFalse,
+			false, "OVERCAST_CONTROL_PLANE_INTERNAL=false", "OVERCAST_VPC_EGRESS=open",
+		},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			runningInContainer = func() bool { return tc.containerised }
-			nativeLinuxDaemon = func(context.Context, *docker.Client) bool { return tc.native }
-
+			resetWarningsOnce()
 			cfg := testConfig()
-			cfg.ControlPlaneInternal = tc.mode
+			cfg.VPCEgress = tc.mode
+			setLegacyPin(cfg, tc.pin, true)
+
+			got := ControlPlaneInternal(cfg)(context.Background(), nil)
+			if got.Internal != tc.want {
+				t.Errorf("Internal = %v, want %v", got.Internal, tc.want)
+			}
+			if got.Reason != tc.wantReason {
+				t.Errorf("Reason = %q, want %q", got.Reason, tc.wantReason)
+			}
+			found := false
+			for _, w := range got.Warnings {
+				if strings.Contains(w, "deprecated") && strings.Contains(w, tc.wantReplacement) {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("Warnings = %q, want a deprecation notice naming %s",
+					got.Warnings, tc.wantReplacement)
+			}
+		})
+	}
+}
+
+// A default installation never set the variable, and must never be warned about
+// it. A deprecation notice that fires for everybody is a notice nobody reads.
+func TestControlPlaneInternal_noDeprecationNoticeWhenUnset(t *testing.T) {
+	restoreContainer := runningInContainer
+	t.Cleanup(func() { runningInContainer = restoreContainer })
+	runningInContainer = func() bool { return true }
+
+	cfg := testConfig()
+	setLegacyPin(cfg, config.ControlPlaneInternalAuto, false)
+
+	for _, w := range ControlPlaneInternal(cfg)(context.Background(), nil).Warnings {
+		if strings.Contains(w, "deprecated") {
+			t.Errorf("unset variable produced a deprecation notice: %q", w)
+		}
+	}
+}
+
+// Isolating the plane while the mode says `open` is a contradiction, and it
+// costs egress a long way from its cause — ENETUNREACH inside somebody's
+// application code, minutes later. Isolating it because the mode said `none` is
+// the mode working, and warning about that would be noise.
+func TestControlPlaneInternal_warnsOnlyWhenIsolationContradictsTheMode(t *testing.T) {
+	restoreContainer := runningInContainer
+	restoreDaemon := nativeLinuxDaemon
+	t.Cleanup(func() {
+		runningInContainer = restoreContainer
+		nativeLinuxDaemon = restoreDaemon
+	})
+	runningInContainer = func() bool { return true }
+	nativeLinuxDaemon = func(context.Context, *docker.Client) bool { return true }
+
+	cases := map[string]struct {
+		mode        config.VPCEgressMode
+		pin         config.ControlPlaneInternalMode
+		wantWarning bool
+	}{
+		"pinned internal under open": {config.VPCEgressOpen, config.ControlPlaneInternalTrue, true},
+		"isolated by none":           {config.VPCEgressNone, config.ControlPlaneInternalAuto, false},
+		"routable under open":        {config.VPCEgressOpen, config.ControlPlaneInternalAuto, false},
+		"pinned routable under none": {config.VPCEgressNone, config.ControlPlaneInternalFalse, false},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			resetWarningsOnce()
+			cfg := testConfig()
+			cfg.VPCEgress = tc.mode
+			setLegacyPin(cfg, tc.pin, false)
 			got := ControlPlaneInternal(cfg)(context.Background(), nil)
 
 			hasWarning := slices.Contains(got.Warnings, ControlPlaneEgressWarning)
 			if hasWarning != tc.wantWarning {
 				t.Errorf("egress warning present = %v, want %v (decision %+v)",
 					hasWarning, tc.wantWarning, got)
-			}
-			if got.Internal != hasWarning {
-				t.Errorf("Internal = %v but warning present = %v — the warning must track isolation exactly",
-					got.Internal, hasWarning)
 			}
 		})
 	}
@@ -412,38 +497,102 @@ func TestControlPlaneInternal_warnsWheneverItIsolatesThePlane(t *testing.T) {
 // the setting that undoes it, or it is noise on an already busy startup.
 func TestControlPlaneEgressWarning_namesTheSymptomAndTheFix(t *testing.T) {
 	for _, want := range []string{
-		"ENETUNREACH",
-		"OVERCAST_CONTROL_PLANE_INTERNAL=false",
-		"NAT gateway",
-		"route tables are metadata only",
+		"NO egress at all",
+		"OVERCAST_VPC_EGRESS=none",
+		"deprecated",
 	} {
 		if !strings.Contains(ControlPlaneEgressWarning, want) {
 			t.Errorf("ControlPlaneEgressWarning does not mention %q:\n%s", want, ControlPlaneEgressWarning)
 		}
 	}
-}
-
-// An empty ControlPlaneInternal is the zero value of a Config built directly
-// rather than through config.Load — which is what every test helper and
-// embedding caller in the tree does — and it has to mean auto rather than
-// "pinned to nothing".
-func TestControlPlaneInternal_zeroValueMeansAuto(t *testing.T) {
-	restoreContainer := runningInContainer
-	t.Cleanup(func() { runningInContainer = restoreContainer })
-	runningInContainer = func() bool { return true }
-
-	cfg := testConfig()
-	cfg.ControlPlaneInternal = ""
-
-	if got := ControlPlaneInternal(cfg)(context.Background(), nil); !got.Internal {
-		t.Errorf("zero-value mode = %+v, want the auto probe's answer (internal)", got)
+	for _, want := range []string{
+		"strand",
+		"NOT hermetic",
+		"OVERCAST_VPC_EGRESS=none",
+	} {
+		if !strings.Contains(ControlPlaneMustStayRoutableWarning, want) {
+			t.Errorf("ControlPlaneMustStayRoutableWarning does not mention %q:\n%s",
+				want, ControlPlaneMustStayRoutableWarning)
+		}
 	}
 }
 
-// PlaneSpecs wires ControlPlaneInternal in as InternalMode rather than
-// resolving it eagerly — the point being that Probe, not this function, is
-// what has a live Docker client to hand it.
-func TestPlaneSpecs_defersTheControlPlaneDecisionToInternalMode(t *testing.T) {
+// `none` has to mean none. The default data plane was never `--internal` before
+// egress modes, so a machine could isolate its control plane and every VPC
+// network and still have every non-VPC function reach the internet through it.
+func TestDataPlaneInternal_followsTheEgressMode(t *testing.T) {
+	cfg := testConfig()
+
+	cfg.VPCEgress = config.VPCEgressOpen
+	if got := Internal(cfg)(context.Background(), nil); got.Internal {
+		t.Errorf("open = %+v, want the data plane routable", got)
+	}
+	cfg.VPCEgress = config.VPCEgressNone
+	if got := Internal(cfg)(context.Background(), nil); !got.Internal {
+		t.Errorf("none = %+v, want the data plane isolated", got)
+	}
+}
+
+// `none` has to mean none: a VPC network is `--internal` whatever the template
+// says, or the mode's promise has a hole in it.
+//
+// `open` leaves the gateway deciding, and that costs it nothing — the container
+// is also on the routable control plane and takes its default route from there,
+// so it has egress either way (measured end-to-end: a Lambda in an isolated
+// subnet on an `Internal=true` network reached checkip.amazonaws.com and got a
+// 403 from real sts.us-east-1). Flattening the flag would only make it lie
+// about the template and leave `routed` nothing to inherit.
+//
+// What changed is that the flag no longer *decides* egress on its own, which is
+// what made a private-with-NAT subnet indistinguishable from an isolated one.
+func TestVPCNetworkInternal_theModeDecidesWhetherTheGatewayDecides(t *testing.T) {
+	cfg := testConfig()
+
+	cfg.VPCEgress = config.VPCEgressOpen
+	if !VPCNetworkInternal(cfg, false) {
+		t.Error("open with no gateway = routable, want the gateway still honoured (internal)")
+	}
+	if VPCNetworkInternal(cfg, true) {
+		t.Error("open with a gateway attached = internal, want routable")
+	}
+
+	cfg.VPCEgress = config.VPCEgressNone
+	for _, hasIGW := range []bool{true, false} {
+		if !VPCNetworkInternal(cfg, hasIGW) {
+			t.Errorf("none with hasIGW=%v = routable, want internal whatever the template says", hasIGW)
+		}
+	}
+}
+
+// A VPC network is the one Overcast resource named from an emulated resource id
+// rather than from configuration, so two instances on one daemon can mint the
+// same name. The owner label is what decides who may remove it, and an instance
+// that cannot establish its own identity stamps nothing — because a sweep that
+// stamps an empty owner would go on to claim every unlabelled network on the
+// machine.
+func TestVPCNetworkSpec_stampsOwnershipOnlyWhenItIsKnown(t *testing.T) {
+	cfg := testConfig()
+
+	spec := VPCNetworkSpec(cfg, VPCNetwork{
+		VPCID: "vpc-1", Subnet: "10.0.0.0/16", Owner: "instance-a", Internal: true,
+	})
+	if spec.Owner != "instance-a" || spec.Labels[docker.LabelInstance] != "instance-a" {
+		t.Errorf("spec = %+v, want owner instance-a in both the field and the label", spec)
+	}
+	if spec.Name != cfg.VPCNetwork("vpc-1") {
+		t.Errorf("Name = %q, want %q", spec.Name, cfg.VPCNetwork("vpc-1"))
+	}
+
+	anon := VPCNetworkSpec(cfg, VPCNetwork{VPCID: "vpc-1", Subnet: "10.0.0.0/16", Internal: true})
+	if _, ok := anon.Labels[docker.LabelInstance]; ok {
+		t.Errorf("labels = %v, want no instance label when the identity is unknown", anon.Labels)
+	}
+}
+
+// PlaneSpecs wires the decisions in as InternalMode rather than resolving them
+// eagerly — the point being that Probe, not this function, has a live Docker
+// client to hand them. Both planes carry one now: `none` isolates both.
+func TestPlaneSpecs_defersEveryDecisionToInternalMode(t *testing.T) {
 	cfg := testConfig()
 	specs := PlaneSpecs(cfg)
 
@@ -452,22 +601,38 @@ func TestPlaneSpecs_defersTheControlPlaneDecisionToInternalMode(t *testing.T) {
 	}
 	data, control := specs[0], specs[1]
 
-	if data.Name != cfg.Network || data.InternalMode != nil {
-		t.Errorf("data plane spec = %+v, want Name=%q and no InternalMode", data, cfg.Network)
+	if data.Name != cfg.Network || data.InternalMode == nil {
+		t.Errorf("data plane spec = %+v, want Name=%q and an InternalMode", data, cfg.Network)
 	}
-	if control.Name != Primary(cfg) {
-		t.Errorf("control plane spec Name = %q, want %q", control.Name, Primary(cfg))
+	if control.Name != Primary(cfg) || control.InternalMode == nil {
+		t.Errorf("control plane spec = %+v, want Name=%q and an InternalMode", control, Primary(cfg))
 	}
-	if control.InternalMode == nil {
-		t.Fatal("control plane spec InternalMode is nil, want ControlPlaneInternal")
+	// Both are labelled, or nothing can verify, account for or safely rebuild
+	// them — an unlabelled network is the state that made #1564 invisible.
+	for _, spec := range specs {
+		if spec.Labels[docker.LabelManaged] != "true" || spec.Labels[docker.LabelService] != docker.ServiceCore {
+			t.Errorf("%s labels = %v, want the managed/core identity labels", spec.Name, spec.Labels)
+		}
+		// A plane carries no instance identity: it is scoped by its name, and
+		// docker.LabelInstance means the EC2 store's identity everywhere else.
+		// One label, one meaning.
+		if spec.Owner != "" {
+			t.Errorf("%s Owner = %q, want no owner — planes are scoped by name", spec.Name, spec.Owner)
+		}
+		if _, ok := spec.Labels[docker.LabelInstance]; ok {
+			t.Errorf("%s carries an instance label; that label is the EC2 store identity", spec.Name)
+		}
 	}
 
 	restoreContainer := runningInContainer
 	t.Cleanup(func() { runningInContainer = restoreContainer })
 	runningInContainer = func() bool { return true }
 
-	if got := control.InternalMode(context.Background(), nil); !got.Internal {
-		t.Errorf("control plane InternalMode(containerised) = %+v, want Internal=true", got)
+	cfg.VPCEgress = config.VPCEgressNone
+	for _, spec := range PlaneSpecs(cfg) {
+		if got := spec.InternalMode(context.Background(), nil); !got.Internal {
+			t.Errorf("%s InternalMode under none = %+v, want Internal=true", spec.Name, got)
+		}
 	}
 }
 
@@ -665,5 +830,44 @@ func TestReattach_toleratesAContainerThatIsNotOnThePlane(t *testing.T) {
 	}
 	if f.calls != 1 {
 		t.Errorf("connect calls = %d, want the rejoin to happen anyway", f.calls)
+	}
+}
+
+// S7: the control plane's InternalMode runs once per docker.Probe, and Probe
+// runs at least twice on a normal boot — the router's supervisor, Lambda's own
+// probe, and again after a reconnect. An operator who set the deprecated
+// variable should not be told about it three times.
+func TestControlPlaneInternal_saysEachThingOncePerProcess(t *testing.T) {
+	restoreContainer := runningInContainer
+	restoreDaemon := nativeLinuxDaemon
+	t.Cleanup(func() {
+		runningInContainer = restoreContainer
+		nativeLinuxDaemon = restoreDaemon
+	})
+	runningInContainer = func() bool { return true }
+	nativeLinuxDaemon = func(context.Context, *docker.Client) bool { return true }
+	resetWarningsOnce()
+
+	cfg := testConfig()
+	cfg.VPCEgress = config.VPCEgressOpen
+	setLegacyPin(cfg, config.ControlPlaneInternalTrue, true)
+	decide := ControlPlaneInternal(cfg)
+
+	first := decide(context.Background(), nil)
+	if len(first.Warnings) == 0 {
+		t.Fatal("the first probe said nothing, want the deprecation notice and the egress warning")
+	}
+	for _, again := range []docker.InternalDecision{
+		decide(context.Background(), nil),
+		decide(context.Background(), nil),
+	} {
+		if len(again.Warnings) != 0 {
+			t.Errorf("a later probe repeated %q — a notice seen three times is one being tuned out",
+				again.Warnings)
+		}
+		// The decision itself is unchanged; only whether it is said again.
+		if again.Internal != first.Internal || again.Reason != first.Reason {
+			t.Errorf("a later probe decided differently: %+v vs %+v", again, first)
+		}
 	}
 }

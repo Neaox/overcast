@@ -9,6 +9,7 @@ package ec2
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,26 +30,57 @@ type networkDaemon struct {
 	server *httptest.Server
 	mu     sync.Mutex
 	calls  []string
+	// created records the create requests by name, so an inspect after a
+	// create answers with what was created rather than 404 — which is what
+	// docker.EnsureNetwork's verify-then-create-then-read flow needs from a
+	// daemon that is pretending to be real.
+	created map[string]map[string]any
 }
 
 func newNetworkDaemon(t *testing.T) *networkDaemon {
 	t.Helper()
-	d := &networkDaemon{}
+	d := &networkDaemon{created: map[string]map[string]any{}}
 	d.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		d.mu.Lock()
 		d.calls = append(d.calls, r.Method+" "+r.URL.Path)
 		d.mu.Unlock()
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/networks/create"):
+			var req map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			name, _ := req["Name"].(string)
+			d.mu.Lock()
+			d.created[name] = req
+			d.mu.Unlock()
 			_, _ = w.Write([]byte(`{"Id":"net-created"}`))
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/networks/"):
+			name := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			d.mu.Lock()
+			req, ok := d.created[name]
+			d.mu.Unlock()
+			if !ok {
+				http.Error(w, `{"message":"no such network"}`, http.StatusNotFound)
+				return
+			}
+			internal, _ := req["Internal"].(bool)
+			_ = json.NewEncoder(w).Encode(docker.NetworkInspect{
+				ID: "net-created", Name: name, Driver: "bridge", Internal: internal,
+			})
 		default:
 			w.WriteHeader(http.StatusOK)
 		}
 	}))
 	t.Cleanup(d.server.Close)
 	return d
+}
+
+// createRequest returns the create body recorded for a network name, or nil.
+func (d *networkDaemon) createRequest(name string) map[string]any {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.created[name]
 }
 
 func (d *networkDaemon) saw(call string) bool {
@@ -71,7 +103,7 @@ func containerisedHandler(t *testing.T, d *networkDaemon) *Handler {
 	runningInContainer = func() bool { return true }
 	ownHostname = func() (string, error) { return "overcast-self", nil }
 
-	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000"}
+	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000", Network: "overcast"}
 	h := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.NewMock()).handler
 	h.docker = docker.NewClient(strings.Replace(d.server.URL, "http://", "tcp://", 1), zap.NewNop())
 	h.dockerReady.Store(true)

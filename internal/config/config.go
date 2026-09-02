@@ -106,15 +106,77 @@ const (
 	ServiceMetricsDisabled ServiceMetricsMode = "disabled"
 )
 
+// VPCEgressMode decides whether the containers Overcast starts can reach
+// anything outside this machine — the internet, real AWS endpoints, a
+// third-party API.
+//
+// It is one named mode rather than a per-network flag because it is one
+// question. A container sits on two Docker networks at once (its data plane
+// and the control plane) and takes its default route from whichever of them is
+// routable, so isolating one and not the other settles nothing: egress
+// survives on the other network and the flag that was set becomes decoration.
+// Egress is a property of the whole topology, so it is set on the whole
+// topology.
+//
+// See docs/networking.md § Egress modes for what each mode grants, and
+// docs/plans/container-networking-egress.md for the decision this encodes.
+type VPCEgressMode string
+
+const (
+	// VPCEgressOpen makes every network Overcast creates routable, so every
+	// container it starts has egress. The default.
+	//
+	// It is the default because it is what every comparable emulator does —
+	// LocalStack, Floci, Moto and SAM CLI all give a VPC-attached function full
+	// egress, and none of them models VPC networking at all — and because the
+	// common local case is a hybrid stack whose functions call real AWS or a
+	// third-party API. On AWS that stack works because its private subnets have
+	// a NAT route. Overcast reads no route tables (see VPCEgressRouted), so
+	// withholding egress here withholds it from stacks AWS would have allowed,
+	// with no template change that helps.
+	VPCEgressOpen VPCEgressMode = "open"
+
+	// VPCEgressRouted decides egress per subnet from its route table: a
+	// `0.0.0.0/0` route to an internet or NAT gateway grants it, no default
+	// route withholds it. The AWS-faithful answer, and where this setting is
+	// meant to end up.
+	//
+	// **Not implemented.** Selecting it fails startup naming the reason rather
+	// than falling back, because every fallback available is a different mode
+	// wearing this one's name: open would grant egress the route tables
+	// withhold, none would withhold egress they grant, and either silently
+	// contradicts the template the operator pointed at. See #1571 for the
+	// design and what it needs first.
+	VPCEgressRouted VPCEgressMode = "routed"
+
+	// VPCEgressNone makes every network Overcast creates `--internal`, so no
+	// container it starts reaches anything outside this machine. For
+	// deterministic CI, air-gapped hosts, and proving a stack has no hidden
+	// external dependency.
+	//
+	// Overcast's own API and the Lambda Runtime API keep working: they ride the
+	// control plane, and reaching a server on this host is not egress. On a
+	// host where an `--internal` control plane would sever that path — Docker
+	// Desktop, where containers dial the host's routable address rather than a
+	// bridge gateway — the control plane is left routable, and the shortfall is
+	// warned about at startup and reported by `/_overcast/health`. Stranding
+	// every invocation at INIT is not a hermetic stack; it is a broken one.
+	VPCEgressNone VPCEgressMode = "none"
+)
+
 // ControlPlaneInternalMode decides whether the control plane Docker network
 // (Config.ControlNetwork) is created `--internal` — cut off from everything
 // Docker did not put on it.
 //
-// It exists because the answer used to be inferred from the runtime
-// environment alone, which made the same pinned Overcast version behave
-// differently on two machines with nothing saying why (#1564). The probe is
-// still the default, but it is now one of three values a team can pin, and
-// whichever one applies is named in the startup log.
+// Superseded by VPCEgressMode. It exists because the answer used to be inferred
+// from the runtime environment alone, which made the same pinned Overcast
+// version behave differently on two machines with nothing saying why (#1564).
+// VPCEgressMode asks the question the operator actually has — may containers
+// reach the outside — of the whole topology rather than of one network.
+//
+// The type stays undeprecated because the setting is still honoured and this is
+// what it is spelled in; it is Config.ControlPlaneInternal, the field, that is
+// deprecated. Read it through Config.LegacyControlPlaneInternal.
 type ControlPlaneInternalMode string
 
 const (
@@ -525,13 +587,36 @@ type Config struct {
 	// Corresponds to env var OVERCAST_NETWORK. Defaults to "overcast".
 	Network string
 
-	// ControlPlaneInternal decides whether ControlNetwork is created
-	// `--internal`: "auto" (probe the host), "true" (always), "false" (never).
+	// VPCEgress decides whether the containers Overcast starts reach anything
+	// outside this machine: "open" (all of them do), "none" (none of them do),
+	// "routed" (per the template's route tables — not implemented, and refused
+	// at startup).
 	//
-	// Corresponds to env var OVERCAST_CONTROL_PLANE_INTERNAL. Defaults to
-	// "auto", which is alpha.37's behaviour. See ControlPlaneInternalMode for
-	// what each value costs, and docs/networking.md § Control-plane isolation.
+	// Corresponds to env var OVERCAST_VPC_EGRESS. Defaults to "open". See
+	// VPCEgressMode and docs/networking.md § Egress modes.
+	VPCEgress VPCEgressMode
+
+	// ControlPlaneInternal pins whether ControlNetwork is created `--internal`,
+	// overriding what VPCEgress decided for that one network: "auto" (leave it
+	// to VPCEgress), "true" (always internal), "false" (never internal).
+	//
+	// Corresponds to env var OVERCAST_CONTROL_PLANE_INTERNAL.
+	//
+	// Deprecated: set OVERCAST_VPC_EGRESS instead — `none` for what `true`
+	// meant, `open` for what `false` meant, both applied to every plane rather
+	// than this one. Kept working, and still winning where it is pinned, so a
+	// configuration written against #1566 keeps its answer; setting it logs a
+	// deprecation notice naming the mode that expresses the same intent.
 	ControlPlaneInternal ControlPlaneInternalMode
+
+	// ControlPlaneInternalSet records that OVERCAST_CONTROL_PLANE_INTERNAL was
+	// present in the environment, as opposed to defaulting to "auto".
+	//
+	// The two are indistinguishable from the value alone and the deprecation
+	// notice must only fire for the operator who actually set it — warning
+	// every default installation about a variable it never used is how a
+	// deprecation notice gets tuned out.
+	ControlPlaneInternalSet bool
 
 	// LambdaDockerSocket is the path to the Docker daemon socket used to
 	// manage Lambda container siblings. Defaults to DOCKER_HOST when set,
@@ -1231,6 +1316,57 @@ func (c *Config) ControlNetwork() string {
 	return c.Network + "_control"
 }
 
+// VPCNetwork returns the Docker network name backing one VPC.
+//
+// Derived from Network for the same reason ControlNetwork is, and for one more:
+// a name shared between two Overcast instances on one daemon is a collision no
+// label can untangle, so one OVERCAST_NETWORK per instance separates them by
+// name before ownership is even asked about.
+//
+// Ownership itself is a separate question with a separate answer, and the two
+// network classes answer it differently:
+//
+//   - **The planes** (Network and ControlNetwork) are scoped by *name*. They
+//     carry no docker.LabelInstance: they are created by docker.Probe, before
+//     any state store has been read, and two instances sharing an
+//     OVERCAST_NETWORK share the plane deliberately.
+//   - **Per-VPC networks** are scoped by *label*. Their names come from an
+//     emulated resource id rather than from configuration, so two instances can
+//     mint the same one; docker.LabelInstance carries the EC2 service's
+//     store-scoped identity (serviceutil.InstanceDomain) and decides who may
+//     remove them.
+//
+// The default value reproduces the historical name exactly (`overcast-vpc-…`),
+// so an installation that never set OVERCAST_NETWORK keeps adopting the
+// networks it already has.
+func (c *Config) VPCNetwork(vpcID string) string {
+	return c.Network + "-vpc-" + vpcID
+}
+
+// VPCNetworkPrefix is the leading fragment every VPCNetwork name shares — what
+// to match on when looking for this instance's VPC networks without a VPC id in
+// hand.
+func (c *Config) VPCNetworkPrefix() string {
+	return c.Network + "-vpc-"
+}
+
+// LegacyControlPlaneInternal reports the deprecated
+// OVERCAST_CONTROL_PLANE_INTERNAL pin: the mode it was set to, and whether it
+// was set at all.
+//
+// It is the one place the deprecated field is read. Every caller goes through
+// here so the deprecation stays visible where it matters — on the public field,
+// for anyone reaching for it — without every compatibility read having to
+// silence the linter itself.
+//
+// `set` is separate from the value because "auto" is both the default and a
+// legitimate explicit value, and the deprecation notice must fire only for the
+// operator who actually set it.
+func (c *Config) LegacyControlPlaneInternal() (mode ControlPlaneInternalMode, set bool) {
+	//nolint:staticcheck // SA1019: the deprecated pin is still honoured where set (#1566); this is its one reader.
+	return c.ControlPlaneInternal, c.ControlPlaneInternalSet
+}
+
 // ExternalHostname returns the hostname that should appear in client-facing
 // URLs. Returns Hostname if set, otherwise "localhost".
 func (c *Config) ExternalHostname() string {
@@ -1561,12 +1697,19 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	                                           ECS_NETWORK, RDS_NETWORK, ELASTICACHE_NETWORK,
 //	                                           MSK_NETWORK, EKS_NETWORK and EFS_NETWORK are gone
 //	                                           and are no longer read.)
-//	OVERCAST_CONTROL_PLANE_INTERNAL    auto  (auto|true|false — whether the control plane network
-//	                                           is created `--internal`. auto probes the host, which
-//	                                           is what alpha.37 shipped; pin true or false for a
-//	                                           deterministic answer across machines. The decision
+//	OVERCAST_VPC_EGRESS                open  (open|routed|none — whether the containers Overcast
+//	                                           starts reach anything outside this machine. open:
+//	                                           all of them do. none: none of them do (hermetic CI;
+//	                                           Overcast's own API and the Lambda Runtime API still
+//	                                           work). routed: per the template's route tables —
+//	                                           not implemented, refused at startup. The decision
 //	                                           and its reason are logged at startup and reported by
-//	                                           /_overcast/health. See #1564.)
+//	                                           /_overcast/health.)
+//	OVERCAST_CONTROL_PLANE_INTERNAL    auto  (DEPRECATED — set OVERCAST_VPC_EGRESS instead.
+//	                                           auto|true|false, pinning the control plane network's
+//	                                           `--internal` flag on top of the mode above. Still
+//	                                           honoured; setting it logs a deprecation notice. See
+//	                                           #1564.)
 //	ECS_DOCKER_SOCKET                  <LAMBDA_DOCKER_SOCKET> (default: same as Lambda)
 //	ECS_KEEP_CONTAINERS                false
 //	OVERCAST_ECS_HOT_RELOAD            <OVERCAST_HOT_RELOAD>
@@ -1925,14 +2068,44 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: OVERCAST_RDS_MODE %q is invalid (expected mock or live)", rawRDSMode)
 	}
 
-	// Control-plane isolation (#1564). Three values rather than a bool: the
-	// default has to stay the host probe, and "auto" is the only honest name
-	// for a value whose meaning depends on the machine. Invalid values fail
-	// startup rather than falling back to auto — a typo that silently kept the
-	// inferred behaviour is exactly the surprise this variable exists to end.
-	rawControlPlaneInternal := strings.ToLower(strings.TrimSpace(
-		envOr("OVERCAST_CONTROL_PLANE_INTERNAL", string(ControlPlaneInternalAuto))))
+	// Container egress. Invalid values fail startup rather than falling back to
+	// the default — this decides whether a function reaches real AWS, and a typo
+	// that quietly restored the default answer is exactly the class of surprise
+	// this setting exists to end. `routed` is a valid *value* and is rejected
+	// later, by the code that would have to implement it, so the message can say
+	// what is missing rather than pretending the name is unknown.
+	rawVPCEgress := strings.ToLower(strings.TrimSpace(
+		envOr("OVERCAST_VPC_EGRESS", string(VPCEgressOpen))))
+	cfg.VPCEgress = VPCEgressMode(rawVPCEgress)
+	switch cfg.VPCEgress {
+	case VPCEgressOpen, VPCEgressNone:
+	case VPCEgressRouted:
+		return nil, fmt.Errorf(
+			"config: OVERCAST_VPC_EGRESS=routed is not implemented yet. It would decide egress per " +
+				"subnet from that subnet's route table, which Overcast does not read: route tables, " +
+				"their 0.0.0.0/0 entries and NAT gateways are stored and returned as metadata and " +
+				"consulted nowhere (docs/services/ec2/limitations.md). Use `open` (every container " +
+				"reaches the internet, the default) or `none` (no container does). Progress and " +
+				"design: https://github.com/overcast-sh/overcast/issues/1571")
+	default:
+		return nil, fmt.Errorf(
+			"config: OVERCAST_VPC_EGRESS %q is invalid (expected open, routed, or none)",
+			rawVPCEgress)
+	}
+
+	// Control-plane isolation (#1564), now an override on top of the mode above
+	// rather than the egress control itself. Three values rather than a bool
+	// because the third is "do not override". Invalid values fail startup
+	// rather than falling back to auto — a typo that silently handed the
+	// decision back to the mode is the same surprise in a new place.
+	rawControlPlaneInternal, controlPlaneInternalSet := os.LookupEnv("OVERCAST_CONTROL_PLANE_INTERNAL")
+	if !controlPlaneInternalSet || strings.TrimSpace(rawControlPlaneInternal) == "" {
+		rawControlPlaneInternal = string(ControlPlaneInternalAuto)
+		controlPlaneInternalSet = false
+	}
+	rawControlPlaneInternal = strings.ToLower(strings.TrimSpace(rawControlPlaneInternal))
 	cfg.ControlPlaneInternal = ControlPlaneInternalMode(rawControlPlaneInternal)
+	cfg.ControlPlaneInternalSet = controlPlaneInternalSet
 	switch cfg.ControlPlaneInternal {
 	case ControlPlaneInternalAuto, ControlPlaneInternalTrue, ControlPlaneInternalFalse:
 	default:

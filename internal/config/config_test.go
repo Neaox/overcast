@@ -2203,6 +2203,136 @@ func TestLoad_controlPlaneInternalRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+// The default is `open`: every container Overcast starts reaches the internet.
+// That is what every comparable emulator does and what the common hybrid case
+// needs, so it must hold for everyone who never sets the variable.
+func TestLoad_vpcEgressDefaultsToOpen(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.VPCEgress != config.VPCEgressOpen {
+		t.Fatalf("VPCEgress: expected %q, got %q", config.VPCEgressOpen, cfg.VPCEgress)
+	}
+}
+
+func TestLoad_vpcEgressAcceptsEachImplementedMode(t *testing.T) {
+	// Case and surrounding whitespace are tolerated the way every other
+	// enum-valued variable tolerates them.
+	for raw, want := range map[string]config.VPCEgressMode{
+		"open":   config.VPCEgressOpen,
+		"none":   config.VPCEgressNone,
+		" Open ": config.VPCEgressOpen,
+		"NONE":   config.VPCEgressNone,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("OVERCAST_VPC_EGRESS", raw)
+
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.VPCEgress != want {
+				t.Fatalf("VPCEgress: expected %q, got %q", want, cfg.VPCEgress)
+			}
+		})
+	}
+}
+
+// `routed` is a real mode that is not built yet, and it fails startup naming
+// what is missing rather than silently becoming one of the other two. Every
+// fallback available is a different mode wearing this one's name: `open` grants
+// egress the route tables withhold, `none` withholds egress they grant.
+func TestLoad_vpcEgressRoutedFailsWithItsOwnReason(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_VPC_EGRESS", "routed")
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected OVERCAST_VPC_EGRESS=routed to fail startup, got nil")
+	}
+	if got := err.Error(); !containsAll(got, "routed", "not implemented", "route table", "issues/1571") {
+		t.Fatalf("the message must name what is missing and where to follow it: %q", got)
+	}
+}
+
+// A typo must not fall back to the default. This setting decides whether a
+// function reaches real AWS, and quietly restoring the default answer is the
+// class of surprise it exists to end.
+func TestLoad_vpcEgressRejectsInvalidValues(t *testing.T) {
+	for _, raw := range []string{"yes", "internal", "off", "true"} {
+		t.Run(raw, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("OVERCAST_VPC_EGRESS", raw)
+
+			_, err := config.Load()
+			if err == nil {
+				t.Fatal("expected error for invalid OVERCAST_VPC_EGRESS, got nil")
+			}
+			if got := err.Error(); !containsAll(got, "OVERCAST_VPC_EGRESS", "open", "routed", "none") {
+				t.Fatalf("unexpected error message: %q", got)
+			}
+		})
+	}
+}
+
+// The deprecation notice must fire only for the operator who actually set the
+// variable. "auto" is both the default and a legitimate explicit value, and
+// they are indistinguishable from the value alone — so Load records which it
+// was, or every default installation gets warned about a variable it never used.
+func TestLoad_controlPlaneInternalRecordsWhetherItWasSet(t *testing.T) {
+	clearEnv(t)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ControlPlaneInternalSet {
+		t.Error("ControlPlaneInternalSet is true with the variable unset")
+	}
+
+	clearEnv(t)
+	t.Setenv("OVERCAST_CONTROL_PLANE_INTERNAL", "auto")
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.ControlPlaneInternalSet {
+		t.Error("ControlPlaneInternalSet is false with the variable explicitly set to auto")
+	}
+}
+
+// The network name is the per-instance namespace, and every network Overcast
+// creates has to be derivable from it — including the per-VPC ones, which used
+// a hard-coded `overcast-vpc-` prefix and so collided across instances. The
+// default has to reproduce the historical name exactly, or an existing
+// installation stops adopting the networks it already has.
+func TestConfig_vpcNetworkNamesFollowTheNetworkPrefix(t *testing.T) {
+	clearEnv(t)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.VPCNetwork("vpc-123"); got != "overcast-vpc-vpc-123" {
+		t.Errorf("VPCNetwork = %q, want the historical default name", got)
+	}
+
+	clearEnv(t)
+	t.Setenv("OVERCAST_NETWORK", "ocalt")
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.VPCNetwork("vpc-123"); got != "ocalt-vpc-vpc-123" {
+		t.Errorf("VPCNetwork = %q, want it under the configured prefix", got)
+	}
+	if got := cfg.VPCNetworkPrefix(); got != "ocalt-vpc-" {
+		t.Errorf("VPCNetworkPrefix = %q, want %q", got, "ocalt-vpc-")
+	}
+}
+
 func TestLoad_efsModeRejectsInvalidValues(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("OVERCAST_EFS_MODE", "nfs")

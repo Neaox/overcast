@@ -24,11 +24,11 @@ reflects whether an internet gateway is attached — see
 that is kept true.
 
 That isolation only bites when Overcast's control plane is internal too, since
-every container sits on both. `OVERCAST_CONTROL_PLANE_INTERNAL` decides it, and
-by default it is decided from the host — so whether a gateway-less VPC actually
-withholds the internet can differ between two machines running the same
-Overcast. See
-[Networking § Control-plane isolation](../../networking.md#control-plane-isolation).
+every container sits on both — and under the default `OVERCAST_VPC_EGRESS=open`
+it is not, so a gateway-less VPC's containers still reach the internet through
+the control plane. `OVERCAST_VPC_EGRESS=none` isolates every network Overcast
+creates, this one included, and is what actually withholds it. See
+[Networking § Egress modes](../../networking.md#egress-modes).
 
 | Label | Value |
 | --- | --- |
@@ -36,8 +36,11 @@ Overcast. See
 | `overcast.service` | `ec2` |
 | `overcast.resource-id` | The VPC ID |
 | `overcast.vpc-id` | The VPC ID |
+| `overcast.instance` | The Overcast instance that created it. An instance only ever removes networks carrying its own value, so two instances on one daemon leave each other's alone |
+| `overcast.network.spec-hash` | The state the network was created in, checked on every start — see [Networking § Network state verification](../../networking.md#network-state-verification) |
 
-Networks are named `overcast-vpc-{vpcID}`. Docker network lifecycle events —
+Networks are named `{OVERCAST_NETWORK}-vpc-{vpcID}` (`overcast-vpc-{vpcID}` by
+default). Docker network lifecycle events —
 create, destroy, connect, disconnect — are forwarded through the event bus, so
 they appear on the console's activity feed.
 

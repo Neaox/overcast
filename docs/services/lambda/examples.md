@@ -314,3 +314,56 @@ Overcast adds no secret cache in front of an extension. The extension binary kee
 its own environment-local cache, as it does on AWS, so a warm environment can
 return a prior value until `SECRETS_MANAGER_TTL` expires. Set the TTL to `0` when
 every request must read the current `AWSCURRENT` value.
+
+## Reaching real AWS from a local function
+
+A hybrid stack — most of it emulated, one client talking to a real regional
+endpoint, a peered private endpoint, or a third-party API — works out of the
+box. `OVERCAST_VPC_EGRESS` defaults to `open`, so every container Overcast
+starts has a route out, `VpcConfig` or not.
+
+The only work is telling the SDK which client goes where. Overcast injects
+these into every container it starts:
+
+| Variable | Effect |
+| --- | --- |
+| `AWS_ENDPOINT_URL` | Every SDK client defaults to Overcast |
+| `AWS_ENDPOINT_URL_<SERVICE>` | Per-service override, same precedence as on AWS |
+| `AWS_REGION` | The emulator's region |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` | Dummy credentials the emulator accepts |
+
+So the default is "everything is local", and you opt one client out of it —
+with a real endpoint and real credentials:
+
+```javascript
+import { S3Client } from "@aws-sdk/client-s3";
+import { SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
+
+// Emulated: picks up AWS_ENDPOINT_URL, no configuration needed.
+const localS3 = new S3Client({});
+
+// Real AWS: an explicit endpoint beats the injected variable, and real
+// credentials beat the injected dummies.
+const realSecrets = new SecretsManagerClient({
+  region: "ap-southeast-2",
+  endpoint: "https://secretsmanager.ap-southeast-2.amazonaws.com",
+  credentials: {
+    accessKeyId: process.env.REAL_AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.REAL_AWS_SECRET_ACCESS_KEY,
+  },
+});
+```
+
+Pass the real credentials in as function environment variables under names of
+your own — never the `AWS_*` ones, which Overcast owns and would overwrite.
+
+| Rule | Detail |
+| --- | --- |
+| Explicit `endpoint` wins | Per-client configuration beats `AWS_ENDPOINT_URL` in every AWS SDK |
+| Real calls need real credentials | The injected dummies are rejected by AWS with `InvalidClientTokenId` |
+| Costs are real | This is your account. A loop in a local function bills like a loop in a deployed one |
+| Not for CI | Set `OVERCAST_VPC_EGRESS=none` there, and the same code fails fast with `ENETUNREACH` instead of quietly reaching production |
+
+If a call to real AWS returns `ENETUNREACH`, egress is off: check
+`overcast network status` and see
+[A function in a VPC fails with `ENETUNREACH`](../../troubleshooting.md#a-function-in-a-vpc-fails-with-enetunreach).

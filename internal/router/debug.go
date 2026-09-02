@@ -81,13 +81,13 @@ type DebugStateProvider interface {
 //   - Capturing traces and profiles
 //
 // A web UI for these endpoints is planned. For now they return JSON.
-func debugHandlers(cfg *config.Config, store state.Store, ec2Svc debugEC2Provider, lambdaSvc debugLambdaProvider, providers []DebugStateProvider, traceBuf *trace.Buffer) func(chi.Router) {
+func debugHandlers(cfg *config.Config, store state.Store, ec2Svc debugEC2Provider, lambdaSvc debugLambdaProvider, providers []DebugStateProvider, traceBuf *trace.Buffer, dockerStatus func() *docker.Status) func(chi.Router) {
 	return func(r chi.Router) {
 		r.Get("/health", debugHealth(cfg, store))
 		r.Get("/config", debugConfig(cfg))
 		r.Get("/state", debugState(store, providers))
 		r.Get("/state/{namespace}", debugStateNamespace(store, providers))
-		r.Get("/metrics", debugMetrics(cfg, store, ec2Svc, lambdaSvc))
+		r.Get("/metrics", debugMetrics(cfg, store, ec2Svc, lambdaSvc, dockerStatus))
 
 		// ---- Request tracing --------------------------------------------------
 		r.Get("/trace/{requestId}", debugTraceGet(traceBuf))
@@ -490,7 +490,7 @@ type debugMetricsResponse struct {
 	Advisories []Advisory           `json:"advisories"`
 }
 
-func debugMetrics(cfg *config.Config, store state.Store, vpcs debugEC2Provider, lambdaSvc debugLambdaProvider) http.HandlerFunc {
+func debugMetrics(cfg *config.Config, store state.Store, vpcs debugEC2Provider, lambdaSvc debugLambdaProvider, dockerStatus func() *docker.Status) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var networkProblems []dataplane.VPCNetworkProblem
 		if vpcs != nil {
@@ -516,6 +516,7 @@ func debugMetrics(cfg *config.Config, store state.Store, vpcs debugEC2Provider, 
 			Health:                   health,
 			HasHealth:                hasHealth,
 			ExistingDatabase:         config.HasExistingDatabase(cfg.DataDir),
+			Networks:                 dockerNetworkStatuses(dockerStatus),
 			VPCNetworkProblems:       networkProblems,
 			LambdaInitVolumeProblems: initVolumeProblems,
 		})
@@ -647,4 +648,19 @@ func debugTraceCount(buf *trace.Buffer) http.HandlerFunc {
 		// already reading them.
 		writeDebugJSON(w, http.StatusOK, buf.Stats())
 	}
+}
+
+// dockerNetworkStatuses reads the network section out of the Docker status
+// snapshot, tolerating every way it can be absent — no Docker services wired, a
+// probe that never completed, a build with no supervisor at all. An absent
+// section is "nothing to say", not "nothing is wrong": see advisoryInput.Networks.
+func dockerNetworkStatuses(dockerStatus func() *docker.Status) []docker.NetworkStatus {
+	if dockerStatus == nil {
+		return nil
+	}
+	s := dockerStatus()
+	if s == nil {
+		return nil
+	}
+	return s.Networks
 }

@@ -105,6 +105,17 @@ func newHealthHandler(cfg *config.Config, store state.Store, enabledServices []s
 		}
 		if dockerStatus != nil {
 			resp.Docker = dockerStatus()
+			// A Docker network that is not in the state this configuration asks
+			// for degrades the whole instance, because the failure it produces
+			// lands nowhere near here: a function that cannot reach the
+			// internet, or cannot reach a database, minutes later inside
+			// somebody's application code. Reporting `ok` beside a network
+			// Overcast has already warned about at startup is the same lie
+			// #1564 was about, told by a second mechanism.
+			if networkStateDegraded(resp.Docker) {
+				status = "degraded"
+				resp.Status = status
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -160,4 +171,23 @@ func persistentHealthSnapshot(store state.Store) *persistentHealth {
 		snapshot.LastSuccessAt = health.LastSuccessAt.UTC().Format(time.RFC3339)
 	}
 	return snapshot
+}
+
+// networkStateDegraded reports whether any Docker network Overcast manages
+// differs from the state its spec asks for.
+//
+// Only an *unrepaired* mismatch counts. A network that differed and was
+// recreated to spec reports no mismatch at all, which is the point: the repair
+// is what makes the state true, and reporting a healed drift would train
+// readers to ignore the field.
+func networkStateDegraded(status *docker.Status) bool {
+	if status == nil {
+		return false
+	}
+	for _, n := range status.Networks {
+		if !n.OK() {
+			return true
+		}
+	}
+	return false
 }

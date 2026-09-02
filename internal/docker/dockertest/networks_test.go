@@ -328,3 +328,29 @@ func (l *logLines) contains(s string) bool {
 	}
 	return false
 }
+
+// A per-VPC network under a test-scoped OVERCAST_NETWORK is minted by the EC2
+// service rather than by the suite, so it could not be named into the pattern.
+// Four of them survived a sweep before the `-vpc-` tail was covered.
+func TestIsTestNetwork_coversPerVPCNetworksOfTestInstances(t *testing.T) {
+	for _, name := range []string{
+		"overcast_vpc_igw_test_a1b2c3d4-vpc-vpc-igwbd1c11d6",
+		"overcast_rds_master_test_00362be8e11f-vpc-vpc-1a2b3c4d",
+	} {
+		if !IsTestNetwork(name) {
+			t.Errorf("IsTestNetwork(%q) = false, want true — a test instance's VPC networks leak", name)
+		}
+	}
+	// And a long-lived instance's VPC network is still never swept: it has no
+	// _test_ segment, whatever OVERCAST_NETWORK is.
+	for _, name := range []string{
+		"overcast-vpc-vpc-7d738f2a",
+		"overcast",
+		"overcast_control",
+		"mystack-vpc-vpc-1",
+	} {
+		if IsTestNetwork(name) {
+			t.Errorf("IsTestNetwork(%q) = true, want false — that is somebody's live network", name)
+		}
+	}
+}
