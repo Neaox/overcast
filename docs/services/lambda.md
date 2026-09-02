@@ -51,7 +51,7 @@ aws lambda invoke --function-name hello --payload '{"hi":1}' \
 | Extensions | Executables under `/opt/extensions` start before the runtime, with `register`, `event/next`, the Logs API and the Telemetry API. |
 | Logging | `LogFormat`, `ApplicationLogLevel`, `SystemLogLevel` and a custom `LogGroup` are all honoured. |
 | Metrics | `AWS/Lambda` `Invocations`, `Errors`, `Duration`, `Throttles` and `ConcurrentExecutions` are recorded for every invocation mechanism. |
-| Container images | A `PackageType=Image` function whose `Code.ImageUri` addresses this account's ECR runs from the registry Overcast serves. |
+| Container images | `PackageType=Image` runs a real image from this account's [ECR](ecr.md), including CDK's `DockerImageFunction`. `ImageConfig` and `update-function-code --image-uri` both apply — see [Examples](lambda/examples.md#container-images). |
 | Hot reload | A local source directory bind-mounted read-only at `/var/task`, retiring the warm environment when the tree changes. |
 
 ## Differences from AWS
@@ -131,7 +131,7 @@ Per-operation status, notes and AWS API links: [Lambda operations](lambda/operat
 
 - [Lambda limitations](./lambda/limitations.md) — divergences, concurrency, runtimes, logging
 - [Lambda troubleshooting](./lambda/troubleshooting.md) — throttles, layer errors, extension endpoints
-- [Lambda examples](./lambda/examples.md) — hot reload, layers, extensions
+- [Lambda examples](./lambda/examples.md) — hot reload, container images, layers, extensions
 - [CloudWatch Logs](./cloudwatch-logs.md) — where function output lands
 - [All service pages](./README.md)
 - [Configuration reference](../configuration.md) — every `LAMBDA_*` environment variable

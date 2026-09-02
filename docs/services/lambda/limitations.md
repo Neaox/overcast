@@ -81,6 +81,11 @@ the function does:
 
 ### Other divergences
 
+- `LastUpdateStatus` is never reported, so **`aws lambda wait function-updated`
+  never returns** — it polls for a field no response carries and gives up after
+  its own attempt budget. Nothing is actually pending: an update is applied
+  before `UpdateFunctionCode` or `UpdateFunctionConfiguration` answers. Drop the
+  wait, or poll `State` until it is `Active`.
 - Extension telemetry subscriptions — the Logs API (`PUT /2020-08-15/logs`) and
   the Telemetry API (`PUT /2022-07-01/telemetry`) — support HTTP destinations
   only. Buffering configuration is honoured with AWS's defaults; out-of-range

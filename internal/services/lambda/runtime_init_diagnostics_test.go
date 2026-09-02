@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/events"
 )
 
 // runtime_init_diagnostics_test.go covers what Overcast says when an execution
@@ -245,5 +246,80 @@ func TestContainerInstance_abandonedInvokeIsNotDiagnosedAsAnINITTimeout(t *testi
 	// warning per cancelled invoke is how a useful line stops being read.
 	if got := logs.Len(); got != 0 {
 		t.Fatalf("log lines = %d, want 0 (all: %v)", got, logs.All())
+	}
+}
+
+// A container that dies during INIT is the other way INIT ends, and it used to
+// be explained by nothing at all: the caller got an exit code and the log got
+// no line, even though the same evidence the timeout branch quotes was sitting
+// right there. The case that costs most is a container that cannot route back
+// to this host — its own [overcast-init] output names the address and the
+// timeout, but that output travels over the connection that is broken, so the
+// daemon's copy is where it survives.
+func TestContainerInstance_initExitIsDiagnosedWithTheSameEvidence(t *testing.T) {
+	// Given: an environment whose container is about to die during INIT.
+	srv, logs := newObservedRuntimeAPIServer(t, zap.WarnLevel)
+	listener, err := srv.AddContainerListener()
+	if err != nil {
+		t.Fatalf("AddContainerListener() error = %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	notifier := newExitNotifier()
+	ci := &containerInstance{
+		id:           "0123456789abcdef",
+		functionName: "diag",
+		containerIP:  "172.18.0.2",
+		rapiListener: listener,
+		exitNotify:   notifier,
+		logger:       srv.logger,
+		readyCh:      make(chan struct{}),
+	}
+
+	// When: the daemon reports it gone with a signal exit code.
+	done := make(chan error, 1)
+	go func() { done <- ci.AwaitReady(context.Background()) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		notifier.mu.Lock()
+		registered := len(notifier.chans) == 1
+		notifier.mu.Unlock()
+		if registered || !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	notifier.handleContainerDied(context.Background(), events.Event{
+		Payload: events.DockerContainerPayload{
+			Service:     "lambda",
+			ContainerID: ci.id,
+			ExitCode:    "139",
+		},
+	})
+	if err := <-done; err == nil {
+		t.Fatal("AwaitReady() = nil, want the container's exit")
+	}
+
+	// Then: the exit is explained with the endpoint, what reached it, and what
+	// the container printed — not with the exit code alone.
+	entries := logs.FilterMessageSnippet("exited during INIT").All()
+	if len(entries) != 1 {
+		t.Fatalf("INIT-exit log lines = %d, want 1 (all: %v)", len(entries), logs.All())
+	}
+	fields := entries[0].ContextMap()
+	if got := fields["exit_code"]; got != "139" {
+		t.Errorf("exit_code = %v, want 139", got)
+	}
+	if got := fields["runtime_api"]; got != listener.Addr() {
+		t.Errorf("runtime_api = %v, want %v", got, listener.Addr())
+	}
+	if got := fields["runtime_api_connections"]; got != int64(0) {
+		t.Errorf("runtime_api_connections = %v, want 0", got)
+	}
+	if got := fields["container_ip"]; got != "172.18.0.2" {
+		t.Errorf("container_ip = %v, want 172.18.0.2", got)
+	}
+	if _, ok := fields["container_output"]; !ok {
+		t.Errorf("the diagnostic carries no container_output: %v", fields)
 	}
 }
