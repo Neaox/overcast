@@ -23,7 +23,14 @@ export function SidebarSection({ label, collapsed, first, children }: SidebarSec
           {label}
         </div>
       )}
-      {children}
+      {/* A list, so the number of services in a section is announced with it — and so
+          the collapsed rail, which has no heading to group by, is still a group. */}
+      <ul
+        aria-label={label}
+        className={cn("m-0 flex list-none flex-col p-0", collapsed ? "w-full items-center gap-0.5" : "gap-px")}
+      >
+        {children}
+      </ul>
     </div>
   )
 }

@@ -25,12 +25,26 @@ export interface SidebarNavEntry {
   exact?: boolean
 }
 
-/** Wiring handed down by the sortable wrapper — all applied to the row element. */
+/**
+ * Wiring handed down by the sortable wrapper, split across two elements.
+ *
+ * `listeners` go on the row as well as the grip, so a pointer can still pick a row up
+ * from anywhere on it. `attributes` go on the grip *only*: they carry `role="button"`
+ * and `tabIndex`, and a row that claims to be a button while containing a link is a
+ * widget with a focusable descendant — invalid, and unusable either way, since focus
+ * lands on the row while the link inside is a second stop the row's own role denies
+ * exists. The grip is also the activator node, which is what gives the keyboard sensor
+ * something to start from.
+ */
 export interface SidebarSortableProps {
-  ref: (element: HTMLDivElement | null) => void
+  setRowRef: (element: HTMLElement | null) => void
   style: React.CSSProperties
   attributes: DraggableAttributes
   listeners: DraggableSyntheticListeners
+  /** dnd-kit's activator ref setter — the element that starts a drag. */
+  setActivatorRef: (element: HTMLElement | null) => void
+  /** Names the row being reordered, for the grip's accessible name. */
+  label: string
 }
 
 const rowVariants = cva(
@@ -105,12 +119,19 @@ export function SidebarNavItem({
   if (collapsed) {
     const target = children?.length ? flatChildren(children)[0].to : to
     return (
-      <SidebarTooltip label={label}>
-        <Link to={target} className={rowCls} aria-label={label} aria-current={active ? "page" : undefined}>
-          <Icon className={iconCls} />
-          {badgeNode}
-        </Link>
-      </SidebarTooltip>
+      <li>
+        <SidebarTooltip label={label}>
+          <Link
+            to={target}
+            className={rowCls}
+            aria-label={label}
+            aria-current={active ? "page" : undefined}
+          >
+            <Icon className={iconCls} />
+            {badgeNode}
+          </Link>
+        </SidebarTooltip>
+      </li>
     )
   }
 
@@ -120,15 +141,9 @@ export function SidebarNavItem({
     // named as the thing that is collapsed.
     const subNavId = `sidebar-subnav-${to.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "")}`
     return (
-      <div>
-        <div
-          ref={sortable?.ref}
-          style={sortable?.style}
-          className={rowCls}
-          {...sortable?.attributes}
-          {...sortable?.listeners}
-        >
-          {sortable && <SidebarGrip />}
+      <li>
+        <div ref={sortable?.setRowRef} style={sortable?.style} className={rowCls} {...sortable?.listeners}>
+          {sortable && <SidebarGrip {...sortable} />}
           <button
             onClick={(event) => {
               event.stopPropagation()
@@ -147,19 +162,13 @@ export function SidebarNavItem({
           </button>
         </div>
         {expanded && <SidebarSubNav id={subNavId} items={children} pathname={pathname} />}
-      </div>
+      </li>
     )
   }
 
   return (
-    <div
-      ref={sortable?.ref}
-      style={sortable?.style}
-      className={rowCls}
-      {...sortable?.attributes}
-      {...sortable?.listeners}
-    >
-      {sortable && <SidebarGrip />}
+    <li ref={sortable?.setRowRef} style={sortable?.style} className={rowCls} {...sortable?.listeners}>
+      {sortable && <SidebarGrip {...sortable} />}
       <Link
         to={to}
         className={rowHitArea}
@@ -170,18 +179,35 @@ export function SidebarNavItem({
         <span className="truncate">{label}</span>
         {badgeNode}
       </Link>
-    </div>
+    </li>
   )
 }
 
 /**
- * Drag affordance — absolutely positioned so it never shifts icon alignment, and
- * click-through so it does not punch a hole in the link it overlaps. It hangs into the
- * nav's left gutter (`px-2` on the `<nav>`) so it clears the service icon rather than
- * sitting on top of it.
+ * Drag affordance and the drag activator both. Absolutely positioned so it never shifts
+ * icon alignment, hanging into the nav's left gutter (`px-2` on the `<nav>`) so it
+ * clears the service icon rather than sitting on top of it.
+ *
+ * A real `<button>`, not a decorative glyph: it is what carries dnd-kit's listeners, so
+ * it is also the thing a keyboard user tabs to and presses Space on to pick the row up.
+ * It stays visible while focused for the same reason it appears on hover.
  */
-function SidebarGrip() {
+function SidebarGrip({
+  setActivatorRef,
+  label,
+  attributes,
+  listeners,
+}: Pick<SidebarSortableProps, "setActivatorRef" | "label" | "attributes" | "listeners">) {
   return (
-    <GripVertical className="pointer-events-none absolute top-1/2 -left-1 h-3 w-3 -translate-y-1/2 text-fg-subtle/40 opacity-0 transition-opacity group-hover:opacity-100" />
+    <button
+      type="button"
+      ref={setActivatorRef}
+      aria-label={`Reorder ${label}`}
+      className="absolute top-1/2 -left-1 flex h-4 w-4 -translate-y-1/2 cursor-grab items-center justify-center opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+      {...attributes}
+      {...listeners}
+    >
+      <GripVertical aria-hidden className="h-3 w-3 text-fg-subtle/40" />
+    </button>
   )
 }

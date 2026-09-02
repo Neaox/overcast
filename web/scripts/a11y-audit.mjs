@@ -138,6 +138,10 @@ async function run() {
         await context.addInitScript((value) => {
           try {
             window.localStorage.setItem("overcast:theme", JSON.stringify(value));
+            // Pin two services so the sidebar's sortable rows actually render. With no
+            // favourites the section shows "Star a service to pin it here" and the drag
+            // handles — the only reorder affordance — are never audited.
+            window.localStorage.setItem("overcast-favourites", JSON.stringify(["/s3", "/sqs"]));
           } catch {
             /* storage disabled */
           }
