@@ -248,7 +248,7 @@ func TestCreateStack_rollbackRetainsAResourceWithDeletionPolicyRetain(t *testing
 		t.Errorf("resource properties = %#v, want the create properties retained", resource.Properties)
 	}
 
-	events, err := p.store.getStackEvents(context.Background(), stack.StackName)
+	events, err := p.store.getStackEvents(context.Background(), stack.StackID)
 	if err != nil {
 		t.Fatalf("getStackEvents: %v", err)
 	}

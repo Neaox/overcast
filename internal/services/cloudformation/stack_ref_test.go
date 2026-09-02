@@ -43,7 +43,7 @@ func TestLegacyReadOps_byStackARN_resolveTheStack(t *testing.T) {
 		Type:       "AWS::SQS::Queue",
 		Status:     ResourceCreateComplete,
 	})
-	if err := st.appendStackEvent(context.Background(), "arn-read", StackEvent{
+	if err := st.appendStackEvent(context.Background(), seeded.StackID, StackEvent{
 		StackID:           seeded.StackID,
 		StackName:         "arn-read",
 		EventID:           "seeded-event-id",
@@ -270,7 +270,7 @@ func TestLegacyDeleteStack_byStackARN_deletesTheStack(t *testing.T) {
 func TestLegacyDeleteStack_alreadyDeleted_isANoOp(t *testing.T) {
 	// Given: a stack that already finished deleting
 	h, st := newRollbackTestHandler(t)
-	seedStack(t, st, "twice-deleted", StatusDeleteComplete)
+	seeded := seedStack(t, st, "twice-deleted", StatusDeleteComplete)
 
 	// When: DeleteStack is called again
 	rec := httptest.NewRecorder()
@@ -288,7 +288,7 @@ func TestLegacyDeleteStack_alreadyDeleted_isANoOp(t *testing.T) {
 	if stack.StatusReason != "seeded" {
 		t.Errorf("StatusReason = %q, want the seeded value untouched", stack.StatusReason)
 	}
-	events, evErr := st.getStackEvents(context.Background(), "twice-deleted")
+	events, evErr := st.getStackEvents(context.Background(), seeded.StackID)
 	if evErr != nil {
 		t.Fatalf("getStackEvents: %v", evErr)
 	}

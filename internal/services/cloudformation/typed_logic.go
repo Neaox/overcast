@@ -793,17 +793,9 @@ func (h *Handler) describeStackEventsTyped(ctx context.Context, req *describeSta
 		return nil, cfnerr("ValidationError", "StackName is required", http.StatusBadRequest)
 	}
 
-	stack, aerr := h.store.getStackByNameOrARN(ctx, req.StackName)
-	if aerr != nil || stack == nil {
-		return nil, cfnerr("ValidationError",
-			fmt.Sprintf("Stack [%s] does not exist", req.StackName), http.StatusBadRequest)
-	}
-
-	// Events are keyed by stack name — look up under the resolved name, the
-	// caller's reference may have been the ARN.
-	allEvents, err := h.store.getStackEvents(ctx, stack.StackName)
-	if err != nil {
-		return nil, cfnerr("InternalError", "failed to load stack events", http.StatusInternalServerError)
+	allEvents, aerr := h.stackEventsByNameOrARN(ctx, req.StackName)
+	if aerr != nil {
+		return nil, aerr
 	}
 
 	n := len(allEvents)

@@ -24,10 +24,18 @@ func newTestCFNStore() (*cfnStore, *clock.Mock) {
 	return newCFNStore(state.NewMemoryStore(), "us-east-1", mock), mock
 }
 
+// testStackARN mints a StackId for the named stack with a fixed generation,
+// which is all the event keys need from it.
+func testStackARN(name string) string {
+	return "arn:aws:cloudformation:us-east-1:000000000000:stack/" + name + "/abc"
+}
+
+var testStackID = testStackARN("mystack")
+
 func testEvent(id string) StackEvent {
 	return StackEvent{
 		EventID:           id,
-		StackID:           "arn:aws:cloudformation:us-east-1:000000000000:stack/mystack/abc",
+		StackID:           testStackID,
 		StackName:         "mystack",
 		LogicalResourceID: "mystack",
 		ResourceType:      "AWS::CloudFormation::Stack",
@@ -44,12 +52,12 @@ func TestAppendStackEvent_singleAppend_isReadableAfterward(t *testing.T) {
 	ctx := context.Background()
 
 	// When: a single event is appended
-	if err := st.appendStackEvent(ctx, "mystack", testEvent("evt-1")); err != nil {
+	if err := st.appendStackEvent(ctx, testStackID, testEvent("evt-1")); err != nil {
 		t.Fatalf("appendStackEvent: %v", err)
 	}
 
 	// Then: getStackEvents returns exactly that event
-	evts, err := st.getStackEvents(ctx, "mystack")
+	evts, err := st.getStackEvents(ctx, testStackID)
 	if err != nil {
 		t.Fatalf("getStackEvents: %v", err)
 	}
@@ -64,7 +72,7 @@ func TestGetStackEvents_noEvents_returnsNilNotError(t *testing.T) {
 	ctx := context.Background()
 
 	// When: getStackEvents is called
-	evts, err := st.getStackEvents(ctx, "no-such-stack")
+	evts, err := st.getStackEvents(ctx, testStackARN("no-such-stack"))
 
 	// Then: no error, no events
 	if err != nil {
@@ -89,13 +97,13 @@ func TestGetStackEvents_ordering_oldestFirstMatchesAppendOrder(t *testing.T) {
 	ctx := context.Background()
 	ids := []string{"evt-1", "evt-2", "evt-3", "evt-4", "evt-5"}
 	for _, id := range ids {
-		if err := st.appendStackEvent(ctx, "mystack", testEvent(id)); err != nil {
+		if err := st.appendStackEvent(ctx, testStackID, testEvent(id)); err != nil {
 			t.Fatalf("appendStackEvent(%s): %v", id, err)
 		}
 	}
 
 	// When: getStackEvents is called
-	evts, err := st.getStackEvents(ctx, "mystack")
+	evts, err := st.getStackEvents(ctx, testStackID)
 	if err != nil {
 		t.Fatalf("getStackEvents: %v", err)
 	}
@@ -137,7 +145,7 @@ func TestAppendStackEvent_concurrentAppends_allEventsPresentNoneLost(t *testing.
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			if err := st.appendStackEvent(ctx, "mystack", testEvent(fmt.Sprintf("evt-%d", i))); err != nil {
+			if err := st.appendStackEvent(ctx, testStackID, testEvent(fmt.Sprintf("evt-%d", i))); err != nil {
 				errs <- err
 			}
 		}(i)
@@ -151,7 +159,7 @@ func TestAppendStackEvent_concurrentAppends_allEventsPresentNoneLost(t *testing.
 	// Then: all N events are present — the old read-modify-write blob could
 	// lose events here (see TestZZBaseline in the fix's history); per-row
 	// Sets have no shared state to race on.
-	evts, err := st.getStackEvents(ctx, "mystack")
+	evts, err := st.getStackEvents(ctx, testStackID)
 	if err != nil {
 		t.Fatalf("getStackEvents: %v", err)
 	}
@@ -192,7 +200,7 @@ func TestGetStackEvents_legacyBlob_readAndOpportunisticallyConverted(t *testing.
 	}
 
 	// When: getStackEvents is called
-	evts, err := st.getStackEvents(ctx, "mystack")
+	evts, err := st.getStackEvents(ctx, testStackID)
 	if err != nil {
 		t.Fatalf("getStackEvents: %v", err)
 	}
@@ -214,7 +222,7 @@ func TestGetStackEvents_legacyBlob_readAndOpportunisticallyConverted(t *testing.
 	} else if found {
 		t.Fatalf("expected legacy blob key %q to be deleted after conversion", blobKey)
 	}
-	rows, err := st.s.Scan(ctx, nsEvents, stackEventsPrefix("us-east-1", "mystack"))
+	rows, err := st.s.Scan(ctx, nsEvents, stackEventsPrefix("us-east-1", stackEventStream{name: "mystack", generation: "abc"}))
 	if err != nil {
 		t.Fatalf("scan converted rows: %v", err)
 	}
@@ -225,7 +233,7 @@ func TestGetStackEvents_legacyBlob_readAndOpportunisticallyConverted(t *testing.
 	// And: a second read no longer needs the legacy path and still returns
 	// the same events in the same order (the fast path must agree with the
 	// legacy path it replaced).
-	evts2, err := st.getStackEvents(ctx, "mystack")
+	evts2, err := st.getStackEvents(ctx, testStackID)
 	if err != nil {
 		t.Fatalf("getStackEvents (post-conversion): %v", err)
 	}
@@ -245,7 +253,7 @@ func TestGetStackEvents_corruptLegacyBlob_isolatedNotFatal(t *testing.T) {
 	}
 
 	// When: getStackEvents is called
-	evts, err := st.getStackEvents(ctx, "mystack")
+	evts, err := st.getStackEvents(ctx, testStackID)
 
 	// Then: the call does not fail — the corrupt record is isolated, not
 	// propagated as an error that would take down DescribeStackEvents
@@ -270,16 +278,16 @@ func TestGetStackEvents_corruptRow_skippedNotFatal(t *testing.T) {
 	// stack's prefix
 	st, _ := newTestCFNStore()
 	ctx := context.Background()
-	if err := st.appendStackEvent(ctx, "mystack", testEvent("evt-1")); err != nil {
+	if err := st.appendStackEvent(ctx, testStackID, testEvent("evt-1")); err != nil {
 		t.Fatalf("appendStackEvent: %v", err)
 	}
-	badKey := stackEventsPrefix("us-east-1", "mystack") + "zzz-corrupt"
+	badKey := stackEventsPrefix("us-east-1", stackEventStream{name: "mystack", generation: "abc"}) + "zzz-corrupt"
 	if err := st.s.Set(ctx, nsEvents, badKey, "not valid json"); err != nil {
 		t.Fatalf("seed corrupt row: %v", err)
 	}
 
 	// When: getStackEvents is called
-	evts, err := st.getStackEvents(ctx, "mystack")
+	evts, err := st.getStackEvents(ctx, testStackID)
 
 	// Then: the healthy event is returned and the corrupt row is skipped,
 	// not surfaced as an error
@@ -298,23 +306,23 @@ func TestDeleteStackEvents_removesAllEventsForThatStackOnly(t *testing.T) {
 	st, _ := newTestCFNStore()
 	ctx := context.Background()
 	for _, id := range []string{"a-1", "a-2", "a-3"} {
-		if err := st.appendStackEvent(ctx, "stack-a", testEvent(id)); err != nil {
+		if err := st.appendStackEvent(ctx, testStackARN("stack-a"), testEvent(id)); err != nil {
 			t.Fatalf("appendStackEvent(stack-a): %v", err)
 		}
 	}
 	for _, id := range []string{"b-1", "b-2"} {
-		if err := st.appendStackEvent(ctx, "stack-b", testEvent(id)); err != nil {
+		if err := st.appendStackEvent(ctx, testStackARN("stack-b"), testEvent(id)); err != nil {
 			t.Fatalf("appendStackEvent(stack-b): %v", err)
 		}
 	}
 
 	// When: stack-a's events are deleted
-	if err := st.deleteStackEvents(ctx, "stack-a"); err != nil {
+	if err := st.deleteStackEvents(ctx, testStackARN("stack-a")); err != nil {
 		t.Fatalf("deleteStackEvents: %v", err)
 	}
 
 	// Then: stack-a has no events left
-	evtsA, err := st.getStackEvents(ctx, "stack-a")
+	evtsA, err := st.getStackEvents(ctx, testStackARN("stack-a"))
 	if err != nil {
 		t.Fatalf("getStackEvents(stack-a): %v", err)
 	}
@@ -323,7 +331,7 @@ func TestDeleteStackEvents_removesAllEventsForThatStackOnly(t *testing.T) {
 	}
 
 	// And: stack-b's events are untouched
-	evtsB, err := st.getStackEvents(ctx, "stack-b")
+	evtsB, err := st.getStackEvents(ctx, testStackARN("stack-b"))
 	if err != nil {
 		t.Fatalf("getStackEvents(stack-b): %v", err)
 	}
@@ -344,7 +352,7 @@ func TestDeleteStackEvents_alsoRemovesLegacyBlobIfPresent(t *testing.T) {
 	}
 
 	// When: the stack's events are deleted
-	if err := st.deleteStackEvents(ctx, "mystack"); err != nil {
+	if err := st.deleteStackEvents(ctx, testStackID); err != nil {
 		t.Fatalf("deleteStackEvents: %v", err)
 	}
 
@@ -362,7 +370,7 @@ func TestDeleteStackEvents_noEvents_isNotAnError(t *testing.T) {
 	ctx := context.Background()
 
 	// When: deleteStackEvents is called for a stack that never had events
-	err := st.deleteStackEvents(ctx, "never-existed")
+	err := st.deleteStackEvents(ctx, testStackARN("never-existed"))
 
 	// Then: it succeeds silently (Delete on a missing key is a no-op)
 	if err != nil {
@@ -484,7 +492,7 @@ func TestGetStackEvents_scanError_returnsError(t *testing.T) {
 	ctx := context.Background()
 
 	// When: getStackEvents is called
-	_, err := st.getStackEvents(ctx, "mystack")
+	_, err := st.getStackEvents(ctx, testStackID)
 
 	// Then: the Scan failure surfaces as an error
 	if err == nil {
@@ -500,7 +508,7 @@ func TestGetStackEvents_legacyGetError_returnsError(t *testing.T) {
 	ctx := context.Background()
 
 	// When: getStackEvents is called
-	_, err := st.getStackEvents(ctx, "mystack")
+	_, err := st.getStackEvents(ctx, testStackID)
 
 	// Then: the legacy-lookup Get failure surfaces as an error
 	if err == nil {
@@ -515,7 +523,7 @@ func TestAppendStackEvent_setError_returnsError(t *testing.T) {
 	ctx := context.Background()
 
 	// When: appendStackEvent is called
-	err := st.appendStackEvent(ctx, "mystack", testEvent("evt-1"))
+	err := st.appendStackEvent(ctx, testStackID, testEvent("evt-1"))
 
 	// Then: the Set failure surfaces as an error
 	if err == nil {
@@ -537,7 +545,7 @@ func TestGetStackEvents_legacyConversionSetFails_blobLeftInPlaceEventsStillRetur
 	st := newCFNStore(fs, "us-east-1", clock.NewMock())
 
 	// When: getStackEvents reads the legacy blob
-	evts, err := st.getStackEvents(ctx, "mystack")
+	evts, err := st.getStackEvents(ctx, testStackID)
 
 	// Then: it still succeeds and returns the events decoded from the blob —
 	// conversion is best-effort and its failure must not fail the read
@@ -563,18 +571,18 @@ func TestDeleteStackEvents_fallbackPath_noPrefixDeleter(t *testing.T) {
 	st := newCFNStore(fs, "us-east-1", clock.NewMock())
 	ctx := context.Background()
 	for _, id := range []string{"evt-1", "evt-2"} {
-		if err := st.appendStackEvent(ctx, "mystack", testEvent(id)); err != nil {
+		if err := st.appendStackEvent(ctx, testStackID, testEvent(id)); err != nil {
 			t.Fatalf("appendStackEvent: %v", err)
 		}
 	}
 
 	// When: deleteStackEvents is called
-	if err := st.deleteStackEvents(ctx, "mystack"); err != nil {
+	if err := st.deleteStackEvents(ctx, testStackID); err != nil {
 		t.Fatalf("deleteStackEvents: %v", err)
 	}
 
 	// Then: the List+Delete fallback still removes every event
-	evts, err := st.getStackEvents(ctx, "mystack")
+	evts, err := st.getStackEvents(ctx, testStackID)
 	if err != nil {
 		t.Fatalf("getStackEvents: %v", err)
 	}
@@ -590,7 +598,7 @@ func TestDeleteStackEvents_fallbackListError_returnsError(t *testing.T) {
 	ctx := context.Background()
 
 	// When: deleteStackEvents is called
-	err := st.deleteStackEvents(ctx, "mystack")
+	err := st.deleteStackEvents(ctx, testStackID)
 
 	// Then: the List failure surfaces as an error
 	if err == nil {
@@ -605,13 +613,13 @@ func TestDeleteStackEvents_fallbackDeleteError_returnsError(t *testing.T) {
 	ctx := context.Background()
 	fs := &failingStore{Store: mem}
 	st := newCFNStore(fs, "us-east-1", clock.NewMock())
-	if err := st.appendStackEvent(ctx, "mystack", testEvent("evt-1")); err != nil {
+	if err := st.appendStackEvent(ctx, testStackID, testEvent("evt-1")); err != nil {
 		t.Fatalf("appendStackEvent: %v", err)
 	}
 	fs.failDelete = true
 
 	// When: deleteStackEvents is called
-	err := st.deleteStackEvents(ctx, "mystack")
+	err := st.deleteStackEvents(ctx, testStackID)
 
 	// Then: the per-key Delete failure surfaces as an error
 	if err == nil {
@@ -629,7 +637,7 @@ func TestDeleteStackEvents_prefixDeleterError_returnsError(t *testing.T) {
 	ctx := context.Background()
 
 	// When: deleteStackEvents is called
-	err := st.deleteStackEvents(ctx, "mystack")
+	err := st.deleteStackEvents(ctx, testStackID)
 
 	// Then: the DeletePrefix failure surfaces as an error
 	if err == nil {
@@ -643,13 +651,13 @@ func TestDeleteStackEvents_finalLegacyBlobDeleteError_returnsError(t *testing.T)
 	fs := &failingPrefixDeleteStore{failingStore: failingStore{Store: state.NewMemoryStore()}}
 	st := newCFNStore(fs, "us-east-1", clock.NewMock())
 	ctx := context.Background()
-	if err := st.appendStackEvent(ctx, "mystack", testEvent("evt-1")); err != nil {
+	if err := st.appendStackEvent(ctx, testStackID, testEvent("evt-1")); err != nil {
 		t.Fatalf("appendStackEvent: %v", err)
 	}
 	fs.failDelete = true
 
 	// When: deleteStackEvents is called
-	err := st.deleteStackEvents(ctx, "mystack")
+	err := st.deleteStackEvents(ctx, testStackID)
 
 	// Then: the trailing legacy-blob Delete failure surfaces as an error
 	if err == nil {

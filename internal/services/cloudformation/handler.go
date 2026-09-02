@@ -1059,6 +1059,37 @@ func (h *Handler) ListStackResources(w http.ResponseWriter, r *http.Request) {
 // observed production behaviour.
 const eventsPageSize = 20
 
+// stackEventsByNameOrARN resolves a DescribeStackEvents reference to the
+// history it names, oldest event first. A name reaches the stack currently
+// holding it. A StackId reaches its own generation whether or not that
+// generation's record still exists: reusing the name overwrites the record
+// but not the events, and on AWS a deleted stack's events stay readable by
+// ID after the name is gone — "Deleted stacks: You must specify the unique
+// stack ID", per the StackName member's docs. A reference that names
+// neither a stack nor a history does not exist. Both dispatch paths — the
+// Query handler and the typed one — go through here so they cannot drift.
+func (h *Handler) stackEventsByNameOrARN(ctx context.Context, nameOrARN string) ([]StackEvent, *protocol.AWSError) {
+	doesNotExist := cfnerr("ValidationError", fmt.Sprintf("Stack [%s] does not exist", nameOrARN), http.StatusBadRequest)
+	stack, aerr := h.store.getStackByNameOrARN(ctx, nameOrARN)
+	if aerr != nil {
+		return nil, aerr
+	}
+	stackID := nameOrARN
+	if stack != nil {
+		stackID = stack.StackID
+	} else if _, err := parseStackEventStream(nameOrARN); err != nil {
+		return nil, doesNotExist
+	}
+	events, err := h.store.getStackEvents(ctx, stackID)
+	if err != nil {
+		return nil, cfnerr("InternalError", "failed to load stack events", http.StatusInternalServerError)
+	}
+	if stack == nil && len(events) == 0 {
+		return nil, doesNotExist
+	}
+	return events, nil
+}
+
 // ── DescribeStackEvents ────────────────────────────────────────────────────
 
 func (h *Handler) DescribeStackEvents(w http.ResponseWriter, r *http.Request) {
@@ -1068,20 +1099,11 @@ func (h *Handler) DescribeStackEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stack, aerr := h.store.getStackByNameOrARN(r.Context(), stackName)
-	if aerr != nil || stack == nil {
-		writeCFNError(w, r, "ValidationError",
-			fmt.Sprintf("Stack [%s] does not exist", stackName), http.StatusBadRequest)
-		return
-	}
-
 	// Events are stored separately from the stack metadata so that stack
-	// reads stay cheap as the event history grows unboundedly. They are
-	// keyed by stack name, so look up under the resolved name — the caller's
-	// reference may have been the ARN.
-	allEvents, err := h.store.getStackEvents(r.Context(), stack.StackName)
-	if err != nil {
-		writeCFNError(w, r, "InternalError", "failed to load stack events", http.StatusInternalServerError)
+	// reads stay cheap as the event history grows unboundedly.
+	allEvents, aerr := h.stackEventsByNameOrARN(r.Context(), stackName)
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
 

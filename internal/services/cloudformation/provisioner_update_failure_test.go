@@ -136,7 +136,7 @@ func TestUpdateStack_lambdaCompensationFailureLeavesRollbackFailed(t *testing.T)
 	if !strings.Contains(stack.Resources[0].StatusReason, "injected compensation failure") {
 		t.Errorf("resource status reason = %q, want compensation failure", stack.Resources[0].StatusReason)
 	}
-	events, err := p.store.getStackEvents(context.Background(), stack.StackName)
+	events, err := p.store.getStackEvents(context.Background(), stack.StackID)
 	if err != nil {
 		t.Fatalf("get stack events: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestUpdateStack_failedReverseUpdateRetainsAttemptedResource(t *testing.T) {
 	if first.Attributes["Version"] != "new" || first.Properties["Version"] != "new" || first.DeletionPolicy != "Retain" || first.UpdateReplacePolicy != "Snapshot" || first.Timestamp.IsZero() {
 		t.Errorf("retained First lost attempted state: %+v", first)
 	}
-	assertStackResourceEvent(t, p, stack.StackName, "First", ResourceUpdateFailed, "restore First: first reverse update failed")
+	assertStackResourceEvent(t, p, stack.StackID, "First", ResourceUpdateFailed, "restore First: first reverse update failed")
 }
 
 func TestUpdateStack_stabilizationFailureRollback(t *testing.T) {
@@ -285,7 +285,7 @@ func TestUpdateStack_stabilizationFailureRollback(t *testing.T) {
 			if resource.Attributes["Version"] != "new" || resource.Properties["Version"] != "new" || resource.DeletionPolicy != "Retain" || resource.UpdateReplacePolicy != "Snapshot" || resource.Timestamp.IsZero() {
 				t.Errorf("retained resource lost attempted state: %+v", resource)
 			}
-			assertStackResourceEvent(t, p, stack.StackName, "Resource", ResourceUpdateFailed, "restore Resource: "+tc.reverseFailureMsg)
+			assertStackResourceEvent(t, p, stack.StackID, "Resource", ResourceUpdateFailed, "restore Resource: "+tc.reverseFailureMsg)
 		})
 	}
 }
@@ -325,9 +325,9 @@ func stackResourceByLogicalID(t *testing.T, resources []StackResource, logicalID
 	return StackResource{}
 }
 
-func assertStackResourceEvent(t *testing.T, p *provisioner, stackName, logicalID, status, reason string) {
+func assertStackResourceEvent(t *testing.T, p *provisioner, stackID, logicalID, status, reason string) {
 	t.Helper()
-	events, err := p.store.getStackEvents(context.Background(), stackName)
+	events, err := p.store.getStackEvents(context.Background(), stackID)
 	if err != nil {
 		t.Fatalf("get stack events: %v", err)
 	}

@@ -97,7 +97,7 @@ func TestProvisionStack_flushTimeoutDoesNotFailAStackThatProvisioned(t *testing.
 	// later event against the stack itself, after CREATE_COMPLETE had already
 	// been recorded — which is why a reader could not tell which resource it
 	// came from.
-	events, err := p.store.getStackEvents(context.Background(), stack.StackName)
+	events, err := p.store.getStackEvents(context.Background(), stack.StackID)
 	if err != nil {
 		t.Fatalf("getStackEvents: %v", err)
 	}

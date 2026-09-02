@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 
 	"github.com/overcast-sh/overcast/internal/clock"
@@ -33,12 +32,6 @@ type cfnStore struct {
 	s             state.Store
 	defaultRegion string
 	clk           clock.Clock
-
-	// legacyConvertMu serialises convertLegacyStackEvents so two concurrent
-	// DescribeStackEvents calls that both find the same legacy blob can't
-	// both rewrite it as rows (the kv store has no compare-and-swap, so
-	// without this the second writer would duplicate every event).
-	legacyConvertMu sync.Mutex
 }
 
 func newCFNStore(s state.Store, defaultRegion string, clk clock.Clock) *cfnStore {
@@ -169,16 +162,25 @@ func (st *cfnStore) listStacks(ctx context.Context) ([]*Stack, *protocol.AWSErro
 
 // ── Stack events ───────────────────────────────────────────────────────────
 //
-// Each event is stored as its own row, keyed "<region>/<stackName>/<seq>"
-// where <seq> is produced by uniqueSuffix — a nanosecond timestamp plus a
+// Each event is stored as its own row, keyed
+// "<region>/<generation>/<stackName>/<seq>". <generation> is the uuid
+// segment of the stack's StackId, so a stream belongs to one incarnation of
+// a stack: deleting a stack and creating another under the same name mints a
+// new uuid and therefore opens an empty stream — which is what
+// DescribeStackEvents by name shows on AWS — while the deleted generation's
+// history stays where its StackId can still find it. The previous layout
+// keyed events by name alone, so a recreated stack inherited its
+// predecessor's events: the CDK's bootstrap retry read the deleted stack's
+// CREATE_FAILED as the new stack's and gave up.
+//
+// <seq> is produced by uniqueSuffix — a nanosecond timestamp plus a
 // monotonic counter, so keys sort in append order even when multiple events
-// land in the same nanosecond (concurrent provisioner goroutines). This
-// replaces the earlier single-JSON-array-per-stack layout, which required a
-// full Get+unmarshal+append+marshal+Set read-modify-write on every append
-// (quadratic over a deployment) and was not safe for concurrent appends to
-// the same stack — a second writer's read-modify-write could race the
-// first and silently drop its event. Per-row Sets have no such race: each
-// append is a single independent write to a unique key.
+// land in the same nanosecond (concurrent provisioner goroutines). Per-row
+// Sets are what make concurrent appends to one stack safe: each append is a
+// single independent write to a unique key, with no read-modify-write to
+// race. The generation comes before the name in the key so that the two
+// pre-generation layouts, both rooted at "<region>/<stackName>", share no
+// prefix with it — see the legacy section below.
 //
 // eventSeq is a process-wide counter (not per-stack) — uniqueness only
 // requires that no two calls produce the same suffix, and a single global
@@ -195,47 +197,85 @@ func uniqueSuffix(clk clock.Clock) string {
 	return strconv.FormatInt(clk.Now().UnixNano(), 10) + "-" + fmt.Sprintf("%010d", seq)
 }
 
-// stackEventsPrefix returns the Scan/DeletePrefix prefix covering every
-// per-event row for a stack: "<region>/<stackName>/".
-func stackEventsPrefix(region, name string) string {
-	return serviceutil.RegionKey(region, name) + "/"
+// stackEventStream is the storage identity of one generation's event
+// history, as carried by its StackId.
+type stackEventStream struct {
+	name       string
+	generation string
 }
 
-// getStackEvents returns all events recorded for the named stack, in the order
-// they were appended (oldest first — callers that need AWS's newest-first
-// DescribeStackEvents ordering reverse the slice themselves). Returns nil, nil
-// when no events exist yet.
-//
-// Legacy compatibility: stacks whose events were recorded before the
-// row-per-event migration have their full history under a single blob key
-// "<region>/<stackName>" (no trailing segment) instead of per-event rows. If
-// the prefix scan comes back empty, getStackEvents falls back to that blob
-// key; when found, it decodes the events, opportunistically rewrites them as
-// individual rows, and deletes the blob so subsequent reads take the fast
-// per-row path. A blob that fails to decode is left in place (not deleted)
-// and treated as "no events" rather than aborting the call — a single
-// unreadable legacy record must not fail DescribeStackEvents.
-func (st *cfnStore) getStackEvents(ctx context.Context, name string) ([]StackEvent, error) {
+// parseStackEventStream splits a StackId
+// (arn:aws:cloudformation:<region>:<account>:stack/<name>/<uuid>) into the
+// name and generation the event keys are built from. Events are addressed by
+// StackId only, never by bare name: a name identifies whichever stack holds
+// it at the moment, not a history.
+func parseStackEventStream(stackID string) (stackEventStream, error) {
+	const marker = ":stack/"
+	i := strings.Index(stackID, marker)
+	if i < 0 {
+		return stackEventStream{}, fmt.Errorf("cfn: %q is not a stack ID", stackID)
+	}
+	name, generation, ok := strings.Cut(stackID[i+len(marker):], "/")
+	if !ok || name == "" || generation == "" {
+		return stackEventStream{}, fmt.Errorf("cfn: %q is not a stack ID", stackID)
+	}
+	return stackEventStream{name: name, generation: generation}, nil
+}
+
+// stackEventsPrefix returns the Scan/DeletePrefix prefix covering every row
+// of one generation's stream: "<region>/<generation>/<stackName>/".
+func stackEventsPrefix(region string, stream stackEventStream) string {
+	return serviceutil.RegionKey(region, stream.generation) + "/" + stream.name + "/"
+}
+
+// getStackEvents returns every event recorded for the generation the StackId
+// names, in the order they were appended (oldest first — callers that need
+// AWS's newest-first DescribeStackEvents ordering reverse the slice
+// themselves). Returns nil, nil when the generation has no events. The record
+// of the stack need not exist any more: a deleted generation's history stays
+// readable by its StackId after the name has been reused, as on AWS.
+func (st *cfnStore) getStackEvents(ctx context.Context, stackID string) ([]StackEvent, error) {
+	stream, err := parseStackEventStream(stackID)
+	if err != nil {
+		return nil, err
+	}
 	region := st.region(ctx)
-	prefix := stackEventsPrefix(region, name)
+	prefix := stackEventsPrefix(region, stream)
 	items, err := st.s.Scan(ctx, nsEvents, prefix)
 	if err != nil {
 		return nil, fmt.Errorf("cfn: scan events: %w", err)
 	}
-	if len(items) > 0 {
-		return decodeStackEventRows(items), nil
+	// Anything still on a pre-generation layout is re-homed as a side effect
+	// of the read, and whatever landed in this generation's stream is part
+	// of the answer whether or not the rewrite reached disk.
+	migrated, err := st.migrateLegacyStackEvents(ctx, region, stream)
+	if err != nil {
+		return nil, err
 	}
-	return st.getLegacyStackEvents(ctx, region, name)
+	for _, kv := range migrated {
+		if strings.HasPrefix(kv.Key, prefix) {
+			items = append(items, kv)
+		}
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+	return decodeStackEventRows(items), nil
 }
 
 // decodeStackEventRows decodes each row's value as a StackEvent, skipping
 // (not erroring on) rows that fail to decode — a single corrupt persisted
 // record must not fail the whole read. Rows are sorted by key, which sorts
-// chronologically because keys embed uniqueSuffix's timestamp+counter.
+// chronologically because keys embed uniqueSuffix's timestamp+counter; a key
+// present twice (a migrated row seen both on disk and in the migration's
+// own output) counts once.
 func decodeStackEventRows(items []state.KV) []StackEvent {
 	sort.Slice(items, func(i, j int) bool { return items[i].Key < items[j].Key })
 	evts := make([]StackEvent, 0, len(items))
-	for _, kv := range items {
+	for i, kv := range items {
+		if i > 0 && kv.Key == items[i-1].Key {
+			continue
+		}
 		var e StackEvent
 		if err := json.Unmarshal([]byte(kv.Value), &e); err != nil {
 			continue // skip corrupt entries
@@ -245,95 +285,185 @@ func decodeStackEventRows(items []state.KV) []StackEvent {
 	return evts
 }
 
-// getLegacyStackEvents reads the pre-migration single-blob event history for
-// a stack, if any, and opportunistically converts it to per-row storage.
-func (st *cfnStore) getLegacyStackEvents(ctx context.Context, region, name string) ([]StackEvent, error) {
-	blobKey := serviceutil.RegionKey(region, name)
-	raw, found, err := st.s.Get(ctx, nsEvents, blobKey)
-	if err != nil {
-		return nil, fmt.Errorf("cfn: get legacy events: %w", err)
-	}
-	if !found {
-		return nil, nil
-	}
-	var evts []StackEvent
-	if err := json.Unmarshal([]byte(raw), &evts); err != nil {
-		// Corrupt legacy blob: isolate the bad record rather than failing the
-		// whole call, and leave it in place rather than deleting data we
-		// couldn't read.
-		return nil, nil
-	}
-	st.convertLegacyStackEvents(ctx, blobKey, evts)
-	return evts, nil
-}
-
-// convertLegacyStackEvents writes each already-decoded legacy event as an
-// individual row (preserving original order via successive uniqueSuffix
-// calls) and removes the old blob key. This is a best-effort, one-time
-// migration: on partial failure it leaves the blob in place so the next read
-// retries the conversion, but still returns the events that were already
-// decoded from it.
-func (st *cfnStore) convertLegacyStackEvents(ctx context.Context, blobKey string, evts []StackEvent) {
-	st.legacyConvertMu.Lock()
-	defer st.legacyConvertMu.Unlock()
-	// Re-check under the lock: a concurrent reader may have completed the
-	// conversion (and deleted the blob) while this call waited.
-	if _, found, err := st.s.Get(ctx, nsEvents, blobKey); err != nil || !found {
-		return
-	}
-	for _, e := range evts {
-		data, err := json.Marshal(e)
-		if err != nil {
-			return
-		}
-		key := blobKey + "/" + uniqueSuffix(st.clk)
-		if err := st.s.Set(ctx, nsEvents, key, string(data)); err != nil {
-			return
-		}
-	}
-	_ = st.s.Delete(ctx, nsEvents, blobKey)
-}
-
-// appendStackEvent appends a single event to the stack's event history as an
+// appendStackEvent appends a single event to the generation's stream as an
 // independent row keyed by a unique, monotonically sortable suffix. Unlike
 // the old blob layout, concurrent appends for the same stack are safe: each
 // call is a single Set to a key no other call can produce.
-func (st *cfnStore) appendStackEvent(ctx context.Context, name string, event StackEvent) error {
+func (st *cfnStore) appendStackEvent(ctx context.Context, stackID string, event StackEvent) error {
+	stream, err := parseStackEventStream(stackID)
+	if err != nil {
+		return err
+	}
 	data, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("cfn: marshal event: %w", err)
 	}
-	key := stackEventsPrefix(st.region(ctx), name) + uniqueSuffix(st.clk)
+	key := stackEventsPrefix(st.region(ctx), stream) + uniqueSuffix(st.clk)
 	return st.s.Set(ctx, nsEvents, key, string(data))
 }
 
-// deleteStackEvents removes every recorded event for the named stack (and
-// only that stack — the region+name prefix scopes the delete to it), plus
-// the legacy blob key if one still exists.
-func (st *cfnStore) deleteStackEvents(ctx context.Context, name string) error {
+// deleteStackEvents removes every event recorded for the generation the
+// StackId names, plus whatever the two legacy layouts still hold under its
+// name. Those carry no generation in their keys, so purging by name is the
+// only purge there is for them — a caller discarding a stack's history is
+// not asking to keep its predecessors'.
+func (st *cfnStore) deleteStackEvents(ctx context.Context, stackID string) error {
+	stream, err := parseStackEventStream(stackID)
+	if err != nil {
+		return err
+	}
 	region := st.region(ctx)
-	prefix := stackEventsPrefix(region, name)
-	if deleter, ok := st.s.(state.PrefixDeleter); ok {
-		if err := deleter.DeletePrefix(ctx, nsEvents, prefix); err != nil {
-			return fmt.Errorf("cfn: delete events: %w", err)
-		}
-	} else {
-		keys, err := st.s.List(ctx, nsEvents, prefix)
-		if err != nil {
-			return fmt.Errorf("cfn: list events for delete: %w", err)
-		}
-		for _, key := range keys {
-			if err := st.s.Delete(ctx, nsEvents, key); err != nil {
-				return fmt.Errorf("cfn: delete event %q: %w", key, err)
-			}
+	for _, prefix := range []string{stackEventsPrefix(region, stream), legacyStackEventsPrefix(region, stream.name)} {
+		if err := st.deleteEventPrefix(ctx, prefix); err != nil {
+			return err
 		}
 	}
 	// Delete is a no-op when the key doesn't exist, so this is safe to call
 	// unconditionally even when the stack was never on the legacy blob layout.
-	if err := st.s.Delete(ctx, nsEvents, serviceutil.RegionKey(region, name)); err != nil {
+	if err := st.s.Delete(ctx, nsEvents, legacyStackEventsBlobKey(region, stream.name)); err != nil {
 		return fmt.Errorf("cfn: delete legacy events blob: %w", err)
 	}
 	return nil
+}
+
+// deleteEventPrefix removes every event row under prefix, with a ranged
+// delete where the store offers one and List+Delete where it does not.
+func (st *cfnStore) deleteEventPrefix(ctx context.Context, prefix string) error {
+	if deleter, ok := st.s.(state.PrefixDeleter); ok {
+		if err := deleter.DeletePrefix(ctx, nsEvents, prefix); err != nil {
+			return fmt.Errorf("cfn: delete events: %w", err)
+		}
+		return nil
+	}
+	keys, err := st.s.List(ctx, nsEvents, prefix)
+	if err != nil {
+		return fmt.Errorf("cfn: list events for delete: %w", err)
+	}
+	for _, key := range keys {
+		if err := st.s.Delete(ctx, nsEvents, key); err != nil {
+			return fmt.Errorf("cfn: delete event %q: %w", key, err)
+		}
+	}
+	return nil
+}
+
+// ── Legacy event layouts ───────────────────────────────────────────────────
+//
+// Two earlier layouts keyed a stack's events by name alone, and either may
+// still be on disk from a previous Overcast version:
+//
+//   - one JSON array per stack under "<region>/<stackName>";
+//   - one row per event under "<region>/<stackName>/<seq>".
+//
+// Neither shares a prefix with the generation layout, whose second segment
+// is a uuid, so a scan of "<region>/<stackName>/" and a get of
+// "<region>/<stackName>" see legacy data only — and see nothing at all once
+// it has been migrated, which is what keeps the check every read makes
+// cheap.
+//
+// Migration happens on read, best-effort, and by the event's own StackId:
+// every event ever written carries the StackId of the stack that produced
+// it, so a legacy row is re-homed under the generation it actually belongs
+// to rather than under whichever stack holds the name today. The generation
+// being read is the fallback for an event whose StackId is unusable. Keys
+// are derived, not minted — a per-event row keeps its <seq>, a blob event
+// takes its own timestamp plus its index in the array — so a migration that
+// is interrupted, or that two readers run at once, writes the same keys
+// again rather than duplicating anything; and the legacy original is only
+// deleted once every row it produced has been written. A legacy record that
+// will not decode is left in place, not deleted, and contributes nothing.
+
+// legacyStackEventsPrefix is the per-row legacy layout's prefix for a name.
+func legacyStackEventsPrefix(region, name string) string {
+	return serviceutil.RegionKey(region, name) + "/"
+}
+
+// legacyStackEventsBlobKey is the single-blob legacy layout's key for a name.
+func legacyStackEventsBlobKey(region, name string) string {
+	return serviceutil.RegionKey(region, name)
+}
+
+// legacyEventStream is the stream a legacy event is re-homed into: the one
+// its own StackId names, when that is a StackId for the same name, and the
+// stream being read otherwise.
+func legacyEventStream(e StackEvent, fallback stackEventStream) stackEventStream {
+	if own, err := parseStackEventStream(e.StackID); err == nil && own.name == fallback.name {
+		return own
+	}
+	return fallback
+}
+
+// migrateLegacyStackEvents re-keys whatever the legacy layouts hold under
+// the stream's name and returns the rows it derived, for every generation
+// they turned out to belong to, whether or not writing them succeeded — the
+// caller filters for the stream it is reading. Store failures on the legacy
+// lookups themselves are returned; failures rewriting are not, since the
+// legacy data is still in place for the next read to retry.
+func (st *cfnStore) migrateLegacyStackEvents(ctx context.Context, region string, stream stackEventStream) ([]state.KV, error) {
+	rowPrefix := legacyStackEventsPrefix(region, stream.name)
+	rows, err := st.s.Scan(ctx, nsEvents, rowPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("cfn: scan legacy events: %w", err)
+	}
+	blobKey := legacyStackEventsBlobKey(region, stream.name)
+	blob, found, err := st.s.Get(ctx, nsEvents, blobKey)
+	if err != nil {
+		return nil, fmt.Errorf("cfn: get legacy events: %w", err)
+	}
+
+	var migrated []state.KV
+	if len(rows) > 0 {
+		converted := make([]state.KV, 0, len(rows))
+		oldKeys := make([]string, 0, len(rows))
+		for _, kv := range rows {
+			var e StackEvent
+			if err := json.Unmarshal([]byte(kv.Value), &e); err != nil {
+				continue
+			}
+			seq := strings.TrimPrefix(kv.Key, rowPrefix)
+			converted = append(converted, state.KV{
+				Key:   stackEventsPrefix(region, legacyEventStream(e, stream)) + seq,
+				Value: kv.Value,
+			})
+			oldKeys = append(oldKeys, kv.Key)
+		}
+		st.replaceLegacyEvents(ctx, converted, oldKeys)
+		migrated = append(migrated, converted...)
+	}
+	if found {
+		var evts []StackEvent
+		if err := json.Unmarshal([]byte(blob), &evts); err == nil {
+			converted := make([]state.KV, 0, len(evts))
+			for i, e := range evts {
+				data, err := json.Marshal(e)
+				if err != nil {
+					continue
+				}
+				converted = append(converted, state.KV{
+					Key: stackEventsPrefix(region, legacyEventStream(e, stream)) +
+						strconv.FormatInt(e.Timestamp.UnixNano(), 10) + "-" + fmt.Sprintf("%010d", i),
+					Value: string(data),
+				})
+			}
+			st.replaceLegacyEvents(ctx, converted, []string{blobKey})
+			migrated = append(migrated, converted...)
+		}
+	}
+	return migrated, nil
+}
+
+// replaceLegacyEvents writes the derived rows and, only once every one of
+// them is on disk, removes the legacy keys they came from. A failure leaves
+// the legacy data where it was for the next read to retry.
+func (st *cfnStore) replaceLegacyEvents(ctx context.Context, rows []state.KV, oldKeys []string) {
+	for _, kv := range rows {
+		if err := st.s.Set(ctx, nsEvents, kv.Key, kv.Value); err != nil {
+			return
+		}
+	}
+	for _, key := range oldKeys {
+		_ = st.s.Delete(ctx, nsEvents, key)
+	}
 }
 
 // ── Deploy diagnostics ─────────────────────────────────────────────────────

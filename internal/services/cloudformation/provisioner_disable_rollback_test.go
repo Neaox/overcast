@@ -122,7 +122,7 @@ func TestUpdateStack_disableRollbackRetainsAttemptedResources(t *testing.T) {
 	if len(persisted.Resources) != 3 {
 		t.Errorf("persisted resources = %+v, want all three retained", persisted.Resources)
 	}
-	assertStackResourceEvent(t, p, stack.StackName, "Second", ResourceUpdateFailed, "later resource update failed")
+	assertStackResourceEvent(t, p, stack.StackID, "Second", ResourceUpdateFailed, "later resource update failed")
 }
 
 // The point of retaining the records is the next attempt: it has to pick up
