@@ -510,9 +510,10 @@ func (s *remappedVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
 // which is what a caller with no daemon snapshot passes.
 //
 // Regions run in turn, so the index also has to know which VPCs exist in
-// which region (reserve): a region whose VPC lost its network runs before the
-// region whose VPC on the same subnet still has one, and the fallback that
-// adopts by subnet would otherwise hand the second's network to the first.
+// which region (reserved, filled at construction): a region whose VPC lost
+// its network runs before the region whose VPC on the same subnet still has
+// one, and the fallback that adopts by subnet would otherwise hand the
+// second's network to the first.
 // One CIDR reused across regions is the common case, not a corner — CDK's
 // default puts every region on 10.0.0.0/16. Within a region the fallback is
 // unchanged: two same-CIDR VPCs there are sharers or a conflict by the
@@ -532,8 +533,16 @@ type vpcNetworkIndex struct {
 	region string
 }
 
-// newVPCNetworkIndex indexes existing. The maps point into the slice.
-func newVPCNetworkIndex(existing []docker.NetworkSummary) *vpcNetworkIndex {
+// newVPCNetworkIndex indexes existing, and records every VPC in byRegion —
+// the store's whole holding, not only the region about to run — as existing
+// in its region. The maps point into the slice.
+//
+// The reservation is part of construction rather than a step a caller takes
+// afterwards because an index without it is not safe to adopt from: the
+// subnet fallback would take a network out from under the VPC it is labelled
+// for in another region, with nothing to say so until that VPC's turn found
+// its network gone. See the type comment.
+func newVPCNetworkIndex(existing []docker.NetworkSummary, byRegion map[string][]*VPC) *vpcNetworkIndex {
 	ix := &vpcNetworkIndex{
 		byID:         make(map[string]*docker.NetworkSummary, len(existing)),
 		byResourceID: make(map[string]*docker.NetworkSummary, len(existing)),
@@ -550,20 +559,14 @@ func newVPCNetworkIndex(existing []docker.NetworkSummary) *vpcNetworkIndex {
 			ix.bySubnet[sub] = n
 		}
 	}
-	return ix
-}
-
-// reserve records vpcs as existing in region, for every region, before any
-// region's pass runs. See the type comment.
-func (ix *vpcNetworkIndex) reserve(region string, vpcs []*VPC) {
-	if ix == nil {
-		return
-	}
-	for _, vpc := range vpcs {
-		if vpc != nil && vpc.VpcID != "" {
-			ix.reserved[vpc.VpcID] = region
+	for region, vpcs := range byRegion {
+		for _, vpc := range vpcs {
+			if vpc != nil && vpc.VpcID != "" {
+				ix.reserved[vpc.VpcID] = region
+			}
 		}
 	}
+	return ix
 }
 
 // enter names the region whose pass is about to run.

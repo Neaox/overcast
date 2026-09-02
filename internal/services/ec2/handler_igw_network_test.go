@@ -52,6 +52,9 @@ type fakeVPCDocker struct {
 	// failConnect names containers whose reconnect the daemon refuses — a
 	// recreate that succeeded but cannot take every container back.
 	failConnect map[string]bool
+	// failList makes the list endpoint fail — a daemon the lazy pass cannot
+	// read, though the rest of it answers.
+	failList bool
 }
 
 type fakeNetwork struct {
@@ -121,14 +124,11 @@ func (f *fakeVPCDocker) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && path == "/networks":
 		// The list endpoint, as the reconcile's lazy pass sees it. The daemon
 		// applies the label filter; every network here is an EC2 one.
-		out := make([]docker.NetworkSummary, 0, len(f.networks))
-		for _, n := range f.networks {
-			out = append(out, docker.NetworkSummary{
-				ID: n.id, Name: n.name, Labels: n.labels, Internal: n.internal, Driver: n.driver,
-				IPAM: docker.NetworkIPAM{Config: []docker.NetworkIPAMConfig{{Subnet: n.subnet}}},
-			})
+		if f.failList {
+			http.Error(w, `{"message":"Cannot connect to the Docker daemon"}`, http.StatusInternalServerError)
+			return
 		}
-		_ = json.NewEncoder(w).Encode(out)
+		_ = json.NewEncoder(w).Encode(f.summariesLocked())
 
 	case strings.HasPrefix(path, "/networks/"):
 		rest := strings.TrimPrefix(path, "/networks/")
@@ -234,6 +234,70 @@ func (f *fakeVPCDocker) has(id string) bool {
 	defer f.mu.Unlock()
 	_, ok := f.networks[id]
 	return ok
+}
+
+// summaries is the daemon-wide snapshot the router hands ReconcileNetworks:
+// every network the fake holds, as the list endpoint would report it.
+func (f *fakeVPCDocker) summaries() []docker.NetworkSummary {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.summariesLocked()
+}
+
+// summariesLocked is summaries for a caller already holding f.mu — serve,
+// which answers the list endpoint from it.
+func (f *fakeVPCDocker) summariesLocked() []docker.NetworkSummary {
+	out := make([]docker.NetworkSummary, 0, len(f.networks))
+	for _, n := range f.networks {
+		out = append(out, docker.NetworkSummary{
+			ID: n.id, Name: n.name, Labels: n.labels, Internal: n.internal, Driver: n.driver,
+			IPAM: docker.NetworkIPAM{Config: []docker.NetworkIPAMConfig{{Subnet: n.subnet}}},
+		})
+	}
+	return out
+}
+
+// add puts a network on the daemon that this handler did not create — a
+// previous run's, an older build's, another instance's — with exactly the
+// labels given, and returns its ID.
+func (f *fakeVPCDocker) add(name, subnet string, labels map[string]string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nextID++
+	n := &fakeNetwork{
+		id: fmt.Sprintf("net-%d", f.nextID), name: name, internal: true, driver: "bridge",
+		subnet: subnet, labels: labels, endpoints: map[string]fakeEndpoint{},
+	}
+	f.networks[n.id] = n
+	return n.id
+}
+
+// setInternal flips a network's --internal flag behind the handler's back —
+// the drift a gateway change the handler could not act on leaves behind.
+func (f *fakeVPCDocker) setInternal(id string, internal bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.networks[id].internal = internal
+}
+
+// callCount returns how many calls so far match the prefix.
+func (f *fakeVPCDocker) callCount(prefix string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	count := 0
+	for _, c := range f.calls {
+		if strings.HasPrefix(c, prefix) {
+			count++
+		}
+	}
+	return count
+}
+
+// setFailList turns the list endpoint's failure on or off between calls.
+func (f *fakeVPCDocker) setFailList(fail bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failList = fail
 }
 
 // callIndex returns the position of the first call matching the prefix, or -1.
@@ -549,10 +613,7 @@ func TestReconcileNetworks_repairsStaleIsolation(t *testing.T) {
 	}
 
 	// When: startup reconcile runs over the networks Docker reports.
-	h.reconcileNetworks(context.Background(), []docker.NetworkSummary{{
-		ID: stale.id, Name: stale.name, Labels: stale.labels,
-		IPAM: docker.NetworkIPAM{Config: []docker.NetworkIPAMConfig{{Subnet: stale.subnet}}},
-	}})
+	h.reconcileNetworks(context.Background(), f.summaries())
 
 	// Then: the network is recreated external, the container moved with it,
 	// and the record names the new network.
@@ -584,10 +645,7 @@ func TestReconcileNetworks_reportsIsolationItCannotRepair(t *testing.T) {
 	f.refuseRemove = true
 
 	// When: startup reconcile runs.
-	h.reconcileNetworks(context.Background(), []docker.NetworkSummary{{
-		ID: stale.id, Name: stale.name, Labels: stale.labels,
-		IPAM: docker.NetworkIPAM{Config: []docker.NetworkIPAMConfig{{Subnet: stale.subnet}}},
-	}})
+	h.reconcileNetworks(context.Background(), f.summaries())
 
 	// Then: the mismatch is on record for the health advisories — a startup
 	// log line is not somewhere anyone looks after the fact — naming the VPC

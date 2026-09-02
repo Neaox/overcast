@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -35,7 +36,7 @@ import (
 // Docker snapshot is one index shared across the regions (vpcNetworkIndex), so
 // each region claims its own and the orphan sweep runs once, over what none
 // of them claimed.
-func (h *Handler) reconcileNetworks(ctx context.Context, networks []docker.NetworkSummary) {
+func (h *Handler) reconcileNetworks(ctx context.Context, snapshot []docker.NetworkSummary) {
 	log := h.log.WithRecorder(ctx)
 
 	if !h.dockerReady.Load() {
@@ -59,38 +60,88 @@ func (h *Handler) reconcileNetworks(ctx context.Context, networks []docker.Netwo
 	}
 	sort.Strings(regions)
 
-	h.publishInstanceIdentity(ctx)
-	index := newVPCNetworkIndex(h.networksInScope(ctx, networks))
-	for _, region := range regions {
-		index.reserve(region, byRegion[region])
+	// The snapshot was taken before the scan above, and nothing serialises
+	// CreateVpc against this pass: it creates the network first and records
+	// it after. Adoption and the sweep therefore work from different lists.
+	//
+	// Adoption works from a list taken after the scan, so that every record
+	// seen has a network older than the list — the ordering
+	// ensureRegionReconciled keeps for the same reason. Against the snapshot
+	// a VPC created in between is a record naming a network the index lacks:
+	// nothing adopts it, its name is refused on create, and it is written
+	// unbacked with reconciledAll then vouching for it until Docker next
+	// reappears.
+	//
+	// The sweep keeps to the snapshot. A network in the later list only is
+	// newer than the scan, and its record may be on its way; swept, it would
+	// leave that record naming a network that is gone, which is worse than
+	// unbacked. The snapshot serves both when the daemon cannot be listed now.
+	listed := snapshot
+	if h.docker != nil {
+		if fresh, err := h.docker.ListNetworks(ctx, serviceName); err == nil {
+			listed = fresh
+		} else {
+			log.Warn("reconcile networks: list networks after the store scan; using the snapshot taken before it",
+				zap.Error(err))
+		}
 	}
+
+	index := h.indexNetworks(ctx, listed, byRegion)
 	for _, region := range regions {
-		h.reconcileRegionNetworks(middleware.ContextWithRegion(ctx, region), region, byRegion[region], index)
+		rctx := middleware.ContextWithRegion(ctx, region)
+		h.adoptRegionNetworks(rctx, region, byRegion[region], index)
+		// An adopted network keeps the --internal flag it was created with,
+		// which a gateway attached or detached since may contradict. This is
+		// the one pass that repairs it: a repair recreates the network under
+		// its containers, which is a startup's to do and not a placement's
+		// (see ensureRegionReconciled).
+		h.reconcileVPCNetworkIsolation(rctx)
+		h.joinRegionNetworks(rctx)
 	}
 	// Only now is a network known to be unclaimed: by no VPC in any region.
-	h.removeOrphanedNetworks(ctx, index.unclaimed(), h.orphanLogPrefix())
+	h.removeOrphanedNetworks(ctx, olderThanScan(index.unclaimed(), snapshot), h.orphanLogPrefix())
 	h.reconciledAll.Store(true)
 }
 
-// reconcileRegionNetworks is one region's share of a reconcile pass: the
-// strategy matches the region's records to networks in the index and creates
-// what is missing, the isolation pass brings each backed network in line with
-// the region's gateways, and Overcast joins every network the records name.
+// olderThanScan narrows unclaimed to the networks snapshot already held:
+// those that existed before the store scan, so that a record naming one, had
+// there been one, would have been seen.
+func olderThanScan(unclaimed map[string]*docker.NetworkSummary, snapshot []docker.NetworkSummary) map[string]*docker.NetworkSummary {
+	out := make(map[string]*docker.NetworkSummary, len(unclaimed))
+	for i := range snapshot {
+		if n, ok := unclaimed[snapshot[i].ID]; ok {
+			out[snapshot[i].ID] = n
+		}
+	}
+	return out
+}
+
+// indexNetworks builds the index a pass adopts from: the daemon's snapshot
+// narrowed to the networks this instance may act on, knowing every VPC the
+// store holds in every region. The instance identity is published first, so
+// that the narrowing has an identity to compare owners against.
+func (h *Handler) indexNetworks(ctx context.Context, networks []docker.NetworkSummary, byRegion map[string][]*VPC) *vpcNetworkIndex {
+	h.publishInstanceIdentity(ctx)
+	return newVPCNetworkIndex(h.networksInScope(ctx, networks), byRegion)
+}
+
+// adoptRegionNetworks is one region's share of a pass: the strategy matches
+// the region's records to networks in the index and creates what is missing.
 // ctx carries the region, so every store read and write here lands in its
 // partition.
-func (h *Handler) reconcileRegionNetworks(ctx context.Context, region string, vpcs []*VPC, index *vpcNetworkIndex) {
-	log := h.log.WithRecorder(ctx)
-
+func (h *Handler) adoptRegionNetworks(ctx context.Context, region string, vpcs []*VPC, index *vpcNetworkIndex) {
 	index.enter(region)
 	h.vpcStrategy.Reconcile(ctx, vpcs, index)
+}
 
-	// An adopted network keeps the --internal flag it was created with, which
-	// a gateway attached or detached since may contradict.
-	h.reconcileVPCNetworkIsolation(ctx)
+// joinRegionNetworks attaches Overcast to every network the region's records
+// name. Adoption takes networks that already existed, so joining only on
+// create would leave Overcast off every network that survived a restart. The
+// records are re-read: the passes before this one may have moved a record
+// onto a new network.
+func (h *Handler) joinRegionNetworks(ctx context.Context) {
+	log := h.log.WithRecorder(ctx)
 
-	// Reconcile adopts networks that already existed, so joining only on create
-	// would leave Overcast off every network that survived a restart. Re-read:
-	// both passes above may have moved a record onto a new network.
 	vpcs, aerr := h.store.listVPCs(ctx)
 	if aerr != nil {
 		log.Error("reconcile networks: list VPCs after reconcile", zap.String("error", aerr.Message))
@@ -101,6 +152,22 @@ func (h *Handler) reconcileRegionNetworks(ctx context.Context, region string, vp
 	}
 }
 
+// regionReconcile is a region's entry in Handler.reconciledRegions: covered
+// by a per-region pass, or — done false — the time a failed attempt may be
+// retried.
+type regionReconcile struct {
+	done    bool
+	retryAt time.Time
+}
+
+// regionReconcileRetry is how long a region waits, after a per-region pass
+// could not read the store or the daemon, before a placement tries again.
+// Every placement into the region asks (dataplane.PlaceInVPC asks twice), and
+// each attempt is a Docker round-trip serialised on reconcileMu, so without
+// the wait a service scaling out during a daemon outage queues single file
+// behind a list call that keeps failing.
+const regionReconcileRetry = 30 * time.Second
+
 // ensureRegionReconciled is the backstop to the full pass: while no full pass
 // has run to the end since Docker last appeared, a region is reconciled on the
 // first placement into it, before the caller reads a record that may name a
@@ -110,20 +177,31 @@ func (h *Handler) reconcileRegionNetworks(ctx context.Context, region string, vp
 //
 // The full pass covers every region the store held when it ran; this catches
 // the case where it could not run at all — the store unreadable at the time —
-// and the window before the router's pass has reached the store. Only this
-// region's VPCs are matched, and the index is discarded rather than swept:
-// what it leaves unclaimed is every other region's network, not litter.
+// and the window between start and the first full pass reaching the store.
+// A full pass on a later Docker reconnect leaves reconciledAll set until it
+// begins, so it hands this no such window; it closes its own by listing the
+// daemon after its store scan. Only this region's VPCs are matched, and the
+// index is discarded rather than swept: what it leaves unclaimed is every
+// other region's network, not litter.
+//
+// It is narrower than the full pass in one more way, deliberately: it adopts
+// what exists and creates what is missing, and does not repair a network's
+// isolation. A repair recreates the bridge under its containers, and the
+// caller here is an ECS RunTask or a Lambda invoke holding a process-wide
+// lock. A drifted network keeps its flag until the next full pass — the next
+// start, or Docker reappearing — which is where the repair, and the advisory
+// when it fails, already lives.
 func (h *Handler) ensureRegionReconciled(ctx context.Context) {
 	if h.reconciledAll.Load() || !h.dockerReady.Load() || h.docker == nil {
 		return
 	}
 	region := h.store.region(ctx)
-	if _, done := h.reconciledRegions.Load(region); done {
+	if !h.regionReconcileDue(region) {
 		return
 	}
 	h.reconcileMu.Lock()
 	defer h.reconcileMu.Unlock()
-	if _, done := h.reconciledRegions.Load(region); done || h.reconciledAll.Load() {
+	if h.reconciledAll.Load() || !h.regionReconcileDue(region) {
 		return // the full pass, or another placement, got here first
 	}
 	log := h.log.WithRecorder(ctx)
@@ -137,26 +215,45 @@ func (h *Handler) ensureRegionReconciled(ctx context.Context) {
 	byRegion, aerr := h.store.vpcsByRegion(ctx)
 	if aerr != nil {
 		log.Error("reconcile networks: list VPCs on first use of a region",
-			zap.String("region", region), zap.String("error", aerr.Message))
+			zap.String("region", region), zap.String("error", aerr.Message),
+			zap.Duration("retry_after", regionReconcileRetry))
+		h.deferRegionReconcile(region)
 		return
 	}
 	networks, err := h.docker.ListNetworks(ctx, serviceName)
 	if err != nil {
-		// Not marked: the next placement tries again.
 		log.Warn("reconcile networks: list networks on first use of a region",
-			zap.String("region", region), zap.Error(err))
+			zap.String("region", region), zap.Error(err),
+			zap.Duration("retry_after", regionReconcileRetry))
+		h.deferRegionReconcile(region)
 		return
 	}
 	vpcs := byRegion[region]
 	log.Info("reconcile networks: region not covered since Docker appeared — reconciling it on first use",
 		zap.String("region", region), zap.Int("vpcs", len(vpcs)))
-	h.publishInstanceIdentity(ctx)
-	index := newVPCNetworkIndex(h.networksInScope(ctx, networks))
-	for r, others := range byRegion {
-		index.reserve(r, others)
+	index := h.indexNetworks(ctx, networks, byRegion)
+	h.adoptRegionNetworks(ctx, region, vpcs, index)
+	h.joinRegionNetworks(ctx)
+	h.reconciledRegions.Store(region, regionReconcile{done: true})
+}
+
+// regionReconcileDue reports whether region still needs a per-region pass:
+// none has covered it since the last full pass started, and no failed attempt
+// is still holding it back.
+func (h *Handler) regionReconcileDue(region string) bool {
+	v, ok := h.reconciledRegions.Load(region)
+	if !ok {
+		return true
 	}
-	h.reconcileRegionNetworks(ctx, region, vpcs, index)
-	h.reconciledRegions.Store(region, struct{}{})
+	r := v.(regionReconcile)
+	return !r.done && !h.clk.Now().Before(r.retryAt)
+}
+
+// deferRegionReconcile records a failed attempt on region: until
+// regionReconcileRetry has passed, a placement answers from the record as it
+// stands rather than asking the daemon again.
+func (h *Handler) deferRegionReconcile(region string) {
+	h.reconciledRegions.Store(region, regionReconcile{retryAt: h.clk.Now().Add(regionReconcileRetry)})
 }
 
 // orphanLogPrefix names the strategy in the orphan sweep's log lines, as each
