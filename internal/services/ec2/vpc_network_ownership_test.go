@@ -18,11 +18,13 @@ package ec2
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -249,5 +251,121 @@ func TestCreateDockerVPCNetwork_stampsTheInstanceLabel(t *testing.T) {
 	if labels[docker.LabelManaged] != "true" || labels[docker.LabelService] != "ec2" ||
 		labels[docker.LabelResourceID] != "vpc-1" || labels["overcast.vpc-id"] != "vpc-1" {
 		t.Errorf("the standard labels are not intact: %v", labels)
+	}
+}
+
+// ─── the flip lock's key ────────────────────────────────────────────────────
+
+// A flip removes the network and creates it again, so the ID the lock was taken
+// on is gone by the time renameVPCNetwork moves the records onto the successor.
+// Keyed by ID, the holder would go on holding a mutex nothing will ever look up
+// again — and a sharer arriving in the window between the recreate and the
+// record write would take a different, free mutex and walk straight into the
+// same endpoints.
+//
+// Keyed by the network's name, which recreateDockerVPCNetwork preserves, the
+// successor resolves to the same key and the exclusion holds all the way
+// through record().
+func TestLockVPCNetwork_holdsAcrossTheSuccessorIDWindow(t *testing.T) {
+	daemon := newOwnershipDaemon(t)
+	h := hostHandler(t, daemon, "shared")
+	ctx := context.Background()
+
+	// Two VPCs sharing one Docker network, as the shared strategy produces.
+	const netName = "overcast-vpc-vpc-a"
+	for _, id := range []string{"vpc-a", "vpc-b"} {
+		if aerr := h.store.putVPC(ctx, &VPC{
+			VpcID: id, CidrBlock: "10.1.0.0/16",
+			DockerNetworkID: "net-1", NetworkStatus: vpcNetworkStatusOK,
+		}); aerr != nil {
+			t.Fatalf("putVPC: %v", aerr.Message)
+		}
+	}
+	daemon.mu.Lock()
+	for _, id := range []string{"net-1", "net-2"} {
+		daemon.inspects[id] = docker.NetworkInspect{ID: id, Name: netName, Driver: docker.DefaultNetworkDriver}
+	}
+	daemon.mu.Unlock()
+
+	_, unlock, aerr := h.lockVPCNetwork(ctx, "vpc-a")
+	if aerr != nil {
+		t.Fatalf("lockVPCNetwork(vpc-a): %v", aerr.Message)
+	}
+
+	// The flip completes: the network is recreated under the same name with a
+	// new ID, and the records move. This is the window — the holder is still
+	// inside record(), and its lock was taken on net-1.
+	for _, id := range []string{"vpc-a", "vpc-b"} {
+		vpc, _ := h.store.getVPC(ctx, id)
+		vpc.DockerNetworkID = "net-2"
+		if aerr := h.store.putVPC(ctx, vpc); aerr != nil {
+			t.Fatalf("putVPC: %v", aerr.Message)
+		}
+	}
+
+	// The sharer arrives now, resolving net-2.
+	acquired := make(chan struct{})
+	go func() {
+		_, unlockB, aerr := h.lockVPCNetwork(context.Background(), "vpc-b")
+		if aerr == nil {
+			unlockB()
+		}
+		close(acquired)
+	}()
+
+	select {
+	case <-acquired:
+		t.Fatal("the sharer acquired the lock while the flip still held it — the successor ID " +
+			"resolved to a different mutex, which is the bug this keying exists to prevent")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	unlock()
+	select {
+	case <-acquired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the sharer never acquired the lock after it was released")
+	}
+}
+
+// A VPC on a genuinely different network must not be made to wait on this one.
+func TestLockVPCNetwork_differentNetworksDoNotContend(t *testing.T) {
+	daemon := newOwnershipDaemon(t)
+	h := hostHandler(t, daemon, "strict")
+	ctx := context.Background()
+
+	for i, id := range []string{"vpc-a", "vpc-b"} {
+		netID := fmt.Sprintf("net-%d", i+1)
+		if aerr := h.store.putVPC(ctx, &VPC{
+			VpcID: id, CidrBlock: fmt.Sprintf("10.%d.0.0/16", i+1),
+			DockerNetworkID: netID, NetworkStatus: vpcNetworkStatusOK,
+		}); aerr != nil {
+			t.Fatalf("putVPC: %v", aerr.Message)
+		}
+		daemon.mu.Lock()
+		daemon.inspects[netID] = docker.NetworkInspect{
+			ID: netID, Name: "overcast-vpc-" + id, Driver: docker.DefaultNetworkDriver,
+		}
+		daemon.mu.Unlock()
+	}
+
+	_, unlockA, aerr := h.lockVPCNetwork(ctx, "vpc-a")
+	if aerr != nil {
+		t.Fatalf("lockVPCNetwork(vpc-a): %v", aerr.Message)
+	}
+	defer unlockA()
+
+	done := make(chan struct{})
+	go func() {
+		_, unlockB, aerr := h.lockVPCNetwork(context.Background(), "vpc-b")
+		if aerr == nil {
+			unlockB()
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a VPC on a different network waited on this one's lock")
 	}
 }

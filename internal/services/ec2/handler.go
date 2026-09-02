@@ -44,12 +44,6 @@ type Handler struct {
 	// networks for litter. See docker.LabelInstance.
 	instances *serviceutil.InstanceDomain
 
-	// netFlipLocks serialises the recreate of a VPC's Docker network per
-	// Docker network ID, so two gateway calls on VPCs sharing a network, or a
-	// call racing the startup reconcile, cannot both remove and recreate the
-	// same subnet. See lockVPCNetwork.
-	netFlipLocks sync.Map // dockerNetworkID -> *sync.Mutex
-
 	// netProblems records, per VPC ID, a dataplane.VPCNetworkProblem: a VPC
 	// whose Docker network could not be brought to the isolation its gateway
 	// state calls for. Read by Service.NetworkProblems for the health

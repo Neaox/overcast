@@ -24,8 +24,11 @@ package docker
 //
 // **The key is the network name, not its id.** An id is exactly the thing a
 // recreate changes, so a lock keyed by id stops protecting the network at the
-// moment it matters most; the name is stable across the whole operation and is
-// unique per daemon.
+// moment it matters most: the holder keeps a mutex nothing will look up again,
+// and whoever arrives once the records name the successor takes a different,
+// free one. The name is stable across the whole operation, unique per daemon,
+// and preserved by every recreate path here — which also bounds the map by the
+// number of networks rather than growing it by one per flip.
 //
 // Process-local. Two Overcast processes on one daemon are not serialised by
 // this — that is what the ownership label is for (LabelInstance): they do not

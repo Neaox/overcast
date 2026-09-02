@@ -7,7 +7,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"sync"
 
 	"go.uber.org/zap"
 
@@ -391,16 +390,34 @@ func vpcNetworkFlipError(attach bool, vpcID string, err error) *protocol.AWSErro
 	}
 }
 
-// lockVPCNetwork returns vpcID's current record with its Docker network's
-// flip lock held. The lock is per network ID rather than per VPC because
-// sharers must contend with each other: two gateway calls on two VPCs of one
-// network, or a call racing the startup reconcile, would otherwise both
-// disconnect the same endpoints and both try to remove and recreate the same
-// subnet, with the loser marking every record on it unbacked. The record is
-// re-read after the lock is taken — the network the caller resolved may have
-// been replaced while it waited — and the acquisition restarts against the
-// new one when it has. A VPC with no network needs no lock; unlock is then a
-// no-op.
+// lockVPCNetwork returns vpcID's current record with its Docker network's flip
+// lock held.
+//
+// The lock is per network rather than per VPC because sharers must contend with
+// each other: two gateway calls on two VPCs of one network, or a call racing
+// the startup reconcile, would otherwise both disconnect the same endpoints and
+// both try to remove and recreate the same subnet, with the loser marking every
+// record on it unbacked.
+//
+// **Keyed by the network's name, not its ID, and that is the whole point.** A
+// flip removes the network and creates it again, so the ID it started with is
+// gone by the time renameVPCNetwork moves the records onto the successor — and
+// a holder keyed by the old ID goes on holding a mutex nothing else will ever
+// look up. A sharer arriving in the window between the recreate and the record
+// write would take a different, free mutex and proceed straight into the same
+// endpoints. The name survives the recreate (recreateDockerVPCNetwork keeps
+// it), so a successor ID resolves to the same key and the exclusion holds all
+// the way through record().
+//
+// It is also the lock docker.EnsureNetwork and `overcast network reset` take,
+// for the same networks. One lock, or the startup verification and the gateway
+// flip would each be serialised only against themselves.
+//
+// The record is re-read after the lock is taken — the network the caller
+// resolved may have been replaced while it waited — and the acquisition
+// restarts only when the replacement is a *different network*; a new ID under
+// the same name is the flip this lock just waited out, and re-locking would
+// spin. A VPC with no network needs no lock; unlock is then a no-op.
 func (h *Handler) lockVPCNetwork(ctx context.Context, vpcID string) (*VPC, func(), *protocol.AWSError) {
 	const attempts = 8
 	for range attempts {
@@ -408,24 +425,52 @@ func (h *Handler) lockVPCNetwork(ctx context.Context, vpcID string) (*VPC, func(
 		if aerr != nil {
 			return nil, func() {}, aerr
 		}
-		if vpc.DockerNetworkID == "" {
+		if vpc.DockerNetworkID == "" || vpc.IsDefault {
+			// The default VPC's network is the shared data plane, which no
+			// gateway change ever recreates (defaultVPCGuard). Nothing to
+			// serialise, and asking the daemon its name would be a Docker call
+			// made purely to lock something that is never touched.
 			return vpc, func() {}, nil
 		}
-		mu, _ := h.netFlipLocks.LoadOrStore(vpc.DockerNetworkID, &sync.Mutex{})
-		lock := mu.(*sync.Mutex)
-		lock.Lock()
+		key := h.vpcNetworkLockKey(ctx, vpc.DockerNetworkID)
+		unlock := docker.LockNetwork(key)
 		current, aerr := h.store.getVPC(ctx, vpcID)
 		if aerr != nil {
-			lock.Unlock()
+			unlock()
 			return nil, func() {}, aerr
 		}
-		if current.DockerNetworkID == vpc.DockerNetworkID {
-			return current, lock.Unlock, nil
+		if current.DockerNetworkID == vpc.DockerNetworkID ||
+			h.vpcNetworkLockKey(ctx, current.DockerNetworkID) == key {
+			return current, unlock, nil
 		}
-		lock.Unlock() // moved under us: lock the network it is on now
+		unlock() // a different network now: lock the one it is actually on
 	}
 	return nil, func() {}, protocol.Wrap(protocol.ErrInternalError,
 		fmt.Errorf("vpc %s: its Docker network kept changing while waiting to lock it", vpcID))
+}
+
+// vpcNetworkLockKey is the name of the network with this ID — the key
+// lockVPCNetwork serialises on.
+//
+// Falls back to the ID when the network cannot be inspected. That is the
+// degenerate case in both directions: a network the daemon will not describe is
+// one the flip is about to fail on anyway, and keying by ID is still correct
+// exclusion for as long as that ID is what the records name.
+//
+// An empty ID has no network to lock and gets a key of its own that nothing
+// else will collide with.
+func (h *Handler) vpcNetworkLockKey(ctx context.Context, netID string) string {
+	if netID == "" {
+		return ""
+	}
+	if h.docker == nil {
+		return netID
+	}
+	info, err := h.docker.InspectNetwork(ctx, netID)
+	if err != nil || info == nil || info.Name == "" {
+		return netID
+	}
+	return info.Name
 }
 
 // gatewayView reads, once, what a flip decision needs: every VPC record, and
