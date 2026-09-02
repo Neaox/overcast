@@ -111,8 +111,9 @@ gateways are CRUD metadata and nothing else.
 | | |
 | --- | --- |
 | New setting | `OVERCAST_VPC_EGRESS=open \| routed \| none`, default **`open`** |
-| `open` | Every network Overcast creates is routable. Every container has egress |
+| `open` | The control plane and the default data plane are routable, so every container has egress |
 | `none` | Every network Overcast creates is `--internal`. Nothing reaches outside the machine; the Runtime API still works |
+| A VPC network under `open` | Still `--internal` when the VPC has no internet gateway. Row E means that costs nothing — egress comes from the routable control plane — so the flag stays honest about the template and `routed` inherits a bit that means something |
 | `routed` | Egress per subnet from its route table. **Refused at startup** — see #1571 |
 | Deprecated | `OVERCAST_CONTROL_PLANE_INTERNAL` stays, still wins where pinned, logs a deprecation notice |
 | Decoupled | The Runtime-API reachability probe decides only whether an isolated control plane is *deliverable*, never whether egress is *wanted* |
@@ -129,6 +130,15 @@ mode wearing this one's name. `open` would grant egress the route tables
 withhold; `none` would withhold egress they grant. Either silently contradicts
 the template the operator pointed at, which is worse than a startup error naming
 what is missing.
+
+**Why the VPC bridge keeps following its gateway under `open`.** Flattening it
+would buy nothing and cost two things. Nothing, because row E says a container
+in an `--internal` VPC takes its default route from the routable control plane
+and reaches the internet regardless — measured end-to-end, including a Lambda in
+an isolated subnet getting a 403 from real `sts.us-east-1`. And it would cost
+the flag's honesty about the template, plus the gateway machinery (#1570) that
+keeps it true and that `routed` needs intact. What changed is authority, not the
+bit: the gateway no longer *decides* egress on its own.
 
 **Why `none` isolates the data plane too.** Before this, the default `overcast`
 plane was never `--internal`, so a machine could isolate its control plane and

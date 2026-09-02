@@ -1,5 +1,29 @@
 ---
 title: "Networking and host-based addressing"
+description: "Networking and host-based addressing"
+section: "Getting Started"
+tags:
+  - addressing
+  - based
+  - docs
+  - host
+  - networking
+---
+
+---
+title: "Networking and host-based addressing"
+description: "Networking and host-based addressing"
+section: "Getting Started"
+tags:
+  - addressing
+  - based
+  - docs
+  - host
+  - networking
+---
+
+---
+title: "Networking and host-based addressing"
 description: "Path-style vs Host-routed AWS endpoints, the *.localhost.overcast.sh wildcard DNS option, reaching Overcast from sibling containers, and how VPCs isolate emulated compute."
 section: "Networking"
 tags:
@@ -448,6 +472,13 @@ It is one setting for the whole topology rather than a flag per network,
 because a container sits on two Docker networks at once and takes its default
 route from whichever of them is routable. Isolating one and not the other
 settles nothing.
+
+**A VPC network is still `--internal` when its VPC has no internet gateway**,
+under `open` as before. That costs `open` nothing: the container is also on the
+control plane, which `open` leaves routable, so it has egress either way. The
+flag stays honest about your template instead of being flattened. What changed
+is that it no longer *decides* egress on its own — which is what used to make a
+private subnet behind a NAT gateway indistinguishable from an isolated one.
 
 **Invocations keep working in `none`.** The Lambda Runtime API and
 `AWS_ENDPOINT_URL` calls back into the emulator are not egress — they reach a
