@@ -22,6 +22,7 @@ command that runs it. Everything else is below.
 | [Local VPCs for CDK](./cdk/local-vpc.md) | Letting a local stack create the VPC instead of looking up IDs that change every teardown |
 | [Testcontainers](./testcontainers.md) | Starting Overcast from integration tests |
 | [Migrating from LocalStack](./migration-from-localstack.md) | Swapping the image and keeping your environment block |
+| [LocalStack compatibility matrix](./localstack-compatibility.md) | Every port, URL, hostname, container convention and client tool, with its status |
 
 ## Build against it
 
