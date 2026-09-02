@@ -43,6 +43,10 @@ func (h *Handler) reconcileNetworks(ctx context.Context, networks []docker.Netwo
 	}
 	h.reconcileMu.Lock()
 	defer h.reconcileMu.Unlock()
+	// Whatever an earlier pass established is void: this one runs because
+	// Docker (re)appeared, and what the daemon has now is the question.
+	h.reconciledAll.Store(false)
+	h.reconciledRegions.Clear()
 
 	byRegion, aerr := h.store.vpcsByRegion(ctx)
 	if aerr != nil {
@@ -58,16 +62,14 @@ func (h *Handler) reconcileNetworks(ctx context.Context, networks []docker.Netwo
 	h.publishInstanceIdentity(ctx)
 	index := newVPCNetworkIndex(h.networksInScope(ctx, networks))
 	for _, region := range regions {
-		index.reserve(byRegion[region])
+		index.reserve(region, byRegion[region])
 	}
 	for _, region := range regions {
-		h.reconcileRegionNetworks(middleware.ContextWithRegion(ctx, region), byRegion[region], index)
+		h.reconcileRegionNetworks(middleware.ContextWithRegion(ctx, region), region, byRegion[region], index)
 	}
 	// Only now is a network known to be unclaimed: by no VPC in any region.
 	h.removeOrphanedNetworks(ctx, index.unclaimed(), h.orphanLogPrefix())
-	for _, region := range regions {
-		h.reconciledRegions.Store(region, struct{}{})
-	}
+	h.reconciledAll.Store(true)
 }
 
 // reconcileRegionNetworks is one region's share of a reconcile pass: the
@@ -76,9 +78,10 @@ func (h *Handler) reconcileNetworks(ctx context.Context, networks []docker.Netwo
 // the region's gateways, and Overcast joins every network the records name.
 // ctx carries the region, so every store read and write here lands in its
 // partition.
-func (h *Handler) reconcileRegionNetworks(ctx context.Context, vpcs []*VPC, index *vpcNetworkIndex) {
+func (h *Handler) reconcileRegionNetworks(ctx context.Context, region string, vpcs []*VPC, index *vpcNetworkIndex) {
 	log := h.log.WithRecorder(ctx)
 
+	index.enter(region)
 	h.vpcStrategy.Reconcile(ctx, vpcs, index)
 
 	// An adopted network keeps the --internal flag it was created with, which
@@ -98,18 +101,20 @@ func (h *Handler) reconcileRegionNetworks(ctx context.Context, vpcs []*VPC, inde
 	}
 }
 
-// ensureRegionReconciled is the backstop to the startup pass: a region no pass
-// has covered since this process started is reconciled on the first placement
-// into it, before the caller reads a record that may name a network the
-// daemon no longer has. After that it costs a map lookup.
+// ensureRegionReconciled is the backstop to the full pass: while no full pass
+// has run to the end since Docker last appeared, a region is reconciled on the
+// first placement into it, before the caller reads a record that may name a
+// network the daemon no longer has. Once a full pass has completed this is a
+// single atomic load, and until then a region already covered costs a map
+// lookup.
 //
-// The startup pass covers every region the store held when it ran; this
-// catches the region it could not see — a record written while it ran, or a
-// store it could not read at the time. Only this region's VPCs are matched,
-// and the index is discarded rather than swept: what it leaves unclaimed is
-// every other region's network, not litter.
+// The full pass covers every region the store held when it ran; this catches
+// the case where it could not run at all — the store unreadable at the time —
+// and the window before the router's pass has reached the store. Only this
+// region's VPCs are matched, and the index is discarded rather than swept:
+// what it leaves unclaimed is every other region's network, not litter.
 func (h *Handler) ensureRegionReconciled(ctx context.Context) {
-	if !h.dockerReady.Load() || h.docker == nil {
+	if h.reconciledAll.Load() || !h.dockerReady.Load() || h.docker == nil {
 		return
 	}
 	region := h.store.region(ctx)
@@ -118,11 +123,23 @@ func (h *Handler) ensureRegionReconciled(ctx context.Context) {
 	}
 	h.reconcileMu.Lock()
 	defer h.reconcileMu.Unlock()
-	if _, done := h.reconciledRegions.Load(region); done {
-		return // the startup pass, or another placement, got here first
+	if _, done := h.reconciledRegions.Load(region); done || h.reconciledAll.Load() {
+		return // the full pass, or another placement, got here first
 	}
 	log := h.log.WithRecorder(ctx)
 
+	// Every region's VPCs, not this one's: the index has to know which VPCs
+	// the networks it holds still belong to, wherever those VPCs are. The
+	// store is read before the daemon so that every record seen has a network
+	// older than the snapshot — CreateVpc creates the network first and
+	// records it after, and the other order could take a VPC created in
+	// between for one whose network is missing.
+	byRegion, aerr := h.store.vpcsByRegion(ctx)
+	if aerr != nil {
+		log.Error("reconcile networks: list VPCs on first use of a region",
+			zap.String("region", region), zap.String("error", aerr.Message))
+		return
+	}
 	networks, err := h.docker.ListNetworks(ctx, serviceName)
 	if err != nil {
 		// Not marked: the next placement tries again.
@@ -130,23 +147,15 @@ func (h *Handler) ensureRegionReconciled(ctx context.Context) {
 			zap.String("region", region), zap.Error(err))
 		return
 	}
-	// Every region's VPCs, not this one's: the index has to know which VPCs
-	// the networks it holds still belong to, wherever those VPCs are.
-	byRegion, aerr := h.store.vpcsByRegion(ctx)
-	if aerr != nil {
-		log.Error("reconcile networks: list VPCs on first use of a region",
-			zap.String("region", region), zap.String("error", aerr.Message))
-		return
-	}
 	vpcs := byRegion[region]
-	log.Info("reconcile networks: region not covered since start — reconciling it on first use",
+	log.Info("reconcile networks: region not covered since Docker appeared — reconciling it on first use",
 		zap.String("region", region), zap.Int("vpcs", len(vpcs)))
 	h.publishInstanceIdentity(ctx)
 	index := newVPCNetworkIndex(h.networksInScope(ctx, networks))
-	for _, others := range byRegion {
-		index.reserve(others)
+	for r, others := range byRegion {
+		index.reserve(r, others)
 	}
-	h.reconcileRegionNetworks(ctx, vpcs, index)
+	h.reconcileRegionNetworks(ctx, region, vpcs, index)
 	h.reconciledRegions.Store(region, struct{}{})
 }
 
