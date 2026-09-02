@@ -326,3 +326,46 @@ func TestSeedPersistedFunctionImages_deletedAndRecreatedDuringPull(t *testing.T)
 		t.Fatalf("replacement = %#v, want recreated-revision/Active", got)
 	}
 }
+
+func TestSeedPersistedFunctionImages_SettlesUpdateInterruptedByRestart(t *testing.T) {
+	// Given: an image function whose update pull was still running when the
+	// last session stopped, so it is persisted InProgress. Nothing else will
+	// ever settle it — and until it does, every later update is refused with
+	// ResourceConflictException.
+	ls := newLambdaStore(state.NewMemoryStore(), "us-east-1", clock.New())
+	fn := &Function{
+		Name:             "interrupted-fn",
+		ARN:              "arn:aws:lambda:us-east-1:000000000000:function:interrupted-fn",
+		Runtime:          "image",
+		PackageType:      "Image",
+		ImageUri:         "000000000000.dkr.ecr.us-east-1.amazonaws.com/demo:v2",
+		State:            "Active",
+		RevisionId:       "interrupted-revision",
+		LastUpdateStatus: lastUpdateInProgress,
+	}
+	if aerr := ls.putFunction(context.Background(), fn); aerr != nil {
+		t.Fatalf("seed: %v", aerr)
+	}
+
+	srv := fakeDockerServer(t, nil)
+	defer srv.Close()
+	dc := docker.NewClient("tcp://"+srv.Listener.Addr().String(), zap.NewNop())
+	cr := &ContainerRuntime{docker: dc, logger: zap.NewNop(), cfg: &config.Config{Region: "us-east-1"}}
+	log := serviceutil.NewServiceLogger(zap.NewNop(), "lambda")
+	svc := &Service{ls: ls, log: log, handler: &Handler{ls: ls, log: log}}
+
+	// When: startup re-runs the pull that was interrupted.
+	svc.seedPersistedFunctionImages(cr)
+
+	// Then: the update settles on its result, and the function is updatable again.
+	got, aerr := ls.getFunction(context.Background(), "interrupted-fn")
+	if aerr != nil {
+		t.Fatalf("getFunction: %v", aerr)
+	}
+	if got.LastUpdateStatus != lastUpdateSuccessful {
+		t.Errorf("LastUpdateStatus = %q, want %q", got.LastUpdateStatus, lastUpdateSuccessful)
+	}
+	if got.State != "Active" {
+		t.Errorf("State = %q, want Active", got.State)
+	}
+}

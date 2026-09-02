@@ -1142,6 +1142,26 @@ func (s *Service) seedPersistedFunctionImages(cr *ContainerRuntime) {
 				zap.Error(pullErr))
 		}
 
+		// Reconcile an update left mid-flight by the last session. Its pull is
+		// the one just re-run, so its result settles the record — and the
+		// record has to settle: an update stuck InProgress refuses every later
+		// one with ResourceConflictException, for ever. Same fresh-read merge
+		// as the Pending case below, keyed on the revision the update wrote.
+		if fn.LastUpdateStatus == lastUpdateInProgress && s.handler != nil {
+			fnCtx := middleware.ContextWithRegion(ctx, regionFromFunctionARN(fn.ARN))
+			status, reason, reasonCode := lastUpdateSuccessful, "", ""
+			if pullErr != nil {
+				status = lastUpdateFailed
+				reason = "Failed to pull container image: " + pullErr.Error()
+				reasonCode = imagePullReasonCode(pullErr)
+			}
+			if settled := s.handler.settleFunctionUpdate(fnCtx, fn.Name, fn.RevisionId, status, reason, reasonCode); settled != nil {
+				s.log.Info("settled function update interrupted by restart",
+					zap.String("function", fn.Name),
+					zap.String("last_update_status", status))
+			}
+		}
+
 		// Reconcile functions stuck in Pending from a previous session. The
 		// pulls above can take a long time and requests are already being
 		// served, so the startup snapshot may be stale: the function can have
