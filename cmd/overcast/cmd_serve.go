@@ -782,6 +782,34 @@ func logLocalStackAliases(logger *zap.Logger, cfg *config.Config) {
 		)
 	}
 
+	if cfg.LocalStackVolumeDataDir != "" {
+		logger.Info(
+			fmt.Sprintf("state directory taken from the volume mounted at %s — LocalStack's volume path, "+
+				"and the only one mounted; set OVERCAST_DATA_DIR (or mount at /data) to choose another",
+				cfg.LocalStackVolumeDataDir),
+			zap.String("dataDir", cfg.LocalStackVolumeDataDir),
+		)
+	}
+
+	if cfg.DockerSocketSource != "" {
+		logger.Info(
+			fmt.Sprintf("Docker endpoint taken from %s: %s — set LAMBDA_DOCKER_SOCKET to override",
+				cfg.DockerSocketSource, cfg.LambdaDockerSocket),
+			zap.String("dockerSocket", cfg.LambdaDockerSocket),
+			zap.String("dockerSocketSource", cfg.DockerSocketSource),
+		)
+	}
+	if cfg.DockerHostUnsupported != "" {
+		logger.Warn(
+			fmt.Sprintf("DOCKER_HOST=%q names a transport Overcast cannot dial (unix://, tcp://, npipe:// "+
+				"and http:// are the supported forms) — falling back to %s, which is a different daemon "+
+				"than the one you configured, or none at all; set LAMBDA_DOCKER_SOCKET to a reachable endpoint",
+				cfg.DockerHostUnsupported, cfg.LambdaDockerSocket),
+			zap.String("dockerHost", cfg.DockerHostUnsupported),
+			zap.String("dockerSocket", cfg.LambdaDockerSocket),
+		)
+	}
+
 	ignored := append([]string(nil), cfg.IgnoredLocalStackVars...)
 	sort.Strings(ignored)
 	for _, name := range ignored {
