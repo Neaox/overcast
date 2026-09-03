@@ -89,4 +89,4 @@ overcast config
 
 - [Running the daemon](./daemon.md) — `serve`, `start`, `stop`, `restart`, `logs`
 - [Debug endpoints](../debug-endpoints.md) — the HTTP surface these commands read
-- [Configuration reference](../configuration.md) — what `overcast config` is showing you
+- [Environment variable reference](../configuration/reference.md) — what `overcast config` is showing you

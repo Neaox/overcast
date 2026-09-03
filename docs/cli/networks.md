@@ -24,7 +24,7 @@ overcast network reset --dry-run # the repair plan, before doing it
 ```
 
 Part of the [CLI reference](../cli.md). Background:
-[Network state verification](../networking.md#network-state-verification).
+[Network state verification](../networking/network-state.md).
 
 ## `overcast network status`
 
@@ -96,5 +96,5 @@ ask. You will only meet this on the first start after upgrading.
 ## Related
 
 - [Networking and host-based addressing](../networking.md) — the network layout these commands police
-- [Configuration reference](../configuration.md) — `OVERCAST_VPC_EGRESS` and the other network variables
+- [Environment variable reference](../configuration/reference.md) — `OVERCAST_VPC_EGRESS` and the other network variables
 - [Troubleshooting](../troubleshooting.md) — a symptom, and where its answer lives

@@ -27,7 +27,7 @@ Part of the [CLI reference](../cli.md).
 ## `overcast serve`
 
 Emulator configuration is by environment variable — see the
-[configuration reference](../configuration.md). `serve` itself takes three
+[environment variable reference](../configuration/reference.md). `serve` itself takes three
 flags, for the web console and the optional mDNS bridge.
 
 | Flag | Default | Description |
@@ -127,5 +127,5 @@ overcast logs ci --follow --tail 500
 ## Related
 
 - [Checking a running daemon](./inspect.md) — `status`, `wait`, `services`, `config`
-- [Configuration reference](../configuration.md) — every environment variable `serve` reads
+- [Environment variable reference](../configuration/reference.md) — every environment variable `serve` reads
 - [Storage and persistence](../storage.md) — what `--state` and `--data-dir` choose between

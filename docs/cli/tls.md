@@ -59,4 +59,4 @@ overcast trust uninstall
 
 - [HTTPS and HTTP/2](../https.md) — why the console wants HTTP/2, and the per-platform detail
 - [Reaching Overcast by name](./bridge.md) — `overcast bridge`
-- [Configuration reference](../configuration.md) — `OVERCAST_TLS`, `OVERCAST_CA_DIR` and the rest
+- [Environment variable reference](../configuration/reference.md) — `OVERCAST_TLS`, `OVERCAST_CA_DIR` and the rest

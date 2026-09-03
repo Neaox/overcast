@@ -62,4 +62,4 @@ alias awslocal='overcast aws'   # LocalStack muscle memory
 
 - [Using AWS SDKs and CLI](../sdk-cli.md) — the full walkthrough, with SDK examples
 - [Migrating from LocalStack](../migration-from-localstack.md) — `awslocal` and the rest of the swap
-- [Configuration reference](../configuration.md) — `OVERCAST_PORT` and every other environment variable
+- [Environment variable reference](../configuration/reference.md) — `OVERCAST_PORT` and every other environment variable
