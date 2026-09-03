@@ -65,11 +65,13 @@ func changelogFragment(d inventoryDiff, modelDate string) string {
 		if clause := addedServicesClause(d.AddedServices); clause != "" {
 			fmt.Fprintf(&out, "  %s\n", clause)
 		}
-		out.WriteString("  a signed request to one reaches a protocol-correct `501` marked `x-emulator-unsupported`, in that service's own error envelope, instead of falling through to the S3 fallback and coming back as a bucket or object answer\n")
+		out.WriteString("  a signed request to one reaches a protocol-correct `501` in that service's own error envelope, instead of the S3 fallback's bucket-or-object answer\n")
 	}
 	if counts, effects := d.changedClauses(); len(counts) > 0 {
-		fmt.Fprintf(&out, "~ [router] the pinned AWS API models moved to %s.\n  %s\n  %s\n",
-			modelDate, joinClauses(counts), joinEffects(effects))
+		fmt.Fprintf(&out, "~ [router] the pinned AWS API models moved to %s.\n", modelDate)
+		for _, line := range packDetail(joinClauses(counts), joinEffects(effects)) {
+			fmt.Fprintf(&out, "  %s\n", line)
+		}
 	}
 	return out.String()
 }
@@ -88,19 +90,19 @@ func changelogFragment(d inventoryDiff, modelDate string) string {
 func (d inventoryDiff) changedClauses() (counts, effects []string) {
 	if n := len(d.RemovedOperations); n > 0 {
 		counts = append(counts, countLabel(n, "operation AWS retired from its models is no longer claimed", "operations AWS retired from its models are no longer claimed"))
-		effects = append(effects, "an operation that is no longer claimed goes back to the S3 fallback")
+		effects = append(effects, "an unclaimed operation goes back to the S3 fallback")
 	}
 	if n := len(d.TraitChanges); n > 0 {
 		counts = append(counts, countLabel(n, "operation changed protocol traits", "operations changed protocol traits"))
-		effects = append(effects, "a protocol-trait change moves that operation's error envelope")
+		effects = append(effects, "a trait change moves the error envelope")
 	}
 	if n := len(d.BindingChanges); n > 0 {
 		counts = append(counts, countLabel(n, "changed an HTTP or target binding", "changed an HTTP or target binding"))
-		effects = append(effects, "a binding change moves which request shape reaches the operation at all")
+		effects = append(effects, "a binding change moves which request shape reaches it")
 	}
 	if n := len(d.AddedCollisions) + len(d.RemovedCollisions); n > 0 {
 		counts = append(counts, countLabel(n, "path binding changed which services share it", "path bindings changed which services share them"))
-		effects = append(effects, "a binding shared by several services is answered without the credential-scope check an unshared one gets, because the models no longer name a single owner for it")
+		effects = append(effects, "a shared binding skips the credential-scope check, having no single owner")
 	}
 	return counts, effects
 }
@@ -109,6 +111,42 @@ func (d inventoryDiff) changedClauses() (counts, effects []string) {
 func joinEffects(effects []string) string {
 	joined := strings.Join(effects, "; ")
 	return strings.ToUpper(joined[:1]) + joined[1:]
+}
+
+// detailLineMax mirrors DETAIL_LINE_MAX in scripts/changelog.py: a continuation
+// line is a note, not a paragraph. Kept here rather than read from there
+// because this generator has to produce a fragment the gate accepts, and
+// TestChangelogFragment_passesTheFragmentLinter runs the real linter over the
+// fragment to prove the two have not drifted.
+const detailLineMax = 200
+
+// packDetail folds sentences into detail lines within the linter's per-line
+// cap, splitting on the "; " the effects sentence is built from rather than
+// mid-clause. A clause that will not fit even alone is emitted whole: dropping
+// it would lose a count the entry exists to report, and the linter failing
+// loudly is the better outcome.
+func packDetail(sentences ...string) []string {
+	var out []string
+	for _, sentence := range sentences {
+		if len(sentence) <= detailLineMax {
+			out = append(out, sentence)
+			continue
+		}
+		line := ""
+		for _, clause := range strings.Split(sentence, "; ") {
+			switch {
+			case line == "":
+				line = clause
+			case len(line)+2+len(clause) <= detailLineMax:
+				line += "; " + clause
+			default:
+				out = append(out, line+";")
+				line = clause
+			}
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 // addedServicesClause names the new services when there are few enough to read,

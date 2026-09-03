@@ -1,19 +1,23 @@
-// Package docslint holds the structural rules for the per-service
-// documentation under docs/services/. It is the mechanical half of
-// docs/dev/service-doc-template.md: the template says what a service page is
-// for, and this says what shape it has to be in for `make docs-check` to pass.
+// Package docslint holds the mechanical rules for published documentation.
+//
+// Two scopes. The structure rules cover docs/services/: it is the mechanical
+// half of docs/dev/service-doc-template.md, where the template says what a
+// service page is for and this says what shape it has to be in for
+// `make docs-check` to pass. The length budget (length.go) and the house-style
+// tells (tells.go) cover every published page.
 //
 // It lives in its own package rather than inside scripts/docs-index.go — the
 // script that calls it — for the same reason internal/docssearch does: a
 // `//go:build ignore` file cannot be unit-tested, and a lint whose rules are
 // untested is a lint that quietly stops meaning anything.
 //
-// Scope is deliberately narrow. Everything here is a *structure* rule that can
-// be decided by looking at the file: which sections exist, in what order, and
-// what is generated. Nothing here judges prose. The content charter
-// (docs/dev/content-charter.md) covers that, and it says why: a linter that
-// grows into a style-bible-as-code stops getting maintained the moment it
-// produces its first annoying false positive.
+// Scope is deliberately narrow. Every rule can be decided by looking at the
+// file: which sections exist, in what order, what is generated, how long the
+// page is, and whether a fixed phrase appears in it. Nothing here judges
+// whether a sentence is good. The content charter (docs/dev/content-charter.md)
+// covers that, and it says why: a linter that grows into a style-bible-as-code
+// stops getting maintained the moment it produces its first annoying false
+// positive.
 package docslint
 
 import (
@@ -127,20 +131,44 @@ var (
 	sentenceEnd = regexp.MustCompile(`[.!?]["')\x60]*(\s|$)`)
 )
 
-// Check runs every rule over the documents it recognises and returns the
-// problems in path order. Documents outside docs/services/ are ignored.
-func Check(docs []Doc) []Problem {
+// Options carries the rules that cannot be compiled in: the tells allowlist,
+// which lives in a file so an exception can be argued for in review without a
+// Go change.
+type Options struct {
+	Allowlist []AllowEntry
+	// WholeCorpus says the caller passed every published page. Only then can
+	// the self-deleting checks run: "this LengthBacklog entry names a page
+	// that no longer exists" is a true statement about the whole tree and a
+	// meaningless one about the single page a unit test lints.
+	WholeCorpus bool
+}
+
+// Check runs every rule with no allowlist. See CheckWith.
+func Check(docs []Doc) []Problem { return CheckWith(docs, Options{}) }
+
+// CheckWith runs every rule over the documents it recognises and returns the
+// problems in path order.
+//
+// Two scopes. The structure rules — sections, ordering, the generated block —
+// apply to docs/services/ only, because they describe one page shape. The
+// length budget and the house-style tells apply to every published page,
+// generated ones included: an operations sub-page is nothing but a table, so it
+// measures zero prose and passes on its merits rather than by name.
+func CheckWith(docs []Doc, opts Options) []Problem {
 	var problems []Problem
 	pending := map[string]bool{}
 	for _, key := range RestructurePending {
 		pending[key] = true
 	}
 	waivedSatisfied := map[string]bool{}
+	seen := map[string]bool{}
+	allowlistUsed := map[string]bool{}
 
 	sorted := append([]Doc(nil), docs...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Path < sorted[j].Path })
 
 	for _, doc := range sorted {
+		seen[doc.Path] = true
 		switch stem, sub, kind := classify(doc.Path); kind {
 		case docLanding:
 			landing, waived := checkLanding(doc, pending[stem])
@@ -153,8 +181,17 @@ func Check(docs []Doc) []Problem {
 		case docIgnored:
 			// Anything outside docs/services/, and the services index itself.
 		}
+		problems = append(problems, checkLength(doc, opts.WholeCorpus)...)
+		problems = append(problems, checkTells(doc, opts.Allowlist)...)
+		for key := range tellHits(doc) {
+			allowlistUsed[key] = true
+		}
 	}
 	problems = append(problems, checkPendingIsStillNeeded(waivedSatisfied)...)
+	if opts.WholeCorpus {
+		problems = append(problems, checkBacklogPathsExist(seen)...)
+		problems = append(problems, checkAllowlistIsStillNeeded(opts.Allowlist, allowlistUsed)...)
+	}
 	return problems
 }
 

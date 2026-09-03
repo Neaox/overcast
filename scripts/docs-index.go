@@ -72,7 +72,7 @@ func main() {
 	if frontmatterChanges > 0 {
 		fatal(fmt.Errorf("%d docs are missing frontmatter; run go run ./scripts/docs-index.go --write-frontmatter", frontmatterChanges))
 	}
-	for _, checkFn := range []func([]docsindex.Doc) error{checkAnchors, checkHeadingIDs, checkExcludedRefs, checkServiceDocStructure} {
+	for _, checkFn := range []func([]docsindex.Doc) error{checkAnchors, checkHeadingIDs, checkExcludedRefs, checkDocStructure} {
 		if err := checkFn(docs); err != nil {
 			fatal(err)
 		}
@@ -183,14 +183,15 @@ func checkExcludedRefs(docs []docsindex.Doc) error {
 	return nil
 }
 
-// checkServiceDocStructure holds every page under docs/services/ to the shape
-// docs/dev/service-doc-template.md describes: required sections, template
-// section order, the generated block last, and the fixed set of sub-page names.
+// checkDocStructure runs internal/docslint over every published page: the
+// service page template under docs/services/ (required sections, section order,
+// the generated block last, the fixed set of sub-page names), and, everywhere,
+// the length budget and the house-style tells.
 //
 // The rules themselves live in internal/docslint, which has tests. This file
 // cannot: it is `//go:build ignore`, which is also why the search scoring moved
 // out to internal/docssearch.
-func checkServiceDocStructure(docs []docsindex.Doc) error {
+func checkDocStructure(docs []docsindex.Doc) error {
 	entries := make([]docslint.Doc, 0, len(docs))
 	for _, doc := range docs {
 		entries = append(entries, docslint.Doc{
@@ -199,7 +200,7 @@ func checkServiceDocStructure(docs []docsindex.Doc) error {
 			BodyLineOffset: doc.BodyLineOffset,
 		})
 	}
-	problems := docslint.Check(entries)
+	problems := docslint.CheckWith(entries, docslint.Options{Allowlist: readTellsAllowlist(), WholeCorpus: true})
 	if len(problems) == 0 {
 		return nil
 	}
@@ -207,7 +208,18 @@ func checkServiceDocStructure(docs []docsindex.Doc) error {
 	for _, p := range problems {
 		lines = append(lines, p.String())
 	}
-	return fmt.Errorf("service docs do not follow the service page template:\n\t%s", strings.Join(lines, "\n\t"))
+	return fmt.Errorf("published docs do not follow the docs rules:\n\t%s", strings.Join(lines, "\n\t"))
+}
+
+// readTellsAllowlist loads the house-style exceptions. An absent file means no
+// exceptions, which is the right answer rather than an error: the allowlist is
+// expected to stay empty most of the time.
+func readTellsAllowlist() []docslint.AllowEntry {
+	contents, err := os.ReadFile(filepath.FromSlash(docslint.AllowlistPath))
+	if err != nil {
+		return nil
+	}
+	return docslint.ParseAllowlist(string(contents))
 }
 
 // checkGeneratedDocsAreTracked rejects an untracked file under docs/services/.

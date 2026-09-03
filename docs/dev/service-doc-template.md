@@ -5,6 +5,32 @@ enforces the structure (`internal/docslint`); this page says what goes in each
 section and why. Read [the content charter](./content-charter.md) first — this
 is that charter applied to one page shape.
 
+## Rule zero: one concern per page
+
+Before the section order, before the status tokens: **a page does one thing, and
+a page that reads as an info dump has failed however well it is organised.**
+
+- Open with what the reader came for — the command, the decision, the answer.
+- Then the table or the short list. Then the exceptions.
+- Exhaustive detail (every flag, every field) goes in a reference table or a
+  `<details>` block, never in paragraphs.
+- Link instead of repeating what another page says.
+
+`make docs-lint` puts a floor under it on **every** published page: 6,000
+characters of prose, 12,000 characters of page, both excluding the generated
+capability block — which is why a generated operations page, being one table,
+passes without being named anywhere. Going over needs a stated reason:
+
+```md
+<!-- docs-length-review: <why this page is legitimately long> -->
+```
+
+The reason has to be one; a marker left on a page that has since come under
+budget fails too. See the charter's rule 1 for the whole mechanism.
+
+Splitting a dump into four dumps is not a split. If a rewrite still reads as
+one, the page is doing too much: split it again, or delete it.
+
 ## The three readers
 
 They arrive in this order, and each one stops reading when they have their
@@ -101,6 +127,26 @@ Create one only when the content exists. An empty sub-page is worse than no
 sub-page: it costs a reader a click to learn nothing. Every hand-written
 sub-page links back to `../<key>.md`, so a reader arriving from search knows
 which service they are looking at.
+
+## Guides that outgrow one page
+
+Anything outside `docs/services/` splits the same way, because the reason is the
+same: a reader wants one concern, not the union of five.
+
+```
+docs/<guide>.md          landing: what it is, the 3–5 things most readers
+                         need, links to the sub-pages. Nothing else.
+docs/<guide>/<sub>.md    one concern each, named for the concern
+```
+
+Each sub-page links back to `../<guide>.md`, so a reader arriving from search
+knows where they are. Two things have to happen for a new directory to reach
+readers, and neither is automatic:
+
+| Step | Why |
+| ---- | --- |
+| Add the directory to `embed.go`'s `//go:embed` pattern | The console serves docs from the embedded tree; a directory the pattern misses is indexed by `internal/docsindex` but 404s when opened. `internal/docsindex`'s corpus test fails on exactly this. |
+| Add each new page to the website's `publicDocFiles` allowlist | Only `docs/cdk/**` and `docs/services/**` publish by prefix; everything else is listed by name. |
 
 ## Visual vocabulary
 

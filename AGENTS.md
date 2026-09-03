@@ -233,9 +233,30 @@ The full checklists are in CONTRIBUTING.md:
 
 Everything under `docs/` except `docs/dev/` and `docs/plans/` ships on
 overcast.sh. Read [docs/dev/content-charter.md](./docs/dev/content-charter.md)
-before writing or editing a published doc — it's one page. The three rules
-agents trip on most, from a 2026-08 content audit of the live site:
+before writing or editing a published doc — it's one page. The rules agents trip
+on most, from a 2026-08 content audit of the live site:
 
+- **One concern per page. No info dumps.** Open with what the reader came for —
+  the command, the decision, the answer — then the table or the short list, then
+  the exceptions. Exhaustive detail (every flag, every field) belongs in a
+  reference table or a `<details>` block, never in paragraphs. Link instead of
+  repeating another page. A guide too big for one page becomes a short landing
+  page plus one sub-page per concern, mirroring `docs/services/<key>/`;
+  splitting a dump into four dumps is not a split. **This applies to a new page
+  as much as to a rewrite.** `make docs-lint` fails a page over **6,000
+  characters of prose or 12,000 characters of page** — both excluding the
+  generated capability block, so a generated operations page passes on its own
+  measurements rather than by being named in an exemption list. Going over needs
+  a stated reason on the page,
+  `<!-- docs-length-review: <why this page is legitimately long> -->`, and the
+  marker itself fails if the reason is empty or if the page later comes inside
+  the budget.
+- **No LLM tells.** "This isn't a proxy — it's a full emulator" corrects an idea
+  the reader never held: cut the negated half and say what the thing is. Same
+  for "it's not about X", "seamless(ly)", "delve", "it's worth noting that", and
+  the three-adjective slogan. `make docs-lint` fails on the fixed shapes and
+  prints the line to paste into the allowlist beside the linter when the wording
+  is genuinely right.
 - **Never cite a file the public site doesn't publish.** No links into
   `docs/dev/**` or `docs/plans/**`, no bare `internal/` Go path standing in
   for an explanation — the audit found this in eleven published files, e.g.
@@ -439,7 +460,7 @@ by hand. They are derived at runtime now, from the docs the binary already
 embeds — see [internal/docsindex](./internal/docsindex/docsindex.go).
 
 - **After changing a Go response struct the web UI consumes, run `make generate-ts` and commit the result.** `web/src/types/api.gen.ts` is rendered by [cmd/tsgen](./cmd/tsgen/main.go) from the structs listed in its manifest (`/_overcast/health`, `/_overcast/metrics`, `/_overcast/debug/metrics`, the SSE envelope, the topology graph, the inbox, the request-tracing payloads, …); `make check-ts` — part of `make docs-check`, and `go test ./cmd/tsgen` — fails when the committed file is stale. Never write a server type by hand in `web/src/types/common.ts`; to expose a new one, add it to the manifest. A struct that refers to a type the manifest does not list is an error naming the field, so the generated set grows only on purpose; a type with its own `MarshalJSON` is refused too — name the package-level struct the method encodes instead (`trace.Entry` → `trace.entryJSON`).
-- **After editing a published doc under `docs/`, run `make docs-lint`.** Nothing to regenerate and nothing to commit beyond the doc — the check is on the doc itself: frontmatter, in-page anchors, the service page template, and the 220-character description budget.
+- **After editing a published doc under `docs/`, run `make docs-lint`.** Nothing to regenerate and nothing to commit beyond the doc — the check is on the doc itself: frontmatter, in-page anchors, the service page template, the 220-character description budget, the page length budget (6,000 prose / 12,000 page characters) and the house-style tells.
 - **`docs/plans/` and `docs/dev/` are neither published nor indexed.** [internal/docsindex](./internal/docsindex/docsindex.go) skips both directories outright, as `embed.go`'s pattern does, so they are invisible to the console. They are working documents, not user-facing pages — and a published doc may not cite them.
 - **A published doc *is* a build input.** `embed.go` compiles `docs/*.md`, `docs/cdk` and `docs/services` into the binary and the console indexes them at runtime, so `internal/docsindex`'s tests assert on the real corpus (search rankings included). Editing one runs the full CI suite; editing `docs/plans/` or `docs/dev/` does not.
 - **Never hand-edit or hand-merge generated files.** Regenerate `internal/awsapi/manifest.gen.go` with `make generate-aws-operations`, using an `api-models-aws` checkout at the revision pinned in `models/aws/VERSION` and setting the `AWS_MODELS_DIR` and `AWS_MODELS_REVISION` variables required by the target.

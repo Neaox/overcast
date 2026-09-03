@@ -60,9 +60,17 @@ PROSE_PREFIXES = (
 # Published docs: read by the build and by the tests, whatever their suffix.
 CODE_PREFIXES = ("docs/",)
 
+# Contributor files that sit under a prose prefix but are still read by a check.
+# The tells allowlist is an input to `make docs-lint`: an entry that stops
+# matching fails the build, so editing it on its own has to run the docs gate or
+# the failure lands on whoever pushes next.
+CODE_PATHS = ("docs/dev/llm-tells-allowlist.txt",)
+
 
 def is_prose(path: str) -> bool:
     """Is this a file no build, test or image reads?"""
+    if path in CODE_PATHS:
+        return False
     if path.startswith(PROSE_PREFIXES):
         return True
     if path.startswith(CODE_PREFIXES):

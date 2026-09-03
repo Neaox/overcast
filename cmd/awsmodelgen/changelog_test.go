@@ -99,7 +99,7 @@ func TestChangelogFragment_explainsOnlyTheCategoriesThatMoved(t *testing.T) {
 	current := inventoryOf("bbb", operationAt("acm", "ListCertificates", "RESTXML", "GET", "/certificates"))
 
 	got := changelogFragment(diffInventories(baseline, current), "2026-08-21")
-	if !strings.Contains(got, "A protocol-trait change moves that operation's error envelope") {
+	if !strings.Contains(got, "A trait change moves the error envelope") {
 		t.Errorf("changelogFragment() = %q, want the trait effect explained", got)
 	}
 	for _, absent := range []string{"credential-scope check", "S3 fallback", "which request shape"} {
@@ -201,5 +201,37 @@ func TestChangelogFragment_passesTheFragmentLinter(t *testing.T) {
 	cmd.Dir = repoRoot
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("scripts/changelog.py check rejected the generated fragment: %v\nfragment:\n%s\noutput:\n%s", err, fragment, out)
+	}
+}
+
+// TestChangelogFragment_staysInsideTheDetailLineCap covers the case the fixture
+// diff above cannot reach: every non-additive category moving at once, which is
+// what a large model refresh looks like. The effects sentence is then four
+// clauses long, and scripts/changelog.py caps a detail line at 200 characters —
+// so the generator has to fold it rather than emit one paragraph.
+func TestChangelogFragment_staysInsideTheDetailLineCap(t *testing.T) {
+	// Given: the effects sentence for all four categories.
+	all := joinEffects([]string{
+		"an unclaimed operation goes back to the S3 fallback",
+		"a trait change moves the error envelope",
+		"a binding change moves which request shape reaches it",
+		"a shared binding skips the credential-scope check, having no single owner",
+	})
+
+	// When: it is packed into detail lines.
+	lines := packDetail(all)
+
+	// Then: every line fits, and nothing was dropped.
+	joined := ""
+	for _, line := range lines {
+		if len(line)+2 > detailLineMax {
+			t.Errorf("detail line is %d chars (cap %d with its indent): %q", len(line)+2, detailLineMax, line)
+		}
+		joined += line
+	}
+	for _, clause := range []string{"S3 fallback", "error envelope", "request shape", "credential-scope check"} {
+		if !strings.Contains(joined, clause) {
+			t.Errorf("packing lost %q; the counts an entry exists to report must survive", clause)
+		}
 	}
 }

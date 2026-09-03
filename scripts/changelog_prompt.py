@@ -207,6 +207,8 @@ def describe(text: str) -> str:
             else "detail line"
         )
         return f"{kind} for the entry above"
+    if changelog.DETAIL_REVIEW.match(text.strip()):
+        return "detail-review marker for the entry below"
     entries, errors = changelog.parse_entries(text, require_migration=False)
     if errors or not entries:
         return "not a valid entry yet"

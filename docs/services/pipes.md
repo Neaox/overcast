@@ -77,8 +77,8 @@ topic is refused at create and update time.
 ## Gotchas
 
 > [!WARNING]
-> `LogConfiguration` and `KmsKeyIdentifier` are not merely inert — they are
-> dropped. A `DescribePipe` assertion that round-trips either field will fail.
+> `LogConfiguration` and `KmsKeyIdentifier` are dropped, not stored inert. A
+> `DescribePipe` assertion that round-trips either field will fail.
 
 > [!NOTE]
 > Only a Lambda **target** reports partial batch failures. A Step Functions

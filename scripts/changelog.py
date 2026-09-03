@@ -18,9 +18,12 @@ which is how Deprecated and Security are written. '!' marks the change
 breaking, '.' marks it explicitly not breaking — needed only where the default
 does not apply (see BREAKING_DEFAULT). The first line's prose is the entry's
 summary sentence and is capped at SUMMARY_MAX chars; an indented line adds
-detail beneath it, rendered as its own line in the same bullet; an indented
-'migration:' line carries the upgrade instructions every breaking entry must
-include.
+detail beneath it, rendered as its own line in the same bullet, up to
+DETAIL_MAX of them at DETAIL_LINE_MAX chars each; an indented 'migration:' line
+carries the upgrade instructions every breaking entry must include, and is
+exempt from the detail count. An entry that needs more detail than the budget
+allows says why, in a '<!-- changelog-detail-review: … -->' line directly above
+it.
 
 Subcommands:
     check      Lint the fragments and enforce the empty-[Unreleased] rule.
@@ -75,6 +78,32 @@ SLUG_MAX = 48
 # '**BREAKING**' flag and '[area]' tag included, since both occupy width
 # there too), not the raw fragment syntax. See .changelog/README.md.
 SUMMARY_MAX = 160
+
+# Budget on the detail beneath a summary. Release notes are scanned, and a
+# bullet that runs to a screen of continuation lines is an info dump wearing a
+# summary: the reader who wanted that depth has the PR link, and the reader who
+# did not has lost the section. Three lines is enough to say what changed, who
+# it affects and what it replaced; an entry that genuinely needs more says so
+# out loud with DETAIL_REVIEW rather than drifting there one line at a time.
+#
+# A breaking entry's 'migration:' note is not detail and does not count — it is
+# the one continuation line a reader cannot be sent elsewhere for, and it
+# already costs the author a '!'. It is held to the same per-line length, which
+# is where a paragraph pretending to be a note gets caught either way.
+DETAIL_MAX = 3
+DETAIL_LINE_MAX = 200
+
+# The deliberate opt-out, on its own unindented line directly above the entry
+# it excuses. An HTML comment because it is the one shape that fits the
+# existing grammar without inventing anything: it is invisible where the
+# fragment renders as markdown, it cannot be mistaken for an entry line or a
+# continuation line, and it stays in the fragment rather than leaking into
+# CHANGELOG.md. The reason has to be substantive — a marker nobody had to think
+# about is exactly the reflex this is trying to avoid — and it is rejected as
+# stale the moment the entry it excuses comes back inside the budget, so the
+# opt-out cannot outlive the reason for it.
+DETAIL_REVIEW = re.compile(r"^<!--\s*changelog-detail-review:(?P<reason>.*?)-->$")
+DETAIL_REVIEW_MIN = 30
 
 # Whether an unmarked entry in each category breaks compatibility.
 #
@@ -153,6 +182,12 @@ class Entry:
     # scannable sentence and the detail stays readable underneath it.
     detail: list[str] = field(default_factory=list)
     migration: str = ""
+    # Why this entry is allowed past DETAIL_MAX, from the
+    # '<!-- changelog-detail-review: … -->' line above it; '' when there was
+    # none. Fragment-only metadata: it is what the author had to write down to
+    # spend the budget, not something a release note reader ever sees.
+    detail_review: str = ""
+    detail_review_line: int = 0
     line: int = 0
     source: str = ""  # fragment filename, for stable assembly ordering
 
@@ -232,6 +267,40 @@ def bracket_prose_error(kind: str, prose: str) -> str:
     )
 
 
+def detail_budget_errors(entries: list[Entry], where: str) -> list[str]:
+    """Whether each entry's detail earns its space, and its marker its keep.
+
+    Runs once every continuation line has arrived, which is the first moment
+    either question can be answered: an entry is only over budget, and a marker
+    only stale, in light of the whole entry.
+    """
+    errors: list[str] = []
+    for entry in entries:
+        count = len(entry.detail)
+        # The line number, not the reason: a marker whose reason was rejected
+        # as too thin has still been written, and reporting it over budget as
+        # well would bury the one error the author has to act on.
+        if entry.detail_review_line:
+            if count <= DETAIL_MAX:
+                errors.append(
+                    f"{where}line {entry.detail_review_line}: the "
+                    f"'changelog-detail-review' marker above "
+                    f"'{elide(entry.prose, 48)}' excuses nothing — that entry has "
+                    f"{count} detail lines, inside the limit of {DETAIL_MAX}. "
+                    "Delete the marker."
+                )
+        elif count > DETAIL_MAX:
+            errors.append(
+                f"{where}line {entry.line}: '{elide(entry.prose, 48)}' carries "
+                f"{count} detail lines (limit {DETAIL_MAX}); release notes are "
+                f"scanned, so keep the {DETAIL_MAX} that change what a reader "
+                "does and leave the rest to the PR. If it genuinely needs more, "
+                "put '<!-- changelog-detail-review: why -->' on the line above "
+                "the entry."
+            )
+    return errors
+
+
 def parse_entries(
     text: str, origin: str = "", require_migration: bool = True
 ) -> tuple[list[Entry], list[str]]:
@@ -239,15 +308,46 @@ def parse_entries(
 
     `require_migration` is off when validating a single line as it is typed:
     a breaking entry's migration note arrives on the *next* line, so demanding
-    it per-line would reject input that is about to become correct.
+    it per-line would reject input that is about to become correct. It doubles
+    as the "this is a whole entry, not a line mid-typing" flag, which is what
+    the detail budget and the detail-review marker need for the same reason —
+    both are only answerable once an entry's continuation lines have arrived.
     """
     where = f"{origin}: " if origin else ""
     entries: list[Entry] = []
     errors: list[str] = []
     continuing_migration = False
+    # The marker seen since the last entry line, as (line number, reason).
+    pending_review: tuple[int, str] | None = None
 
     for number, raw in enumerate(text.splitlines(), start=1):
         if not raw.strip() or raw.startswith("#"):
+            continue
+
+        review = DETAIL_REVIEW.match(raw.strip())
+        if review is not None:
+            if raw[0].isspace():
+                errors.append(
+                    f"{where}line {number}: a 'changelog-detail-review' marker "
+                    "goes at the start of the line, directly above the entry it "
+                    "excuses; indented, it would be read as a detail line."
+                )
+                continue
+            reason = review.group("reason").strip()
+            if len(reason) < DETAIL_REVIEW_MIN:
+                errors.append(
+                    f"{where}line {number}: the 'changelog-detail-review' reason "
+                    f"is {len(reason)} chars (needs at least {DETAIL_REVIEW_MIN}); "
+                    "say what a reader loses if the detail is cut, not that it is "
+                    "needed."
+                )
+            if pending_review is not None:
+                errors.append(
+                    f"{where}line {number}: a 'changelog-detail-review' marker is "
+                    f"already open from line {pending_review[0]}; one marker "
+                    "excuses the one entry directly beneath it."
+                )
+            pending_review = (number, reason)
             continue
 
         if raw[0].isspace():
@@ -257,6 +357,16 @@ def parse_entries(
                 )
                 continue
             stripped = raw.strip()
+            # Every continuation line is held to the same length, the
+            # 'migration:' note included: a note that has become a paragraph is
+            # unreadable under a bullet whichever kind of note it is.
+            if len(stripped) > DETAIL_LINE_MAX:
+                errors.append(
+                    f"{where}line {number}: a detail line under "
+                    f"'{elide(entries[-1].prose, 48)}' is {len(stripped)} chars "
+                    f"(limit {DETAIL_LINE_MAX}); split it or cut it to the point — "
+                    "a continuation line is a note, not a paragraph."
+                )
             if stripped.lower().startswith(MIGRATION_PREFIX):
                 note = stripped[len(MIGRATION_PREFIX) :].strip()
                 if not note:
@@ -274,6 +384,10 @@ def parse_entries(
             continue
 
         continuing_migration = False
+        # A marker excuses the entry line directly beneath it, whether or not
+        # that line turns out to parse: holding it open past one would move it
+        # onto an entry it was never written for.
+        review_for_entry, pending_review = pending_review, None
         match = ENTRY_LINE.match(raw)
         if match is None:
             errors.append(
@@ -326,6 +440,8 @@ def parse_entries(
             breaking=breaking,
             areas=areas,
             prose=prose,
+            detail_review=review_for_entry[1] if review_for_entry else "",
+            detail_review_line=review_for_entry[0] if review_for_entry else 0,
             line=number,
         )
         entries.append(entry)
@@ -349,6 +465,14 @@ def parse_entries(
                     "'migration:' line saying what a user has to do about it."
                 )
 
+        errors.extend(detail_budget_errors(entries, where))
+        if pending_review is not None:
+            errors.append(
+                f"{where}line {pending_review[0]}: a 'changelog-detail-review' "
+                "marker has no entry beneath it; it goes on the line directly "
+                "above the entry it excuses."
+            )
+
     return entries, errors
 
 
@@ -359,6 +483,7 @@ One entry per line, blank line to finish.
   !  breaking   .  not breaking (only needed when the default is wrong)
   first line is a standalone summary sentence (<= 160 chars)
   indent a line to add detail beneath it, or a 'migration:' note
+  up to 3 detail lines per entry, 200 chars each
 
   e.g.  + [sqs] long polling on `ReceiveMessage`
 """
@@ -659,7 +784,13 @@ def render_entry(entry: Entry) -> str:
     if entry.breaking != BREAKING_DEFAULT[entry.section] or breaking_hint(entry.prose):
         marker = "!" if entry.breaking else "."
     areas = f" [{'/'.join(entry.areas)}]" if entry.areas else ""
-    rendered = f"{symbol}{marker}{areas} {entry.prose}\n"
+    rendered = ""
+    # The marker is part of the entry as written, not decoration: dropping it
+    # here would have `changelog.py new` write a fragment that its own check
+    # then fails.
+    if entry.detail_review_line:
+        rendered += f"<!-- changelog-detail-review: {entry.detail_review} -->\n"
+    rendered += f"{symbol}{marker}{areas} {entry.prose}\n"
     for note in entry.detail:
         rendered += f"  {note}\n"
     if entry.migration:

@@ -285,13 +285,177 @@ class ParseEntriesTest(unittest.TestCase):
 
 		self.assertTrue(any("lead with a summary sentence" in e for e in errors), errors)
 
-	def test_detail_lines_do_not_count_toward_the_cap(self) -> None:
-		# Only the summary line is capped; detail is deliberately unbounded.
-		detail = "y" * 300
+	def test_detail_lines_do_not_count_toward_the_summary_cap(self) -> None:
+		# The summary cap is about the first line only. Detail answers to a
+		# budget of its own — DETAIL_MAX lines of DETAIL_LINE_MAX chars — and
+		# never to this one.
+		detail = "y" * (changelog.SUMMARY_MAX + 1)
 		entries, errors = changelog.parse_entries(f"+ [sqs] a short summary\n  {detail}\n")
 
 		self.assertEqual([], errors)
 		self.assertEqual([detail], entries[0].detail)
+
+
+class DetailBudgetTest(unittest.TestCase):
+	# Release notes are scanned, so an entry's detail is budgeted the way its
+	# summary is: at most DETAIL_MAX lines, DETAIL_LINE_MAX chars each. An entry
+	# that genuinely needs more says why, out loud, on the line above it.
+	REASON = (
+		"the four codepaths it replaces are each named in a runbook a reader "
+		"has to find and retire"
+	)
+
+	def test_three_detail_lines_are_inside_the_budget(self) -> None:
+		entries, errors = changelog.parse_entries(
+			"+ [router] per-service routing rules\n"
+			"  path rules win over host rules\n"
+			"  an unmatched request still reaches the default backend\n"
+			"  reloaded without restarting the daemon\n"
+		)
+
+		self.assertEqual([], errors)
+		self.assertEqual(changelog.DETAIL_MAX, len(entries[0].detail))
+
+	def test_a_fourth_detail_line_is_rejected(self) -> None:
+		_, errors = changelog.parse_entries(
+			"+ [router] per-service routing rules\n"
+			"  path rules win over host rules\n"
+			"  an unmatched request still reaches the default backend\n"
+			"  reloaded without restarting the daemon\n"
+			"  and one line too many\n",
+			origin=".changelog/20260903-routing.md",
+		)
+
+		self.assertEqual(1, len(errors))
+		self.assertIn(".changelog/20260903-routing.md: line 1:", errors[0])
+		self.assertIn("per-service routing rules", errors[0])
+		self.assertIn("carries 4 detail lines (limit 3)", errors[0])
+		self.assertIn("changelog-detail-review", errors[0])
+
+	def test_a_detail_line_over_the_length_cap_is_rejected(self) -> None:
+		line = "y" * 250
+		_, errors = changelog.parse_entries(f"+ [sqs] a short summary\n  {line}\n")
+
+		self.assertEqual(1, len(errors))
+		self.assertIn("a short summary", errors[0])
+		self.assertIn("is 250 chars (limit 200)", errors[0])
+
+	def test_migration_does_not_count_toward_the_detail_budget(self) -> None:
+		# The one continuation line a reader cannot be sent to the PR for, and
+		# it already cost the author a '!'. Three detail lines plus it is fine.
+		entries, errors = changelog.parse_entries(
+			"-! [state] the v1 on-disk layout\n"
+			"  the v2 layout has shipped since alpha.30\n"
+			"  a v1 directory is left in place, not deleted\n"
+			"  the importer still reads both\n"
+			"  migration: export before upgrading, then import afterwards\n"
+		)
+
+		self.assertEqual([], errors)
+		self.assertEqual(changelog.DETAIL_MAX, len(entries[0].detail))
+		self.assertIn("export before upgrading", entries[0].migration)
+
+	def test_a_migration_line_is_still_held_to_the_length_cap(self) -> None:
+		_, errors = changelog.parse_entries(
+			"-! [state] the v1 on-disk layout\n" + f"  migration: {'z' * 250}\n"
+		)
+
+		self.assertEqual(1, len(errors))
+		self.assertIn("(limit 200)", errors[0])
+
+	def test_the_review_marker_excuses_an_over_budget_entry(self) -> None:
+		entries, errors = changelog.parse_entries(
+			f"<!-- changelog-detail-review: {self.REASON} -->\n"
+			"+ [router] per-service routing rules\n"
+			"  path rules win over host rules\n"
+			"  an unmatched request still reaches the default backend\n"
+			"  reloaded without restarting the daemon\n"
+			"  the old --route flag keeps working until alpha.45\n"
+		)
+
+		self.assertEqual([], errors)
+		self.assertEqual(self.REASON, entries[0].detail_review)
+		self.assertEqual(1, entries[0].detail_review_line)
+
+	def test_a_thin_review_reason_is_rejected(self) -> None:
+		# A marker nobody had to think about is the reflex the budget exists to
+		# prevent, so the reason has to be substantive or the marker is not one.
+		_, errors = changelog.parse_entries(
+			"<!-- changelog-detail-review: needed -->\n"
+			"+ [router] per-service routing rules\n"
+			"  path rules win over host rules\n"
+			"  an unmatched request still reaches the default backend\n"
+			"  reloaded without restarting the daemon\n"
+			"  the old --route flag keeps working until alpha.45\n"
+		)
+
+		self.assertEqual(1, len(errors))
+		self.assertIn("reason is 6 chars (needs at least 30)", errors[0])
+
+	def test_a_stale_review_marker_is_rejected(self) -> None:
+		# The opt-out cannot outlive its reason: once the entry is back inside
+		# the budget the marker is excusing nothing and has to go.
+		_, errors = changelog.parse_entries(
+			f"<!-- changelog-detail-review: {self.REASON} -->\n"
+			"+ [router] per-service routing rules\n"
+			"  path rules win over host rules\n"
+		)
+
+		self.assertEqual(1, len(errors))
+		self.assertIn("line 1:", errors[0])
+		self.assertIn("excuses nothing", errors[0])
+		self.assertIn("Delete the marker.", errors[0])
+
+	def test_the_marker_excuses_only_the_entry_beneath_it(self) -> None:
+		over_budget = (
+			"  path rules win over host rules\n"
+			"  an unmatched request still reaches the default backend\n"
+			"  reloaded without restarting the daemon\n"
+			"  the old --route flag keeps working until alpha.45\n"
+		)
+		_, errors = changelog.parse_entries(
+			f"<!-- changelog-detail-review: {self.REASON} -->\n"
+			"+ [router] per-service routing rules\n" + over_budget
+			+ "~ [web] the routing table view\n" + over_budget
+		)
+
+		self.assertEqual(1, len(errors))
+		self.assertIn("the routing table view", errors[0])
+
+	def test_a_marker_with_no_entry_beneath_it_is_rejected(self) -> None:
+		_, errors = changelog.parse_entries(
+			"+ [sqs] long polling\n"
+			f"<!-- changelog-detail-review: {self.REASON} -->\n"
+		)
+
+		self.assertEqual(1, len(errors))
+		self.assertIn("no entry beneath it", errors[0])
+
+	def test_an_indented_marker_is_rejected(self) -> None:
+		# Indented it would parse as a detail line and be rendered as one.
+		_, errors = changelog.parse_entries(
+			"+ [sqs] long polling\n"
+			f"  <!-- changelog-detail-review: {self.REASON} -->\n"
+		)
+
+		self.assertTrue(any("start of the line" in e for e in errors), errors)
+
+	def test_the_marker_round_trips_but_never_reaches_the_changelog(self) -> None:
+		source = (
+			f"<!-- changelog-detail-review: {self.REASON} -->\n"
+			"+ [router] per-service routing rules\n"
+			"  path rules win over host rules\n"
+			"  an unmatched request still reaches the default backend\n"
+			"  reloaded without restarting the daemon\n"
+			"  the old --route flag keeps working until alpha.45\n"
+		)
+		entries, errors = changelog.parse_entries(source)
+
+		self.assertEqual([], errors)
+		self.assertEqual(source, changelog.render_entry(entries[0]))
+		self.assertNotIn(
+			"changelog-detail-review", "\n".join(changelog.render_bullet(entries[0]))
+		)
 
 
 class RenderEntryTest(unittest.TestCase):
@@ -1108,6 +1272,65 @@ class CommandReleaseTest(unittest.TestCase):
 
 		self.assertEqual(1, result.returncode)
 		self.assertIn("already has a", result.stderr.decode("utf-8"))
+
+
+class CommandCheckTest(unittest.TestCase):
+	EMPTY_UNRELEASED = "# Changelog\n\n## [Unreleased]\n"
+
+	def run_check(self, fragments: Path, changelog_path: Path):
+		return subprocess.run(
+			[
+				sys.executable,
+				str(Path(__file__).with_name("changelog.py")),
+				"--fragments-dir",
+				str(fragments),
+				"--changelog",
+				str(changelog_path),
+				"check",
+			],
+			capture_output=True,
+		)
+
+	def test_an_over_budget_fragment_fails(self) -> None:
+		root = write_dir(
+			{
+				"20260903-routing.md": (
+					"+ [router] per-service routing rules\n"
+					"  path rules win over host rules\n"
+					"  an unmatched request still reaches the default backend\n"
+					"  reloaded without restarting the daemon\n"
+					"  the old --route flag keeps working until alpha.45\n"
+				)
+			}
+		)
+		changelog_dir = write_dir({"CHANGELOG.md": self.EMPTY_UNRELEASED})
+
+		result = self.run_check(root, changelog_dir / "CHANGELOG.md")
+
+		self.assertEqual(1, result.returncode)
+		self.assertIn("carries 4 detail lines", result.stdout.decode("utf-8"))
+
+	def test_a_released_section_is_never_re_checked(self) -> None:
+		# `check` reads the fragments and, in CHANGELOG.md, nothing but whether
+		# '[Unreleased]' is empty. The budget is a rule for what is being
+		# written, not a retroactive verdict on what already shipped — an
+		# alpha.39-shaped bullet in a released section stays green.
+		dumped = "".join(f"  {'d' * 250}\n" for _ in range(6))
+		root = write_dir({"20260903-cfn.md": VALID_FRAGMENT})
+		changelog_dir = write_dir(
+			{
+				"CHANGELOG.md": (
+					self.EMPTY_UNRELEASED
+					+ "\n## [0.0.1-alpha.39] - 2026-09-01\n\n### Changed\n\n"
+					+ "- [router] routed mode\n"
+					+ dumped
+				)
+			}
+		)
+
+		result = self.run_check(root, changelog_dir / "CHANGELOG.md")
+
+		self.assertEqual(0, result.returncode, result.stdout.decode("utf-8"))
 
 
 class StdioEncodingTest(unittest.TestCase):
