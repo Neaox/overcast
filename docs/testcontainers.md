@@ -200,10 +200,10 @@ var endpoint = $"http://{overcast.Hostname}:{overcast.GetMappedPublicPort(4566)}
 <!-- END overcast:code-tabs -->
 
 For container-backed services (Lambda invokes, ECS tasks, RDS engines, …) add
-your implementation's bind-mount option for `/var/run/docker.sock` — see the
-[Docker socket note](../README.md#running-with-docker). Everything else in
-this guide (image choice, port-mapping caveats, configuration env vars)
-applies unchanged.
+your implementation's bind-mount option for `/var/run/docker.sock` — see
+[`LAMBDA_DOCKER_SOCKET`](./configuration/reference.md) for the paths each
+platform uses. Everything else here (image choice, port-mapping caveats,
+configuration env vars) applies unchanged.
 
 ## Using the LocalStack Testcontainers modules
 

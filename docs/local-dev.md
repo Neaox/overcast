@@ -17,8 +17,6 @@ Running your application against Overcast gets you a realistic AWS. It does not,
 on its own, get you a fast edit-run cycle: a Lambda still wants a zip and an ECS
 task still wants an image, so a one-character fix costs a rebuild and a redeploy.
 
-This guide covers the three ways to close that gap, when each is the right one,
-and the mistakes that make a correctly configured mount look broken.
 
 ## Which one to use
 

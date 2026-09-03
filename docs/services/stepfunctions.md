@@ -88,7 +88,7 @@ deploys keep working — and fail at execution time instead.
 
 A `Task`'s own `TimeoutSeconds` is a different thing: it bounds that attempt, and
 an uncaught task timeout is a `FAILED` execution rather than a `TIMED_OUT` one, as
-on AWS. Note that a local cold start can be slower than AWS's, so a tight
+on AWS. A local cold start can be slower than AWS's, so a tight
 `TimeoutSeconds` may fire here where it would not in the cloud.
 
 `StartSyncExecution` is served for `EXPRESS` state machines only; `STANDARD` gets

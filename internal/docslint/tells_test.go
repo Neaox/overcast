@@ -96,3 +96,60 @@ func TestParseAllowlist_readsPathAndPhrase(t *testing.T) {
 		t.Errorf("parsed %+v, want the path and the whole phrase", got[0])
 	}
 }
+
+func TestCheck_rejectsThePageNarratingItself(t *testing.T) {
+	for _, sentence := range []string{
+		"This page explains how to configure CDK to target Overcast.",
+		"This guide covers the three ways to close that gap.",
+		"**This page describes** the wire protocol.",
+		"> This guide documents every environment variable.",
+	} {
+		t.Run(sentence, func(t *testing.T) {
+			// Given: an opening sentence about the page rather than about the
+			// reader's problem.
+			// When / Then: it is reported, with the fix in the message.
+			assertReports(t, Check([]Doc{tellDoc(sentence)}), "page-narration")
+		})
+	}
+}
+
+func TestCheck_rejectsThePageDescribingItsOwnJob(t *testing.T) {
+	for _, sentence := range []string{
+		"Re-approving a root certificate is what this section exists to avoid.",
+		"A hand-maintained list rots quickly, so this guide carries none.",
+		"This page measures Overcast against LocalStack's interface.",
+		"Start with the short version; this page is the audit behind it.",
+	} {
+		t.Run(sentence, func(t *testing.T) {
+			assertReports(t, Check([]Doc{tellDoc(sentence)}), "page-self-reference")
+		})
+	}
+}
+
+func TestCheck_rejectsTheAddedHedgesAndBrochureWord(t *testing.T) {
+	for _, sentence := range []string{
+		"The port is fixed. Note that a cold start can be slower.",
+		"In summary, the two backends differ only in when they flush.",
+		"Under the hood this uses GET /_overcast/tls/status.",
+	} {
+		t.Run(sentence, func(t *testing.T) {
+			assertReports(t, Check([]Doc{tellDoc(sentence)}), "docs/demo-guide.md:3")
+		})
+	}
+}
+
+func TestCheck_acceptsOrdinarySelfReferenceAndNotes(t *testing.T) {
+	for _, sentence := range []string{
+		"This page lists every variable Overcast reads, with its default.",
+		"The console notes that a rebuild is pending, and says which build.",
+		"A note that names the mode is written to the startup log.",
+		"This guide is for the platform engineer.",
+	} {
+		t.Run(sentence, func(t *testing.T) {
+			// Given: a sentence the new rules must not claim.
+			// When / Then: a rule that fires on these is a rule that gets
+			// allowlisted into meaninglessness.
+			assertClean(t, Check([]Doc{tellDoc(sentence)}))
+		})
+	}
+}

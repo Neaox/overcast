@@ -362,8 +362,8 @@ your own — never the `AWS_*` ones, which Overcast owns and would overwrite.
 | Explicit `endpoint` wins | Per-client configuration beats `AWS_ENDPOINT_URL` in every AWS SDK |
 | Real calls need real credentials | The injected dummies are rejected by AWS with `InvalidClientTokenId` |
 | Costs are real | This is your account. A loop in a local function bills like a loop in a deployed one |
-| Not for CI | Set `OVERCAST_VPC_EGRESS=none` there, so the same code fails fast with `ENETUNREACH` instead of quietly reaching production. Run Overcast in a container on the runner: on Docker Desktop the control plane has to stay routable, so `none` cannot withhold egress and the call still reaches production |
-| Or make it match your template | `OVERCAST_VPC_EGRESS=routed` gives the function egress only where its subnet's route table does — so a `VpcConfig` in a private subnet with no NAT gateway fails locally exactly as it would deployed. It needs Overcast in a container for the same reason `none` does. See [`routed`](../../networking/routed-egress.md) |
+| Not for CI | Set `OVERCAST_VPC_EGRESS=none` there, so the same code fails fast with `ENETUNREACH` instead of quietly reaching production. Run Overcast in a container on the runner — on Docker Desktop the control plane stays routable and `none` cannot withhold egress ([why](../../networking/egress.md)) |
+| Or make it match your template | `OVERCAST_VPC_EGRESS=routed` gives the function egress only where its subnet's route table does, so a `VpcConfig` in a private subnet with no NAT gateway fails locally as it would deployed. Same container requirement — see [`routed`](../../networking/routed-egress.md) |
 
 If a call to real AWS returns `ENETUNREACH`, egress is off: check
 `overcast network status` and see

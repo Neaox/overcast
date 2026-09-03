@@ -71,9 +71,8 @@ The same setup is available UI-first: **Settings → HTTPS & certificates**
   says so, and shows how to hand the daemon a CA that outlives it, because
   otherwise that trust install is due again on the next recreation.
 
-Under the hood this uses `GET /_overcast/tls/status` and
-`POST /_overcast/tls/setup` on the API port (proxied by the console's own
-backend). The setup endpoint refuses cross-origin browser requests: only
+The console calls `GET /_overcast/tls/status` and
+`POST /_overcast/tls/setup` on the API port, through its own backend. The setup endpoint refuses cross-origin browser requests: only
 pages served from the daemon's own names (loopback, `localhost.overcast.sh`,
 …) may trigger a trust-store install, so a hostile web page cannot make your
 OS pop certificate prompts.
@@ -159,9 +158,8 @@ every recreation mints a **fresh** CA: the one you installed goes stale,
 browsers warn again, and `AWS_CA_BUNDLE` paths stop verifying. Re-trusting is
 the same command again (`overcast https enable --endpoint ...` fetches the new
 CA and installs it alongside; `overcast https disable --endpoint ...` removes
-one when you are done with it) — but re-approving a root certificate on a
-schedule set by your container lifecycle is the thing this section exists to
-avoid.
+one when you are done with it), but a named volume saves re-approving a root
+certificate on a schedule set by your container lifecycle.
 
 Use the `https://` spelling: a container serving TLS answers a plain-HTTP dial
 with `http: TLS handshake error ...: client sent an HTTP request to an HTTPS

@@ -22,6 +22,7 @@ package docslint
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -182,6 +183,7 @@ func CheckWith(docs []Doc, opts Options) []Problem {
 			// Anything outside docs/services/, and the services index itself.
 		}
 		problems = append(problems, checkLength(doc, opts.WholeCorpus)...)
+		problems = append(problems, checkOutsideLinks(doc)...)
 		problems = append(problems, checkTells(doc, opts.Allowlist)...)
 		for key := range tellHits(doc) {
 			allowlistUsed[key] = true
@@ -381,6 +383,48 @@ func checkSubPage(doc Doc, stem, sub string) []Problem {
 	// from search with no idea which service they are looking at.
 	if !strings.Contains(doc.Body, "../"+stem+".md") {
 		report(0, "no link back to the landing page; link ../%s.md so a reader arriving from search knows where they are", stem)
+	}
+	return problems
+}
+
+// markdownLinkRE matches an inline Markdown link's target. Reference-style
+// links are not matched; the corpus has none, and a rule that half-covers a
+// syntax is worse than one whose scope is stated.
+var markdownLinkRE = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)`)
+
+// checkOutsideLinks rejects a relative link that resolves outside docs/.
+//
+// The console serves the embedded docs/ tree and nothing else, so a link to
+// ../README.md or ../CONTRIBUTING.md renders as a link a reader can click and
+// cannot follow — it works on GitHub and 404s in the product. Link the docs
+// page that covers it, or, for a file that only exists in the repository, the
+// full https://github.com/... URL, which opens from either.
+func checkOutsideLinks(doc Doc) []Problem {
+	dir := path.Dir(doc.Path)
+	var problems []Problem
+	for i, line := range eachOutsideFences(strings.Split(doc.Body, "\n")) {
+		if line == "" {
+			continue
+		}
+		for _, m := range markdownLinkRE.FindAllStringSubmatch(line, -1) {
+			target, _, _ := strings.Cut(m[1], "#")
+			switch {
+			case target == "", strings.HasPrefix(target, "#"):
+				continue // an in-page anchor
+			case strings.Contains(target, "://"), strings.HasPrefix(target, "mailto:"):
+				continue // an absolute URL, which opens anywhere
+			case strings.HasPrefix(target, "/"):
+				continue // site-absolute, resolved by the website's router
+			}
+			if resolved := path.Clean(path.Join(dir, target)); resolved == "docs" || strings.HasPrefix(resolved, "docs/") {
+				continue
+			}
+			problems = append(problems, Problem{
+				Path: doc.Path,
+				Line: doc.BodyLineOffset + i + 1,
+				Msg:  fmt.Sprintf("links to %q, which is outside docs/ — the console embeds docs/ only, so this is a dead link in the product. Link the docs page that covers it, or a full https://github.com/... URL", m[1]),
+			})
+		}
 	}
 	return problems
 }

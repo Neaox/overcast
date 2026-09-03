@@ -55,7 +55,7 @@ var tellRules = []tellRule{
 	{
 		ID:  "brochure-word",
 		Why: "marketing vocabulary. Say what it does",
-		RE:  regexp.MustCompile(`(?i)\b(?:seamless(?:ly)?|effortless(?:ly)?|delv(?:e|es|ed|ing)|game[- ]?chang(?:er|ing)|cutting[- ]edge|best[- ]in[- ]class|deep dive|dive into|plethora|myriad|tapestry|a testament to|the realm of|unlock the (?:power|potential)|at its core|in today(?:'|’)?s\s+\w+\s+landscape)\b`),
+		RE:  regexp.MustCompile(`(?i)\b(?:seamless(?:ly)?|effortless(?:ly)?|delv(?:e|es|ed|ing)|game[- ]?chang(?:er|ing)|cutting[- ]edge|best[- ]in[- ]class|deep dive|dive into|plethora|myriad|tapestry|a testament to|the realm of|under the hood|unlock the (?:power|potential)|at its core|in today(?:'|’)?s\s+\w+\s+landscape)\b`),
 	},
 	{
 		ID:  "adjective-triad",
@@ -65,7 +65,21 @@ var tellRules = []tellRule{
 	{
 		ID:  "hedge-opener",
 		Why: "throat-clearing in front of the sentence that matters. Delete the opener",
-		RE:  regexp.MustCompile(`(?i)(?:^|[.;]\s+)\s*(?:it(?:'|’)?s worth noting that|it is worth noting that|it(?:'|’)?s important to note that|it is important to note that|as (?:we|you) (?:can see|mentioned earlier))`),
+		RE:  regexp.MustCompile(`(?i)(?:^|[.;]\s+)\s*(?:it(?:'|’)?s worth noting that|it is worth noting that|it(?:'|’)?s important to note that|it is important to note that|note that|in summary|as (?:we|you) (?:can see|mentioned earlier))\b`),
+	},
+	{
+		ID: "page-narration",
+		Why: "the page narrating itself before it starts. Delete the sentence and open " +
+			"with what the reader came for — the command, the decision, the answer",
+		// Anchored at the start of a line, which is where this one always
+		// appears: the sentence under the H1 that says what is coming.
+		RE: regexp.MustCompile(`(?i)^\s*(?:>\s*)?\**This (?:page|guide) (?:explains|covers|describes|documents)\b`),
+	},
+	{
+		ID: "page-self-reference",
+		Why: "the page describing its own job instead of doing it. State the fact; " +
+			"a reader who wants the scope reads the first line",
+		RE: regexp.MustCompile(`(?i)\bthis (?:page|guide|section) (?:carries|exists to|measures|is the)\b`),
 	},
 }
 

@@ -23,18 +23,11 @@ reflects whether an internet gateway is attached — see
 [Internet gateways and isolation](#internet-gateways-and-isolation) for how
 that is kept true.
 
-That isolation only bites when Overcast's control plane is internal too, since
-every container sits on both — and under the default `OVERCAST_VPC_EGRESS=open`
-it is not, so a gateway-less VPC's containers still reach the internet through
-the control plane. `OVERCAST_VPC_EGRESS=none` isolates every network Overcast
-creates, this one included, and is what actually withholds it.
-
-`OVERCAST_VPC_EGRESS=routed` is the third answer, and the only one that reads
-your template: every VPC plane is `--internal`, and a container joins a second,
-routable network per VPC — `overcast-vpc-<vpc-id>-egress` — only when its
-subnet's route table has a `0.0.0.0/0` route to an attached internet gateway or
-an available NAT gateway. See
-[Networking § Egress modes](../../networking/egress.md) and
+That isolation only bites when the control plane is internal too, since every
+container sits on both, and `OVERCAST_VPC_EGRESS` is what decides it — see
+[Egress modes](../../networking/egress.md). Under `routed` a container also
+joins a second, routable network per VPC, `overcast-vpc-<vpc-id>-egress`, when
+its subnet's route table grants egress — see
 [`routed`](../../networking/routed-egress.md).
 
 | Label | Value |
@@ -63,9 +56,7 @@ Under `OVERCAST_VPC_EGRESS=open` — the default — a VPC's network is created
 `none` every network Overcast creates is `--internal` whatever the template
 says, and attaching a gateway changes nothing.
 
-The flag is honest about your template; it is not what decides whether those
-containers reach the internet. Under `open` they do either way, because they are
-also on the routable control plane. See
+The flag records your template rather than deciding egress — see
 [Egress modes](../../networking/egress.md).
 
 Docker fixes that flag when a network is created, so

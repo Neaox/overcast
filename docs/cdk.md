@@ -12,8 +12,7 @@ tags:
 # Using AWS CDK with Overcast
 
 Overcast supports `cdk deploy` and `cdk destroy` for stacks that use
-[supported resource types](#supported-resource-types). This page explains how to
-configure CDK to target Overcast and what to expect.
+[supported resource types](#supported-resource-types).
 
 > [!TIP]
 > Deploying anything with a VPC? Read
@@ -92,17 +91,6 @@ All of these operations are implemented.
 ---
 
 ## Supported resource types
-
-<!--
-  Derivation: the counts and tables in this section are transcribed from the
-  resourceHandlers map in internal/services/cloudformation/provisioner.go —
-  136 registered entries (127 real handlers + 9 stubResourceHandler entries),
-  plus the dynamically resolved Custom::* / AWS::CloudFormation::CustomResource
-  and AWS::CloudFormation::Stack (see resolveHandler in the same file).
-  Re-derive with:  grep -c '"AWS::' on the map literal (stubs are the entries
-  whose value is &stubResourceHandler{}). Keep this section in sync when the
-  map changes.
--->
 
 Overcast's CloudFormation provisioner supports **136 resource types** today:
 127 fully provisioned, 9 recognised as stubs, plus custom resources and
