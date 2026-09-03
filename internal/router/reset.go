@@ -25,6 +25,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 	"github.com/overcast-sh/overcast/internal/state"
 )
 
@@ -66,6 +67,12 @@ func resetServiceHandler(store state.Store, providers []DebugStateProvider) http
 		matchingProviders := resetProvidersForServicePrefix(providers, prefix)
 
 		for _, ns := range namespaces {
+			// A single-service reset reaches "ec2:instance" too — it matches
+			// the same prefix as every other ec2 namespace. Skipped for the
+			// reason resetStore preserves it: see serviceutil.IsInstanceNamespace.
+			if serviceutil.IsInstanceNamespace(ns) {
+				continue
+			}
 			keys, _ := store.List(r.Context(), ns, "")
 			for _, k := range keys {
 				_ = store.Delete(r.Context(), ns, k)
@@ -146,11 +153,56 @@ func resetStore(ctx context.Context, store state.Store) {
 		}
 		return
 	}
+	// Captured and put back around the wipe rather than skipped during it,
+	// because the fast path below cannot skip anything: MemoryStore.Reset drops
+	// every namespace at once, which is the whole reason it is fast. Doing it
+	// the same way on both paths leaves one behaviour to reason about instead
+	// of two that have to be kept in step.
+	//
+	// Per underlying store, not once for the wrapper: a NamespacedStore can
+	// route "ec2:instance" and "lambda:instance" to different backends, and
+	// each has to come back with its own.
+	kept := captureInstanceIdentities(ctx, store)
 	if ms, ok := store.(*state.MemoryStore); ok {
 		ms.Reset()
-		return
+	} else {
+		resetAllNamespaces(ctx, store)
 	}
-	resetAllNamespaces(ctx, store)
+	restoreInstanceIdentities(ctx, store, kept)
+}
+
+// captureInstanceIdentities reads every sweep-domain identity in store, so the
+// wipe that follows can put them back. See serviceutil.IsInstanceNamespace for
+// why they must survive; a store that cannot be listed yields nothing, which
+// costs the identities and is no worse than the reset that was going to happen
+// anyway.
+func captureInstanceIdentities(ctx context.Context, store state.Store) map[string]string {
+	namespaces, err := store.ListNamespaces(ctx)
+	if err != nil {
+		return nil
+	}
+	kept := make(map[string]string, len(namespaces))
+	for _, ns := range namespaces {
+		if !serviceutil.IsInstanceNamespace(ns) {
+			continue
+		}
+		if id, found, err := store.Get(ctx, ns, serviceutil.InstanceKey); err == nil && found && id != "" {
+			kept[ns] = id
+		}
+	}
+	return kept
+}
+
+// restoreInstanceIdentities writes the captured identities back.
+//
+// A write that fails is not retried and not reported: the caller is a reset,
+// the identity will simply be minted afresh on the next start, and that is the
+// behaviour this change exists to improve rather than a state worth failing the
+// reset over.
+func restoreInstanceIdentities(ctx context.Context, store state.Store, kept map[string]string) {
+	for ns, id := range kept {
+		_ = store.Set(ctx, ns, serviceutil.InstanceKey, id)
+	}
 }
 
 func resetAllNamespaces(ctx context.Context, store state.Store) {
