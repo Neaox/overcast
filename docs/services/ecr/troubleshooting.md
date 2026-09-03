@@ -22,6 +22,18 @@ Back to [ECR](../ecr.md).
 | `cdk deploy` re-pushes unchanged assets after a restart | The registry ran on an ephemeral port, so its images died with the container | Use the fixed port, which is backed by a named volume |
 | A container image fails to pull at task or invoke time | The repository record outlived the image | Read the repository — reconciliation drops records the registry cannot serve — then push again |
 
+## A port answering as another instance's registry
+
+Two Overcast instances sharing a Docker daemon can interleave ephemeral
+publishes across address families, leaving one instance's `localhost:<port>`
+pointing at the other's registry. The startup probe carries this instance's
+credentials so the two can be told apart: ours accepts them and reports the probe
+repository absent, a sibling's rejects them, and a port answering as someone
+else's is passed over. An anonymous probe cannot make the distinction, because
+every authenticated registry refuses an anonymous request alike.
+
+The fixed default port never had the ambiguity — only the ephemeral fallback.
+
 ## Reclaiming a leaked registry container
 
 Shutting Overcast down removes its registry container. Killing it — `SIGKILL`, a

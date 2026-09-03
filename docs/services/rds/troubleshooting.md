@@ -84,6 +84,15 @@ whole call so nothing partial is recorded.
 `GetRandomPassword` and CDK's `Credentials.fromGeneratedSecret` can generate
 characters RDS forbids.
 
+A stopped or failed instance is refused rather than remembered: a container
+reads `MYSQL_ROOT_PASSWORD` (or its equivalent) once, when it initialises its
+data directory, so there is no later moment at which a pending password could be
+applied.
+
+**Clusters rotate member by member.** `ModifyDBCluster` applies the password to
+each member through the same path. If one refuses, the call fails and names it,
+and the members already rotated keep the new password.
+
 ## `Start` reports success but the database is gone
 
 **Cause.** The container was removed out from under Overcast — a `docker prune`,

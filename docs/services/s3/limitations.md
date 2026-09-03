@@ -17,8 +17,7 @@ really does, and where it stops.
 
 ## Versioning: version ids, delete markers and suspended buckets
 
-A bucket has three versioning states, and the third is the one worth reading
-carefully.
+A bucket has three versioning states.
 
 | State | Behaviour |
 | --- | --- |
@@ -53,8 +52,7 @@ internal structure is part of the contract.
 
 ## Lifecycle: version-aware actions
 
-On a versioned bucket the same rules mean different things, and the sweeper
-applies AWS's meanings.
+On a versioned bucket the same rules mean different things.
 
 | Rule | Behaviour |
 | --- | --- |
@@ -63,9 +61,9 @@ applies AWS's meanings.
 | `NoncurrentVersionTransition` | Marks noncurrent versions with a storage class on the same eligibility rules, and still respects the minimum transition size below. Delete markers are never transitioned — there are no bytes to move |
 | `ExpiredObjectDeleteMarker` | Removes a delete marker that has become its key's *only* version. AWS refuses it alongside `Days` or `Date` in the same `Expiration`, and so does Overcast (`400 InvalidRequest`) |
 
-Expiration wins over transition for a given version, as on AWS. Every action
-runs on the injected clock through the hourly sweeper, so a test reaches them by
-advancing a mock clock rather than waiting.
+Expiration wins over transition for a given version, as on AWS. The hourly
+sweeper runs on the injected clock, so a test advances a mock clock rather than
+waiting.
 
 ## Lifecycle: default minimum transition size
 
@@ -82,10 +80,8 @@ The setting is applied, not merely round-tripped:
 | `varies_by_storage_class` | An object under 128 KB still transitions to `GLACIER` or `DEEP_ARCHIVE`; every other class keeps the 128 KB floor |
 
 A rule whose own `Filter` sets `ObjectSizeGreaterThan` or `ObjectSizeLessThan`
-opts out of the default entirely, because on AWS custom filters take precedence
-over the default transition behaviour. A value outside the two documented ones is
-refused with `400 InvalidArgument` rather than stored, so a stored configuration
-cannot claim a behaviour the sweeper would not apply. Every
+opts out of the default, as on AWS. A value outside the two documented ones is
+refused with `400 InvalidArgument` rather than stored. Every
 `PutBucketLifecycleConfiguration` replaces the configuration wholesale.
 
 CloudFormation's
@@ -97,7 +93,7 @@ dispatches through this header; S3 still owns the validation.
 `PutBucketWebsite` accepts the whole `WebsiteConfiguration` —
 `RedirectAllRequestsTo`, `IndexDocument`, `ErrorDocument` and `RoutingRules`
 with their `Condition` and `Redirect` members — and `GetBucketWebsite` returns
-it unchanged. AWS's constraints are enforced rather than assumed:
+it unchanged. AWS's constraints are enforced:
 
 - `RedirectAllRequestsTo` cannot be combined with any other element, and a
   configuration must carry either it or an `IndexDocument`.
@@ -111,11 +107,10 @@ Anything refused returns `400 InvalidArgument` and leaves the previous
 configuration in place. Each Put replaces the whole document;
 `DeleteBucketWebsite` removes it.
 
-Two deliberate boundaries:
+Two boundaries:
 
 - **`HttpRedirectCode` values are not validated.** Real S3 rejects a code that is
-  not a valid HTTP redirect status; the exact error is not in the API model, so
-  Overcast stores the value rather than inventing a rejection.
+  not a valid HTTP redirect status; Overcast stores whatever it is sent.
 - **No website endpoint is served.** A stack that deploys one deploys it, but no
   request is redirected or answered with an index document.
 
@@ -126,9 +121,8 @@ queue, topic and Lambda destinations. AWS models it as an element with no
 content, so presence is the whole signal: while it is set, the bucket sends
 **every** object event to the default event bus, with no event-type selection
 and no key filter. Overcast omits it from
-`GetBucketNotificationConfiguration` when it is not set — emitting an empty
-element would turn delivery on for any client that read the configuration back
-and put it again — and clears it when a later Put omits it.
+`GetBucketNotificationConfiguration` when it is not set, and clears it when a
+later Put omits it.
 
 Object events go through EventBridge's own delivery path, so rule patterns,
 input transformers, retries and dead-letter queues behave as they do for
@@ -158,9 +152,8 @@ AWS documents consumers to compare when ordering two events for the same key.
 Both appear as `versionId` and `sequencer` in the `Records[].s3.object` payload
 delivered to SQS and Lambda.
 
-The detail is **intentionally partial**: `request-id`, `requester` and
-`source-ip-address` are omitted rather than invented, because a fabricated
-request id would look real to a consumer correlating events. AWS's other
+The detail is **partial**: `request-id`, `requester` and `source-ip-address`
+are omitted rather than invented. AWS's other
 `detail-type` values — restore, storage-class, tagging and ACL events — have no
 corresponding operation here and are never published.
 
@@ -168,7 +161,7 @@ CloudFormation's
 `AWS::S3::Bucket.NotificationConfiguration.EventBridgeConfiguration` dispatches
 through `PutBucketNotificationConfiguration`. CloudFormation spells it as an
 `EventBridgeEnabled` flag whose only legal value is `true`; an explicit `false`
-is refused, because the S3 API has no spelling for it other than the element's
+is refused: the S3 API has no spelling for it other than the element's
 absence.
 
 ## Encryption

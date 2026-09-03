@@ -91,13 +91,9 @@ var LengthBacklog = map[string]LengthBacklogEntry{
 	"docs/performance.md":                         {Prose: 10000, Page: 14000, Measured: "9993/13785", Why: "what to expect, and what to tune, are two pages"},
 	"docs/services/cloudformation/limitations.md": {Prose: 14500, Page: 16000, Measured: "14164/15943", Why: "the divergence list belongs in a table; the essays under it belong in troubleshooting"},
 	"docs/services/ec2/limitations.md":            {Prose: 10000, Page: 13500, Measured: "9534/13466", Why: "same: table the divergences, move the explanations out"},
-	"docs/services/ecr/limitations.md":            {Prose: 6500, Page: 12000, Measured: "6421/6483", Why: "just over on prose; tighten rather than split"},
 	"docs/services/ecs/limitations.md":            {Prose: 10000, Page: 12000, Measured: "9666/10641", Why: "table the divergences, move the explanations out"},
 	"docs/services/lambda/examples.md":            {Prose: 10500, Page: 16500, Measured: "10159/16213", Why: "the prose between the examples is doing the work the examples should"},
 	"docs/services/lambda/limitations.md":         {Prose: 22000, Page: 26500, Measured: "21976/26103", Why: "the largest service page in the tree; table the divergences and split the runtime notes out"},
-	"docs/services/rds/limitations.md":            {Prose: 7000, Page: 12000, Measured: "6516/9170", Why: "just over on prose; tighten rather than split"},
-	"docs/services/s3/limitations.md":             {Prose: 6500, Page: 12000, Measured: "6359/8997", Why: "just over on prose; tighten rather than split"},
-	"docs/storage.md":                             {Prose: 6000, Page: 12500, Measured: "5623/12190", Why: "backends and persistence are two questions"},
 	"docs/troubleshooting.md":                     {Prose: 6000, Page: 13500, Measured: "2877/13367", Why: "a symptom index page with the entries grouped by where they bite"},
 }
 
