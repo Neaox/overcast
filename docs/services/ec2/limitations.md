@@ -34,8 +34,8 @@ your template: every VPC plane is `--internal`, and a container joins a second,
 routable network per VPC — `overcast-vpc-<vpc-id>-egress` — only when its
 subnet's route table has a `0.0.0.0/0` route to an attached internet gateway or
 an available NAT gateway. See
-[Networking § Egress modes](../../networking.md#egress-modes) and
-[`routed`](../../networking.md#routed-egress-from-your-route-tables).
+[Networking § Egress modes](../../networking/egress.md) and
+[`routed`](../../networking/routed-egress.md).
 
 | Label | Value |
 | --- | --- |
@@ -44,7 +44,7 @@ an available NAT gateway. See
 | `overcast.resource-id` | The VPC ID |
 | `overcast.vpc-id` | The VPC ID |
 | `overcast.instance` | The Overcast instance that created it. An instance only ever removes networks carrying its own value, so two instances on one daemon leave each other's alone |
-| `overcast.network.spec-hash` | The state the network was created in, checked on every start — see [Networking § Network state verification](../../networking.md#network-state-verification) |
+| `overcast.network.spec-hash` | The state the network was created in, checked on every start — see [Networking § Network state verification](../../networking/network-state.md) |
 | `overcast.network.vpc-role` | `plane` for the VPC's own network, `egress` for the routable one beside it under `OVERCAST_VPC_EGRESS=routed`. Both carry the same VPC ID, so this is what tells them apart |
 
 Networks are named `{OVERCAST_NETWORK}-vpc-{vpcID}` (`overcast-vpc-{vpcID}` by
@@ -66,7 +66,7 @@ says, and attaching a gateway changes nothing.
 The flag is honest about your template; it is not what decides whether those
 containers reach the internet. Under `open` they do either way, because they are
 also on the routable control plane. See
-[Egress modes](../../networking.md#egress-modes).
+[Egress modes](../../networking/egress.md).
 
 Docker fixes that flag when a network is created, so
 `AttachInternetGateway` and `DetachInternetGateway` recreate the network to

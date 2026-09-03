@@ -90,7 +90,6 @@ var LengthBacklog = map[string]LengthBacklogEntry{
 	"docs/https.md":                               {Prose: 15500, Page: 18000, Measured: "15398/17822", Why: "turning it on is one page; certificate trust per platform is another"},
 	"docs/localstack-compatibility.md":            {Prose: 6000, Page: 12500, Measured: "4697/12469", Why: "mostly the compatibility matrix, which is the page's job — trim the prose around it"},
 	"docs/migration-from-localstack.md":           {Prose: 14000, Page: 22000, Measured: "13775/21941", Why: "the switch-over steps and the per-feature differences are two audiences"},
-	"docs/networking.md":                          {Prose: 34500, Page: 47500, Measured: "34351/47448", Why: "split into egress modes, VPC networks, control plane and Runtime API, and troubleshooting"},
 	"docs/performance.md":                         {Prose: 10000, Page: 14000, Measured: "9993/13785", Why: "what to expect, and what to tune, are two pages"},
 	"docs/services/cloudformation/limitations.md": {Prose: 14500, Page: 16000, Measured: "14164/15943", Why: "the divergence list belongs in a table; the essays under it belong in troubleshooting"},
 	"docs/services/ec2/limitations.md":            {Prose: 10000, Page: 13500, Measured: "9534/13466", Why: "same: table the divergences, move the explanations out"},

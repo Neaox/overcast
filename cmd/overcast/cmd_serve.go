@@ -958,8 +958,8 @@ func resolvePublishedPort(cfg *config.Config, logger *zap.Logger) {
 // Cognito token minted from the host carries the published port in its
 // `iss`, and a validator inside a container comparing that literally against
 // cfg.Port reports a mismatch no URL rewrite can paper over (see
-// docs/networking.md's "no single port can be dialable from both sides of a
-// remap" for the full story). So this is raised as an actionable Warn, not
+// docs/networking/urls.md's "no single port can be dialable from both sides
+// of a remap" for the full story). So this is raised as an actionable Warn, not
 // mere Info: most setups need do nothing (the rewrite already covers them),
 // but a setup that hits the one case it cannot has a one-line fix.
 func publishedPortMismatchWarning(listenPort, publishedPort int) string {

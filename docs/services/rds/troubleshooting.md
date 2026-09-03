@@ -59,7 +59,7 @@ your own machine — cannot reach it.
 
 **Fix.** Put the caller in the same VPC, or create the instance with
 `PubliclyAccessible=true`, which keeps it on the default plane as well. See
-[Networking § Lambda, ECS and VPCs](../../networking.md) and the
+[Lambda, ECS and VPCs](../../networking/vpcs.md) and the
 [reachability defaults](./limitations.md#reachability-defaults).
 
 ## The endpoint resolves but nothing answers

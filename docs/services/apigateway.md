@@ -55,7 +55,7 @@ dial. REST v1 has no such field, matching AWS — the console composes it
 client-side, falling back to path-style only when the endpoint it is connected
 to cannot carry a subdomain. Stack outputs that compose an invoke URL in the
 template, as CDK does, are re-hosted onto a reachable origin by
-`DescribeStacks`; see [networking](../networking.md).
+`DescribeStacks`; see [what host and port a URL carries](../networking/urls.md).
 
 ## What works
 

@@ -129,8 +129,10 @@ Virtual-hosted style needs the bucket subdomain to resolve. `*.localhost` does
 that on Linux and macOS but **not on Windows**, so set
 `OVERCAST_HOSTNAME=localhost.overcast.sh`, whose every subdomain resolves to
 `127.0.0.1` on every OS. See
-[networking.md](./networking.md) for the full rule, the reserved service labels
-a bucket name cannot carry in the bare form, and the offline fallbacks, and the
+[Host-routed addressing](./networking/host-routing.md) for the full rule and
+the reserved service labels a bucket name cannot carry in the bare form,
+[Hostnames that resolve for every caller](./networking/hostnames.md) for the
+offline fallbacks, and the
 [CDK S3 asset upload troubleshooting](./cdk.md#s3-asset-upload-fails-on-windows)
 for the CDK-specific case.
 

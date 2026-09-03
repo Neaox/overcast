@@ -84,5 +84,5 @@ Per-operation status, notes and AWS API links: [MSK operations](msk/operations.m
 - [Kinesis Data Streams](./kinesis.md)
 - [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
-- [Networking § Lambda, ECS and VPCs](../networking.md)
+- [Lambda, ECS and VPCs](../networking/vpcs.md)
 - [AWS API reference](https://docs.aws.amazon.com/msk/latest/developerguide/what-is-msk.html)

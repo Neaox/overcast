@@ -277,7 +277,7 @@ chose — so it says so and changes nothing, `--force` included. Restart Overcas
 instead: its startup reconcile has the state store to ask. You will only meet
 this on the first start after upgrading.
 
-Background: [Network state verification](./networking.md#network-state-verification).
+Background: [Network state verification](./networking/network-state.md).
 
 ---
 

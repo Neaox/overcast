@@ -13,7 +13,7 @@ package lambda
 // AuthType is intentionally not enforced (see handler_url.go doc) — every
 // Host-routed invocation runs as if AuthType were NONE, regardless of what
 // was configured. This matches Overcast's "not a security boundary" stance
-// (AGENTS.md) and is called out in docs/networking.md.
+// (AGENTS.md) and is called out in docs/networking/host-routing.md.
 
 import (
 	"encoding/base64"

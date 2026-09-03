@@ -51,7 +51,7 @@ dialled locally rather than out to AWS. Everything else is fetched for real.
 `{id}.cloudfront.localhost.overcast.sh:4566`, not `cloudfront.net` — so the
 name a stack output hands you is one you can dial. Set
 `OVERCAST_HOSTNAME=localhost.overcast.sh` to make it resolve on every OS; see
-[networking](../networking.md).
+[Hostnames that resolve for every caller](../networking/hostnames.md).
 
 ## What works
 

@@ -17,5 +17,11 @@ var WebDistFS embed.FS
 // Developer-only planning notes under docs/plans and contributor-only docs
 // under docs/dev are intentionally excluded.
 //
-//go:embed docs/*.md docs/cdk docs/services
+// Every directory a published page lives in has to be named here: the pattern
+// takes no wildcard across directories, and internal/docsindex builds its index
+// by walking the tree on disk, so a directory missing from this line is a page
+// that is searchable in the console and 404s when opened. TestDocsEmbed in
+// embed_test.go fails when the two sets diverge.
+//
+//go:embed docs/*.md docs/cdk docs/networking docs/services
 var DocsServicesFS embed.FS

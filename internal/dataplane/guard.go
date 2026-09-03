@@ -23,7 +23,8 @@ import (
 // that it cannot place. It is wrong, and it breaks S3.
 //
 // Those labels are ordinary words in a bucket name, which is why
-// docs/networking.md declines to register `rds`, `cache`, `kafka` and `es` as
+// docs/networking/host-routing.md declines to register `rds`, `cache`, `kafka`
+// and `es` as
 // host-routed labels: a bucket named `my.rds` is addressed virtual-hosted as
 // `my.rds.localhost`, matches the shape exactly, and is not a data-plane
 // endpoint at all. Refusing it would break the bucket.

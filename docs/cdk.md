@@ -336,7 +336,8 @@ S3 virtual-host middleware to the correct path-style route.
 >
 > All three need a public DNS lookup, so none of them works offline or behind
 > DNS rebinding protection. See the caveat in
-> [networking.md](./networking.md) for the fallbacks.
+> [Hostnames that resolve for every caller](./networking/hostnames.md) for
+> the fallbacks.
 
 ---
 
