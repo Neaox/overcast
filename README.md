@@ -374,11 +374,11 @@ exact endpoint support.
 [SQS](./docs/services/sqs.md), [SSM](./docs/services/ssm.md), [Step Functions](./docs/services/stepfunctions.md), [STS](./docs/services/sts.md),
 [Transfer Family](./docs/services/transfer.md), [WAF v2](./docs/services/waf.md).
 
-Some services require Docker socket access for full runtime behavior:
+Some services require Docker socket access for full runtime behaviour:
 
 - Lambda, ECS, RDS, EC2/VPC, and ElastiCache can launch sibling containers.
 - Without Docker, their metadata/control-plane APIs still work where possible,
-  but runtime execution falls back to metadata-only or stub behavior.
+  but runtime execution falls back to metadata-only or stub behaviour.
 
 IAM is implemented for local development and CloudFormation/CDK compatibility,
 but IAM policies are not enforced as an authorization layer.
