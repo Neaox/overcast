@@ -28,8 +28,8 @@ Overcast does not emulate.
 | Concurrent container starts | `LAMBDA_DOCKER_MAX_CONCURRENT_STARTS` | auto (4 fallback) | Starts queue behind a semaphore |
 | `ReservedConcurrentExecutions` | per function, AWS API | unset | Throttle immediately |
 
-Derivations and every other `LAMBDA_*` variable are in
-[Configuration](../../configuration.md).
+Derivations and every other `LAMBDA_*` variable are in the
+[environment variable reference](../../configuration/reference.md).
 
 An invocation that cannot get a container first reclaims the least-recently-used
 idle one — never a provisioned one — and then waits. If it is still waiting when
@@ -67,7 +67,7 @@ budget and where an exhausted event ends up.
 Environments are created in the background (`Status: IN_PROGRESS`, then `READY`),
 held open regardless of the idle sweep, replenished when one is lost, and rebuilt
 against the new configuration after a code or config update. Containers report
-`AWS_LAMBDA_INITIALIZATION_TYPE=provisioned-concurrency`, which is what Powertools
+`AWS_LAMBDA_INITIALIZATION_TYPE=provisioned-concurrency`, the variable Powertools
 and similar libraries read to classify a cold start.
 
 Provisioned concurrency is a **floor, not a ceiling**: when all reserved
@@ -84,4 +84,4 @@ and reported `Status: FAILED` with a `StatusReason` rather than claiming `READY`
 - [Lambda execution environments](./execution-environments.md) — when a warm container is retired
 - [Lambda event delivery and retries](./async.md) — what happens to a throttled event
 - [Lambda troubleshooting](./troubleshooting.md) — throttles, layer errors, extension endpoints
-- [Configuration reference](../../configuration.md) — every `LAMBDA_*` environment variable
+- [Environment variable reference](../../configuration/reference.md) — every `LAMBDA_*` variable

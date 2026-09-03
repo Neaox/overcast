@@ -106,9 +106,8 @@ aws lambda invoke --function-name my-fn --payload '{}' \
 ```
 
 **Push to `repositoryUri`, deploy the `amazonaws.com` URI.** Both address the
-same repository — the first is where the Docker daemon can reach the registry,
-the second is what AWS and CDK write, and Overcast resolves it back. Either form
-works in `ImageUri`.
+same repository: the first is where the Docker daemon reaches the registry, the
+second is what AWS and CDK write. Either form works in `ImageUri`.
 
 ### Moving the function to a new image
 
@@ -142,8 +141,7 @@ starts, matching real Lambda. Layers published locally with
 path, later entries in the function's `Layers` list win.
 
 A layer ARN that is neither local nor cache-backed fails before the cold start,
-with a Lambda init-style error rather than a container that starts and cannot
-import:
+with a Lambda init-style error:
 
 ```
 {"errorMessage":"Failed to load Lambda layer arn:aws:lambda:...: layer version not found","errorType":"Runtime.InitError"}
@@ -231,21 +229,15 @@ arn:aws:lambda:ap-southeast-2:665172237481:layer:AWS-Parameters-and-Secrets-Lamb
 arn:aws:lambda:ap-southeast-2:665172237481:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:90
 ```
 
-Reference extensions by layer version in your IaC, because that is what CDK,
-CloudFormation and Lambda ARNs expose. The AWS Parameters and Secrets Lambda
-Extension for `ap-southeast-2` was verified at layer version `90`.
+Reference extensions by layer version in your IaC, the form CDK, CloudFormation
+and Lambda ARNs expose. The AWS Parameters and Secrets Lambda Extension for
+`ap-southeast-2` was verified at layer version `90`.
 
 | Rule | Detail |
 | --- | --- |
 | Endpoint variables are injected | `AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_SSM`, `AWS_ENDPOINT_URL_SECRETS_MANAGER`, `AWS_REGION` and the `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` triple, so an endpoint-aware extension reaches the emulator |
 | Match the **function's** architecture | An `x86_64` function needs the x86_64 layer even on Apple Silicon |
 | No secret cache in front of the extension | The binary keeps its own environment-local cache, as on AWS, so a warm environment can return a prior value until `SECRETS_MANAGER_TTL` expires. Set the TTL to `0` when every request must read the current `AWSCURRENT` value |
-
-## Reaching real AWS from a function
-
-| Want | Do |
-| --- | --- |
-| One client calling a real regional endpoint, a peered private endpoint or a third-party API, with the rest of the stack emulated | Nothing, under the default `OVERCAST_VPC_EGRESS=open`: construct that one client with an explicit endpoint and real credentials — see [Egress modes § Reaching real AWS from a container](../../networking/egress.md#reaching-real-aws-from-a-container) |
 
 ## Related
 

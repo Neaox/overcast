@@ -111,11 +111,12 @@ Three things keep that working:
 | --- | --- |
 | URLs the function requests itself | `CreateQueue`, `GetQueueUrl` and `ListQueues` answer on the origin the function called in on, so they are dialable by definition |
 | Loopback URLs in the function's environment | Rewritten at container start: an `http://localhost:<port>` or `http://127.0.0.1:<port>` origin on Overcast's own port is re-pointed at the container-reachable endpoint. Other hosts and ports are left alone |
-| Split-horizon hostnames | `localhost.overcast.sh`, `localhost.localstack.cloud` and `localhost.floci.io` resolve to `127.0.0.1` in public DNS and are remapped to Overcast inside each container. Add more with `OVERCAST_SPLIT_HORIZON_HOSTS`; `OVERCAST_HOSTNAME` is mapped too when it is a DNS name |
+| Split-horizon hostnames | A wildcard-DNS name resolves to `127.0.0.1` on the host and is remapped to Overcast inside each container — see [Hostnames that resolve for every caller](../networking/hostnames.md) |
 
 Setting `OVERCAST_HOSTNAME=localhost.overcast.sh` gives every service one URL
-form valid on both sides of the container boundary. If your function builds its
-own SQS client, passing the endpoint explicitly is always safe:
+form valid on both sides of the container boundary; `OVERCAST_SPLIT_HORIZON_HOSTS`
+adds further names. If your function builds its own SQS client, passing the
+endpoint explicitly is always safe:
 
 ```js
 new SQSClient({ endpoint: process.env.AWS_ENDPOINT_URL });
@@ -142,5 +143,5 @@ Per-operation status, notes and AWS API links: [Lambda operations](lambda/operat
 - [Lambda runtimes](./lambda/runtimes.md) — identifiers, deprecation dates, images
 - [CloudWatch Logs](./cloudwatch-logs.md) — where function output lands
 - [All service pages](./README.md)
-- [Configuration reference](../configuration.md) — every `LAMBDA_*` environment variable
+- [Environment variable reference](../configuration/reference.md) — every `LAMBDA_*` variable
 - [AWS API reference](https://docs.aws.amazon.com/lambda/latest/api/welcome.html)

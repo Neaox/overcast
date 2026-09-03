@@ -11,7 +11,7 @@ tags:
 
 # IAM troubleshooting
 
-The errors that stop a local run, and what to do about each. Back to the
+Symptom, cause and fix for the errors that stop a local run behind
 [IAM](../iam.md).
 
 ## `DeleteConflict` (409) deleting a user, role, group or policy
