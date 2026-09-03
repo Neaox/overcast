@@ -46,7 +46,7 @@ aws acm describe-certificate --certificate-arn "$CERT"
 | -------------------- | ------------------------------------------------------------ | ---------------------------------------------- |
 | Validation           | DNS or email round-trip; `PENDING_VALIDATION` first          | Skipped; the certificate is `ISSUED` on return |
 | Certificate material | A real X.509 chain is issued                                 | No key or chain is generated                   |
-| Import and renewal   | `ImportCertificate`, `RenewCertificate`, `ExportCertificate` | Not implemented — `501 Not Implemented`        |
+| Import and renewal   | `ImportCertificate`, `RenewCertificate`, `ExportCertificate` | Not implemented — `400 UnknownOperationException` |
 
 ## Gotchas
 

@@ -12,7 +12,7 @@ tags:
 # Cognito limitations
 
 Divergences from AWS, in full. The summary is on the
-[Cognito](../cognito.md).
+[Cognito page](../cognito.md).
 
 ## Lambda triggers
 
@@ -65,15 +65,14 @@ These have no AWS counterpart and exist for local development:
 | `/_overcast/cognito/user-pools/{poolId}/import-users`            | Bulk user import                               |
 
 > [!CAUTION]
-> A route that hands out plaintext passwords exists because this is a local
-> emulator. Do not expose Overcast's port to a network you do not control.
+> One of these routes hands out plaintext passwords. Do not expose Overcast's
+> port to a network you do not control.
 
 ## Everything else
 
 - **Identity pools** (`cognito-identity`) are not emulated. Only user pools
   (`cognito-idp`) are.
-- **Passwords** are bcrypt-hashed at the library's minimum cost, chosen to keep
-  bcrypt semantics without paying production CPU per request. It is not a
+- **Passwords** are bcrypt-hashed at the library's minimum cost, which is not a
   production hashing configuration.
 - **`UpdateUserPoolDomain`** accepts an SSL certificate update and does nothing
   with it.

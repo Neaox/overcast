@@ -12,12 +12,11 @@ tags:
 # CloudFormation teardown
 
 What [CloudFormation](../cloudformation.md) does when a resource will not go, and
-which resources it deliberately leaves standing.
+which resources it leaves standing.
 
-A delete reports success only when the resource is gone, and there are two ways
-for it to be gone: the delete removed it, or it was not there to begin with. An
-absent resource is always a successful teardown — nothing may wedge a stack over a
-resource that no longer exists — and every other outcome is reported.
+A delete reports success only when the resource is gone: either the delete
+removed it, or it was not there to begin with. An absent resource is always a
+successful teardown; every other outcome is reported.
 
 ## What the stack does with a failed delete
 
@@ -39,7 +38,7 @@ past it:
 | Child teardown failed | A nested `AWS::CloudFormation::Stack` |
 
 The rest are failures a retry may clear on its own. Either way the resource is
-still standing, which is why both stop the teardown. `DeleteStack`'s
+still standing, so both stop the teardown. `DeleteStack`'s
 `RetainResources` option is not implemented, so a resource that keeps refusing
 cannot yet be skipped past — clear the cause and call `DeleteStack` again.
 Resources deleted before the failure stay deleted, so a retry resumes from what is

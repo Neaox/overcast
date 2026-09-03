@@ -32,14 +32,14 @@ correctness will pass locally and fail on AWS, or the reverse.
 | `Compress`, `OriginShield` | Stored and echoed; no compression, no shield tier |
 
 > [!CAUTION]
-> The first two rows are the ones that bite. Access control is the reason
-> CloudFront sits in front of a bucket, and Overcast does not implement it.
-> Treat private-content behaviour as untested until it runs on AWS.
+> The first two rows are the ones that bite: nothing here verifies a signed URL
+> or restricts an origin to the distribution. Treat private-content behaviour as
+> untested until it runs on AWS.
 
 ## Caching
 
-The origin proxy has a real in-process response cache, with a deliberately
-simpler model than CloudFront's.
+The origin proxy has a real in-process response cache, with a simpler model
+than CloudFront's.
 
 | Aspect | Overcast |
 | --- | --- |
@@ -58,14 +58,14 @@ Tag matching is case-insensitive, and a comma-separated header yields at most
 
 ## Distributions
 
-| Behaviour | Overcast | AWS |
+| Area | On AWS | Overcast |
 | --- | --- | --- |
-| `Status` after create or update | `Deployed` immediately | `InProgress` until propagation finishes |
-| `ETag` | A quoted version counter, `"1"`, `"2"`, … | An opaque token |
-| `CallerReference` reuse with an identical config | Returns the existing distribution, `201` | `DistributionAlreadyExists` |
+| `Status` after create or update | `InProgress` until propagation finishes | `Deployed` immediately |
+| `ETag` | An opaque token | A quoted version counter, `"1"`, `"2"`, … |
+| `CallerReference` reuse with an identical config | `DistributionAlreadyExists` | Returns the existing distribution, `201` |
 | `CallerReference` reuse with a different config | `DistributionAlreadyExists` | `DistributionAlreadyExists` |
-| `DeleteDistribution` | Requires `If-Match` and `Enabled: false`; cascades the distribution's invalidations and purges its cache. Its tag set is not removed | Requires `If-Match` and `Enabled: false` |
-| `TestFunction` | Returns a fixed success result with `ComputeUtilization: 12`; the function code is not run | Runs the code against the supplied event |
+| `DeleteDistribution` | Requires `If-Match` and `Enabled: false` | The same, plus it cascades the distribution's invalidations and purges its cache. Its tag set is not removed |
+| `TestFunction` | Runs the code against the supplied event | Returns a fixed success result with `ComputeUtilization: 12`; the code is not run |
 
 `CreateDistributionWithTags` honours a `_custom_id_` tag to force a specific
 distribution ID, for tests that need a stable one.

@@ -97,11 +97,10 @@ Reaching a limit logs a warning and publishes an `apigateway:Throttled` event â€
 visible on the console's Events and Usage Plans pages â€” coalesced to at most one
 per key per second.
 
-**Rejection is opt-in and off by default.** Overcast is not a rate-limiting or
-load-testing tool, and switching enforcement on can turn a working local stack
-into one that gets `429`s. By default an over-limit request is counted,
+**Rejection is opt-in and off by default.** An over-limit request is counted,
 reported, and served normally. Set `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE=true`
-to reject it the way AWS does:
+to reject it the way AWS does, bearing in mind that a working local stack then
+starts getting `429`s:
 
 | Condition | Status | `x-amzn-ErrorType` | Body |
 | --- | --- | --- | --- |

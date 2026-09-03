@@ -51,8 +51,8 @@ aws cloudtrail get-trail-status --name main
 
 > [!NOTE]
 > Every CloudTrail operation is 🧊 Inert: the call is accepted and answered
-> correctly, and nothing happens as a result. The point is to unblock stacks
-> that require CloudTrail control-plane calls, not to audit anything.
+> correctly, and nothing happens as a result. A stack that requires CloudTrail
+> control-plane calls deploys; nothing it does is audited.
 
 <!-- BEGIN overcast:capabilities -->
 
