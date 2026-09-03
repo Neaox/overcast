@@ -1534,9 +1534,9 @@ var allServices = []string{"s3", "sqs", "sns", "ses", "dynamodb", "dynamodbstrea
 // state through it.
 //
 // These are the names OVERCAST_STATE_<SERVICE> is keyed by, and cmd/capgen
-// generates the service-name table in docs/README.md from this list, which is
-// what keeps the documented names from drifting away from the real ones when a
-// service is added or renamed.
+// generates the service-name table in docs/configuration.md from this list,
+// which is what keeps the documented names from drifting away from the real
+// ones when a service is added or renamed.
 func AllServices() []string {
 	out := make([]string, len(allServices))
 	copy(out, allServices)
@@ -1639,7 +1639,8 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //
 // Environment variables (all optional, defaults shown):
 //
-//	OVERCAST_LISTEN                    0.0.0.0 (comma-separated for several; bind address —
+//	OVERCAST_LISTEN                    127.0.0.1 native, 0.0.0.0 containerised (comma-separated
+//	                                           for several; bind address — see resolveListenDefault;
 //	                                           OVERCAST_HOST was renamed to this and removed, see #870;
 //	                                           LocalStack's GATEWAY_LISTEN is accepted as a compatibility
 //	                                           alias for it and OVERCAST_PORT together — see
@@ -2096,7 +2097,7 @@ func Load() (*Config, error) {
 		}
 		svc, known := serviceByEnvSuffix[envKey[len(statePrefix):]]
 		if !known {
-			return nil, fmt.Errorf("config: %s does not name a known service (see the service names table in docs/README.md)", envKey)
+			return nil, fmt.Errorf("config: %s does not name a known service (see the service names table in docs/configuration.md#service-names)", envKey)
 		}
 
 		raw := strings.ToLower(value)
