@@ -29,6 +29,9 @@ aws wafv2 create-web-acl \
 aws wafv2 list-web-acls --scope REGIONAL
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area     | Behaviour                                                                  |

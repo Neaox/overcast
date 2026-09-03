@@ -42,6 +42,9 @@ DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns "$LB" \
 curl -H "Host: $DNS" http://localhost:4566/
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 Register the address of something that actually listens — a container on
 Overcast's network, or a port on your host. An ECS service with a
 `loadBalancers` configuration does this for you.

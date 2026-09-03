@@ -33,6 +33,9 @@ aws stepfunctions describe-execution --execution-arn "$EX"
 aws stepfunctions get-execution-history --execution-arn "$EX"
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 > [!IMPORTANT]
 > Anything Overcast cannot interpret **fails the execution loudly** — never a
 > silent pass-through, and never a fake `SUCCEEDED`. The error is

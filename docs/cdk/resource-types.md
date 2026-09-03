@@ -110,4 +110,4 @@ attributes per resource type are listed in the
 - [Local VPCs for CDK](./local-vpc.md) — the VPC pattern that survives a teardown
 - [Using AWS CDK](../cdk.md) — bootstrap and deploy against Overcast
 - [CloudFormation service reference](../services/cloudformation.md) — the provisioner behind these types
-- [All documentation](../README.md) — every guide and service page
+- [Reference index](../README.md) — every guide and service page

@@ -33,6 +33,9 @@ aws autoscaling describe-auto-scaling-groups --auto-scaling-group-name web \
   --query 'AutoScalingGroups[0].Instances[].[InstanceId,LifecycleState]'
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 The reconciler is woken by every change, so the instances are usually there by
 the time the next call lands. A one-second tick bounds the transitions nothing
 pokes — a lifecycle heartbeat expiring, a cooldown ending.

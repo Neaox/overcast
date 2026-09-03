@@ -31,6 +31,9 @@ aws ecs run-task --cluster dev --task-definition web
 aws ecs list-tasks --cluster dev
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area | Behaviour |

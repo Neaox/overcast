@@ -34,6 +34,9 @@ aws sqs send-message --queue-url "$SRC" --message-body '{"id":1}'
 aws pipes describe-pipe --name inbox-to-topic
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Leg | Supported | Refused at `CreatePipe`/`UpdatePipe` |

@@ -34,6 +34,9 @@ ITER=$(aws dynamodbstreams get-shard-iterator --stream-arn "$ARN" \
 aws dynamodbstreams get-records --shard-iterator "$ITER"
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area | Behaviour |

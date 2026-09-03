@@ -29,6 +29,9 @@ aws secretsmanager get-secret-value --secret-id app/db \
   --query SecretString --output text
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area            | Behaviour                                                                                              |

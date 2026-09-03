@@ -28,6 +28,9 @@ aws sqs send-message --queue-url "$Q" --message-body '{"id":1}'
 aws sqs receive-message --queue-url "$Q" --wait-time-seconds 5
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area               | Behaviour                                                                                                                   |

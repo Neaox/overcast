@@ -58,12 +58,12 @@ func findCallouts(visible []string) []calloutBlock {
 // calloutKind pulls "WARNING" out of "> [!WARNING]", for a failure message that
 // names the two blocks the writer has to look at.
 func calloutKind(line string) string {
-	open := strings.Index(line, "[!")
-	close := strings.Index(line, "]")
-	if open < 0 || close < open+2 {
+	start := strings.Index(line, "[!")
+	end := strings.Index(line, "]")
+	if start < 0 || end < start+2 {
 		return "alert"
 	}
-	return line[open+2 : close]
+	return line[start+2 : end]
 }
 
 // checkCallouts reports each pair of callouts with no visible line between them.

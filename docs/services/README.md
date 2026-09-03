@@ -67,7 +67,7 @@ aws sqs create-queue --queue-name orders
 
 Each service has an overall tier, and it decides the **Status:** token at the top
 of that service's page. The full generated table, with operation counts and
-tiers, is on [Documentation § Services](../README.md#services).
+tiers, is on [Reference index § Services](../README.md#services).
 
 | Tier | Meaning | Page status |
 | --- | --- | --- |
@@ -103,7 +103,7 @@ x-emulator-unsupported: true
 A running service also reports a **runtime emulation tier** — full, partial,
 inert or stub — on `/_overcast/health`, in `overcast services` and in the web
 console. That is a different axis, defined in
-[Documentation § Runtime emulation tiers](../README.md#runtime-emulation-tiers).
+[Reference index § Runtime emulation tiers](../README.md#runtime-emulation-tiers).
 
 ## Related
 

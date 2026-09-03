@@ -33,6 +33,9 @@ docker push "$URI:latest"
 aws ecr describe-images --repository-name my-app
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area | Behaviour |

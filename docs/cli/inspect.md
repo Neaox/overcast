@@ -57,7 +57,7 @@ overcast wait --timeout 30s
 
 Lists the AWS services the daemon has enabled and the runtime emulation tier of
 each — full, partial, inert or stub, explained in
-[Documentation § Runtime emulation tiers](../README.md#runtime-emulation-tiers).
+[Reference index § Runtime emulation tiers](../README.md#runtime-emulation-tiers).
 
 | Flag | Default | Description |
 | --- | --- | --- |

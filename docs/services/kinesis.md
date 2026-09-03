@@ -32,6 +32,9 @@ ITER=$(aws kinesis get-shard-iterator --stream-name events \
 aws kinesis get-records --shard-iterator "$ITER"
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area | Behaviour |

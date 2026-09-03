@@ -31,6 +31,9 @@ aws athena get-query-execution --query-execution-id <id>
 # Status.State is already SUCCEEDED
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area | Behaviour |

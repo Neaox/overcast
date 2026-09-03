@@ -37,6 +37,9 @@ curl -s "http://localhost:4566/_overcast/appsync/apis/$API/graphql" \
   -H "x-api-key: $KEY" -d '{"query":"{ hello }"}'
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## Endpoint URLs
 
 A GraphQL API answers on two forms, with identical behaviour:

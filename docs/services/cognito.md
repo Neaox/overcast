@@ -36,6 +36,9 @@ aws cognito-idp initiate-auth --client-id "$CLIENT" --auth-flow USER_PASSWORD_AU
   --auth-parameters USERNAME=ada,PASSWORD='Passw0rd!'
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area              | Behaviour                                                                                                            |

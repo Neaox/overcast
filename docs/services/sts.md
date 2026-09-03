@@ -28,6 +28,9 @@ aws sts assume-role \
   --role-session-name local
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area                        | Behaviour                                                        |

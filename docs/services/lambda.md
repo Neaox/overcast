@@ -33,6 +33,9 @@ aws lambda invoke --function-name hello --payload '{"hi":1}' \
   --cli-binary-format raw-in-base64-out out.json && cat out.json
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 > [!IMPORTANT]
 > Real execution requires Docker. Without it `Invoke` returns a stub response and
 > does not run your code. In a container, bind-mount the Docker socket.

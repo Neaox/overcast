@@ -29,6 +29,9 @@ aws logs put-log-events --log-group-name /custom/demo --log-stream-name run-1 \
 aws logs filter-log-events --log-group-name /custom/demo
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 A Lambda function gets `/aws/lambda/<function-name>` created for it at
 `CreateFunction`, and a stream per invocation. Its stdout and stderr land there.
 

@@ -28,6 +28,9 @@ aws eks create-cluster --name dev \
 aws eks describe-cluster --name dev --query 'cluster.status'
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 In the default `mock` mode the cluster is `ACTIVE` immediately, with synthetic
 endpoint and CA fields. Set `OVERCAST_EKS_MODE=live` to have `CreateCluster`
 launch a k3s control-plane container instead — see

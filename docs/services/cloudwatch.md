@@ -32,6 +32,9 @@ aws cloudwatch describe-alarms --alarm-names errors \
   --query 'MetricAlarms[0].[StateValue,StateReason]'
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 The alarm reacts within about one period: evaluation runs over **closed**
 periods, so a datapoint published into the period still accumulating is not yet
 a datapoint to evaluate.

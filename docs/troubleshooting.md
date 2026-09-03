@@ -30,7 +30,7 @@ Find the symptom, follow the link. If nothing matches, start the daemon with
 | My file edits are not reaching a container | [The inner loop § When it does not work](./local-dev.md#when-it-does-not-work) |
 | It all feels slow | [Performance](./performance.md) — usually the client, not the emulator |
 | Something that worked on LocalStack does not here | [Migrating from LocalStack § Troubleshooting](./migration-from-localstack.md#troubleshooting) |
-| An operation returns `501 Not Implemented` | The service's page under [Services](./README.md#services) — it is not emulated yet |
+| An operation returns `501 Not Implemented` | The service's page under [Reference index § Services](./README.md#services) — it is not emulated yet |
 
 ## Startup warnings
 

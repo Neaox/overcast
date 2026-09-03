@@ -33,6 +33,9 @@ aws ec2 create-subnet --vpc-id "$VPC" --cidr-block 10.0.1.0/24 \
 docker network ls --filter label=overcast.vpc-id="$VPC"
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area | Behaviour |

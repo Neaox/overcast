@@ -92,6 +92,23 @@ and nothing else — credentials, region and per-language client setup belong to
 [Using AWS SDKs and CLI](../sdk-cli.md). Shell blocks are ` ```bash `. End on the
 call that proves it worked.
 
+Then one line under the block, before the next heading:
+
+```md
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+```
+
+The endpoint-only block is right for everyone who already has AWS configured
+and wrong for the reader the first screen is for: with an empty `~/.aws` the
+CLI and every SDK refuse to sign, so the quick start's first command dies on
+`Unable to locate credentials` without ever reaching Overcast. One sentence
+answers that; the link is what keeps credentials from being taught fifty
+times. Prose rather than a callout — fifty pages of `> [!NOTE]` would spend
+the alert vocabulary on the least surprising fact in the corpus.
+`internal/docslint` requires the `sdk-cli.md#credentials` link inside the
+Quick start section, so it cannot quietly go missing from one page.
+
 **Differences from AWS.** `| Area | On AWS | Overcast |`, AWS before Overcast.
 Drop the middle column when the rows genuinely have no AWS half to state —
 `| Area | Overcast |` — rather than inventing one.

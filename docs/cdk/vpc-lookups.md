@@ -140,4 +140,4 @@ go stale.
 - [Using AWS CDK](../cdk.md) — bootstrap and deploy CDK stacks against Overcast
 - [EC2 / VPC service reference](../services/ec2.md) — VPC support, filters, and the default VPC
 - [Using AWS SDKs and CLI](../sdk-cli.md) — endpoint and credential configuration for local AWS clients
-- [All documentation](../README.md) — every guide and service page
+- [Reference index](../README.md) — every guide and service page

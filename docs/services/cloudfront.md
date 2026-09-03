@@ -35,6 +35,9 @@ ID=$(aws cloudfront create-distribution --distribution-config '{
 curl "http://localhost:4566/_overcast/cloudfront/distributions/$ID/"
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 An origin domain Overcast already answers for — `{bucket}.s3.…`, an API Gateway
 or Lambda function URL, any subdomain of the host you reached Overcast on — is
 dialled locally rather than out to AWS. Everything else is fetched for real.

@@ -27,6 +27,9 @@ aws ssm put-parameter --name /app/db/url --type String --value postgres://localh
 aws ssm get-parameter --name /app/db/url --query Parameter.Value --output text
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area         | Behaviour                                                                                          |

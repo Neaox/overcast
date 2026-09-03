@@ -29,6 +29,9 @@ aws firehose put-record \
 # → { "RecordId": "…", "Encrypted": false }
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area | Behaviour |

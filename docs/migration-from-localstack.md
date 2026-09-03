@@ -59,7 +59,7 @@ services:
 ## Coverage
 
 For current coverage use the
-[generated service index](./README.md#services) — every emulated service with
+[Reference index § Services](./README.md#services) — every emulated service with
 its operation count — and the per-service pages behind it for operation-level
 detail. CloudFormation coverage is listed separately under
 [supported resource types](./cdk/resource-types.md). Overcast has no plans, so
@@ -83,8 +83,8 @@ container. Storage defaults to `memory` when no volume is mounted — see
 
 ### Tests pass with LocalStack but fail here
 
-1. Check the service page under [Services](./README.md#services) — the operation
-   may not be emulated yet.
+1. Check the service page under [Reference index § Services](./README.md#services)
+   — the operation may not be emulated yet.
 2. Re-run with `OVERCAST_LOG_LEVEL=debug` to see the request and the response.
 3. Inspect stored state at `/_overcast/debug/state` (needs `OVERCAST_DEBUG=true`).
 4. If the operation is listed ✅ Supported,
