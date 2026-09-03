@@ -24,6 +24,7 @@ them?**
 | [What host and port a URL carries](./networking/urls.md) | A port that differs depending on who asks |
 | [Data-plane endpoints](./networking/data-plane-endpoints.md) | An RDS, Aurora or ElastiCache endpoint that will not connect |
 | [The Docker networks Overcast uses](./networking/docker-networks.md) | The data plane, the control plane, the per-VPC bridges, and how to join them |
+| [How a VPC is backed by a Docker network](./networking/vpc-backing.md) | The bridge behind a VPC, what an internet gateway does to it, and overlapping CIDRs |
 | [Egress modes](./networking/egress.md) | Whether a container reaches the internet: `open`, `none`, and what each isolates |
 | [`routed`: egress from your route tables](./networking/routed-egress.md) | Per-subnet egress, and the address pool it draws on |
 | [Lambda, ECS and VPCs](./networking/vpcs.md) | A Lambda that cannot reach a database, and what a `VpcConfig` takes away |
