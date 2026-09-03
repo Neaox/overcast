@@ -6,7 +6,7 @@ import (
 )
 
 func tellDoc(sentence string) Doc {
-	return Doc{Path: "docs/demo-guide.md", Body: "# Demo\n\n" + sentence + "\n"}
+	return Doc{Path: "docs/demo-guide.md", Body: withRelated("# Demo\n\n" + sentence + "\n")}
 }
 
 func TestCheck_rejectsTheContrastDefinition(t *testing.T) {
@@ -59,7 +59,7 @@ func TestCheck_ignoresTellsInsideFencedCode(t *testing.T) {
 	body := "# Demo\n\n```text\nWARN seamless fallback: it is not a proxy — it is a shim\n```\n"
 
 	// When / Then: only prose is the writer's to answer for.
-	assertClean(t, Check([]Doc{{Path: "docs/demo-guide.md", Body: body}}))
+	assertClean(t, Check([]Doc{{Path: "docs/demo-guide.md", Body: withRelated(body)}}))
 }
 
 func TestCheck_honoursAnAllowlistedPhrase(t *testing.T) {

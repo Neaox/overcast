@@ -42,4 +42,9 @@ All 12 listed operations are implemented. Back to [Backup](../backup.md).
 | `ListTags`            | ✅ Supported | GET /tags/{ResourceArn} (#1195)                                                                                                                                                        | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_ListTags.html)            |
 | `UntagResource`       | ✅ Supported | POST /untag/{ResourceArn} — Backup's own path, not another member of the shared /tags dispatcher (#1195)                                                                               | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_UntagResource.html)       |
 
+## Related
+
+- [Backup](../backup.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

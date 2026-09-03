@@ -12,8 +12,6 @@ tags:
 
 # Lambda, ECS and VPCs
 
-Back to [Networking](../networking.md).
-
 Giving a function a `VpcConfig` (or a task an `awsvpc` configuration) puts the
 container in that VPC: it joins that VPC's Docker network, takes an address from
 its CIDR, and reaches the other resources in it by name. **It also takes away
@@ -83,3 +81,4 @@ setup — to get the restriction and the diagnostics together.
 - [Egress modes](./egress.md) — whether a container in a VPC reaches the internet
 - [The Docker networks Overcast uses](./docker-networks.md) — the bridge a VPC becomes
 - [Networking troubleshooting](./troubleshooting.md) — the VPC migrations and the default VPC
+- [Networking and host-based addressing](../networking.md) — the rest of the addressing story

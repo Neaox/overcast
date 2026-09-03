@@ -55,4 +55,9 @@ All 25 listed operations are implemented. Back to [Auto Scaling](../autoscaling.
 | `SetInstanceHealth`                   | ✅ Supported | Unhealthy instances are terminated and replaced by the reconciler                                                                                                        |          |
 | `SetInstanceProtection`               | ✅ Supported | Protected instances are excluded from scale-in                                                                                                                           |          |
 
+## Related
+
+- [Auto Scaling](../autoscaling.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

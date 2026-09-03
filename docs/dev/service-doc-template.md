@@ -102,6 +102,13 @@ Drop the middle column when the rows genuinely have no AWS half to state —
 overrides](../configuration.md#service-names)`, guides, and the AWS API
 reference last. Same-directory targets carry a `./` prefix.
 
+**Every published page carries one**, not only a service landing page — a reader
+arrives from search on whichever page matched, and the link footer is their only
+route to the page they wanted. `internal/docslint` requires it everywhere except
+a directory index (`README.md`), which is a list of links already, and checks the
+two ends of the order above: own sub-pages first, links off the site last. The
+middle of the list is a judgment and is left to you.
+
 **Required:** `Quick start`, `Operations`, `Related`. The rest are optional —
 write one when there is something to say, not to fill the outline. Sections you
 do write must stay in the order above, and headings outside this vocabulary
@@ -127,6 +134,20 @@ Create one only when the content exists. An empty sub-page is worse than no
 sub-page: it costs a reader a click to learn nothing. Every hand-written
 sub-page links back to `../<key>.md`, so a reader arriving from search knows
 which service they are looking at.
+
+**The link back goes inside the first sentence, not on a line of its own.**
+`Back to [ECS](../ecs.md).` spends the one line every reader reads on the one
+thing they already know. Say what the page holds and carry the link in that:
+
+```md
+The full divergence list behind [RDS](../rds.md).
+Symptom, cause and fix for tasks that will not start behind [ECS](../ecs.md).
+Worked setups past the [EFS quick start](../efs.md#quick-start).
+```
+
+`internal/docslint` rejects a first body line that is nothing but a link, with
+or without a `Back to` in front of it. A line with a clause of its own passes,
+including one that keeps the back-link at the end.
 
 ## Guides that outgrow one page
 

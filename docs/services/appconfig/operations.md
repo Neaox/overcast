@@ -74,4 +74,9 @@ All 20 listed operations are implemented. Back to [AppConfig](../appconfig.md).
 | `UntagResource`       | ✅ Supported | Removes tags by the `tagKeys` query parameter                                     | [docs](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/API_UntagResource.html)       |
 | `ListTagsForResource` | ✅ Supported | Returns tags for applications, environments, and configuration profiles           | [docs](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/API_ListTagsForResource.html) |
 
+## Related
+
+- [AppConfig](../appconfig.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

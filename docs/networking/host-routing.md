@@ -12,8 +12,6 @@ tags:
 
 # Host-routed addressing
 
-Back to [Networking](../networking.md).
-
 Overcast accepts both AWS addressing styles and rewrites every host-routed
 request onto the same handlers path-style requests use, so authorizers, stage
 variables, integration dispatch and event publishing behave identically either
@@ -147,3 +145,4 @@ are simplified:
 - [Hostnames that resolve for every caller](./hostnames.md) — making the subdomain resolve
 - [What host and port a URL carries](./urls.md) — what Overcast puts in the URLs it hands back
 - [Using AWS SDKs and CLI](../sdk-cli.md) — endpoint configuration per SDK
+- [Networking and host-based addressing](../networking.md) — the rest of the addressing story

@@ -92,3 +92,10 @@ Managed policy *versions* are a counter rather than a history:
 `CreatePolicyVersion` with `SetAsDefault=true` replaces the operative document
 and bumps `DefaultVersionId`, which is what `AWS::IAM::ManagedPolicy` updates
 dispatch, but superseded documents are not retained.
+
+## Related
+
+- [IAM](../iam.md) — quick start and what works
+- [IAM troubleshooting](./troubleshooting.md) — the errors that stop a local run
+- [IAM operations](./operations.md) — per-operation status
+- [STS](../sts.md) — where an assumed-role session comes from

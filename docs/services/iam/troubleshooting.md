@@ -79,3 +79,9 @@ evaluator, works with enforcement off, and `MatchedStatements` names the
 statement that decided it. `MissingContextValues` names condition keys the call
 did not supply. If the policy is an AWS-managed ARN, note that those documents
 are not stored here and grant nothing.
+
+## Related
+
+- [IAM](../iam.md) — quick start and what works
+- [IAM limitations](./limitations.md) — what the policy evaluator covers
+- [IAM operations](./operations.md) — per-operation status

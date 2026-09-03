@@ -43,4 +43,9 @@ All 13 listed operations are implemented. Back to [Transfer Family](../transfer.
 | `UntagResource`       | 🧊 Inert |                                                                            | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_UntagResource.html)       |
 | `ListTagsForResource` | 🧊 Inert | No pagination; every tag is returned in one page                           | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_ListTagsForResource.html) |
 
+## Related
+
+- [Transfer Family](../transfer.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

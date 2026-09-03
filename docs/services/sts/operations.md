@@ -47,4 +47,9 @@ tags:
 | `GetDelegatedAccessToken`    | ❌ Unsupported | Returns NotImplemented | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetDelegatedAccessToken.html)    |
 | `GetWebIdentityToken`        | ❌ Unsupported | Returns NotImplemented | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetWebIdentityToken.html)        |
 
+## Related
+
+- [STS](../sts.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

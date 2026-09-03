@@ -137,4 +137,9 @@ tags:
 | `GetBucketNotificationConfiguration` | ✅ Supported | Returns empty config if none set                                                                                                                                                                                                                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketNotificationConfiguration.html) |
 | `PutBucketNotificationConfiguration` | ✅ Supported | SQS, SNS, Lambda and EventBridge destinations; prefix/suffix filters. Records carry versionId and sequencer; SNS deliveries carry the Records JSON as the notification envelope's Message string with Subject "Amazon S3 Notification", as real S3 does; EventBridge events carry AWS's Object Created/Object Deleted shape, including deletion-type, minus the fields Overcast has no value for | [docs](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketNotificationConfiguration.html) |
 
+## Related
+
+- [S3](../s3.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

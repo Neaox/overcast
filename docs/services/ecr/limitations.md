@@ -11,7 +11,8 @@ tags:
 
 # ECR limitations
 
-Back to [ECR](../ecr.md).
+How a repository URI is derived, what survives a restart, and what the image
+inventory tracks, behind [ECR](../ecr.md).
 
 ## The repository URI
 
@@ -101,3 +102,10 @@ registry 404s is dropped, so a restart that keeps the registry's storage but
 loses the in-memory records rediscovers them, and one that keeps the records but
 loses the storage drops them. A record written by `PutImage` is left alone either
 way — it was never in the registry.
+
+## Related
+
+- [ECR](../ecr.md) — quick start and what works
+- [ECR troubleshooting](./troubleshooting.md) — push failures, leaked containers, reclaiming storage
+- [ECR operations](./operations.md) — per-operation status
+- [Environment variable reference](../../configuration/reference.md) — `OVERCAST_ECR_REGISTRY_PORT` and the rest

@@ -12,8 +12,6 @@ tags:
 
 # Hostnames that resolve for every caller
 
-Back to [Networking](../networking.md).
-
 Every URL Overcast hands out carries `OVERCAST_HOSTNAME` when it is set, so that
 name has to resolve to Overcast for whoever receives the URL. One value works
 for the host and for containers alike:
@@ -112,3 +110,4 @@ inside the containers it starts, on top of the built-in
 - [What host and port a URL carries](./urls.md) — the port half of the same rule
 - [Host-routed addressing](./host-routing.md) — what the subdomains are for
 - [Networking troubleshooting](./troubleshooting.md) — when a name will not resolve
+- [Networking and host-based addressing](../networking.md) — the rest of the addressing story

@@ -11,7 +11,8 @@ tags:
 
 # Lambda limitations
 
-Back to [Lambda](../lambda.md).
+The full divergence list behind [Lambda](../lambda.md): async retries, concurrency,
+runtimes, logging and VPC placement.
 
 ## Divergences
 
@@ -51,9 +52,8 @@ and Scheduler targets, and SNS `lambda` subscriptions, which share the async pat
   when the one-minute wait ends, so it never runs again.
 - **An aged-out record's `condition` reads `RetriesExhausted`**, which is probably
   not what AWS sends — its console describes an on-failure destination as firing
-  when an event "fails all processing attempts *or* exceeds the maximum age", so
-  the two are distinct. AWS documents no string for the second, and inventing one
-  would be worse than reusing a real one.
+  when an event "fails all processing attempts *or* exceeds the maximum age", and
+  AWS documents no string for the second.
 - A function throttled by its **own reserved concurrency** is the documented
   exception and is not retried: AWS sends those events to the dead-letter queue
   "without any retries", and Overcast does the same once the invocation has waited
@@ -166,8 +166,7 @@ An invocation that cannot get a container first reclaims the least-recently-used
 idle one (never a provisioned one), then waits — and if it is still waiting when
 the function's timeout expires it is throttled, with a 429
 `TooManyRequestsException` and `Reason: ConcurrentInvocationLimitExceeded`. The
-instance limits protect your machine; they are not an emulation of AWS's account
-quota.
+instance limits protect your machine rather than emulating AWS's account quota.
 
 The memory budget counts bytes, not containers: a new container is admitted only
 while `Σ MemorySize` of live containers plus its own stays inside the budget. Each
@@ -246,10 +245,9 @@ the period rolls over. Measured on a 128 MB `nodejs22.x` hello-world driven with
 no think time: warm p50 is unchanged at ~5 ms, but roughly one invocation in eight
 stalls for ~80 ms, taking p95 from ~15 ms to ~80 ms.
 
-It is not a defect and it is not emulated away — throttling a container that
-overruns its CPU allocation is what Lambda does. It disappears entirely with more
-memory (at 1769 MB, a full vCPU, there are no stalls at all) or any gap between
-invocations.
+Throttling a container that overruns its CPU allocation is what Lambda does, so
+it is not emulated away. It disappears with more memory (at 1769 MB, a full
+vCPU, there are no stalls) or any gap between invocations.
 
 ### Init delivery is shared across instances
 
@@ -299,7 +297,7 @@ no image, so the `400` above is the only response they can produce.
 
 `LAMBDA_SEED_RUNTIME_IMAGES=true` pre-pulls only the images for runtimes AWS still
 supports; a deprecated-but-deployable runtime is pulled on demand at its first
-cold start. `GET /_overcast/lambda/runtimes` returns the catalog with each
+cold start. `GET /_overcast/lambda/runtimes` returns the catalogue with each
 runtime's `supported`, `deprecated`, `createBlocked` and `updateBlocked` flags.
 
 ## Log format and log levels
@@ -407,9 +405,9 @@ is not an object, a missing, empty or non-string `itemIdentifier`, and an
 identifier naming a record that was not in the batch. Each is logged with the
 reason.
 
-One deliberate divergence: the member names are matched case-insensitively, so a
-handler written against a strongly typed SDK that serialises `BatchItemFailures`
-is honoured rather than read as malformed. `FunctionResponseTypes` itself is
+Member names are matched case-insensitively, so a handler written against a
+strongly typed SDK that serialises `BatchItemFailures` is honoured rather than
+read as malformed. `FunctionResponseTypes` itself is
 validated against AWS's one-member enum.
 
 ## VPC placement — `VpcConfig`
@@ -431,12 +429,16 @@ subtracts rather than adds.
 Overcast's own API endpoint is the exception and stays reachable from every
 function regardless of placement. `AWS_ENDPOINT_URL` and the Lambda Runtime API
 ride a separate control plane, so calling S3 or DynamoDB from inside a VPC works
-here without the NAT gateway or VPC endpoint AWS would need. That is a deliberate
-divergence: the alternative is every VPC-placed function failing on its first SDK
-call.
+here without the NAT gateway or VPC endpoint AWS would need.
 
-The common mistake this catches is a database in a VPC and a function without a
-`VpcConfig` — which never worked on AWS. The fix is the AWS one: put the function
-in the VPC, or set `PubliclyAccessible` on the instance. A refused connection is
-named rather than left to hang; see
-[Lambda, ECS and VPCs](../../networking/vpcs.md).
+The mistake this catches is a database in a VPC and a function outside it, which
+never worked on AWS either. Put the function in the VPC, or set
+`PubliclyAccessible` on the instance; a refused connection is named rather than
+left to hang.
+
+## Related
+
+- [Lambda](../lambda.md) — quick start and what works
+- [Lambda troubleshooting](./troubleshooting.md) — throttles, layer errors, extension endpoints
+- [Lambda operations](./operations.md) — per-operation status
+- [Lambda, ECS and VPCs](../../networking/vpcs.md) — what VPC membership restricts

@@ -17,7 +17,7 @@ tags:
 containers from test code and tears them down with the test. Overcast ships a
 first-party Testcontainers module for **Go**; modules for other languages are
 planned ([#1495](https://github.com/overcast-sh/overcast/issues/1495) tracks listing
-them in the Testcontainers catalog once Overcast reaches v1.0).
+them in the Testcontainers catalogue once Overcast reaches v1.0).
 
 The module starts an Overcast container, waits until `/_overcast/health`
 answers, and hands back everything an AWS SDK client needs: the endpoint URL,
@@ -299,3 +299,9 @@ Overcast's own [Go module](#go) is still the better tool for a suite you are
 writing now: it waits on `/_overcast/health`, reads back the effective region
 and account, and has no tag parsing to work around. This section is for the
 suite you already have.
+
+## Related
+
+- [Migrating from LocalStack](./migration-from-localstack.md) — the LocalStack modules and the image swap
+- [Using AWS SDKs and CLI](./sdk-cli.md) — pointing a client at the started container
+- [Configuration](./configuration.md) — the variables to pass a container

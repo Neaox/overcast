@@ -11,7 +11,8 @@ tags:
 
 # ECR troubleshooting
 
-Back to [ECR](../ecr.md).
+Push and pull failures against the local registry behind [ECR](../ecr.md), and how
+to reclaim what a killed run left behind.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
@@ -93,3 +94,10 @@ reclaim the disk — not as routine cleanup. Unlike a leaked container, a volume
 left behind by a killed Overcast is not a problem to fix: it holds no port and
 runs no process, and the next instance on the same fixed port picks it up and
 carries on with the images already in it.
+
+## Related
+
+- [ECR](../ecr.md) — quick start and what works
+- [ECR limitations](./limitations.md) — repository URIs, persistence, image inventory
+- [ECR operations](./operations.md) — per-operation status
+- [ECS troubleshooting](../ecs/troubleshooting.md) — tasks that cannot pull an image

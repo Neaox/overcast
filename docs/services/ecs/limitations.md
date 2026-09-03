@@ -11,7 +11,8 @@ tags:
 
 # ECS limitations
 
-Back to [ECS](../ecs.md).
+How the scheduler behind [ECS](../ecs.md) decides a deployment is done, and which
+volume and networking rules it enforces.
 
 ## What "done" means for a deployment
 
@@ -37,9 +38,9 @@ desired count — three seconds normally, ten once the deployment has already
 failed a task and is replacing it on a backoff.
 
 The window applies on the healthy path too, and that costs a couple of seconds on
-every deploy. It is deliberate: a container that exits on startup is `RUNNING`
-for an instant first, and anything sampling the service in that instant sees a
-finished rollout around a service that is about to be at 0/1. AWS says the same
+every deploy. A container that exits on startup is `RUNNING` for an instant
+first, and anything sampling the service in that instant sees a finished rollout
+around a service that is about to be at 0/1. AWS says the same
 thing in substance — a deployment completes when the service is "healthy and at
 the desired number of tasks" — but Overcast runs no health checks, so staying up
 is the only evidence of health it can collect.
@@ -212,5 +213,12 @@ outside the VPC, exactly as on AWS. The way out is AWS's own field:
 
 Overcast's own API endpoint stays reachable from every task either way, so
 `AWS_ENDPOINT_URL` keeps working. See
-[Lambda, ECS and VPCs](../../networking/vpcs.md) for what is and is not
-enforced, and for what a refused connection looks like.
+[Lambda, ECS and VPCs](../../networking/vpcs.md) for what a refused connection
+looks like.
+
+## Related
+
+- [ECS](../ecs.md) — quick start and what works
+- [ECS troubleshooting](./troubleshooting.md) — tasks that will not start or stay up
+- [ECS operations](./operations.md) — per-operation status
+- [Lambda, ECS and VPCs](../../networking/vpcs.md) — what VPC membership restricts

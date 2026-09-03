@@ -109,4 +109,9 @@ tags:
 | `DeleteReplicationConfiguration`    | ❌ Unsupported |       | [docs](https://docs.aws.amazon.com/efs/latest/ug/API_DeleteReplicationConfiguration.html)    |
 | `DescribeReplicationConfigurations` | ❌ Unsupported |       | [docs](https://docs.aws.amazon.com/efs/latest/ug/API_DescribeReplicationConfigurations.html) |
 
+## Related
+
+- [EFS](../efs.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

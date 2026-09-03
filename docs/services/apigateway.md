@@ -47,7 +47,8 @@ curl "http://localhost:4566/restapis/$API/dev/_user_request_/"
 
 Host-routed is the shape real AWS uses; `{base}` is whatever hostname you
 reached Overcast on. Set `OVERCAST_HOSTNAME=localhost.overcast.sh` so it
-resolves on every OS.
+resolves for every caller — see
+[Hostnames that resolve for every caller](../networking/hostnames.md).
 
 HTTP v2 reports the host-routed form in `apiEndpoint`, minted on that hostname
 rather than `amazonaws.com`, so `Fn::GetAtt ApiEndpoint` returns a URL you can

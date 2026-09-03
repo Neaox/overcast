@@ -171,3 +171,9 @@ returns them, defaulting to SSE-S3 when none is set. Nothing is encrypted:
 objects are stored as sent. Object-level SSE request headers
 (`x-amz-server-side-encryption` and its SSE-C siblings) are ignored — they are
 neither stored nor echoed on a later `GetObject` or `HeadObject`.
+
+## Related
+
+- [S3](../s3.md) — quick start and what works
+- [S3 operations](./operations.md) — per-operation status
+- [Host-routed addressing](../../networking/host-routing.md) — how a bucket subdomain resolves

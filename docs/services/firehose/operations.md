@@ -51,4 +51,9 @@ All 9 listed operations are implemented. Back to [Firehose](../firehose.md).
 | `UntagDeliveryStream`       | ✅ Supported | Removes tags by key from a delivery stream   | [docs](https://docs.aws.amazon.com/firehose/latest/APIReference/API_UntagDeliveryStream.html)       |
 | `ListTagsForDeliveryStream` | ✅ Supported | Returns tags for a delivery stream           | [docs](https://docs.aws.amazon.com/firehose/latest/APIReference/API_ListTagsForDeliveryStream.html) |
 
+## Related
+
+- [Firehose](../firehose.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

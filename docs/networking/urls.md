@@ -12,8 +12,6 @@ tags:
 
 # What host and port a URL carries
 
-Back to [Networking](../networking.md).
-
 Every URL Overcast hands out follows one rule: **the configured
 `OVERCAST_HOSTNAME` (when set), on the port *you* reached Overcast on.** Your
 request is the only proof of a dialable port — Overcast cannot see its own Docker
@@ -48,3 +46,4 @@ unaffected either way.
 
 - [Hostnames that resolve for every caller](./hostnames.md) — choosing the name half
 - [Data-plane endpoints](./data-plane-endpoints.md) — where the port differs for a different reason
+- [Networking and host-based addressing](../networking.md) — the rest of the addressing story

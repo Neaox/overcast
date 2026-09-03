@@ -19,6 +19,15 @@ func landing(sections ...string) string {
 	return b.String()
 }
 
+// withRelated gives a fixture the link footer every published page needs, so a
+// test about one rule is not also a test about that one.
+func withRelated(body string) string {
+	if strings.Contains(body, "\n## Related") {
+		return body
+	}
+	return strings.TrimRight(body, "\n") + "\n\n## Related\n\n- [Reference index](./README.md)\n"
+}
+
 // doc is a landing page for a service that is NOT in RestructurePending, so
 // every rule applies to it. pending is one that still is, so the three
 // prose-dependent rules are waived.
@@ -202,7 +211,7 @@ func TestCheck_requiresAHandWrittenSubPageToLinkBackToItsLandingPage(t *testing.
 	assertReports(t, Check([]Doc{sub}), "no link back to the landing page")
 
 	// And: one that links back is fine
-	linked := Doc{Path: "docs/services/s3/limitations.md", Body: "# S3 limitations\n\nBack to [S3](../s3.md).\n"}
+	linked := Doc{Path: "docs/services/s3/limitations.md", Body: withRelated("# S3 limitations\n\nThe full divergence list behind [S3](../s3.md).\n")}
 	assertClean(t, Check([]Doc{linked}))
 }
 
@@ -220,7 +229,7 @@ func TestCheck_rejectsHandWrittenContentInTheGeneratedOperationsPage(t *testing.
 func TestCheck_ignoresDocsOutsideTheServicesTree(t *testing.T) {
 	// Given: a page elsewhere under docs/ with none of the required sections
 	// When / Then: this package lints service docs only
-	assertClean(t, Check([]Doc{{Path: "docs/cdk.md", Body: "# CDK\n\nAnything at all.\n"}}))
+	assertClean(t, Check([]Doc{{Path: "docs/cdk.md", Body: withRelated("# CDK\n\nAnything at all.\n")}}))
 	assertClean(t, Check([]Doc{{Path: "docs/services/README.md", Body: "# Service Reference\n\nAnything.\n"}}))
 }
 
@@ -268,7 +277,7 @@ func TestCheck_acceptsLinksTheConsoleCanOpen(t *testing.T) {
 func TestCheck_readsAnUpwardLinkFromASubPage(t *testing.T) {
 	// Given: a service sub-page linking back up two levels, which lands on
 	// docs/networking.md and is therefore fine.
-	doc := Doc{Path: "docs/services/ec2/limitations.md", Body: "# EC2\n\nBack to [../ec2.md](../ec2.md) and [networking](../../networking.md).\n"}
+	doc := Doc{Path: "docs/services/ec2/limitations.md", Body: withRelated("# EC2\n\nBack to [../ec2.md](../ec2.md) and [networking](../../networking.md).\n")}
 
 	// When / Then: only a target outside docs/ is a problem.
 	assertClean(t, Check([]Doc{doc}))

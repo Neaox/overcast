@@ -77,3 +77,10 @@ exists to prevent.
   subscribing.
 - Cross-region `AWS::SNS::Subscription` `Region` is not implemented, and fails
   the stack rather than being quietly ignored.
+
+## Related
+
+- [SNS](../sns.md) — quick start and what works
+- [SNS operations](./operations.md) — per-operation status
+- [SQS](../sqs.md) — the most common subscription target
+- [SES](../ses.md) — where email subscriptions land

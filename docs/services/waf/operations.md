@@ -37,4 +37,9 @@ All 7 listed operations are implemented. Back to [WAF v2](../waf.md).
 | `UntagResource`       | ✅ Supported | Removes tags by key from a WebACL ARN | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_UntagResource.html)       |
 | `ListTagsForResource` | ✅ Supported | Returns tags for a WebACL ARN         | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_ListTagsForResource.html) |
 
+## Related
+
+- [WAF v2](../waf.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

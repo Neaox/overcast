@@ -69,4 +69,9 @@ tags:
 | `ListDeadLetterSourceQueues` | ✅ Supported | Lists queues that target a given DLQ                  | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListDeadLetterSourceQueues.html) |
 | `StartMessageMoveTask`       | ✅ Supported | Redrives messages from a DLQ back to its source queue | [docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_StartMessageMoveTask.html)       |
 
+## Related
+
+- [SQS](../sqs.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

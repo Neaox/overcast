@@ -54,4 +54,9 @@ All 12 listed operations are implemented. Back to [Scheduler](../scheduler.md).
 | `UntagResource`       | ✅ Supported | Removes `?TagKeys` from ARN                                                                           | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_UntagResource.html)       |
 | `ListTagsForResource` | ✅ Supported | Returns the modeled `TagList`, ordered by key                                                         | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_ListTagsForResource.html) |
 
+## Related
+
+- [Scheduler](../scheduler.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

@@ -12,8 +12,6 @@ tags:
 
 # Egress modes
 
-Back to [Networking](../networking.md).
-
 `OVERCAST_VPC_EGRESS` decides whether the containers Overcast starts can reach
 anything outside your machine.
 
@@ -90,3 +88,4 @@ property of the whole topology, and pinning a single network never settled it.
 - [`routed`: egress from your route tables](./routed-egress.md) — the per-subnet mode
 - [The Docker networks Overcast uses](./docker-networks.md) — what the modes are applied to
 - [Lambda, ECS and VPCs](./vpcs.md) — what VPC membership restricts on top of egress
+- [Networking and host-based addressing](../networking.md) — the rest of the addressing story

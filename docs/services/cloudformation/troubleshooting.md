@@ -11,7 +11,8 @@ tags:
 
 # CloudFormation troubleshooting
 
-Back to [CloudFormation](../cloudformation.md).
+Symptom, cause and fix for the stacks that stop a deploy behind
+[CloudFormation](../cloudformation.md).
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
@@ -93,3 +94,10 @@ Environment variable values, secrets and resolved parameter values are never
 included, names only; a container's own output is reproduced verbatim because that
 is the diagnosis, but Overcast never adds a value the container did not print
 itself.
+
+## Related
+
+- [CloudFormation](../cloudformation.md) — quick start and what works
+- [CloudFormation limitations](./limitations.md) — the status machine, rollbacks and dynamic references
+- [CloudFormation operations](./operations.md) — per-operation status
+- [ECS troubleshooting](../ecs/troubleshooting.md) — a stack that completes around a service that is not working

@@ -34,4 +34,9 @@ All 4 listed operations are implemented. Back to [DynamoDB Streams](../dynamodbs
 | `GetShardIterator` | ✅ Supported |                                                                                                   | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_GetShardIterator.html) |
 | `ListStreams`      | ✅ Supported | Region-scoped — reports only streams for tables in the request's region                           | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListStreams.html)      |
 
+## Related
+
+- [DynamoDB Streams](../dynamodbstreams.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

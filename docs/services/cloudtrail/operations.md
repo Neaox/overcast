@@ -42,4 +42,9 @@ All 12 listed operations are implemented. Back to [CloudTrail](../cloudtrail.md)
 | `RemoveTags`     | 🧊 Inert | Matches each `TagsList` entry on its `Key`, ignoring the value | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_RemoveTags.html)     |
 | `ListTags`       | 🧊 Inert | One `ResourceTagList` entry per requested ARN; no pagination   | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_ListTags.html)       |
 
+## Related
+
+- [CloudTrail](../cloudtrail.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

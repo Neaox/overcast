@@ -11,8 +11,6 @@ tags:
 
 # Networking troubleshooting
 
-Back to [Networking](../networking.md).
-
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | A host-routed URL will not resolve from your shell | DNS rebinding protection, or `*.localhost` on Windows | [Hostnames that resolve for every caller](./hostnames.md) |
@@ -22,11 +20,63 @@ Back to [Networking](../networking.md).
 | A token minted on the host fails validation inside a container | A remapped port splits the OIDC issuer | Publish the API 1:1 (`-p 4566:4566`) — [URLs](./urls.md) |
 | An RDS or ElastiCache endpoint refuses connections | The port belongs to the other caller, or the engine container is gone | [Data-plane endpoints](./data-plane-endpoints.md), then [below](#an-endpoint-name-resolves-nowhere) |
 | `refusing a data-plane name the caller cannot reach` | The two resources are not in the same VPC, and would not be on AWS either | [Lambda, ECS and VPCs](./vpcs.md) |
-| Outbound connections fail with `ENETUNREACH` | `OVERCAST_VPC_EGRESS=none`, or `routed` with no `0.0.0.0/0` route on the subnet | [Egress modes](./egress.md), [`routed`](./routed-egress.md) |
+| Outbound connections fail with `ENETUNREACH` | `OVERCAST_VPC_EGRESS=none`, or `routed` with no `0.0.0.0/0` route on the subnet | [A function in a VPC fails with `ENETUNREACH`](#a-function-in-a-vpc-fails-with-enetunreach), below |
 | The `vpc-egress-not-withheld` advisory, or two egress warnings at startup | This host cannot withhold egress with Overcast running outside a container | Run Overcast in a container, or against a native Linux daemon — [Egress modes](./egress.md) |
 | `OVERCAST_VPC_EGRESS_POOL … has no free /24 left` | Every VPC with egress takes one `/24`, and 256 fit in the default | Delete VPCs, or widen the pool — [The address-pool ceiling](./routed-egress.md#the-address-pool-ceiling) |
 | `all predefined address pools have been fully subnetted` | Docker's own default pools, which every tool on the machine shares | Remove unused Docker networks, or widen Docker's `default-address-pools` |
 | `Docker network is not in the state this configuration asks for` | A reused network differs from what this configuration would create | `overcast network reset --dry-run`, then reset — [Network state verification](./network-state.md) |
+
+## A function in a VPC fails with `ENETUNREACH`
+
+**Symptom.** A Lambda or ECS task with a `VpcConfig` cannot reach an external
+API, a real AWS endpoint, or anything else outside Docker. Code that works
+without a VPC — and works on LocalStack — fails here, usually as
+`ENETUNREACH`, sometimes as a DNS failure because the resolver is unreachable too.
+
+**Cause.** Almost always one of two things.
+
+| | |
+| --- | --- |
+| `OVERCAST_VPC_EGRESS=none` | That is the mode working: no container Overcast starts reaches anything outside this machine. On Docker Desktop the control plane stays routable, so containers keep a route out and a startup warning says so — see [Egress modes](./egress.md) |
+| `OVERCAST_VPC_EGRESS=routed` and the container is in a subnet with no `0.0.0.0/0` route | That is the mode working too — the missing NAT gateway, caught locally. `overcast logs` names the subnet and route table that decided it. Add a NAT gateway and a route to grant egress; containers placed afterwards get it, and running ones are moved onto it. On the hosts where `none` cannot isolate the control plane, `routed` cannot withhold either, and reports `vpc-egress-not-withheld`. See [`routed`](./routed-egress.md) |
+| A network drifted | A network Overcast reuses kept a setting from an older version or a different mode, because Docker never applies `--internal` to an existing network. Overcast repairs one with nothing attached and warns about one with containers on it |
+
+A container with a `VpcConfig` joins exactly two networks — its VPC's network
+and the control plane — so if both are `--internal`, Docker installs no default
+route and it has no way out. `none` makes both internal; drift can leave one
+that way.
+
+**Check which.** The startup log and `GET /_overcast/health` both say what each
+network ended up as, and why:
+
+```
+network isolation  network=overcast_control internal=true
+                   reason="OVERCAST_VPC_EGRESS=none"
+```
+
+```sh
+overcast network status
+```
+
+A network reported as `NOT in the configured state` is drift; one reported `ok`
+with `internal=true` under `OVERCAST_VPC_EGRESS=none` is the mode.
+
+**Fixes:**
+
+| | |
+| --- | --- |
+| Restore egress | Unset `OVERCAST_VPC_EGRESS`, or set it to `open`, and restart. `open` is the default |
+| The network kept an old setting | `overcast network reset --dry-run` to see what it would do, then `overcast network reset`. It stops Overcast's own containers, disconnects yours, and rebuilds the network to spec |
+| You want a hermetic stack | Then `ENETUNREACH` is the correct answer. Keep `none`, and check the startup log: on Docker Desktop the control plane stays routable — see [Egress modes](./egress.md) |
+| The function does not need the VPC locally | Drop the `VpcConfig` for the local stage. Under `none` even a non-VPC function has no egress either |
+
+**Reaching real AWS from a local function** — a hybrid stack whose code calls a
+real regional endpoint or a third-party API — works under the default `open`
+mode with no extra configuration. Overcast injects `AWS_ENDPOINT_URL` into every
+container it starts, so an SDK client picks Overcast up by default; construct
+the one client that should talk to real AWS with an explicit endpoint (or none)
+and real credentials, and leave the rest pointing at the emulator. There is a
+worked example in [Lambda examples](../services/lambda/examples.md#reaching-real-aws-from-a-local-function).
 
 ## An endpoint name resolves nowhere
 
@@ -76,3 +126,4 @@ every running container is attached to.
 
 - [Troubleshooting](../troubleshooting.md) — the whole-emulator symptom index
 - [The Docker networks Overcast uses](./docker-networks.md) — what each network carries
+- [Networking and host-based addressing](../networking.md) — the rest of the addressing story

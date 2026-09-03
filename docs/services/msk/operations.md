@@ -78,4 +78,9 @@ tags:
 | `ListTagsForResource` | ✅ Supported | Returns all tags for an ARN | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_ListTagsForResource.html) |
 | `UntagResource`       | ✅ Supported | Removes specific tag keys   | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_UntagResource.html)       |
 
+## Related
+
+- [MSK](../msk.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

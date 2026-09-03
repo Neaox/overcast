@@ -110,4 +110,9 @@ All 50 listed operations are implemented. Back to [EKS](../eks.md).
 | `DescribeAddonConfiguration` | ✅ Supported | Returns the synthetic configuration schema for the requested add-on and version; both query members are required, and an uncatalogued version is a ResourceNotFoundException                                       | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_DescribeAddonConfiguration.html) |
 | `DescribeAddonVersions`      | ✅ Supported | Returns the synthetic version catalog for vpc-cni, coredns, kube-proxy and aws-ebs-csi-driver, filtered by the addonName/kubernetesVersion/types/publishers/owners query members and paged by maxResults/nextToken | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_DescribeAddonVersions.html)      |
 
+## Related
+
+- [EKS](../eks.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

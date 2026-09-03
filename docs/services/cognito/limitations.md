@@ -80,3 +80,9 @@ These have no AWS counterpart and exist for local development:
 - **`DescribeUserPoolDomain`** returns an empty `DomainDescription` when the
   domain is not found, rather than an error.
 - Any operation outside the 70 listed returns `501 Not Implemented`.
+
+## Related
+
+- [Cognito](../cognito.md) — quick start and what works
+- [Cognito examples](./examples.md) — worked sign-up and sign-in flows
+- [Cognito operations](./operations.md) — per-operation status

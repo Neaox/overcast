@@ -50,4 +50,9 @@ All 8 listed operations are implemented. Back to [Shield](../shield.md).
 | `UntagResource`       | ✅ Supported | Removes tag keys from a protection | [docs](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/API_UntagResource.html)       |
 | `ListTagsForResource` | ✅ Supported | Lists tags on a protection         | [docs](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/API_ListTagsForResource.html) |
 
+## Related
+
+- [Shield](../shield.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

@@ -83,4 +83,9 @@ tags:
 | `UntagResource`       | ✅ Supported | Modern, ARN-addressed sibling of UntagLogGroup (#1195)                                                                            | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_UntagResource.html)       |
 | `ListTagsForResource` | ✅ Supported | Modern, ARN-addressed sibling of ListTagsLogGroup (#1195)                                                                         | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_ListTagsForResource.html) |
 
+## Related
+
+- [CloudWatch Logs](../cloudwatch-logs.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

@@ -130,3 +130,10 @@ back rather than leaving the database behind.
 **Fix.** If you want the control plane without the wait, set
 `OVERCAST_RDS_MODE=mock` — accepting that nothing will be listening on the
 endpoint.
+
+## Related
+
+- [RDS](../rds.md) — quick start and what works
+- [RDS limitations](./limitations.md) — what is enforced and what is only recorded
+- [RDS operations](./operations.md) — per-operation status
+- [Data-plane endpoints](../../networking/data-plane-endpoints.md) — when an endpoint name resolves nowhere

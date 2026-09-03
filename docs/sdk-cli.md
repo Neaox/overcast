@@ -125,16 +125,14 @@ Both styles work, with no configuration:
   emits against a custom endpoint when path-style is disabled, and the only
   form CDK's asset publisher uses.
 
-Virtual-hosted style needs the bucket subdomain to resolve. `*.localhost` does
-that on Linux and macOS but **not on Windows**, so set
-`OVERCAST_HOSTNAME=localhost.overcast.sh`, whose every subdomain resolves to
-`127.0.0.1` on every OS. See
-[Host-routed addressing](./networking/host-routing.md) for the full rule and
-the reserved service labels a bucket name cannot carry in the bare form,
-[Hostnames that resolve for every caller](./networking/hostnames.md) for the
-offline fallbacks, and the
+Virtual-hosted style needs the bucket subdomain to resolve, so set
+`OVERCAST_HOSTNAME=localhost.overcast.sh` — see
+[Hostnames that resolve for every caller](./networking/hostnames.md) for why, and
+for the offline fallbacks. [Host-routed addressing](./networking/host-routing.md)
+has the full rule and the reserved service labels a bucket name cannot carry in
+the bare form; the
 [CDK S3 asset upload troubleshooting](./cdk/troubleshooting.md#s3-asset-upload-fails-on-windows)
-for the CDK-specific case.
+covers the CDK-specific case.
 
 ---
 
@@ -392,3 +390,9 @@ start the daemon with `OVERCAST_TLS=auto`; to bring your own certificate,
 configure `OVERCAST_TLS_CERT` and `OVERCAST_TLS_KEY`. Point SDK clients at
 the CA with `AWS_CA_BUNDLE=~/.overcast/data/ca/rootCA.pem`. See
 [HTTPS and HTTP/2](./https.md) for details.
+
+## Related
+
+- [CLI reference](./cli.md) — `overcast env` and `overcast aws`
+- [Networking and host-based addressing](./networking.md) — path-style versus host-routed endpoints
+- [Service reference](./services/README.md) — what each service supports

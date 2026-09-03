@@ -32,4 +32,9 @@ All 2 listed operations are implemented. Back to [AppConfigData](../appconfigdat
 | `StartConfigurationSession` | ✅ Supported | Starts a polling session; returns `InitialConfigurationToken`; honours `RequiredMinimumPollIntervalInSeconds`                                                                                       | [docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/API_appconfigdata_StartConfigurationSession.html) |
 | `GetLatestConfiguration`    | ✅ Supported | Takes the token as the `configuration_token` query parameter; returns the configuration as the response payload with the session state in headers; empty payload when unchanged since the last poll | [docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/API_appconfigdata_GetLatestConfiguration.html)    |
 
+## Related
+
+- [AppConfigData](../appconfigdata.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

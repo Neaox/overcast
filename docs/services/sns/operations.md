@@ -84,4 +84,9 @@ tags:
 | `ListPhoneNumbersOptedOut`     | ❌ Unsupported |                                                                                                                                    | [docs](https://docs.aws.amazon.com/sns/latest/api/API_ListPhoneNumbersOptedOut.html)         |
 | `OptInPhoneNumber`             | ❌ Unsupported |                                                                                                                                    | [docs](https://docs.aws.amazon.com/sns/latest/api/API_OptInPhoneNumber.html)                 |
 
+## Related
+
+- [SNS](../sns.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

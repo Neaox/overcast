@@ -11,8 +11,6 @@ tags:
 
 # The Docker networks Overcast uses
 
-Back to [Networking](../networking.md).
-
 Everything Overcast starts as a container sits on two Docker networks, and you
 normally never have to think about either. **To attach your own container** — a
 Compose service that needs to reach a database Overcast started — join
@@ -47,3 +45,4 @@ Two exceptions put a resource on the shared plane as well:
 - [Egress modes](./egress.md) — whether these networks reach the internet
 - [Network state verification](./network-state.md) — what happens when one is not as configured
 - [Lambda, ECS and VPCs](./vpcs.md) — what VPC membership restricts
+- [Networking and host-based addressing](../networking.md) — the rest of the addressing story

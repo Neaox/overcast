@@ -105,3 +105,10 @@ go straight to `available`.
 > `DescribeMountTargets.IpAddress` is always synthetic, exports on or off. The
 > export is reached through its published host port or the export network,
 > never through that address.
+
+## Related
+
+- [EFS](../efs.md) — quick start and what works
+- [EFS operations](./operations.md) — per-operation status
+- [Lambda, ECS and VPCs](../../networking/vpcs.md) — what a mount target needs to be reachable
+- [Storage and persistence](../../storage.md) — where file system data lives

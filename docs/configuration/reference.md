@@ -143,3 +143,10 @@ explaining.
 | `OVERCAST_INIT_ENABLED`          | `true`                 | Run init-hook scripts found in `OVERCAST_INIT_DIRS` at startup; set `false` to disable |
 | `OVERCAST_INIT_DIRS`             | `/etc/localstack/init,/etc/overcast/init` | Comma-separated base directories scanned for init-hook scripts in `boot.d/`, `start.d/`, `ready.d/` and `shutdown.d/` — see [Migrating from LocalStack](../migration-from-localstack.md#init-hooks) |
 | `OVERCAST_INIT_TIMEOUT`          | `30s`                  | Per-script timeout for init hooks                                                    |
+
+## Related
+
+- [Configuration](../configuration.md) — where each setting lives, and the handful most people change
+- [Bind address and port](./ports.md)
+- [Log levels](./log-levels.md)
+- [CLI reference](../cli.md) — the flags that mirror these variables

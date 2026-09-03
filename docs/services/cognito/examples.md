@@ -87,3 +87,10 @@ Content-Type: application/json
 ```json
 { "imported": 1, "skipped": 0, "errors": [] }
 ```
+
+## Related
+
+- [Cognito](../cognito.md) — quick start and what works
+- [Cognito limitations](./limitations.md) — the full divergence list
+- [Cognito operations](./operations.md) — per-operation status
+- [SES](../ses.md) — where user pool mail lands

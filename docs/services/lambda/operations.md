@@ -149,4 +149,9 @@ tags:
 | `UntagResource` | ✅ Supported | Removes specified keys; idempotent on missing keys; tagKeys is required                                                                | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UntagResource.html) |
 | `ListTags`      | ✅ Supported | Returns the resource's tags; code-signing-config, capacity-provider and network-connector ARNs return 501                              | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListTags.html)      |
 
+## Related
+
+- [Lambda](../lambda.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

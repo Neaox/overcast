@@ -44,4 +44,9 @@ All 8 listed operations are implemented. Back to [OpenSearch](../opensearch.md).
 | `ListTags`   | ✅ Supported | lists tags for a resource, addressed by the `arn` query parameter | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_ListTags.html)   |
 | `RemoveTags` | ✅ Supported | removes the named tag keys from a resource                        | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_RemoveTags.html) |
 
+## Related
+
+- [OpenSearch](../opensearch.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->
