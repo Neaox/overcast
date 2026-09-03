@@ -11,7 +11,8 @@ tags:
 
 # Lambda examples
 
-Back to [Lambda](../lambda.md).
+Worked function setups past the [Lambda quick start](../lambda.md#quick-start):
+hot reload, container images, layers and extensions.
 
 ## Hot reload
 
@@ -89,11 +90,10 @@ Overcast decides whether a warm environment is still current by fingerprinting t
 mounted tree — every entry's path, and every file's size and modification time —
 before each invocation. When the fingerprint moves, the warm container is retired
 and the next invocation starts a fresh one against the edited source, exactly as
-`UpdateFunctionCode` does. That is what makes editing an already-loaded file work
-on runtimes that cache modules.
+`UpdateFunctionCode` does, so editing an already-loaded file works on runtimes
+that cache modules.
 
-The fingerprint is bounded, so that recomputing it does not become the cost of
-invoking:
+The fingerprint is bounded so recomputing it stays cheap:
 
 | Bound | Effect |
 | --- | --- |
@@ -364,7 +364,11 @@ your own — never the `AWS_*` ones, which Overcast owns and would overwrite.
 | Costs are real | This is your account. A loop in a local function bills like a loop in a deployed one |
 | Not for CI | Set `OVERCAST_VPC_EGRESS=none` there, so the same code fails fast with `ENETUNREACH` instead of quietly reaching production. Run Overcast in a container on the runner — on Docker Desktop the control plane stays routable and `none` cannot withhold egress ([why](../../networking/egress.md)) |
 | Or make it match your template | `OVERCAST_VPC_EGRESS=routed` gives the function egress only where its subnet's route table does, so a `VpcConfig` in a private subnet with no NAT gateway fails locally as it would deployed. Same container requirement — see [`routed`](../../networking/routed-egress.md) |
+| A real call returns `ENETUNREACH` | Egress is off — see [the diagnosis](../../networking/troubleshooting.md#a-function-in-a-vpc-fails-with-enetunreach) |
 
-If a call to real AWS returns `ENETUNREACH`, egress is off: check
-`overcast network status` and see
-[A function in a VPC fails with `ENETUNREACH`](../../troubleshooting.md#a-function-in-a-vpc-fails-with-enetunreach).
+## Related
+
+- [Lambda](../lambda.md) — quick start and what works
+- [Lambda limitations](./limitations.md) — concurrency, runtimes, logging, VPC placement
+- [Lambda troubleshooting](./troubleshooting.md) — throttles, layer errors, extension endpoints
+- [The inner loop](../../local-dev.md) — hot reload across services

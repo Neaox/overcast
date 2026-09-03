@@ -11,7 +11,8 @@ tags:
 
 # EKS limitations
 
-Back to [EKS](../eks.md).
+What [EKS](../eks.md) provisions in each of its two modes, and where the emulation
+stops.
 
 ## The two modes
 
@@ -70,3 +71,9 @@ Both mean "not yet", not "never" — retry once the cluster settles.
   they store enforces IAM policy or schedules a Kubernetes workload.
 - Overcast's published startup and idle-memory figures are measured in `mock`
   mode.
+
+## Related
+
+- [EKS](../eks.md) — quick start and what works
+- [EKS operations](./operations.md) — per-operation status
+- [ECS](../ecs.md) — the container service that does run real tasks

@@ -47,9 +47,9 @@ platforms.
 the `OVERCAST_HOSTNAME` environment variable as an additional virtual-host base,
 so any `<bucket>.<hostname>` request is correctly rewritten to path-style.
 
-`localhost.overcast.sh` is a public domain whose DNS unconditionally resolves
-all `*.localhost.overcast.sh` subdomains to `127.0.0.1` (your local machine).
-No hosts-file edits required, and it behaves identically on every OS:
+Every `*.localhost.overcast.sh` subdomain resolves to `127.0.0.1` on every OS,
+with no hosts-file edits — see
+[Hostnames that resolve for every caller](../networking/hostnames.md):
 
 ```bash
 # Start Overcast with the wildcard-DNS hostname
@@ -68,24 +68,16 @@ npx cdk deploy --require-approval never
 ```
 
 CDK then constructs a bucket hostname like
-`cdk-hnb659fds-assets-000000000000-us-east-1.localhost.overcast.sh:4566`,
-which resolves via public DNS to `127.0.0.1` and is rewritten by Overcast's
-S3 virtual-host middleware to the correct path-style route.
+`cdk-hnb659fds-assets-000000000000-us-east-1.localhost.overcast.sh:4566`, which
+Overcast's S3 virtual-host middleware rewrites to the path-style route.
 
 > [!NOTE]
-> The fix also works on Linux and macOS, so
-> `OVERCAST_HOSTNAME=localhost.overcast.sh` is safe in a shared CI/CD
-> environment where developers are on different host operating systems.
->
-> `localhost.localstack.cloud` and `localhost.floci.io` are recognised too and
-> behave identically, so a setup carried over from either tool keeps working
-> unchanged. Neither sends any traffic to those projects — the domains are
-> purely a DNS convenience and every request goes to Overcast on your machine.
->
-> All three need a public DNS lookup, so none of them works offline or behind
-> DNS rebinding protection. See the caveat in
-> [Hostnames that resolve for every caller](../networking/hostnames.md) for
-> the fallbacks.
+> The same hostname works on Linux and macOS, so it is safe in a shared CI/CD
+> environment where developers are on different host operating systems. It needs
+> a public DNS lookup, so it does not work offline or behind DNS rebinding
+> protection — [Hostnames that resolve for every
+> caller](../networking/hostnames.md) has the fallbacks, and the other two
+> wildcard domains Overcast recognises.
 
 ## Related
 

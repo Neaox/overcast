@@ -60,8 +60,8 @@ download, and a **Switch to HTTPS** button once the https listener answers.
   six sockets. ALPN over TLS gives the console one multiplexed connection
   instead.
 - **Trusted names with no hosts-file edits.** The certificate covers
-  `localhost.overcast.sh` and `*.localhost.overcast.sh`, public DNS records
-  that resolve to `127.0.0.1`.
+  `localhost.overcast.sh` and `*.localhost.overcast.sh` — see
+  [Hostnames that resolve for every caller](./networking/hostnames.md).
 - **Production parity.** SDK clients and tools that insist on a TLS endpoint
   point at Overcast unchanged.
 

@@ -53,4 +53,9 @@ All 11 listed operations are implemented. Back to [Glue](../glue.md).
 | `UntagResource` | ✅ Supported | Removes tags by key from databases and tables   | [docs](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api-UntagResource.html) |
 | `GetTags`       | ✅ Supported | Returns tags for databases and tables           | [docs](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api-GetTags.html)       |
 
+## Related
+
+- [Glue](../glue.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

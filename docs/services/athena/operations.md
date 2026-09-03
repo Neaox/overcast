@@ -53,4 +53,9 @@ All 11 listed operations are implemented. Back to [Athena](../athena.md).
 | `UntagResource`       | ✅ Supported | Removes tag keys from a workgroup | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_UntagResource.html)       |
 | `ListTagsForResource` | ✅ Supported | Lists tags on a workgroup         | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_ListTagsForResource.html) |
 
+## Related
+
+- [Athena](../athena.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

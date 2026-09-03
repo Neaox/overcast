@@ -53,4 +53,9 @@ All 23 listed operations are implemented. Back to [Kinesis](../kinesis.md).
 | `UntagResource`                 | ✅ Supported | Stream ARNs                                                                                                                                                                                              | [docs](https://docs.aws.amazon.com/kinesis/latest/APIReference/API_UntagResource.html)                 |
 | `UpdateStreamMode`              | ✅ Supported | Stores StreamModeDetails and echoes it from Describe*; on-demand capacity is not actually enforced                                                                                                       | [docs](https://docs.aws.amazon.com/kinesis/latest/APIReference/API_UpdateStreamMode.html)              |
 
+## Related
+
+- [Kinesis](../kinesis.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

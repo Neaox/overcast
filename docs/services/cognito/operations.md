@@ -136,4 +136,9 @@ All 70 listed operations are implemented. Back to [Cognito](../cognito.md).
 | `UntagResource`       | ✅ Supported |       | [docs](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UntagResource.html)       |
 | `ListTagsForResource` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListTagsForResource.html) |
 
+## Related
+
+- [Cognito](../cognito.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

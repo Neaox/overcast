@@ -315,10 +315,10 @@ Deliberate divergences, so you know what to expect.
 Overcast returns path-style URLs (`http://localhost:4566/bucket/key`). Both
 virtual-hosted forms work too — `bucket.s3.<base>` and the bare `bucket.<base>` —
 and unlike LocalStack neither needs an `s3.` prefix on your endpoint. What they
-do need is for the bucket subdomain to resolve, which `*.localhost` does on Linux
-and macOS but not on Windows. `OVERCAST_HOSTNAME=localhost.overcast.sh` makes it
-work everywhere; an existing `localhost.localstack.cloud` is recognised and keeps
-working.
+do need is for the bucket subdomain to resolve: set
+`OVERCAST_HOSTNAME=localhost.overcast.sh`, and an existing
+`localhost.localstack.cloud` keeps working — see
+[Hostnames that resolve for every caller](./networking/hostnames.md).
 
 To force path-style instead of configuring a hostname:
 
@@ -430,3 +430,9 @@ container. Storage defaults to `memory` when no volume is mounted — see
 4. If the operation is listed ✅ Supported,
    [open a compatibility issue](https://github.com/overcast-sh/overcast/issues/new?template=compat_review.md)
    with a minimal reproduction.
+
+## Related
+
+- [LocalStack compatibility matrix](./localstack-compatibility.md) — every item, with its status
+- [Using AWS SDKs and CLI](./sdk-cli.md) — endpoint and credential setup
+- [Troubleshooting](./troubleshooting.md) — a symptom, and where its answer lives

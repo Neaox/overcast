@@ -78,4 +78,9 @@ tags:
 | `UpdateServicePrimaryTaskSet`   | ✅ Supported   | Promotes target to PRIMARY; demotes all other task sets to ACTIVE                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateServicePrimaryTaskSet.html)   |
 | `UpdateTaskSet`                 | ✅ Supported   | Updates Scale and recalculates ComputedDesiredCount                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateTaskSet.html)                 |
 
+## Related
+
+- [ECS](../ecs.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

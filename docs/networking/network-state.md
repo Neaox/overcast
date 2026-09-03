@@ -12,27 +12,19 @@ tags:
 
 # Network state verification
 
-Back to [Networking](../networking.md).
-
-```sh
-overcast network status              # what differs, and on which fields
-overcast network reset --dry-run     # exactly what a reset would do
-overcast network reset               # do it
-```
-
-`reset` rebuilds each network that differs: it stops the containers **Overcast**
-started, disconnects containers it did not start and leaves them running, removes
-the network, and recreates it to spec. A network already in the right state is
-left alone unless you pass `--force`. Name one or more networks to narrow it.
-
-## What is checked, and why
-
 Docker's create-network call returns an existing network **unchanged** — no
 isolation, no subnet, no driver option applied. A network created by an older
 Overcast, a different egress mode, or by hand therefore keeps every setting it
 was born with, while `docker network ls` says the name is present and everything
 looks fine. So Overcast checks, on every start, that each network it reuses is in
-the exact state it would have created it in. Every field:
+the exact state it would have created it in.
+
+The commands that report and repair what it finds are
+[`overcast network status` and `overcast network reset`](../cli/networks.md).
+
+## What is checked, and why
+
+Every field:
 
 | Checked | Why it matters |
 | --- | --- |
@@ -96,3 +88,4 @@ network carrying another tool's ownership labels is left alone whatever its name
 - [The Docker networks Overcast uses](./docker-networks.md) — what each network is for
 - [Egress modes](./egress.md) — what decides the `internal` flag
 - [CLI reference](../cli.md) — the rest of `overcast network`
+- [Networking and host-based addressing](../networking.md) — the rest of the addressing story

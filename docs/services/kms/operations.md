@@ -99,4 +99,9 @@ All 33 listed operations are implemented. Back to [KMS](../kms.md).
 | `RetireGrant`         | ✅ Supported | Retires a grant by ID or token                                          | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_RetireGrant.html)         |
 | `ListRetirableGrants` | ✅ Supported | Lists grants retirable by a principal                                   | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ListRetirableGrants.html) |
 
+## Related
+
+- [KMS](../kms.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

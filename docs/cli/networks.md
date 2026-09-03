@@ -13,18 +13,15 @@ tags:
 
 # Docker networks
 
-Docker's create-network call returns an existing network unchanged, so one made
-by an older Overcast, or under a different `OVERCAST_VPC_EGRESS`, keeps its
-original settings while looking present and correct. These two commands find
-that and repair it.
+`overcast network status` reports every Overcast-managed Docker network that is
+not in the state your configuration asks for, and `overcast network reset`
+rebuilds the ones that differ. Why a network can differ at all, and what is
+checked, is [Network state verification](../networking/network-state.md).
 
 ```bash
 overcast network status          # read-only; non-zero exit means drift
 overcast network reset --dry-run # the repair plan, before doing it
 ```
-
-Part of the [CLI reference](../cli.md). Background:
-[Network state verification](../networking/network-state.md).
 
 ## `overcast network status`
 
@@ -86,15 +83,14 @@ Reporting a positive result instead is
 [#1599](https://github.com/overcast-sh/overcast/issues/1599).
 
 **One class of network it will not rebuild:** a per-VPC network created before
-Overcast recorded the internet-gateway state on it
-(`overcast.network.gateway`). Without that label there is no way to tell an
-isolated bridge from a gateway-attached one, and rebuilding on a guess would
-write a state nothing chose — so it says so and changes nothing, `--force`
-included. Restart Overcast instead: its startup reconcile has the state store to
-ask. You will only meet this on the first start after upgrading.
+Overcast recorded the internet-gateway state on it, which it declines to judge —
+see [Network state verification](../networking/network-state.md). Restart
+Overcast instead; its startup reconcile has the state store to ask. You will only
+meet this on the first start after upgrading.
 
 ## Related
 
+- [Network state verification](../networking/network-state.md) — what is checked, and what is repaired without asking
 - [Networking and host-based addressing](../networking.md) — the network layout these commands police
 - [Environment variable reference](../configuration/reference.md) — `OVERCAST_VPC_EGRESS` and the other network variables
 - [Troubleshooting](../troubleshooting.md) — a symptom, and where its answer lives

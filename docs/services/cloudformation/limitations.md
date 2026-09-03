@@ -11,7 +11,8 @@ tags:
 
 # CloudFormation limitations
 
-Back to [CloudFormation](../cloudformation.md).
+The full divergence list behind [CloudFormation](../cloudformation.md): the stack
+status machine, what a rollback puts back, and how dynamic references resolve.
 
 ## Stacks are addressable by name or ARN — a deleted stack only by ARN
 
@@ -22,7 +23,7 @@ answers `ValidationError: Stack with id <name> does not exist` — the same answ
 name that was never created gets — while the ARN, which embeds the generation's
 uuid, still resolves the deleted stack's final state and events.
 
-That is what CDK's deploy monitor relies on: it polls by the ARN it holds from the
+CDK's deploy monitor relies on that: it polls by the ARN it holds from the
 deploy, and the AWS SDK's `stack-delete-complete` waiter treats that
 `ValidationError` as the terminal success case. A stack mid-`DELETE_IN_PROGRESS`
 still resolves by name; only the completed record excludes it.
@@ -69,7 +70,7 @@ underlying service error. That error is not lost: it stays on the resource's
 
 Every stack event also carries a `ClientRequestToken`: the caller's when one was
 supplied, and otherwise the request ID of the API call that started the operation.
-That fallback is what makes a failure traceable — the request ID keys
+The request ID keys
 `/_overcast/debug/trace/{requestId}`, so pasting an event's token into the trace
 viewer opens the request behind it, with every internal service call the operation
 made. The token belongs to the operation rather than the stack, so a create and a
@@ -180,9 +181,8 @@ stored resource properties both keep the literal text, so:
   needs an explicit `DependsOn`, as on AWS.
 
 A reference that cannot be resolved **fails the resource** and the stack rolls
-back. That matters more than it sounds: the alternative is a resource created with
-the literal `{{resolve:…}}` text in place of a value, which every service
-downstream then treats as data.
+back, rather than creating it with the literal `{{resolve:…}}` text in place of a
+value.
 
 Divergences: an explicit SSM parameter version is accepted but resolves to the
 current value, with a warning; `ssm-secure` is accepted in any resource property
@@ -238,18 +238,16 @@ Updates wait on the same condition, so an `UPDATE_COMPLETE` means the change was
 applied *and* settled. A resource that cannot settle fails with the reason the
 service itself gives — an RDS event, the newest actionable ECS service event, an
 MSK `stateInfo`, an EKS health issue, a Lambda `StateReason` — and the stack rolls
-back. A failed update is never answered by replacing the resource: the change has
-already been applied to the one that exists, so a second copy would carry the same
-problem.
+back. A failed update is never answered by replacing the resource; the change has
+already been applied to the one that exists.
 
 A Lambda function is complete at `Active`, which is what real CloudFormation waits
 for. `Active` means deployed, not working: a function with a broken handler is
-`Active` on AWS too and fails at invoke, so the wait deliberately stops there.
+`Active` on AWS too and fails at invoke, so the wait stops there.
 
 Every wait runs whether or not the deployment has a container runtime behind the
 service. A resource with no container coming reaches its ready status as soon as it
-is recorded — there is no data plane being claimed, so there is nothing left to
-prove — and the wait gets its answer on the first poll.
+is recorded, and the wait gets its answer on the first poll.
 
 ## A limitation a resource carries is its `ResourceStatusReason`
 
@@ -274,5 +272,11 @@ finish in time is logged and nothing more — the stack keeps the status it reac
 Every resource in it exists and answers requests, and the queued writes are neither
 lost nor abandoned: they go back at the head of the pending queue, and the pending
 log replays them after an unclean exit. Whether the store is keeping up is reported
-by `/_overcast/health` and `/_overcast/debug/metrics`, which is where a durability
-problem belongs — not in a `CREATE_FAILED` on a stack that provisioned.
+by `/_overcast/health` and `/_overcast/debug/metrics`.
+
+## Related
+
+- [CloudFormation](../cloudformation.md) — quick start and what works
+- [CloudFormation troubleshooting](./troubleshooting.md) — stuck stacks and failed deploys
+- [CloudFormation operations](./operations.md) — per-operation status
+- [Using AWS CDK](../../cdk.md) — the resource types a stack can provision

@@ -13,8 +13,6 @@ tags:
 
 # `routed`: egress from your route tables
 
-Back to [Networking](../networking.md).
-
 `OVERCAST_VPC_EGRESS=routed` decides egress **per subnet**, from the route table
 associated with it. LocalStack, Moto and SAM CLI give a VPC-attached function
 full egress and model no VPC networking at all, so this is where local emulation
@@ -127,3 +125,4 @@ without the egress its template grants.
 - [Egress modes](./egress.md) — `open` and `none`, and what the setting covers
 - [The Docker networks Overcast uses](./docker-networks.md) — the bridges this mode adds
 - [Networking troubleshooting](./troubleshooting.md) — when a container has the wrong answer
+- [Networking and host-based addressing](../networking.md) — the rest of the addressing story

@@ -47,4 +47,9 @@ tags:
 | `TagResource`             | ✅ Supported   | Adds or updates tags on an alarm, over the Query, JSON and rpcv2Cbor protocols (#1280). Tagging an alarm that does not exist is ResourceNotFoundException, as on AWS. Tag sets are validated — 50 tags per resource, keys 1-128 characters and not aws:-prefixed, values up to 256 — and a rejected set is not written                                                                                                                                                                                                                                                                                                                                               | [docs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_TagResource.html)             |
 | `UntagResource`           | ✅ Supported   | Removes tags from an alarm, over the Query, JSON and rpcv2Cbor protocols (#1280). A key that is not present is ignored; an alarm that does not exist is ResourceNotFoundException                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | [docs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_UntagResource.html)           |
 
+## Related
+
+- [CloudWatch](../cloudwatch.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

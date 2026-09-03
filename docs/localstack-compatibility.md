@@ -77,11 +77,9 @@ Every row here is verified against a running instance.
 
 ## Environment variables
 
-The full table, alias by alias, is in
-[Migrating from LocalStack § Environment variables](./migration-from-localstack.md#environment-variables).
-Variables with a genuine Overcast equivalent are read directly as aliases;
-every other documented LocalStack variable is recognised and inert — never
-rejected, and named in a startup log line with the reason it does nothing.
+| Item | Status | Notes |
+| ---- | ------ | ----- |
+| Every documented LocalStack variable | Aliased or inert | One with an Overcast equivalent is read as an alias; every other is recognised, does nothing, and says so in a startup log line. Full table: [Migrating from LocalStack § Environment variables](./migration-from-localstack.md#environment-variables) |
 
 ## Container conventions
 
@@ -146,3 +144,9 @@ your setup is written against — rather than service lists. For what Overcast
 actually emulates, use the [service index](./README.md#services); a carried-over
 `LOCALSTACK_AUTH_TOKEN` is recognised, logged once at startup as inert, and
 gates nothing.
+
+## Related
+
+- [Migrating from LocalStack](./migration-from-localstack.md) — the short version, with the steps
+- [Testcontainers](./testcontainers.md) — the LocalStack modules against this image
+- [Service reference](./services/README.md) — what each service supports

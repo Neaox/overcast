@@ -11,7 +11,7 @@ tags:
 
 # ECS examples
 
-Back to [ECS](../ecs.md).
+Worked task and service setups past the [ECS quick start](../ecs.md#quick-start).
 
 ## Images published to the emulated ECR
 
@@ -130,3 +130,10 @@ Anything that cannot be honoured — the flag off, an ambiguous bare tag, an unk
 or unredirectable volume, a relative path — leaves the task running on the plain
 scratch volumes it declared, and says so in a warning naming what to fix. A task
 never silently starts with a mount you asked for and did not get.
+
+## Related
+
+- [ECS](../ecs.md) — quick start and what works
+- [ECS limitations](./limitations.md) — rollouts, volumes, networking
+- [ECS troubleshooting](./troubleshooting.md) — tasks that will not start or stay up
+- [The inner loop](../../local-dev.md) — hot reload across services

@@ -117,4 +117,9 @@ tags:
 | ------------------------- | -------------- | ------------------------ | ---------------------------------------------------------------------------- |
 | `All other v2 operations` | ❌ Unsupported | Returns `NotImplemented` | [docs](https://docs.aws.amazon.com/ses/latest/APIReference/API_V2Other.html) |
 
+## Related
+
+- [SES](../ses.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

@@ -152,9 +152,11 @@ func Check(docs []Doc) []Problem { return CheckWith(docs, Options{}) }
 //
 // Two scopes. The structure rules — sections, ordering, the generated block —
 // apply to docs/services/ only, because they describe one page shape. The
-// length budget and the house-style tells apply to every published page,
-// generated ones included: an operations sub-page is nothing but a table, so it
-// measures zero prose and passes on its merits rather than by name.
+// length budget, the house-style tells, the opening line and the "## Related"
+// footer apply to every published page, generated ones included: an operations
+// sub-page is nothing but a table, so it measures zero prose and passes the
+// budget on its merits rather than by name, and capgen writes its footer for
+// the same reason it writes the rest of the file.
 func CheckWith(docs []Doc, opts Options) []Problem {
 	var problems []Problem
 	pending := map[string]bool{}
@@ -184,6 +186,8 @@ func CheckWith(docs []Doc, opts Options) []Problem {
 		}
 		problems = append(problems, checkLength(doc, opts.WholeCorpus)...)
 		problems = append(problems, checkOutsideLinks(doc)...)
+		problems = append(problems, checkOpeningLine(doc)...)
+		problems = append(problems, checkRelated(doc)...)
 		problems = append(problems, checkTells(doc, opts.Allowlist)...)
 		for key := range tellHits(doc) {
 			allowlistUsed[key] = true
@@ -316,29 +320,25 @@ func checkLanding(doc Doc, waived bool) ([]Problem, bool) {
 // checkTailAfterBlock enforces that the generated block is last, except for a
 // trailing "## Related". Anything else after it is content a reader reaches
 // only by scrolling past the generated section, and it is content capgen would
-// shove further down on its next run.
+// shove further down on its next run. That "## Related" is itself the last
+// section is checked in related.go, for every page rather than only this one.
 func checkTailAfterBlock(doc Doc, lines []string, end int) []Problem {
 	var problems []Problem
 	fail := func(i int, msg string) []Problem {
 		return append(problems, Problem{Path: doc.Path, Line: doc.BodyLineOffset + i + 1, Msg: msg})
 	}
 	visible := eachOutsideFences(lines)
-	seenRelated := false
 	for i := end + 1; i < len(lines); i++ {
 		line := strings.TrimSpace(visible[i])
 		if line == "" {
 			continue
 		}
-		if !seenRelated {
-			if line != "## Related" {
-				return fail(i, fmt.Sprintf("content after %s; only a trailing %q section may follow the generated block", EndMarker, "## Related"))
-			}
-			seenRelated = true
-			continue
+		if line != "## Related" {
+			return fail(i, fmt.Sprintf("content after %s; only a trailing %q section may follow the generated block", EndMarker, "## Related"))
 		}
-		if strings.HasPrefix(line, "## ") {
-			return fail(i, fmt.Sprintf("%q must be the last section on the page", "## Related"))
-		}
+		// Whether anything follows "## Related" is checkRelated's rule, and it
+		// applies to every published page rather than only to a landing one.
+		break
 	}
 	return problems
 }

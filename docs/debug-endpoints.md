@@ -112,3 +112,9 @@ one of them would cost more than it tells you. Hops past that budget show
 
 See the [environment variable reference](./configuration/reference.md) for the
 full list of `OVERCAST_DEBUG_TRACE_*` variables and their defaults.
+
+## Related
+
+- [Troubleshooting](./troubleshooting.md) — a symptom, and where its answer lives
+- [Log levels](./configuration/log-levels.md) — `OVERCAST_DEBUG` and `OVERCAST_LOG_LEVEL`
+- [Checking a running daemon](./cli/inspect.md) — the CLI over this surface

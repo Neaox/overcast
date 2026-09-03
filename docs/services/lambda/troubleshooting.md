@@ -11,7 +11,8 @@ tags:
 
 # Lambda troubleshooting
 
-Back to [Lambda](../lambda.md).
+Symptom, cause and fix for functions that will not run behind
+[Lambda](../lambda.md).
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
@@ -146,3 +147,10 @@ the `lambda:InstanceEvicted` event carries an `evictedReason`:
 | `surplus` | Above `LAMBDA_MAX_WARM_INSTANCES` for that function |
 | `memory-pressure` | The aggregate memory budget was near its limit |
 | `shutdown` | Overcast is stopping |
+
+## Related
+
+- [Lambda](../lambda.md) — quick start and what works
+- [Lambda limitations](./limitations.md) — concurrency, runtimes, logging, VPC placement
+- [Lambda examples](./examples.md) — hot reload, container images, layers, extensions
+- [CloudWatch Logs](../cloudwatch-logs.md) — where function output lands

@@ -116,3 +116,12 @@ Services](./README.md#services).
 | `transfer`        | Transfer Family  | `aws-transfer`                                     |
 
 <!-- END overcast:service-names -->
+
+## Related
+
+- [Environment variable reference](./configuration/reference.md) — every variable, with its default
+- [Bind address and port](./configuration/ports.md)
+- [Log levels](./configuration/log-levels.md)
+- [Running two instances on one host](./configuration/two-instances.md)
+- [MCP endpoint](./configuration/mcp.md)
+- [CLI reference](./cli.md) — the flags that mirror these variables

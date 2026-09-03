@@ -212,4 +212,9 @@ All 74 listed operations are implemented. Back to [IAM](../iam.md).
 | -------------------------------- | ------------ | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
 | `GetAccountAuthorizationDetails` | ✅ Supported | Returns all users, groups, roles, and managed policies in one call | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetAccountAuthorizationDetails.html) |
 
+## Related
+
+- [IAM](../iam.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

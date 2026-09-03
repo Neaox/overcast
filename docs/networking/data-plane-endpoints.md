@@ -13,8 +13,6 @@ tags:
 
 # Data-plane endpoints
 
-Back to [Networking](../networking.md).
-
 Most names Overcast hands back point at **Overcast**. A few point at a
 **container Overcast started** — an RDS instance's `Endpoint.Address`, an
 ElastiCache node's address — and those resolve by a different mechanism and
@@ -93,3 +91,4 @@ strands nothing, and a cluster created since answers only to `cluster`.
 - [Networking troubleshooting](./troubleshooting.md) — when an endpoint name resolves nowhere
 - [RDS](../services/rds.md) — the service reference
 - [The Docker networks Overcast uses](./docker-networks.md) — which network the alias lands on
+- [Networking and host-based addressing](../networking.md) — the rest of the addressing story

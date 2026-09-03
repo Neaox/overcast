@@ -272,6 +272,13 @@ on most, from a 2026-08 content audit of the live site:
 - **A table cell is not a paragraph.** A cell over ~25 words or with a
   nested clause belongs in prose below the table with its own heading, not
   crammed into the row.
+- **Every page ends with `## Related`, and opens with a sentence.** The footer
+  is the only route out of a page somebody reached from search, so `make
+  docs-lint` requires one on every published page (a directory `README.md`
+  aside) and checks that a page's own sub-pages come first and links off the
+  site last. It also rejects a first body line that is nothing but a link:
+  `Back to [ECS](../ecs.md).` becomes `Symptom, cause and fix for tasks that
+  will not start behind [ECS](../ecs.md).`
 
 Editing anything under `docs/services/` means following
 [docs/dev/service-doc-template.md](./docs/dev/service-doc-template.md) as well:

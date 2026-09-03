@@ -208,4 +208,9 @@ All 82 listed operations are implemented. Back to [AppSync](../appsync.md).
 | `TransactWriteItems` | ✅ Supported | DynamoDB data source resolver operation | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_TransactWriteItems.html) |
 | `ConditionCheck`     | ✅ Supported | DynamoDB transact-write condition check | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_ConditionCheck.html)     |
 
+## Related
+
+- [AppSync](../appsync.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

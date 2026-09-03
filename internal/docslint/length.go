@@ -89,7 +89,6 @@ var LengthBacklog = map[string]LengthBacklogEntry{
 	"docs/services/ecs/limitations.md":            {Prose: 10000, Page: 12000, Measured: "9666/10641", Why: "table the divergences, move the explanations out"},
 	"docs/services/lambda/examples.md":            {Prose: 10500, Page: 16500, Measured: "10159/16213", Why: "the prose between the examples is doing the work the examples should"},
 	"docs/services/lambda/limitations.md":         {Prose: 22000, Page: 26500, Measured: "21976/26103", Why: "the largest service page in the tree; table the divergences and split the runtime notes out"},
-	"docs/troubleshooting.md":                     {Prose: 6000, Page: 13500, Measured: "2877/13367", Why: "a symptom index page with the entries grouped by where they bite"},
 }
 
 // LengthReviewed records a page's authored size as the linter measures it.

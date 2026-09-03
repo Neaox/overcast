@@ -22,7 +22,7 @@ Find the symptom, follow the link. If nothing matches, start the daemon with
 | A resource I created is gone after a restart | [Storage and persistence](./storage.md) — and [Builds without SQLite](./storage.md#builds-without-sqlite) if you run the slim image or `overcastd` |
 | A hostname will not resolve, or works from the shell but not a container | [Networking](./networking/hostnames.md#in-docker-compose) |
 | A Lambda or task cannot reach a database | [Lambda, ECS and VPCs](./networking/vpcs.md) |
-| A function cannot reach the internet or real AWS (`ENETUNREACH`) | [A function in a VPC fails with `ENETUNREACH`](#a-function-in-a-vpc-fails-with-enetunreach), below |
+| A function cannot reach the internet or real AWS (`ENETUNREACH`) | [A function in a VPC fails with `ENETUNREACH`](./networking/troubleshooting.md#a-function-in-a-vpc-fails-with-enetunreach) |
 | `cdk deploy` fails, or a stack sits in `CREATE_IN_PROGRESS` | [CDK troubleshooting](./cdk/troubleshooting.md) |
 | CDK reports no private subnet groups, or stale VPC IDs | [Importing a VPC into CDK § Troubleshooting](./cdk/vpc-lookups.md#troubleshooting) |
 | A browser will not trust the certificate | [HTTPS and HTTP/2](./https.md) |
@@ -76,59 +76,13 @@ advisories, on the web console's **Metrics & Health** page and in the
 | `No Lambda can run: containers cannot reach the Runtime API` | No candidate address a Lambda container could dial answered, so every invocation will fail during INIT. Usually a host firewall blocking a freshly built binary — see [Containers cannot reach the Runtime API](./services/lambda/troubleshooting.md#containers-cannot-reach-the-runtime-api). |
 | `A Lambda init volume belongs to another instance` | Informational. Another Overcast on this daemon created the volume holding this build's init; it is safe to keep mounting, but only that instance will ever prune it — see [Lambda limitations](./services/lambda/limitations.md#init-delivery-is-shared-across-instances). |
 
-## A function in a VPC fails with `ENETUNREACH`
-
-**Symptom.** A Lambda or ECS task with a `VpcConfig` cannot reach an external
-API, a real AWS endpoint, or anything else outside Docker. Code that works
-without a VPC — and works on LocalStack — fails here, usually as
-`ENETUNREACH`, sometimes as a DNS failure because the resolver is unreachable too.
-
-**Cause.** Almost always one of two things.
-
-| | |
-| --- | --- |
-| `OVERCAST_VPC_EGRESS=none` | That is the mode working: no container Overcast starts reaches anything outside this machine. On Docker Desktop the control plane stays routable, so containers keep a route out and a startup warning says so — see [Egress modes](./networking/egress.md) |
-| `OVERCAST_VPC_EGRESS=routed` and the container is in a subnet with no `0.0.0.0/0` route | That is the mode working too — the missing NAT gateway, caught locally. `overcast logs` names the subnet and route table that decided it. Add a NAT gateway and a route to grant egress; containers placed afterwards get it, and running ones are moved onto it. On the hosts where `none` cannot isolate the control plane, `routed` cannot withhold either, and reports `vpc-egress-not-withheld`. See [`routed`](./networking/routed-egress.md) |
-| A network drifted | A network Overcast reuses kept a setting from an older version or a different mode, because Docker never applies `--internal` to an existing network. Overcast repairs one with nothing attached and warns about one with containers on it |
-
-A container with a `VpcConfig` joins exactly two networks — its VPC's network
-and the control plane — so if both are `--internal`, Docker installs no default
-route and it has no way out. `none` makes both internal; drift can leave one
-that way.
-
-**Check which.** The startup log and `GET /_overcast/health` both say what each
-network ended up as, and why:
-
-```
-network isolation  network=overcast_control internal=true
-                   reason="OVERCAST_VPC_EGRESS=none"
-```
-
-```sh
-overcast network status
-```
-
-A network reported as `NOT in the configured state` is drift; one reported `ok`
-with `internal=true` under `OVERCAST_VPC_EGRESS=none` is the mode.
-
-**Fixes:**
-
-| | |
-| --- | --- |
-| Restore egress | Unset `OVERCAST_VPC_EGRESS`, or set it to `open`, and restart. `open` is the default |
-| The network kept an old setting | `overcast network reset --dry-run` to see what it would do, then `overcast network reset`. It stops Overcast's own containers, disconnects yours, and rebuilds the network to spec |
-| You want a hermetic stack | Then `ENETUNREACH` is the correct answer. Keep `none`, and check the startup log: on Docker Desktop the control plane stays routable — see [Egress modes](./networking/egress.md) |
-| The function does not need the VPC locally | Drop the `VpcConfig` for the local stage. Under `none` even a non-VPC function has no egress either |
-
-**Reaching real AWS from a local function** — a hybrid stack whose code calls a
-real regional endpoint or a third-party API — works under the default `open`
-mode with no extra configuration. Overcast injects `AWS_ENDPOINT_URL` into every
-container it starts, so an SDK client picks Overcast up by default; construct
-the one client that should talk to real AWS with an explicit endpoint (or none)
-and real credentials, and leave the rest pointing at the emulator. There is a
-worked example in [Lambda examples](./services/lambda/examples.md#reaching-real-aws-from-a-local-function).
-
 One more advisory is served on demand rather than raised: `GET /_overcast/preflight/region`
 answers whether resources of a given `?kind=` exist in some region other than the
 caller's. An empty console list with `There are N in <region>` behind it is an
 `AWS_REGION` mismatch, not missing data.
+
+## Related
+
+- [Networking troubleshooting](./networking/troubleshooting.md) — names, ports, egress and VPCs
+- [Debug endpoints](./debug-endpoints.md) — request traces, metrics and the state dump
+- [Storage and persistence](./storage.md) — what survives a restart

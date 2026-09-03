@@ -179,4 +179,9 @@ All 89 listed operations are implemented. Back to [CloudFront](../cloudfront.md)
 | `DeleteContinuousDeploymentPolicy`    | ✅ Supported | Requires If-Match ETag                | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_DeleteContinuousDeploymentPolicy.html)    |
 | `ListContinuousDeploymentPolicies`    | ✅ Supported | MaxItems pagination                   | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_ListContinuousDeploymentPolicies.html)    |
 
+## Related
+
+- [CloudFront](../cloudfront.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

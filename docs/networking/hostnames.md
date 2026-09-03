@@ -12,8 +12,6 @@ tags:
 
 # Hostnames that resolve for every caller
 
-Back to [Networking](../networking.md).
-
 Every URL Overcast hands out carries `OVERCAST_HOSTNAME` when it is set, so that
 name has to resolve to Overcast for whoever receives the URL. One value works
 for the host and for containers alike:
@@ -26,7 +24,9 @@ Every `*.localhost.overcast.sh` subdomain resolves to `127.0.0.1` through public
 DNS, so host-routed URLs work with no hosts-file edits and behave the same on
 Linux, macOS and Windows. `localhost.localstack.cloud` and `localhost.floci.io`
 are recognised out of the box and work the same way, so a setup carried over
-from either tool keeps working.
+from either tool keeps working. None of the three sends traffic to the project
+that owns it — the domain is a DNS lookup and nothing else, and every request
+goes to Overcast on your machine.
 
 | Option | Resolves | Offline | Windows | Setup |
 | --- | --- | --- | --- | --- |
@@ -112,3 +112,4 @@ inside the containers it starts, on top of the built-in
 - [What host and port a URL carries](./urls.md) — the port half of the same rule
 - [Host-routed addressing](./host-routing.md) — what the subdomains are for
 - [Networking troubleshooting](./troubleshooting.md) — when a name will not resolve
+- [Networking and host-based addressing](../networking.md) — the rest of the addressing story

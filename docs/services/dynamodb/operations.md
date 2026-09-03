@@ -94,4 +94,9 @@ tags:
 | `UpdateGlobalTable`           | ❌ Unsupported | Overcast emulates a single region | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateGlobalTable.html)           |
 | `UpdateGlobalTableSettings`   | ❌ Unsupported | Overcast emulates a single region | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateGlobalTableSettings.html)   |
 
+## Related
+
+- [DynamoDB](../dynamodb.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

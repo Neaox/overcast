@@ -1647,8 +1647,20 @@ func buildOperationsDoc(service string, caps []CapabilityDecl) string {
 	fmt.Fprintf(&b, "# %s\n\n", title)
 	fmt.Fprintf(&b, "%s Back to [%s](../%s.md).\n", coverageSentence(caps), name, docFile)
 	b.WriteString(buildDocSection(service, caps))
+	b.WriteString(buildOperationsRelated(service))
 	b.WriteString(capEndMarker + "\n")
 	return b.String()
+}
+
+// buildOperationsRelated is the operations page's link footer.
+//
+// internal/docslint requires one on every published page, and requires this
+// file to hold nothing capgen did not write — so the footer is generated too.
+// Two links: the landing page, which is where a reader who arrived from search
+// on one operation row usually wants to be, and the service index.
+func buildOperationsRelated(service string) string {
+	return fmt.Sprintf("## Related\n\n- [%s](../%s.md) — quick start, what works, and the differences from AWS\n- [All service pages](../README.md)\n\n",
+		serviceDisplayName(service), serviceDocFile(service))
 }
 
 // operationsDescription is the frontmatter description, kept well inside the

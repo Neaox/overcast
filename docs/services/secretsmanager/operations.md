@@ -76,4 +76,9 @@ tags:
 | `ReplicateSecretToRegions`     | ❌ Unsupported | stub; returns 501                        | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_ReplicateSecretToRegions.html)     |
 | `RemoveRegionsFromReplication` | ❌ Unsupported | stub; returns 501                        | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_RemoveRegionsFromReplication.html) |
 
+## Related
+
+- [Secrets Manager](../secretsmanager.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

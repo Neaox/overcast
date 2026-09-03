@@ -136,4 +136,9 @@ tags:
 | `ListTypeRegistrations`    | ❌ Unsupported | stub; returns 501 | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ListTypeRegistrations.html)    |
 | `SetTypeDefaultVersion`    | ❌ Unsupported | stub; returns 501 | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_SetTypeDefaultVersion.html)    |
 
+## Related
+
+- [CloudFormation](../cloudformation.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

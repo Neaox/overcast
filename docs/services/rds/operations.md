@@ -100,4 +100,9 @@ tags:
 | `ListTagsForResource`    | ✅ Supported | Returns tag list for any RDS resource ARN                          | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_ListTagsForResource.html)    |
 | `RemoveTagsFromResource` | ✅ Supported | Removes specified tag keys from a resource                         | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_RemoveTagsFromResource.html) |
 
+## Related
+
+- [RDS](../rds.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

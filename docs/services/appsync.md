@@ -48,14 +48,13 @@ A GraphQL API answers on two forms, with identical behaviour:
 
 `uris` reports the host-routed form — what `Fn::GetAtt GraphQLUrl` passes on —
 whenever the hostname you reached Overcast on can carry a subdomain. On a bare
-`localhost` or an IP it reports the path-style form, because `*.localhost` does
-not resolve on Windows or macOS. Set `OVERCAST_HOSTNAME=localhost.overcast.sh`
-to get the AWS shape everywhere; see
+`localhost` or an IP it reports the path-style form. Set
+`OVERCAST_HOSTNAME=localhost.overcast.sh` to get the AWS shape everywhere — see
 [Hostnames that resolve for every caller](../networking/hostnames.md).
 
 The `dns` map always carries host-routed names — it holds a name, not a URL, so
-it has nothing else to carry. `dns.REALTIME` deliberately repeats
-`dns.GRAPHQL`'s host: Overcast serves both endpoints from one place.
+it has nothing else to carry. `dns.REALTIME` repeats `dns.GRAPHQL`'s host:
+Overcast serves both endpoints from one place.
 
 ## What works
 

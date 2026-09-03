@@ -44,4 +44,9 @@ All 8 listed operations are implemented. Back to [Pipes](../pipes.md).
 | `UntagResource`       | ✅ Supported | Removes tags by key from a pipe ARN | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_UntagResource.html)       |
 | `ListTagsForResource` | ✅ Supported | Returns tags for a pipe ARN         | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_ListTagsForResource.html) |
 
+## Related
+
+- [Pipes](../pipes.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

@@ -66,4 +66,9 @@ tags:
 | `StartAutomationExecution`     | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_StartAutomationExecution.html)     |
 | `RegisterDefaultPatchBaseline` | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_RegisterDefaultPatchBaseline.html) |
 
+## Related
+
+- [SSM](../ssm.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

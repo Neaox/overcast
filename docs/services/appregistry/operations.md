@@ -76,4 +76,9 @@ All 22 listed operations are implemented. Back to [AppRegistry](../appregistry.m
 | `AWS::ServiceCatalogAppRegistry::Application`         | ✅ Supported | `GetAtt` attributes: `Id`, `Arn`, `Name`, `ApplicationName`, `ApplicationTagKey`, `ApplicationTagValue`. | [docs](https://docs.aws.amazon.com/servicecatalog/latest/dg/API_app-registry_AWS::ServiceCatalogAppRegistry::Application.html)         |
 | `AWS::ServiceCatalogAppRegistry::ResourceAssociation` | ✅ Supported | Physical ID is `<appId>/<resourceType>/<resource>`.                                                      | [docs](https://docs.aws.amazon.com/servicecatalog/latest/dg/API_app-registry_AWS::ServiceCatalogAppRegistry::ResourceAssociation.html) |
 
+## Related
+
+- [AppRegistry](../appregistry.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->

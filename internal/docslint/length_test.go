@@ -8,7 +8,7 @@ import (
 
 // guide is a published page outside docs/services/, where only the length and
 // tells rules apply — the shape most of these tests want.
-func guide(body string) Doc { return Doc{Path: "docs/demo-guide.md", Body: body} }
+func guide(body string) Doc { return Doc{Path: "docs/demo-guide.md", Body: withRelated(body)} }
 
 // prose returns a page whose measured prose is at least n characters, built out
 // of paragraphs so nothing else in the linter has an opinion about it.
@@ -54,7 +54,7 @@ func TestMeasure_excludesTheGeneratedBlock(t *testing.T) {
 	// of every docs/services/<key>/operations.md.
 	body := BeginMarker + "\n\n# S3 operations\n\n45 of 53 listed operations are implemented.\n\n" +
 		strings.Repeat("| `GetObject` | GET | ✅ Supported | returns the stored object bytes |\n", 400) +
-		"\n" + EndMarker + "\n"
+		"\n## Related\n\n- [Demo](../demo.md)\n\n" + EndMarker + "\n"
 
 	// When: it is measured.
 	got := Measure(body)
@@ -157,8 +157,8 @@ func TestCheck_letsABackloggedPageShrinkButNotGrow(t *testing.T) {
 	path, entry := backlogged(t)
 
 	// Given: the page at its recorded ceiling, and the same page grown past it.
-	at := Doc{Path: path, Body: prose(entry.Prose - 500)}
-	grown := Doc{Path: path, Body: prose(entry.Prose + 500)}
+	at := Doc{Path: path, Body: withRelated(prose(entry.Prose - 500))}
+	grown := Doc{Path: path, Body: withRelated(prose(entry.Prose + 500))}
 
 	// When / Then: waiting for a rewrite is not permission to get worse.
 	assertClean(t, Check([]Doc{at}))
@@ -169,7 +169,7 @@ func TestCheck_retiresABacklogEntryOnceThePageIsInsideTheBudget(t *testing.T) {
 	path, _ := backlogged(t)
 
 	// Given: a whole-corpus run over that page, now short.
-	docs := []Doc{{Path: path, Body: "# Demo\n\nSplit at last.\n"}}
+	docs := []Doc{{Path: path, Body: withRelated("# Demo\n\nSplit at last.\n")}}
 
 	// When / Then: the entry is deleted by failing the build, the same way
 	// RestructurePending entries are.

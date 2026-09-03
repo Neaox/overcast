@@ -108,4 +108,9 @@ All 72 listed operations are implemented. Back to [EC2 / VPC](../ec2.md).
 | `conflict` | ✅ Supported | Reserved for strict mode when CIDR collides with another existing VPC | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_conflict.html) |
 | `remapped` | ✅ Supported | Reserved for remapped mode and backed by a shadow CIDR                | [docs](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_remapped.html) |
 
+## Related
+
+- [EC2 / VPC](../ec2.md) — quick start, what works, and the differences from AWS
+- [All service pages](../README.md)
+
 <!-- END overcast:capabilities -->
