@@ -33,6 +33,9 @@ aws elasticache describe-cache-clusters --cache-cluster-id sessions \
 redis-cli -p 63790 ping
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area | Behaviour |

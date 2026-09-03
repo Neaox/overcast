@@ -34,6 +34,9 @@ aws appconfigdata get-latest-configuration \
   --configuration-token "$TOKEN" config.json && cat config.json
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 Identifiers may be names or IDs. Nothing has to be deployed first — a hosted
 version is readable as soon as it is created.
 

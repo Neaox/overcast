@@ -410,7 +410,7 @@ func comparablePath(uri string) string {
 // checkable claim.
 //
 // Its contract says the same thing three ways — "documentation metadata only",
-// "generic behavior, unsupported operations without explicit stubs, or other
+// "generic behaviour, unsupported operations without explicit stubs, or other
 // non-dispatched rows" — and every clause means *not dispatched*. But because
 // the flag only ever suppressed checks, nothing tested the claim, and a row
 // that was dispatched could carry it and disappear from the cross-check, the
@@ -445,7 +445,7 @@ func checkDocOnlyRowsAreNotDispatched(service, svcDir string, caps []CapabilityD
 
 // implementedHandlerMethods returns the names of methods in svcDir that take
 // (http.ResponseWriter, *http.Request) and do something other than answer 501.
-// A dispatched operation has one; a row documenting generic behavior does not.
+// A dispatched operation has one; a row documenting generic behaviour does not.
 func implementedHandlerMethods(svcDir string) (map[string]bool, error) {
 	entries, err := os.ReadDir(svcDir)
 	if err != nil {
@@ -2513,10 +2513,10 @@ func updateRootReadmeServiceList(root string, allCaps []CapabilityDecl) (bool, e
 	buf.WriteString("exact endpoint support.\n\n")
 	buf.WriteString(formatCommaSeparatedLinks(links))
 	buf.WriteString(".\n\n")
-	buf.WriteString("Some services require Docker socket access for full runtime behavior:\n\n")
+	buf.WriteString("Some services require Docker socket access for full runtime behaviour:\n\n")
 	buf.WriteString("- Lambda, ECS, RDS, EC2/VPC, and ElastiCache can launch sibling containers.\n")
 	buf.WriteString("- Without Docker, their metadata/control-plane APIs still work where possible,\n")
-	buf.WriteString("  but runtime execution falls back to metadata-only or stub behavior.\n\n")
+	buf.WriteString("  but runtime execution falls back to metadata-only or stub behaviour.\n\n")
 	buf.WriteString("IAM is implemented for local development and CloudFormation/CDK compatibility,\n")
 	buf.WriteString("but IAM policies are not enforced as an authorization layer.\n\n")
 	buf.WriteString("See the [service emulation reference](./docs/services/) for per-endpoint\n")

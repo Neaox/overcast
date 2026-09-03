@@ -81,4 +81,4 @@ the server log carries a matching warning naming the type and the logical ID.
 - [CDK troubleshooting](./troubleshooting.md) — a deploy that fails or never completes
 - [Using AWS CDK](../cdk.md) — bootstrap and deploy against Overcast
 - [CloudFormation service reference](../services/cloudformation.md) — the provisioner and its `Fn::GetAtt` coverage
-- [All documentation](../README.md) — every guide and service page
+- [Reference index](../README.md) — every guide and service page

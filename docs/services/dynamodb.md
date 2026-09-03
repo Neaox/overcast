@@ -30,6 +30,9 @@ aws dynamodb put-item --table-name orders \
 aws dynamodb get-item --table-name orders --key '{"id": {"S": "o-1"}}'
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area | Behaviour |

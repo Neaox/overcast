@@ -29,6 +29,9 @@ aws opensearch describe-domain --domain-name logs
 aws opensearch list-domain-names
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area | Behaviour |

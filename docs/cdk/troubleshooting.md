@@ -86,4 +86,4 @@ Overcast's S3 virtual-host middleware rewrites to the path-style route.
 - [Using AWS CDK](../cdk.md) — bootstrap and deploy against Overcast
 - [Hostnames that resolve for every caller](../networking/hostnames.md) — the wildcard-DNS domain and its fallbacks
 - [Troubleshooting](../troubleshooting.md) — the whole-emulator symptom index
-- [All documentation](../README.md) — every guide and service page
+- [Reference index](../README.md) — every guide and service page

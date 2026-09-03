@@ -34,6 +34,9 @@ aws efs describe-file-systems --file-system-id "$FS"
 docker volume ls --filter name=overcast-efs-"$FS"
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area | Behaviour |

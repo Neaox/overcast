@@ -35,6 +35,9 @@ aws cloudformation wait stack-create-complete --stack-name demo
 aws cloudformation describe-stacks --stack-name demo --query 'Stacks[0].Outputs'
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area | Behaviour |

@@ -142,7 +142,8 @@ one of those services in its single build.
 
 The rows above compare interfaces — the ports, URLs, variables and conventions
 your setup is written against — rather than service lists. For what Overcast
-actually emulates, use the [service index](./README.md#services); a carried-over
+actually emulates, use the service table on the
+[Reference index](./README.md#services); a carried-over
 `LOCALSTACK_AUTH_TOKEN` is recognised, logged once at startup as inert, and
 gates nothing.
 

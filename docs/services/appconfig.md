@@ -33,6 +33,9 @@ aws appconfig create-hosted-configuration-version --application-id "$APP" \
   --content fileb://cfg.json version.json
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area | Behaviour |

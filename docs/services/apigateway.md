@@ -38,6 +38,9 @@ aws apigateway create-deployment --rest-api-id "$API" --stage-name dev
 curl "http://localhost:4566/restapis/$API/dev/_user_request_/"
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## Invoke URLs
 
 | API | Path-style | Host-routed |

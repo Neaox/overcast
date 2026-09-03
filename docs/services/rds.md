@@ -34,6 +34,9 @@ aws rds describe-db-instances --db-instance-identifier mydb \
 psql -h 127.0.0.1 -p 33060 -U app postgres
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 First boot takes roughly half a minute — the engine has to initialise its data
 directory before it accepts anything.
 

@@ -30,6 +30,9 @@ aws ses send-email \
   --message 'Subject={Data=Hello},Body={Text={Data=It works}}'
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 Open <http://localhost:4567/inbox> to read it.
 
 ## What lands in the Inbox

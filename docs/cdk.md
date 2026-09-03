@@ -127,4 +127,4 @@ npx cdk deploy --require-approval never
 - [Using AWS SDKs and CLI](./sdk-cli.md) — endpoint and credential configuration
 - [Configuration](./configuration.md) — every environment variable
 - [Hostnames that resolve for every caller](./networking/hostnames.md) — the wildcard-DNS name asset publishing needs
-- [All documentation](./README.md) — every guide and service page
+- [Reference index](./README.md) — every guide and service page

@@ -27,6 +27,9 @@ aws bedrock-runtime converse \
   --messages '[{"role":"user","content":[{"text":"hello"}]}]'
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 The reply is a complete `ConverseResponse` — every member the AWS model marks
 required, with fixed assistant text in `output.message.content[0].text`.
 

@@ -33,6 +33,9 @@ aws kafka get-bootstrap-brokers --cluster-arn "$ARN"
 # → { "BootstrapBrokerString": "127.0.0.1:49092" }
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area | Behaviour |

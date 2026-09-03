@@ -200,6 +200,7 @@ func CheckWith(docs []Doc, opts Options) []Problem {
 		case docLanding:
 			landing, waived := checkLanding(doc, pending[stem])
 			problems = append(problems, landing...)
+			problems = append(problems, checkQuickStartCredentials(doc, pending[stem])...)
 			if pending[stem] {
 				waivedSatisfied[stem] = waived
 			}
@@ -212,6 +213,7 @@ func CheckWith(docs []Doc, opts Options) []Problem {
 		problems = append(problems, checkOutsideLinks(doc)...)
 		problems = append(problems, checkOpeningLine(doc)...)
 		problems = append(problems, checkRelated(doc)...)
+		problems = append(problems, checkCallouts(doc)...)
 		problems = append(problems, checkTells(doc, opts.Allowlist)...)
 		for key := range tellHits(doc) {
 			allowlistUsed[key] = true

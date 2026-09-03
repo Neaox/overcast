@@ -32,6 +32,9 @@ CERT=$(aws acm request-certificate \
 aws acm describe-certificate --certificate-arn "$CERT"
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 ## What works
 
 | Area         | Behaviour                                                                                                               |

@@ -34,6 +34,9 @@ aws route53 change-resource-record-sets --hosted-zone-id "$ZONE" --change-batch 
 dig +short @localhost api.example.internal
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 The resolver runs on port 53 by default (`OVERCAST_DNS`, `OVERCAST_DNS_PORT`).
 Failing to bind it is not fatal, so on a machine where something already owns
 port 53 the API still works and only DNS answers are missing.

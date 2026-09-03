@@ -30,6 +30,9 @@ aws iam attach-role-policy --role-name app \
   --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
 ```
 
+Any credentials work; with none configured, run `eval "$(overcast env)"` first
+— see [Using AWS SDKs and CLI](../sdk-cli.md#credentials).
+
 > [!CAUTION]
 > **Overcast is not a security boundary.** Credentials are accepted but never
 > verified, and every call succeeds regardless of attached policies unless you

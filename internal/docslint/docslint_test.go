@@ -11,12 +11,22 @@ func landing(sections ...string) string {
 	var b strings.Builder
 	b.WriteString("# S3\n\nOne sentence. Two sentences.\n\n")
 	for _, s := range sections {
-		b.WriteString(s)
+		b.WriteString(withCredentialsLine(s))
 		b.WriteString("\n\n")
 	}
 	b.WriteString(BeginMarker + "\n\n## Operations\n\nAll 3 listed operations are implemented.\n\n" + EndMarker + "\n\n")
 	b.WriteString("## Related\n\n- [All service pages](README.md)\n")
 	return b.String()
+}
+
+// withCredentialsLine gives a fixture's Quick start the credentials pointer the
+// template requires, so a test about some other rule is not also a test about
+// that one. A section that is not a Quick start passes through untouched.
+func withCredentialsLine(section string) string {
+	if !strings.HasPrefix(section, "## Quick start") || strings.Contains(section, credentialsAnchor) {
+		return section
+	}
+	return section + "\n\nAny credentials work; see [Using AWS SDKs and CLI](../sdk-cli.md#credentials)."
 }
 
 // withRelated gives a fixture the link footer every published page needs, so a
@@ -188,7 +198,8 @@ func TestCheck_doesNotReadHeadingsOrTablesInsideFencedCode(t *testing.T) {
 func TestCheck_blockquotesAndAlertsDoNotCountTowardTheIntroBudget(t *testing.T) {
 	// Given: a signpost blockquote and a GitHub alert above the prose
 	body := "# S3\n\n> [!NOTE]\n> Something worth knowing. And more of it.\n\nOne sentence. Two sentences.\n\n" +
-		"## Quick start\n\nx.\n\n" + BeginMarker + "\n\n## Operations\n\nAll 3 listed operations are implemented.\n\n" +
+		withCredentialsLine("## Quick start\n\nx.") + "\n\n" +
+		BeginMarker + "\n\n## Operations\n\nAll 3 listed operations are implemented.\n\n" +
 		EndMarker + "\n\n## Related\n\n- [x](README.md)\n"
 
 	// When / Then: only the prose is budgeted
