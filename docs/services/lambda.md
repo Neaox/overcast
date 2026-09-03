@@ -68,9 +68,11 @@ aws lambda invoke --function-name hello --payload '{"hi":1}' \
 | SnapStart          | Supported                          | Not emulated; no restore records                                                                                              |
 | Tagging            | All taggable resources             | Functions and event source mappings only; other taggable resources return `501`                                               |
 
-The full list — async-retry edge cases, `LoggingConfig: {}`, unqualified
-`DeleteFunction`, the reactive S3 code sync, the JSON log record vocabulary,
-runtime coverage and VPC placement — is in [Limitations](./lambda/limitations.md).
+The full list is in [Limitations](./lambda/limitations.md), one table with a
+page behind each row: [concurrency](./lambda/concurrency.md),
+[execution environments](./lambda/execution-environments.md),
+[event delivery and retries](./lambda/async.md),
+[logging](./lambda/logging.md) and [runtimes](./lambda/runtimes.md).
 
 ## Gotchas
 
@@ -130,9 +132,14 @@ Per-operation status, notes and AWS API links: [Lambda operations](lambda/operat
 
 ## Related
 
-- [Lambda limitations](./lambda/limitations.md) — divergences, concurrency, runtimes, logging
+- [Lambda limitations](./lambda/limitations.md) — every divergence, in one table
 - [Lambda troubleshooting](./lambda/troubleshooting.md) — throttles, layer errors, extension endpoints
 - [Lambda examples](./lambda/examples.md) — hot reload, container images, layers, extensions
+- [Lambda concurrency](./lambda/concurrency.md) — the instance and memory limits
+- [Lambda execution environments](./lambda/execution-environments.md) — what retires a warm container
+- [Lambda event delivery and retries](./lambda/async.md) — retries, destinations, batch failures
+- [Lambda logging](./lambda/logging.md) — the JSON record vocabulary and its levels
+- [Lambda runtimes](./lambda/runtimes.md) — identifiers, deprecation dates, images
 - [CloudWatch Logs](./cloudwatch-logs.md) — where function output lands
 - [All service pages](./README.md)
 - [Configuration reference](../configuration.md) — every `LAMBDA_*` environment variable

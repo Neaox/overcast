@@ -127,7 +127,7 @@ new image is pulled in the background, so `update-function-code` answers
 `LastUpdateStatus: InProgress` and the wait is what tells you the pull landed —
 or that it failed, with `ImageAccessDenied` or `InvalidImage` in
 `LastUpdateStatusReasonCode`. Every other update settles before the call
-returns; see [Limitations](limitations.md#other-divergences).
+returns; see [Limitations](limitations.md#update-status).
 
 CDK's `DockerImageFunction` with `DockerImageCode.fromImageAsset` needs none of
 this by hand: `cdk deploy` builds the image, pushes it to the repository
