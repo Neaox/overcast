@@ -28,6 +28,28 @@ Symptom, cause and fix for the stacks that stop a deploy behind
 | A large `--template-body` is refused | AWS's 51,200-byte inline quota | Use `TemplateURL`, which lifts it to 1,000,000 bytes. `aws cloudformation deploy` and `cdk deploy` switch for you |
 | SDK waiters see `CREATE_IN_PROGRESS` forever on a fast stack | `OVERCAST_CFN_SYNC_WAIT_MS` was set to `0` | Leave it at its `1000` default so a fast stack is terminal on the first `DescribeStacks` |
 
+## Where the reason lives
+
+In `StackStatusReason` and in each event's `ResourceStatusReason` — never in the
+status itself.
+
+| Situation | Where the explanation is |
+| --- | --- |
+| An automatic rollback | `StackStatusReason` reads `resource X failed: …` while the rollback runs |
+| `RollbackStack` | `StackStatusReason` reads `User Initiated` |
+| A stack that reached `*_ROLLBACK_COMPLETE` | The reason is cleared, so what survives is the `ROLLBACK_IN_PROGRESS` event and the `CREATE_FAILED` resource that caused it |
+| A create that failed with `DisableRollback` | The stack carries AWS's summary — `The following resource(s) failed to create: [MyBucket]` — and the underlying service error stays on the resource's `ResourceStatusReason` and its `CREATE_FAILED` event |
+| A `ListStacks` summary | Carries `StackStatusReason` alongside the status, as AWS's `StackSummary` does |
+
+Every stack event also carries a `ClientRequestToken`: the caller's when one was
+supplied, and otherwise the request ID of the API call that started the operation.
+That request ID keys `/_overcast/debug/trace/{requestId}`, so pasting an event's
+token into the trace viewer opens the request behind it, with every internal
+service call the operation made. The token belongs to the operation rather than
+the stack, so a create and a later update are distinguishable, and a nested
+stack's events carry the parent operation's token. `OVERCAST_DEBUG` must be on
+for the trace to be retained.
+
 ## Getting out of `UPDATE_ROLLBACK_FAILED`
 
 A stack reaches it when an update fails and the automatic rollback fails too —
@@ -98,6 +120,9 @@ itself.
 ## Related
 
 - [CloudFormation](../cloudformation.md) — quick start and what works
-- [CloudFormation limitations](./limitations.md) — the status machine, rollbacks and dynamic references
+- [CloudFormation limitations](./limitations.md) — the divergence table and the status machine
+- [CloudFormation stack updates](./updates.md) — in-place, replace, and what a rollback puts back
+- [CloudFormation teardown](./teardown.md) — failed deletes and DeletionPolicy
+- [CloudFormation dynamic references](./dynamic-references.md) — resolve semantics
 - [CloudFormation operations](./operations.md) — per-operation status
 - [ECS troubleshooting](../ecs/troubleshooting.md) — a stack that completes around a service that is not working

@@ -69,9 +69,11 @@ Intrinsics: `Ref`, `Fn::Sub`, `Fn::Join`, `Fn::Select`, `Fn::GetAtt`, `Fn::If`,
 | `DeletionPolicy: Snapshot`                          | Snapshots                                      | Treated as `Retain`; no snapshot is taken                                                        |
 | Drift detection, StackSets, stack policies, imports | Supported                                      | Not implemented                                                                                  |
 
-The status machine, what an update rollback puts back, what happens when a
-teardown fails, and how `DeletionPolicy` interacts with each of them are in
-[Limitations](./cloudformation/limitations.md).
+The full list is in [Limitations](./cloudformation/limitations.md), with the
+status machine and the waits. Behind it:
+[stack updates](./cloudformation/updates.md),
+[teardown](./cloudformation/teardown.md) and
+[dynamic references](./cloudformation/dynamic-references.md).
 
 ## Gotchas
 
@@ -101,8 +103,11 @@ Per-operation status, notes and AWS API links: [CloudFormation operations](cloud
 
 ## Related
 
-- [CloudFormation limitations](./cloudformation/limitations.md) — status machine, rollback, teardown, dynamic references
+- [CloudFormation limitations](./cloudformation/limitations.md) — every divergence, the status machine, the waits
 - [CloudFormation troubleshooting](./cloudformation/troubleshooting.md) — stuck stacks and failed deploys
+- [CloudFormation stack updates](./cloudformation/updates.md) — in-place, replace, and what a rollback puts back
+- [CloudFormation teardown](./cloudformation/teardown.md) — failed deletes and DeletionPolicy
+- [CloudFormation dynamic references](./cloudformation/dynamic-references.md) — resolve semantics
 - [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
 - [CDK](../cdk.md) — the supported resource types and how to point CDK here
