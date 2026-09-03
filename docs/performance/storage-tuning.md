@@ -80,7 +80,7 @@ docker cp overcast:/data ./overcast-data-backup
 **Sharing a Lambda layer cache from the host is still fine.** The bind-mount
 penalty is about SQLite's per-commit fsyncs, and read-mostly files like cached
 layer zips do not pay it. To pre-download layers on the host (or share one cache
-across containers), bind-mount just the layer directory and point
+across containers), bind-mount only the layer directory and point
 `LAMBDA_LAYER_CACHE_DIR` at it, while `/data` stays on the named volume:
 
 ```yaml

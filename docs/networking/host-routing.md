@@ -35,6 +35,7 @@ The subdomain has to resolve to wherever Overcast is listening — see
 | AppSync (GraphQL) | `{apiId}.appsync-api.{region}.{base}/graphql` | Also reachable at `/realtime` on the same host — Overcast colocates the GraphQL and realtime endpoints. |
 | AppSync (subscriptions) | `{apiId}.appsync-realtime-api.{region}.{base}` | The host real AWS serves subscriptions on, and the one Amplify derives by substituting into the GraphQL URL. Routes to the same endpoint as `/realtime`. |
 | CloudFront | `{distributionId}.cloudfront.{base}` | Global, so there is no region segment. `DomainName` is minted on the hostname you reached Overcast on rather than the literal `cloudfront.net`. |
+| Elastic Load Balancing | `{name}-{id}.{region}.elb.{base}/...` | AWS's own load balancer shape, so the region sits *before* the label. Reaches the target group the matching listener forwards to — see [ELB](../services/elb.md). |
 | S3 (virtual-hosted style) | `{bucket}.s3[.{region}].{base}/...` or `{bucket}.{base}/...` | Both forms work. The second is what an AWS SDK emits against a custom endpoint with path-style disabled, and the only form CDK's asset publisher uses. See [sdk-cli.md](../sdk-cli.md#s3-addressing-styles) and [CDK troubleshooting](../cdk/troubleshooting.md#s3-asset-upload-fails-on-windows). |
 
 **The Host is case-insensitive in every part** — resource ID, service label,
@@ -54,13 +55,14 @@ so one rule resolves them, applied in order:
    everything before the first `.s3.`, so bucket names containing dots stay
    addressable here.
 2. **`{bucket}.{base}` → S3**, where `{base}` is `localhost`,
-   `localhost.overcast.sh`, `localhost.localstack.cloud`, or your
-   `OVERCAST_HOSTNAME`. Exception: if the part in front of the base carries a
-   service label (`execute-api`, `lambda-url`, `appsync-api`,
-   `appsync-realtime-api`, `cloudfront`) as its second or later dot-segment, it
-   is a service address, and rule 3 takes it.
+   `localhost.overcast.sh`, `localhost.localstack.cloud`, `localhost.floci.io`,
+   or your `OVERCAST_HOSTNAME`. Exception: if the part in front of the base
+   carries a service label (`execute-api`, `lambda-url`, `appsync-api`,
+   `appsync-realtime-api`, `cloudfront`, `elb`) as its second or later
+   dot-segment, it is a service address, and rule 3 takes it.
 3. **`{id}.{label}[.{region}].{base}` → the owning service**, for the labels in
-   the table above.
+   the table above. `elb` is the one that carries its region in front of the
+   label instead (`{name}-{id}.{region}.elb.{base}`), matching AWS.
 4. **Anything else stays path-style** and reaches S3, the emulator's catch-all.
 
 The order is fixed here rather than configurable, so the same Host always
@@ -68,10 +70,10 @@ resolves the same way.
 
 > [!IMPORTANT]
 > **Reserved service labels.** A bucket whose **second or later** dot-segment is
-> `execute-api`, `lambda-url`, `appsync-api`, `appsync-realtime-api` or
-> `cloudfront` cannot be addressed by rule 2 — `my.execute-api.localhost` is an
-> API Gateway invoke. Use path-style (`localhost:4566/my.execute-api/key`) or the
-> explicit form (`my.execute-api.s3.localhost`); both work.
+> `execute-api`, `lambda-url`, `appsync-api`, `appsync-realtime-api`,
+> `cloudfront` or `elb` cannot be addressed by rule 2 — `my.execute-api.localhost`
+> is an API Gateway invoke. Use path-style (`localhost:4566/my.execute-api/key`)
+> or the explicit form (`my.execute-api.s3.localhost`); both work.
 >
 > A bucket named *exactly* like a label is unaffected: `execute-api.localhost` is
 > the bucket `execute-api`, because a host-routed address always carries a
@@ -95,6 +97,7 @@ This table is the centralised list, maintained by hand.
 | `{apiId}.appsync-api.{region}.{base}` | ✅ routed | AppSync GraphQL |
 | `{apiId}.appsync-realtime-api.{region}.{base}` | ✅ routed | AppSync subscriptions. Amplify derives this host from the GraphQL URL, so it must route even though Overcast serves both endpoints from one place |
 | `{distributionId}.cloudfront.net` | ✅ routed | CloudFront distribution. Global, so there is no region segment |
+| `{name}-{id}.{region}.elb.amazonaws.com` | ✅ routed | Application Load Balancer. The one shape whose region precedes the label |
 | `{bucket}.s3[.{region}].{base}` | ✅ routed | S3 virtual-hosted style |
 | `{bucket}.s3.dualstack.{region}.{base}` | ✅ routed | Matched by the `.s3.` rule |
 | `{bucket}.s3-{region}.{base}` | ✅ routed | Legacy dash dialect, pre-2019 regions |

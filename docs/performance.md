@@ -11,14 +11,14 @@ tags:
 
 # Performance and memory
 
-Overcast aims to be fast and lean: sub-50 ms startup, under 15 MiB at idle, and
-low per-request overhead. CI pipelines should not wait for the emulator.
+Overcast targets sub-50 ms startup, under 15 MiB at idle, and low per-request
+overhead. CI pipelines should not wait for the emulator.
 
 ## Targets
 
 | Metric | Target |
 | --- | --- |
-| Startup time | < 50 ms (currently ~22 ms p50, hybrid backend) |
+| Startup time | < 50 ms, spawn to ready — see the per-backend table below |
 | Idle memory | < 15 MiB |
 | Docker image (slim) | < 40 MiB — Go binary only, no web console |
 | Docker image (console) | < 100 MiB — includes web management console |

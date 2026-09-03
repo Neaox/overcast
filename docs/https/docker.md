@@ -93,7 +93,7 @@ container lifecycle.
 Use the `https://` spelling. A container serving TLS answers a plain-HTTP dial
 with `http: TLS handshake error ...: client sent an HTTP request to an HTTPS
 server`. The `http://` spelling still works — the CLI notices the daemon answers
-TLS and retries over https — it just costs you a confusing line in the log. The
+TLS and retries over https — it only costs you a confusing line in the log. The
 daemon logs the correct command at startup when it detects it is containerised.
 
 ### What `--endpoint` does
