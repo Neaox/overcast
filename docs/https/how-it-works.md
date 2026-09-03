@@ -13,7 +13,7 @@ tags:
 # How the local CA works
 
 What `overcast https enable` puts on disk, which names it covers, and what the
-containers Overcast starts do with it. To just turn TLS on, see
+containers Overcast starts do with it. To turn TLS on, see
 [HTTPS and HTTP/2](../https.md).
 
 ## What `enable` mints

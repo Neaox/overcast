@@ -75,6 +75,8 @@ network carrying another tool's ownership labels is left alone whatever its name
 > naming `overcast network reset`. Stopping your stack before upgrading avoids
 > both; otherwise, expect one reconnect and one advisory to clear.
 
+`overcast network reset` is the fix in every case but one.
+
 > [!WARNING]
 > **`overcast network reset` cannot repair a VPC network from before the
 > upgrade.** Those carry no `overcast.network.gateway` label, so the command

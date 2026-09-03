@@ -41,10 +41,11 @@ without a VPC — and works on LocalStack — fails here, usually as
 | `OVERCAST_VPC_EGRESS=routed` and the container is in a subnet with no `0.0.0.0/0` route | That is the mode working too — the missing NAT gateway, caught locally. `overcast logs` names the subnet and route table that decided it. Add a NAT gateway and a route to grant egress; containers placed afterwards get it, and running ones are moved onto it. On the hosts where `none` cannot isolate the control plane, `routed` cannot withhold either, and reports `vpc-egress-not-withheld`. See [`routed`](./routed-egress.md) |
 | A network drifted | A network Overcast reuses kept a setting from an older version or a different mode, because Docker never applies `--internal` to an existing network. Overcast repairs one with nothing attached and warns about one with containers on it |
 
-A container with a `VpcConfig` joins exactly two networks — its VPC's network
-and the control plane — so if both are `--internal`, Docker installs no default
-route and it has no way out. `none` makes both internal; drift can leave one
-that way.
+A container with a `VpcConfig` joins two networks — its VPC's network and the
+control plane — so if both are `--internal`, Docker installs no default route
+and it has no way out. `none` makes both internal; drift can leave one that
+way. (Under `routed` there is a third, the VPC's egress network, and only the
+containers whose subnet grants a route out join it.)
 
 **Check which.** The startup log and `GET /_overcast/health` both say what each
 network ended up as, and why:

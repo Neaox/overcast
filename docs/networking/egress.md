@@ -22,8 +22,8 @@ anything outside your machine.
 | [`routed`](./routed-egress.md) | Exactly what its subnet's route table says: a `0.0.0.0/0` route to an attached internet gateway or an available NAT gateway grants egress, and no default route withholds it | Catching a missing NAT gateway locally instead of in a deploy, and any stack whose public/private subnet split is the thing you are testing |
 
 Any other value fails startup rather than falling back to the default: this
-decides whether your code reaches real AWS, and a typo that quietly restored the
-default answer is the surprise the setting exists to end.
+setting decides whether your code reaches real AWS, so a typo must not quietly
+restore the default.
 
 It is one setting for the whole topology rather than a flag per network, because
 a container sits on two Docker networks at once and takes its default route from
@@ -79,14 +79,18 @@ A hybrid stack — most of it emulated, one client talking to a real regional
 endpoint, a peered private endpoint, or a third-party API — works under `open`
 with no extra configuration: every container Overcast starts has a route out,
 `VpcConfig` or not. The only work is telling the SDK which client goes where.
-Overcast injects these into every container it starts:
+Overcast injects the emulator's endpoint into every container it starts, and a
+Lambda container's region and credentials as well:
 
-| Variable | Effect |
-| --- | --- |
-| `AWS_ENDPOINT_URL` | Every SDK client defaults to Overcast |
-| `AWS_ENDPOINT_URL_<SERVICE>` | Per-service override, same precedence as on AWS |
-| `AWS_REGION` | The emulator's region |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` | Dummy credentials the emulator accepts |
+| Variable | Injected into | Effect |
+| --- | --- | --- |
+| `AWS_ENDPOINT_URL` | every container | Every SDK client defaults to Overcast |
+| `AWS_ENDPOINT_URL_SSM`, `AWS_ENDPOINT_URL_SECRETS_MANAGER` | Lambda | The two per-service overrides the AWS Parameters and Secrets extension reads |
+| `AWS_REGION` / `AWS_DEFAULT_REGION` | Lambda | The emulator's region |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` | Lambda | Dummy credentials the emulator accepts |
+
+An ECS task gets `AWS_ENDPOINT_URL` and nothing else, so put its region and
+credentials in the task definition's `environment` as you would for a deploy.
 
 So the default is "everything is local", and you opt one client out of it —
 with a real endpoint and real credentials:

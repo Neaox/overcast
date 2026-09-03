@@ -71,7 +71,7 @@ address and port on the rules above, and both cluster names are registered as
 aliases on the writer's container — so `cluster.clusterEndpoint.hostname` in a
 CDK stack resolves from inside a task exactly as the instance endpoint does.
 
-**The reader endpoint is where Overcast diverges from AWS on purpose.** On AWS it
+**The reader endpoint does not load-balance.** On AWS it
 load-balances across the Aurora Replicas and serves the writer only when the
 cluster has none. Overcast gives every cluster member its own engine container
 with its own storage — there is no shared Aurora volume to replicate from — so a
