@@ -345,7 +345,7 @@ are there too.
 `overcast bridge` publishes `overcast.local` and `overcast-app.local` over mDNS
 and proxies port 80 by `Host` header, so `.local` names work with no hosts-file
 edits and no port numbers. Flags and the per-platform mDNS/port-80 setup are in
-the [CLI reference](./docs/cli.md#overcast-bridge).
+the [CLI reference](./docs/cli/bridge.md).
 
 
 ---
