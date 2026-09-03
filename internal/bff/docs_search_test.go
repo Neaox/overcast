@@ -24,30 +24,38 @@ func TestDocsSearch_cdkQuery(t *testing.T) {
 	// Given: the BFF is serving with docs routes enabled.
 	handler := NewHandler(nil, publishedDocs(), UIConfig{})
 
-	// When: we search docs for the local CDK VPC pattern.
-	req := httptest.NewRequest(http.MethodGet, "/api/docs/search?q=cdk+local+vpc&limit=3", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	// The CDK VPC material is two pages — the stack that creates the VPC, and
+	// the lookups for one it did not create — so each query has to reach its
+	// own half rather than whichever page mentions "vpc" most.
+	for _, tc := range []struct{ query, want string }{
+		{"cdk+local+vpc+stack", "cdk/local-vpc.md"},
+		{"cdk+vpc+lookup+import", "cdk/vpc-lookups.md"},
+	} {
+		// When: we search docs for that half.
+		req := httptest.NewRequest(http.MethodGet, "/api/docs/search?q="+tc.query+"&limit=3", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
 
-	// Then: the search index returns the local VPC guide.
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	var body struct {
-		Query   string `json:"query"`
-		Results []struct {
-			Href  string `json:"Href"`
-			Title string `json:"Title"`
-		} `json:"results"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if len(body.Results) == 0 {
-		t.Fatal("expected docs search results")
-	}
-	if body.Results[0].Href != "cdk/local-vpc.md" {
-		t.Fatalf("expected local VPC guide first, got %#v", body.Results[0])
+		// Then: the search index ranks the page that answers it first.
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d: %s", tc.query, rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Query   string `json:"query"`
+			Results []struct {
+				Href  string `json:"Href"`
+				Title string `json:"Title"`
+			} `json:"results"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: decode response: %v", tc.query, err)
+		}
+		if len(body.Results) == 0 {
+			t.Fatalf("%s: expected docs search results", tc.query)
+		}
+		if body.Results[0].Href != tc.want {
+			t.Fatalf("%s: expected %s first, got %#v", tc.query, tc.want, body.Results[0])
+		}
 	}
 }
 
