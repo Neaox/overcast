@@ -18,9 +18,6 @@ import (
 // IsInstanceNamespace.
 const InstanceKey = "id"
 
-// instanceKey is InstanceKey under the name the rest of this file uses.
-const instanceKey = InstanceKey
-
 // InstanceNamespaceSuffix is what every namespace holding a sweep-domain
 // identity ends in: "ec2:instance", "lambda:instance", and so on for each
 // service that stamps docker.LabelInstance.
@@ -74,7 +71,7 @@ func InstanceIdentity(ctx context.Context, st state.Store, namespace string) str
 	if st == nil {
 		return ""
 	}
-	id, found, err := st.Get(ctx, namespace, instanceKey)
+	id, found, err := st.Get(ctx, namespace, InstanceKey)
 	if err != nil {
 		return ""
 	}
@@ -83,7 +80,7 @@ func InstanceIdentity(ctx context.Context, st state.Store, namespace string) str
 	}
 
 	minted := uuid.NewString()
-	if err := st.Set(ctx, namespace, instanceKey, minted); err != nil {
+	if err := st.Set(ctx, namespace, InstanceKey, minted); err != nil {
 		return ""
 	}
 	// Re-read so two processes starting against one durable store converge on
@@ -91,7 +88,7 @@ func InstanceIdentity(ctx context.Context, st state.Store, namespace string) str
 	// closely enough that each reads back its own write, in which case the
 	// domains stay split — that costs an unswept volume, never a deleted one,
 	// which is the direction this whole mechanism errs in.
-	if settled, found, err := st.Get(ctx, namespace, instanceKey); err == nil && found && settled != "" {
+	if settled, found, err := st.Get(ctx, namespace, InstanceKey); err == nil && found && settled != "" {
 		return settled
 	}
 	return minted

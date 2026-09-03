@@ -32,6 +32,17 @@ func identityOf(t *testing.T, st state.Store, namespace string) string {
 	return id
 }
 
+// plainStore is a state.Store that is not a *state.MemoryStore, so resetStore
+// takes the generic list-and-delete path instead of the MemoryStore fast path.
+//
+// It exists because the branch that matters in production is the one the fast
+// path skips. #1605 is by nature a persistent-backend bug — on a MemoryStore
+// the identity is lost at the next start whatever this code does, so the only
+// deployments the fix changes anything for (SQLite, WAL, hybrid) are exactly
+// the ones running resetAllNamespaces. Two MemoryStores in the subtest below
+// would have left it uncovered while the comment claimed otherwise.
+type plainStore struct{ state.Store }
+
 func postReset(t *testing.T, st state.Store) {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -86,10 +97,10 @@ func TestReset_theNextStartReadsTheSameIdentity(t *testing.T) {
 	}
 }
 
-// MemoryStore.Reset drops every namespace at once and cannot skip anything, so
-// the fast path is the one most likely to lose this. The generic path is
-// exercised by the namespaced case below, which routes to a store the fast
-// path does not apply to.
+// Both wipe paths, because they lose the identity in different ways.
+// MemoryStore.Reset drops every namespace at once and cannot skip anything;
+// resetAllNamespaces walks and deletes, and is the path every persistent
+// backend takes — see plainStore.
 func TestReset_keepsTheIdentityOnBothWipePaths(t *testing.T) {
 	t.Run("memory fast path", func(t *testing.T) {
 		store := state.NewMemoryStore()
@@ -100,11 +111,32 @@ func TestReset_keepsTheIdentityOnBothWipePaths(t *testing.T) {
 		}
 	})
 
+	t.Run("generic path", func(t *testing.T) {
+		store := &plainStore{state.NewMemoryStore()}
+		ctx := context.Background()
+		before := serviceutil.InstanceIdentity(ctx, store, "ec2:instance")
+		if err := store.Set(ctx, "ec2:vpcs", "vpc-1", `{"VpcId":"vpc-1"}`); err != nil {
+			t.Fatal(err)
+		}
+
+		postReset(t, store)
+
+		if _, found, _ := store.Get(ctx, "ec2:vpcs", "vpc-1"); found {
+			t.Error("the generic wipe did not clear emulated state")
+		}
+		if got := identityOf(t, store, "ec2:instance"); got != before {
+			t.Errorf("identity = %q, want %q", got, before)
+		}
+	})
+
 	t.Run("namespaced store, per underlying store", func(t *testing.T) {
 		// Each backend has to come back with its own identity: a
-		// NamespacedStore can route two services to two different stores.
+		// NamespacedStore can route two services to two different stores. One
+		// of them is not a MemoryStore, so the two branches of resetStore run
+		// side by side over one wrapper — which is the arrangement a real
+		// deployment with a per-service backend override actually has.
 		defaultStore := state.NewMemoryStore()
-		lambdaStore := state.NewMemoryStore()
+		lambdaStore := &plainStore{state.NewMemoryStore()}
 		ns := state.NewNamespacedStore(defaultStore, map[string]state.Store{
 			"lambda": lambdaStore,
 		})

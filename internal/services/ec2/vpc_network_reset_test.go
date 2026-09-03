@@ -12,7 +12,7 @@ package ec2
 //
 // These tests work against the reset's *contract* rather than calling the
 // handler: internal/router imports this package, so a test here cannot call
-// resetStore. wipeState mirrors what the router does, both ways round, and the
+// resetStore. wipeState models what the router does, both ways round, and the
 // pair shows which half does the damage.
 
 import (
@@ -24,9 +24,18 @@ import (
 )
 
 // wipeState deletes every key in the handler's store, as POST /_overcast/reset
-// does. keepIdentity mirrors the exemption the router applies to
-// serviceutil.IsInstanceNamespace — pass false to model the behaviour before
-// #1605 was fixed.
+// does. keepIdentity models the exemption the router applies to
+// serviceutil.IsInstanceNamespace — pass false for the behaviour before #1605.
+//
+// **It is a model, and the seam is worth naming.** The router *captures the
+// identities and restores them* around the wipe, because MemoryStore.Reset
+// drops every namespace at once and cannot skip anything; this *skips* them
+// during it. The two are equivalent for everything asserted below — what the
+// store holds afterwards — and not equivalent in shape, so these tests would
+// not notice if resetStore's shape changed under them. That is deliberate:
+// what these cover is the consequence for the sweep, and the router's own
+// tests (internal/router/reset_instance_identity_test.go) cover the mechanism,
+// on both wipe paths.
 func wipeState(t *testing.T, h *Handler, keepIdentity bool) {
 	t.Helper()
 	ctx := context.Background()

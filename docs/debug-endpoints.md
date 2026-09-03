@@ -28,7 +28,7 @@ look up.
 | `/_overcast/metrics`                 | GET    | Go runtime memory/GC/goroutine stats (always enabled) |
 | `/_overcast/topology`                | GET    | Full cross-region resource graph (always enabled)     |
 | `/_overcast/preflight/region`        | GET    | Whether resources of a `?kind=` exist in some region other than the caller's, and how many (always enabled). Answers with nothing to report when the caller's own region has any — it explains an empty list, it is not a census |
-| `/_overcast/reset`                   | POST   | Wipe all state (always enabled — not expensive or leaky like the rest of this namespace) |
+| `/_overcast/reset`                   | POST   | Wipe all emulated state (always enabled — not expensive or leaky like the rest of this namespace). The instance identity survives, so the Docker resources this instance created are still recognisably its own and still swept |
 | `/_overcast/reset/{service}`         | POST   | Wipe state for one service (always enabled)           |
 | `/_overcast/debug/health`            | GET    | Detailed: uptime, services, state backend and health  |
 | `/_overcast/debug/config`            | GET    | Effective configuration (secrets redacted)            |
