@@ -83,11 +83,11 @@ func (idx *Index) Search(query string, limit int) []Result {
 //
 // The two describe the same service, so they match most of the same queries —
 // and the generated one wins on bulk, because it is a row per operation with
-// every behaviour note in it. That is the same failure
-// TestSearch_servicePageOutranksTheOperationManifest names for
-// docs/operation-manifest.md, one directory down. Someone searching "log group
-// retention" wants the page that says how retention behaves, with the table a
-// click away; they do not want to arrive in the middle of a ninety-row table.
+// every behaviour note in it. That is the failure
+// TestSearch_servicePageOutranksAGeneratedListing names corpus-wide, and this is
+// where it is prevented. Someone searching "log group retention" wants the page
+// that says how retention behaves, with the table a click away; they do not want
+// to arrive in the middle of a ninety-row table.
 //
 // An ordering rule rather than a score penalty, because it is an ordering
 // guarantee: no amount of content in the generated file can defeat it, and

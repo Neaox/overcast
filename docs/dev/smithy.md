@@ -177,9 +177,9 @@ type ProtocolService interface {
 ```
 
 The `cmd/stub-report` tool walks typed-dispatch services (those with a
-`typed_ops.go`) and produces the operation manifest at
-`docs/operation-manifest.md`. REST-routed and not-yet-migrated services carry
-no `typed_ops.go`, so they get no typed-dispatch section — the manifest lists
+`typed_ops.go`) and prints an operation inventory on demand — run
+`go run ./cmd/stub-report`. REST-routed and not-yet-migrated services carry
+no `typed_ops.go`, so they get no typed-dispatch section — the report lists
 them separately, by name and reason, instead of omitting them silently.
 
 ---

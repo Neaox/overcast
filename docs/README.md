@@ -1,6 +1,6 @@
 ---
-title: "Documentation"
-description: "Every Overcast guide and reference, routed by what you are trying to do — first run, wiring an SDK, deploying a CDK stack, tuning storage, or debugging something that went wrong."
+title: "Reference index"
+description: "The index of every Overcast guide and reference, grouped by the job you are doing — getting running, building against it, tuning and inspecting it — with the per-service table underneath."
 section: "Getting Started"
 tags:
   - docs
@@ -42,7 +42,6 @@ command that runs it. Everything else is below.
 | [Performance](./performance.md) | Startup and memory expectations, storage tuning, where "feels slow" time goes |
 | [Debug endpoints](./debug-endpoints.md) | Health, metrics, state dump, request traces, pprof |
 | [Troubleshooting](./troubleshooting.md) | A symptom, and where its answer lives |
-| [Operation manifest](./operation-manifest.md) | Which services dispatch by target header and which by path — an internals inventory |
 
 ---
 

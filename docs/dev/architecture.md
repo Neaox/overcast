@@ -693,8 +693,8 @@ Some of these are principled and permanent; others are simply undone.
   typed dispatch is switched off entirely, leaving 69 typed operations
   unreachable, after it was found to ignore filters on several `Describe*`
   calls and to drop mutations such as `TerminateInstances`. Routing the whole
-  service back to the legacy path was the right call — but it means the
-  operation manifest lists 69 operations as typed that no request ever reaches.
+  service back to the legacy path was the right call — but it means
+  `cmd/stub-report` lists 69 operations as typed that no request ever reaches.
   Re-enabling needs an operation-by-operation audit, tracked as
   [#754](https://github.com/overcast-sh/overcast/issues/754).
 
