@@ -14,6 +14,34 @@ function applyTheme(theme: Theme) {
   }
 }
 
+function readStoredTheme(): Theme {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (raw === null) return "system"
+    const parsed: unknown = JSON.parse(raw)
+    return parsed === "light" || parsed === "dark" ? parsed : "system"
+  } catch {
+    // Corrupt JSON, or localStorage unavailable (private browsing): the
+    // system preference is the honest answer, not a crash on boot.
+    return "system"
+  }
+}
+
+/**
+ * Applies the persisted theme to `<html>` at boot, before React renders.
+ *
+ * The hook below only runs where it is mounted, and its only mount point is
+ * the header — which lives *behind* the connection gate. A console that
+ * cannot reach its emulator yet (the connection dialog, the cold-boot
+ * screen) therefore rendered in the system theme however the user had set
+ * it, and so did the first paint of every load. Applying the stored value
+ * once, synchronously, from `main.tsx` fixes both: every screen honours the
+ * preference, and there is no flash of the wrong theme before hydration.
+ */
+export function applyStoredTheme(): void {
+  applyTheme(readStoredTheme())
+}
+
 export function useTheme() {
   const [theme, setTheme] = useLocalStorage<Theme>(STORAGE_KEY, "system")
 

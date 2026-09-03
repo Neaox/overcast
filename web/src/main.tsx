@@ -12,7 +12,13 @@ import { isNetworkError } from "@/lib/network-error"
 import { preloadRouteChunksWhenIdle } from "@/lib/preload-route-chunks"
 import { endpointStore } from "@/services/endpoint-store"
 import { hasPersistedRegion, fetchServerRegion } from "@/services/discovery"
+import { applyStoredTheme } from "@/hooks/use-theme"
 import "@/styles/global.css"
+
+// Before the first render, so every screen honours the stored theme —
+// including the ones in front of the connection gate, which never mount the
+// header and so never ran the hook that applies it.
+applyStoredTheme()
 
 const DevToolsPanel = lazy(() => import("@/components/dev-tools"))
 

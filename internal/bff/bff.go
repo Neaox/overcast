@@ -537,6 +537,11 @@ func writeDebugDisabledError(w http.ResponseWriter) {
 	})
 }
 
+// assetsDirPrefix is where Vite emits the hashed bundle (`web/dist/assets/`).
+// The SPA never routes below it, so a miss under this prefix is a missing
+// file rather than a client-side route.
+const assetsDirPrefix = "assets/"
+
 // spaHandlerFunc serves static files from staticFS; unmatched paths fall back
 // to index.html for client-side routing. When serving index.html it injects a
 // <script>window.__OVERCAST__ = {...}</script> tag so the bundled SPA can
@@ -558,6 +563,17 @@ func spaHandlerFunc(staticFS fs.FS, cfg UIConfig) http.HandlerFunc {
 		if err == nil {
 			f.Close()
 			fileServer.ServeHTTP(w, r)
+			return
+		}
+		// Nothing under the bundle directory is ever a client-side route, so a
+		// miss there is a missing build artefact — say 404 instead of handing
+		// back index.html with a 200. Falling back made a genuinely absent
+		// chunk (a stale hash, a half-copied dist) surface in the browser as
+		// `Unexpected token '<'` from a script that "loaded", and made a plain
+		// `curl` of any asset path succeed whether or not the file existed —
+		// which is what left #1609 unfalsifiable from the outside.
+		if strings.HasPrefix(p, assetsDirPrefix) {
+			http.NotFound(w, r)
 			return
 		}
 		// Client-side route — serve index.html
