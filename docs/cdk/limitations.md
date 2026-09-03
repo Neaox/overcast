@@ -40,7 +40,7 @@ that needs it pulls from there. It works out of the box on native Linux and
 Docker Desktop; only a remote Docker daemon needs an `insecure-registries` entry,
 which Overcast checks at registry startup and logs remediation for.
 
-Two consequences worth knowing:
+Two consequences:
 
 - **`repositoryUri` names `localhost`** even when `OVERCAST_HOSTNAME` is set to
   something else, because the Docker daemon — not your API client — is what dials
@@ -67,8 +67,9 @@ stack's provisioning goroutine. Child outputs are exposed via
 ## Partial resource coverage
 
 Not every CDK construct maps to a supported resource type, and a resource whose
-type is unsupported is stubbed rather than refused. Run with
-`OVERCAST_LOG_LEVEL=debug` to see which resources were stubbed during a deploy.
+type is unsupported is stubbed rather than refused. Each one says so on its own
+`CREATE_COMPLETE` event, in an `Overcast:`-prefixed `ResourceStatusReason`, and
+the server log carries a matching warning naming the type and the logical ID.
 
 ## No drift detection or stack policies
 

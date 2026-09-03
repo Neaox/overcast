@@ -79,7 +79,7 @@ func TestWithOvercast(t *testing.T) {
 - `ghcr.io/overcast-sh/overcast:latest` — adds the web console (handy when debugging
   a failing test interactively; pair with `WithConsole`).
 
-Pin an exact version tag (e.g. `ghcr.io/overcast-sh/overcast-slim:0.0.1-alpha.25`)
+Pin an exact version tag (e.g. `ghcr.io/overcast-sh/overcast-slim:0.0.1-alpha.40`)
 in CI — Docker never re-pulls a moving tag it already has, so `:latest` (or
 `:alpha`) can go stale on long-lived runners.
 
@@ -261,7 +261,7 @@ ctr, err := localstack.Run(ctx, "ghcr.io/overcast-sh/overcast-slim:latest")
 ### .NET
 
 ```csharp
-var overcast = new LocalStackBuilder("ghcr.io/overcast-sh/overcast-slim:0.0.1-alpha.25").Build();
+var overcast = new LocalStackBuilder("ghcr.io/overcast-sh/overcast-slim:0.0.1-alpha.40").Build();
 await overcast.StartAsync();
 
 var endpoint = overcast.GetConnectionString();
