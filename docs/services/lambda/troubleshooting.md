@@ -49,12 +49,11 @@ actually reaches:
 | 4 | The host's own routable interface address | Everything else |
 | 5 | Every interface (`0.0.0.0`), advertising `host.docker.internal` | Last resort |
 
-Verification uses a throwaway ephemeral port, not the Runtime API port itself —
-the causes it exists to catch are all port-independent (a Windows firewall rule
-is per-program, Docker Desktop routes per-address, an `--internal` bridge severs
-a path rather than a port), and binding the real port before deciding whether to
-keep it would leave it taken mid-decision. So `container_verified=true` means the
-address is reachable, not that a port-specific rule was tested.
+Verification uses a throwaway ephemeral port rather than the Runtime API port.
+The causes it catches are port-independent: a Windows firewall rule is
+per-program, Docker Desktop routes per-address, an `--internal` bridge severs a
+path rather than a port. So `container_verified=true` means the address is
+reachable, not that a port-specific rule was tested.
 
 The result is remembered per Docker daemon and per control plane in your data
 directory (`runtime-api-host-<network>.json`), so only the first startup against
@@ -65,8 +64,8 @@ reached the address.
 
 If the probe cannot run at all — an air-gapped host with no cached `busybox`, or
 a daemon that refuses container creates — Overcast keeps the ordering above,
-reports nothing as broken, and logs that the address was chosen without a check.
-An unmeasured address is not an unreachable one.
+reports nothing as broken, and logs that the address was chosen without a
+check.
 
 The startup log says which candidate won:
 

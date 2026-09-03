@@ -38,8 +38,7 @@ Telemetry API, one object per line, shaped `{"time", "type", "record"}`:
 | `platform.runtimeDone` | `END` | `DEBUG` on success, else `WARN` | `requestId`, `status`, `tracing`, `spans` (`responseLatency`), `metrics`: `durationMs`, `producedBytes` |
 | `platform.report` | `REPORT` | `INFO` on success, else `WARN` | `requestId`, `status`, `tracing`, `metrics`: `durationMs`, `billedDurationMs`, `memorySizeMB`, `maxMemoryUsedMB` |
 
-The levels are AWS's own system-log-level mapping, not an Overcast convention.
-`status` is `success`, `failure` (the handler returned an error), `error` (the
+The levels are AWS's own system-log-level mapping. `status` is `success`, `failure` (the handler returned an error), `error` (the
 environment ended the invocation) or `timeout`. `metrics.initDurationMs` appears
 in `platform.report` only on the first report of an on-demand cold start.
 `tracing` carries the `X-Amzn-Trace-Id` the runtime genuinely received; `spanId`
@@ -51,10 +50,10 @@ proxy — so they are a different, smaller span than `platform.report`'s
 host-measured `durationMs`, as AWS's two records are two different measurements.
 The host's own measurements are the fallback where the runtime never answered.
 
-The three **init-phase** records come from that same init, which is PID 1 and the
-proxy in front of the Runtime API, so it sees the phase begin and end without
-inferring either, and they travel on the same sequence-ordered stream as the
-container's own output. All three are `DEBUG` for a successful on-demand cold
+The three **init-phase** records come from that same init — PID 1 and the proxy
+in front of the Runtime API, so it observes the phase beginning and ending
+rather than inferring either — and travel on the same sequence-ordered stream as
+the container's own output. All three are `DEBUG` for a successful on-demand cold
 start, so a default log stream never shows them; a provisioned environment's
 `platform.initReport` is `INFO`, and an environment whose runtime died before
 asking for work reports `status: error` on both closing records at `WARN`.
@@ -73,7 +72,7 @@ Overcast emits only the subset of AWS's schema it genuinely observes.
 | `platform.runtimeDone` spans other than `responseLatency` | Omitted — `responseDuration` ends only after the answer has finished streaming through the init's unbuffered proxy, and `runtimeOverhead` exists only at the runtime's next poll, both after the record is on its way |
 | SnapStart restore records (`platform.restoreStart`, `platform.restoreRuntimeDone`, `platform.restoreReport`) | Not emitted; SnapStart is not emulated |
 | Extension telemetry destinations (Logs API `PUT /2020-08-15/logs`, Telemetry API `PUT /2022-07-01/telemetry`) | HTTP only. Buffering configuration is honoured with AWS's defaults; out-of-range values are clamped to the documented limits rather than rejected |
-| `UpdateFunctionConfiguration` with an explicitly empty `LoggingConfig: {}` | `501`. AWS's semantics for that shape are undocumented, and either guess — no-op or reset to defaults — mutates the function. `LoggingConfig` with explicit members applies normally |
+| `UpdateFunctionConfiguration` with an explicitly empty `LoggingConfig: {}` | `501` — AWS's semantics for that shape are undocumented. `LoggingConfig` with explicit members applies normally |
 
 ## Filtering
 
@@ -94,8 +93,8 @@ tail** only. Telemetry and Logs API subscribers receive the complete set either
 way — AWS is explicit that the CloudWatch system log level does not affect
 Telemetry API behaviour.
 
-The configuration is handed to the runtime the way AWS hands it over, because the
-managed runtimes and Powertools read it: `AWS_LAMBDA_LOG_FORMAT` is always set to
+The configuration is handed to the runtime the way AWS hands it over, for the
+managed runtimes and Powertools to read: `AWS_LAMBDA_LOG_FORMAT` is always set to
 `Text` or `JSON`, and `AWS_LAMBDA_LOG_LEVEL` is set to the effective
 `ApplicationLogLevel` only under `JSON`. Those values are baked into a container
 at start, so changing `LogFormat` or either level retires the warm environments.
