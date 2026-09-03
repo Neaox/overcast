@@ -71,29 +71,24 @@ can be applied mechanically rather than reconstructed from memory.
 ### Added
 
 - [networking] `OVERCAST_VPC_EGRESS=routed` gives each subnet the egress its route table describes, and withholds it everywhere else.
-  a `0.0.0.0/0` route to an internet gateway attached to the VPC, or to a NAT gateway that exists and is available, gives that subnet's containers a route out. No default route, or one whose target is detached, deleted or is not a gateway that reaches the internet, withholds it: outbound connections fail with `ENETUNREACH` rather than hanging. A subnet with no explicit association uses its VPC's main table, as on AWS
-  a container placed in several subnets gets a route out when any of them grants one — on AWS such a function reaches the internet from some of its ENIs and not others, which is not a state one container can be in
-  the VPC's plane stays one `--internal` bridge every container in the VPC joins, whatever its subnets route to, so an isolated database and a NAT-routed function in one VPC still reach each other. The route out is a second, routable network per VPC, `{OVERCAST_NETWORK}-vpc-{vpcID}-egress`, joined only by the containers whose subnet grants one
-  a route table that changes moves running containers on or off that network in place, by one connect or disconnect — their plane, address, DNS names and control-plane connection are untouched, so an in-flight invocation keeps its Runtime API. `CreateRoute`, `DeleteRoute`, `DeleteRouteTable`, the association calls, `CreateNatGateway`, `DeleteNatGateway` and the gateway attach/detach calls all revisit the VPC; a container placed afterwards simply gets the new answer
-  a move Docker refuses does not fail the API call — AWS never refuses a route for a reason like a daemon's — but is logged at `error`, raised as an advisory in `/_overcast/debug/metrics` (with `OVERCAST_DEBUG=true`), and retried at the next start
-  resources outside a VPC, and those in a default VPC, keep the egress they have: their subnets are public on AWS
-  run Overcast in a container for this mode. On Docker Desktop with Overcast running natively — and on any native Windows or macOS host — `routed` cannot withhold egress: every container has a route out whatever its route table says. Two warnings at startup and the `vpc-egress-not-withheld` health advisory say so rather than letting it pass
+  a `0.0.0.0/0` route to an attached internet gateway, or an available NAT gateway, grants that subnet's containers a route out. Anything else withholds it: connections fail with `ENETUNREACH`
+  a route table that changes moves running containers on or off a second, routable per-VPC network in place, so an in-flight invocation keeps its Runtime API. The VPC's plane stays `--internal`
+  run Overcast in a container: on a native Windows or macOS host it cannot withhold egress, and says so. Full rules in [docs/networking.md](docs/networking.md#routed-egress-from-your-route-tables)
 
 - [networking] `OVERCAST_VPC_EGRESS_POOL` sets the range `routed` carves its per-VPC egress networks from, one `/24` each.
   it defaults to `198.18.0.0/16`, the RFC 2544 benchmarking range, which supports 256 VPCs with egress and is never routed on the internet. `/8` to `/24`, validated at startup in every mode
-  the pinned range is why a second network per VPC is safe: it never draws on Docker's own default address pools, which stretch to about 31 networks in total on a stock daemon and are shared with every other tool on the machine. Each VPC keeps its `/24` across restarts
+  the pinned range never draws on Docker's own default address pools, which stretch to about 31 networks on a stock daemon and are shared with every other tool. Each VPC keeps its `/24` across restarts
   an exhausted pool fails the placement, naming the pool and how to widen it, rather than quietly starting a container without the egress its template grants
 
 - [networking] a health advisory, `vpc-egress-not-withheld`, when the host cannot withhold the egress the configured mode asks for.
-  on Docker Desktop with Overcast on the host, containers reach the Lambda Runtime API at the host's own address and an internal control plane would sever it, so that one network stays routable and every container keeps a route out. `none` is set to *prove* a stack has no external dependency, and until now the shortfall was one WARN at boot
-  under `routed` the same advisory reports VPC placement only: `routed` leaves the shared data plane routable, because a resource that named no VPC has egress on AWS too, so a VPC-placed container that also lands there takes a route its subnet never granted. `none` isolates that plane as well
-  it distinguishes a shortfall from a choice: where the deprecated `OVERCAST_CONTROL_PLANE_INTERNAL=false` is what left the plane routable, the host was never consulted, and the advisory says the isolation was given up rather than refused
+  on Docker Desktop with Overcast on the host, containers reach the Lambda Runtime API at the host's own address, so that network stays routable and keeps a route out. Until now: one WARN at boot
+  under `routed` it reports VPC placement only: the mode leaves the shared data plane routable, as AWS does outside a VPC, so a container there takes a route its subnet never granted; `none` isolates it
+  it distinguishes a shortfall from a choice: the deprecated `OVERCAST_CONTROL_PLANE_INTERNAL=false` gives the isolation up, and the advisory says so rather than reporting a host that refused
 
 - [networking] every Docker network Overcast reuses is verified field by field against the state this configuration would create, on every start.
-  driver, isolation, IPv6, IPAM and driver options are all compared, not just the isolation flag — Docker's create-network call returns an existing network unchanged, so one made by an older version keeps every setting it was born with while looking correct
-  a network with no `overcast.network.spec-hash` label is treated as mismatched: those are the networks that have actually been wrong
-  a mismatched plane with nothing attached is recreated; one with containers attached is left alone, warned about by name and field, reported as degraded in `/_overcast/health`, and raised as a console advisory. A network another tool created is never rebuilt, whatever its name
-  on the first start after upgrading, every VPC network mismatches — none carries a spec-hash label yet — and each is rebuilt once under its containers, which drops open connections across that VPC bridge. Containers are reconnected at the address and aliases they had, and their control-plane connection is untouched, so an in-flight invocation keeps its Runtime API
+  driver, isolation, IPv6, IPAM and driver options are all compared, not just the isolation flag; a network with no `overcast.network.spec-hash` label counts as mismatched, and those have been wrong
+  a mismatched plane with nothing attached is recreated; one with containers attached is left alone, warned about by name and field, degraded in `/_overcast/health`, and raised as a console advisory
+  after upgrading every VPC network mismatches and is rebuilt once under its containers, dropping open connections — see [docs/networking.md](docs/networking.md#network-state-verification)
 
 - [networking] isolating the control plane now warns loudly at startup, because the cost lands a long way from the cause.
   a VPC-attached container joins its VPC network and the control plane; when both are internal it gets no default route at all and fails with `ENETUNREACH` inside application code, minutes later
@@ -106,18 +101,20 @@ can be applied mechanically rather than reconstructed from memory.
 - [cli] `overcast start` / `stop` / `restart` / `logs` manage a background instance, natively or as a container.
   native by default, no Docker required; `--docker` runs the instance as a container instead, with `--image`/`--channel`/`--data-volume`/`--mount-docker-socket`
   `overcast logs` streams a background instance's output either way, with `-f`/`--follow` and `-n`/`--tail`
-  `overcast status` lists every registered instance — name, backend, endpoint and running/stopped/unknown state — beside its existing single-endpoint health check, and `overcast wait` blocks until the daemon reports healthy
+  `overcast status` lists every registered instance — name, backend, endpoint and running/stopped/unknown state — beside its health check, and `overcast wait` blocks until the daemon is healthy
 
 - [cli] `overcast env` and `overcast aws` point a shell or the AWS CLI at the emulator without stray `AWS_*` variables reaching it.
-  `env` prints exports for sh, PowerShell and fish, including unset lines for any other `AWS_*` variable the shell exports (`AWS_PROFILE`, `AWS_SESSION_TOKEN`, per-service endpoint overrides, …) so nothing left over can redirect a call to real AWS
-  `aws` runs the host AWS CLI with those variables scrubbed, and tab-completes its passthrough arguments through the AWS CLI's own `aws_completer` when installed, falling back to file completion otherwise
+  `env` prints exports for sh, PowerShell and fish, including unset lines for any other `AWS_*` variable the shell exports (`AWS_PROFILE`, `AWS_SESSION_TOKEN`, per-service endpoint overrides, …)
+  so nothing left over can redirect a call to real AWS. `aws` runs the host AWS CLI with those same variables scrubbed
+  it tab-completes its passthrough arguments through the AWS CLI's own `aws_completer` when that is installed, falling back to file completion otherwise
 
 - [cli] `overcast reset [service]`, `overcast services` and `overcast config` cover the rest of a local loop.
-  `reset` wipes emulated state behind a TTY confirmation prompt, `services` lists enabled services and their emulation tiers, and `config` shows the running daemon's effective config (needs `OVERCAST_DEBUG`)
+  `reset` wipes emulated state behind a TTY confirmation prompt, and `services` lists enabled services and their emulation tiers
+  `config` shows the running daemon's effective config (needs `OVERCAST_DEBUG`)
 
-- [router] `/_health` and `/_localstack/health` are served as aliases of `/_overcast/health`, so a healthcheck carried over from LocalStack or from before #927 works.
+- [router] `/_health` and `/_localstack/health` are served as aliases of `/_overcast/health`, so a LocalStack healthcheck works.
   a 404 there is read by an orchestrator as a dead container: it restarts Overcast, and on the default in-memory state backend a restart wipes every resource a deploy in flight had created
-  `/_localstack/health` answers in LocalStack's own shape (a `services` map plus `edition` and `version`); `/_localstack/init`, `/_localstack/init/{stage}` and `POST /_localstack/state/reset` run the same handlers as their `/_overcast/` originals, so the two paths cannot drift
+  `/_localstack/health` answers in LocalStack's shape (a `services` map plus `edition` and `version`), and `init`, `init/{stage}` and `POST state/reset` run the same handlers as the `/_overcast/` ones
   the rest of `/_localstack/` 404s naming the Overcast endpoint that replaces it — `diagnose`, `config` and `usage` included — instead of an S3 error
 
 - [router] LocalStack's `/_aws/ses` (GET, DELETE) and `/_aws/sqs/messages` inspection endpoints are served, so test assertions carried over from LocalStack pass.
@@ -128,35 +125,37 @@ can be applied mechanically rather than reconstructed from memory.
 - [config] a volume mounted at LocalStack's `/var/lib/localstack` becomes the state directory when nothing else says where state goes.
   a compose file migrated from LocalStack unchanged used to run silently ephemeral, because the mount was not where Overcast looks
 
-- [config] more of a LocalStack environment carries over unchanged: `DOCKER_HOST`, `LS_LOG`, `ENFORCE_IAM`, `LAMBDA_REMOVE_CONTAINERS` and `DNS_ADDRESS=0` are honoured, and the Docker-flag and network variables are recognised as inert.
-  `DOCKER_HOST` is used when `LAMBDA_DOCKER_SOCKET` is unset, so Colima, Rancher Desktop, Podman and rootless Docker reach their daemon — `unix://`, `tcp://`, `npipe://` and `http://` are dialable; `ssh://` and `https://` warn and fall back to the platform socket
-  `LAMBDA_REMOVE_CONTAINERS` inverts onto `LAMBDA_KEEP_CONTAINERS`; the two spellings agreeing is agreement, not a conflict
-  `MAIN_DOCKER_NETWORK`, `ECS_DOCKER_FLAGS`, `EC2_DOCKER_FLAGS` and `BATCH_DOCKER_FLAGS` join the recognised-but-inert list — the Java Testcontainers module sets the three flag variables inside the container, and Overcast labels the containers it starts itself
+- [config] more of a LocalStack environment carries over unchanged, and its Docker-flag and network variables are recognised as inert.
+  `LS_LOG`, `ENFORCE_IAM`, `DNS_ADDRESS=0` and `LAMBDA_REMOVE_CONTAINERS` are honoured; the last inverts onto `LAMBDA_KEEP_CONTAINERS`, and the two spellings agreeing is agreement, not a conflict
+  `DOCKER_HOST` is used when `LAMBDA_DOCKER_SOCKET` is unset, so Colima, Rancher Desktop, Podman and rootless Docker work; `unix://`, `tcp://`, `npipe://`, `http://` dial, `ssh://`/`https://` fall back
+  `MAIN_DOCKER_NETWORK`, `ECS_DOCKER_FLAGS`, `EC2_DOCKER_FLAGS` and `BATCH_DOCKER_FLAGS` are inert — the Java Testcontainers module sets the three flag ones, and Overcast labels its own containers
 
 - [compat/testcontainers] the LocalStack Testcontainers modules for Java, Node, Python, Go and .NET start the Overcast image with only the image name changed.
-  Overcast prints LocalStack's `Ready.` line once every listener is bound, and the image answers `/usr/local/bin/docker-entrypoint.sh`; per-language snippets and each module's tag rule are in `docs/testcontainers.md`
-  a Testcontainers module for Go of our own, `github.com/overcast-sh/overcast/testcontainers/go`, starts the container, waits on `/_overcast/health`, and exposes endpoint/region/credential helpers plus `WithDockerSocket` and `WithConsole`
+  Overcast prints LocalStack's `Ready.` line once every listener is bound, and the image answers `/usr/local/bin/docker-entrypoint.sh`; snippets and tag rules are in `docs/testcontainers.md`
+  a Testcontainers module for Go of our own, `github.com/overcast-sh/overcast/testcontainers/go`, starts the container, waits on `/_overcast/health`, and exposes endpoint, region and credential helpers
 
 - [lambda] `LAMBDA_RUNTIME_API_HOST=auto|<address>` pins the address containers dial for the Runtime API, skipping the probe
 
 - [router] 34 operations newly modeled by AWS are recognised, spanning one service new to the corpus (`iam-toolbox`).
-  a signed request to one reaches a protocol-correct `501` marked `x-emulator-unsupported`, in that service's own error envelope, instead of falling through to the S3 fallback and coming back as a bucket or object answer
+  a signed request to one reaches a protocol-correct `501` marked `x-emulator-unsupported`, in that service's own error envelope
+  it used to fall through to the S3 fallback and come back as a bucket or object answer
 
 - [web] service icons in the console sidebar, dashboard and search use each service's catalog colour; toggle under Settings → Appearance.
-  on by default. The sidebar, dashboard tiles and global search all repaint live the moment the switch flips, no reload needed — active sidebar rows keep their own service colour too, with the "you are here" signal carried by the row background and label instead
-  the topology map and the ARN combobox already coloured unconditionally for functional reasons and are unchanged; the tab favicon keeps its fixed ink, since a coloured 16px browser-tab icon loses legibility against arbitrary browser chrome
+  on by default. The sidebar, dashboard tiles and global search repaint live the moment the switch flips — an active row keeps its service colour, "you are here" moving to the row background and label
+  the topology map and the ARN combobox already coloured unconditionally for functional reasons and are unchanged
+  the tab favicon keeps its fixed ink, since a coloured 16px browser-tab icon loses legibility against arbitrary browser chrome
 
 - [web/docs] code examples in the docs viewer are tabbed by language and syntax-highlighted.
-  multi-language SDK examples render as language tabs and the picked language sticks across code groups and pages, implemented as an `overcast:code-tabs` comment-sentinel region in the Markdown, which still reads as plain sections on GitHub
-  fenced blocks in the docs viewer and the per-service docs modals are highlighted for bash/sh, go, typescript/ts/tsx, javascript, json/jsonc, yaml, python, java, csharp, powershell and sql; other languages render as plain styled text
+  multi-language SDK examples render as language tabs and the pick sticks across code groups and pages, as an `overcast:code-tabs` comment-sentinel region that still reads as plain sections on GitHub
+  fenced blocks in the docs viewer and the per-service modals are highlighted for bash/sh, go, typescript/ts/tsx, javascript, json/jsonc, yaml, python, java, csharp, powershell and sql; others are plain
 
 - [docs] a LocalStack compatibility matrix, and a CLI reference covering every `overcast` subcommand.
-  the matrix lists every port, URL, hostname, container convention, client tool and behavioural convention with its status, each gap naming the issue tracking it; the migration guide stays the short version and links to it
+  the matrix lists every port, URL, hostname, container convention, client tool and behavioural convention with its status, each gap naming its issue; the migration guide links to it and stays short
   the CLI page covers start/stop/restart/status/wait/logs/services/reset/config/env/aws/import/bridge/https/trust/mcp, and is linked from the README and the docs index
 
 - [docs] a one-page content charter (`docs/dev/content-charter.md`) for published docs, enforced by the docs lint.
   covers citation, prose-economy and table-vs-prose rules; referenced from `CONTRIBUTING.md` and `AGENTS.md`
-  `scripts/docs-index.go --check` rejects a published doc that cites `docs/dev/**` or `docs/plans/**` — literal path or resolved Markdown link — and one whose frontmatter `description` exceeds 220 characters
+  `scripts/docs-index.go --check` rejects a published doc citing `docs/dev/**` or `docs/plans/**` — literal path or resolved link — and one whose frontmatter `description` exceeds 220 characters
 
 - [release] a moving `:latest` Docker tag on both images, tracking the alpha channel until the first stable release ships and stable releases from then on
 
@@ -165,21 +164,20 @@ can be applied mechanically rather than reconstructed from memory.
   breaking entries also sort first within their category when assembled, so a scanner hits **BREAKING** on the first bullet
 
 - [web] a skip link, `aria-current` on the sidebar, and keyboard reordering of pinned services.
-  the sidebar is forty-odd links deep, so reaching the content by keyboard used to mean tabbing through the whole service list after every navigation; the collapse toggle now names what it collapses and reports its state
+  the sidebar is forty-odd links deep, so reaching the content by keyboard meant tabbing the whole service list after every navigation; the collapse toggle names what it collapses and reports its state
   pinned services reorder from a drag handle that takes focus — Space picks a row up, the arrows move it, Space drops it, Escape cancels — where the sidebar had a PointerSensor and nothing else
 
 ### Changed
 
 - **BREAKING** [networking] `OVERCAST_VPC_EGRESS=open|routed|none` decides container egress; `open` is the default, so every container reaches the internet.
-  `none` makes every network Overcast creates `--internal` — the two planes and every per-VPC network — for deterministic CI and air-gapped hosts. Overcast's own APIs and the Lambda Runtime API keep working, because reaching a server on this machine is not egress
-  `routed` decides egress per subnet, from that subnet's route table — see the Added entry above
-  a VPC network still follows its internet gateway under `open`, and that now costs nothing: the container is also on the routable control plane and takes its default route from there. What changed is that the gateway no longer decides egress on its own, which is what made a private-with-NAT subnet indistinguishable from an isolated one
-  an invalid value fails startup rather than falling back
-  migration: nothing to do on Docker Desktop, which already behaved this way. A containerised or native-Linux host that relied on the control plane being `--internal` gets egress back — set `OVERCAST_VPC_EGRESS=none` to keep the isolation
+  `none` makes every network Overcast creates `--internal` — both planes and every per-VPC network — for deterministic CI and air-gapped hosts. Overcast's APIs and the Runtime API keep working
+  `routed` decides egress per subnet, from that subnet's route table — see the Added entry above. An invalid value fails startup rather than falling back
+  a VPC network still follows its internet gateway under `open`, and that now costs nothing; the gateway no longer decides egress alone, which made a private-with-NAT subnet look isolated
+  migration: nothing to do on Docker Desktop, which already behaved this way. A containerised or native-Linux host with an `--internal` control plane now gets egress: set `OVERCAST_VPC_EGRESS=none`
 
 - **BREAKING** [release] the GitHub org and Go module path moved to `overcast-sh`.
   repo `github.com/Neaox/overcast` -> `github.com/overcast-sh/overcast`; images now publish as `ghcr.io/overcast-sh/overcast[:tag]`
-  migration: update import paths from `github.com/Neaox/overcast` to `github.com/overcast-sh/overcast` (pre-rename module versions stay fetchable at the old path); pull `ghcr.io/overcast-sh/overcast[:tag]` instead of `ghcr.io/neaox/overcast[:tag]`; old GitHub URLs under `github.com/Neaox/overcast` redirect automatically
+  migration: update imports to `github.com/overcast-sh/overcast` and pull `ghcr.io/overcast-sh/overcast[:tag]`, not `ghcr.io/neaox/overcast`. Old module versions and `Neaox` URLs still resolve
 
 - **BREAKING** [router/cli] `POST /_overcast/debug/reset` moved to `POST /_overcast/reset` and no longer needs `OVERCAST_DEBUG`.
   migration: call `/_overcast/reset` (and `/_overcast/reset/{service}`); the debug-gated path is gone
@@ -195,51 +193,45 @@ can be applied mechanically rather than reconstructed from memory.
   `PutEvents` fans out to targets with retries and dead-lettering, which was never inert; capability notes now list ECS and event-bus targets, and `docs/services/eventbridge.md` already said partial
 
 - [web] the console passes an axe-core WCAG 2.2 AA sweep of every surface, in both themes, at two widths and with dialogs and menus open.
-  160 violations before, 0 after: the region combobox had no accessible name on any page, the map's service cards claimed to be buttons while holding four other controls, header cells above checkbox and action columns announced "blank" ahead of every row, and code blocks and wide tables scrolled sideways with no way to reach them from the keyboard
-  form labels are attached to their fields — `Field` never passed the `htmlFor` its label needed, so every TanStack-Form control was an unnamed edit box — and hints and errors are announced with them, with `aria-invalid` while the control is invalid
-  a tab and its panel point at each other, the global search palette is a combobox with a listbox that announces its result count and moves `aria-activedescendant`, the events source filter is a Radix popover that Escape closes and returns focus from, the sidebar is a real list so its length and position are announced, and virtualized tables report their real length through `aria-rowcount`/`aria-rowindex` rather than "row 3 of 20" inside five thousand
-  the accent and the three semantic colours clear 4.5:1 as text on every surface in both themes, and nothing is set below 11px — the 7-10px labels were frozen in px while the root font steps up to 22px on a 4K panel
-  `pnpm a11y` and `pnpm type-audit` drive a running console and report axe findings and per-surface type sizes; both exit non-zero on a regression
+  160 violations before, 0 after: an unnamed region combobox, service cards claiming to be buttons, header cells announcing "blank" above every row, code blocks and tables the keyboard could not scroll
+  labels attach through the `htmlFor` `Field` never passed, with their hints, errors and `aria-invalid`; tabs pair with panels; search is a real combobox; the sidebar a list; tables report their length
+  the accent and the three semantic colours clear 4.5:1 on every surface in both themes and nothing sits below 11px; `pnpm a11y` and `pnpm type-audit` drive a console and fail on a regression
 
 - [build/web] the docs navigation and search index are derived at runtime instead of generated into the repository, and the console fetches them.
-  `web/src/docs-nav.gen.ts` and `internal/docssearch/index.gen.jsonl` are deleted. Both were sorted one-entry-per-page manifests that every docs PR rewrote, so two docs branches conflicted on files nobody had written by hand
-  `internal/docsindex` parses `docs/` — the same set `embed.go` compiles into the binary — and `internal/bff` serves it from a new `GET /api/docs/nav`, so the console no longer imports a 7,332-line generated module into its bundle
-  that response is projected and encoded once behind a `sync.Once` and served as bytes: a warm request drops from ~360us to ~30us and from 21 allocations to 11, and what a warm docs handler retains drops from 4.6 MB to 3.5 MB
-  editing a published doc needs no regeneration step any more: `make docs-index` is replaced by `make docs-lint`, which checks frontmatter, in-page anchors, service page structure and the description budget. `docs/dev/generated-files.md` is the new inventory
+  `web/src/docs-nav.gen.ts` and `internal/docssearch/index.gen.jsonl` are deleted: per-page manifests every docs PR rewrote, so two docs branches conflicted on files nobody had written by hand
+  `internal/docsindex` parses the `docs/` set the binary embeds and `internal/bff` serves it from `GET /api/docs/nav`, encoded once behind a `sync.Once`: ~360us to ~30us warm, 21 allocations to 11
+  the console no longer bundles a 7,332-line generated module and retains 3.5 MB rather than 4.6 MB; `make docs-index` becomes `make docs-lint`, and `docs/dev/generated-files.md` is the inventory
 
 - [docs] every service page is rewritten to the service page template, with the long-form material on sub-pages.
-  each opens with one line of positioning, a status token and a copy-pasteable quick start, then what works and how it diverges from AWS; the per-operation table moves to `docs/services/<service>/operations.md`, and limitations, examples and troubleshooting get their own pages where they earn one
-  Lambda drops from 1,169 lines to 130, ECS from 490 to 94, CloudFormation from 450 to 109 and RDS from 464 to a landing page plus two sub-pages
-  covers compute and orchestration (lambda, ecs, eks, ecr, stepfunctions, scheduler, pipes, eventbridge, cloudformation, appconfig, appconfigdata, appregistry), messaging, security and identity (sqs, sns, ses, cognito, iam, sts, ssm, secretsmanager, kms, acm, organizations, shield, waf, bedrock), networking and monitoring (ec2, elb, route53, cloudfront, apigateway, appsync, autoscaling, cloudwatch, cloudwatch-logs, cloudtrail) and storage and data (s3, dynamodb, dynamodbstreams, rds, efs, elasticache, glue, athena, opensearch, backup, transfer, kinesis, firehose, msk)
-  the authored gap lists are table-first and Ctrl+F-navigable: a Known-limitations summary table on Lambda, and CloudFormation's thirty-odd Notes bullets as headed subsections
-  ten stale hand-authored "Summary" tables that had drifted from the generated one below them are gone, as are the hand-maintained CloudFormation resource-type table and the duplicated Lambda environment-variable table, which `docs/cdk.md` and `docs/configuration.md` already own
+  each opens with one line of positioning, a status token and a copy-pasteable quick start, then what works and how it diverges from AWS; the operation table moves to `<service>/operations.md`
+  every service in [docs/services/README.md](docs/services/README.md) is covered: Lambda drops from 1,169 lines to 130, ECS from 490 to 94, CloudFormation from 450 to 109, RDS from 464 to three pages
+  the gap lists are table-first and Ctrl+F-navigable; ten stale "Summary" tables that had drifted from the generated one below them are gone, as are the CloudFormation and Lambda duplicate tables
 
 - [docs] one voice across the service pages and guides: same table columns, Related order, status rule and spelling everywhere.
   `Differences from AWS` is `| Area | On AWS | Overcast |` on every page (two-column where a page never stated the AWS half); `What works` is `| Area | Behaviour |`
   a page's `**Status:**` follows its coverage tier — Comprehensive is Supported, everything else is Partial — which reconciles ten pages that disagreed with the generated index
-  `Related` follows one order everywhere: sub-pages, sibling services, the service index, configuration, guides, AWS reference last; frontmatter descriptions say what a page contains instead of restating its opening sentence, which the site renders directly above them
-  `docs/services/README.md` is a scannable index rather than a prose page
+  `Related` runs sub-pages, siblings, the service index, configuration, guides, AWS reference last; descriptions say what a page contains; `docs/services/README.md` is an index, not a prose page
 
 - [docs] the guides are tightened to the content charter, and each subject has one owner.
-  `docs/README.md` splits into standalone pages — configuration, debug endpoints, storage, networking, troubleshooting — and routes by task; `docs/persistence.md` merges into `docs/storage.md` and `docs/multi-container-networking.md` into `docs/networking.md`, so the storage backends and the Docker Compose hostname question are each documented in one place
-  `docs/troubleshooting.md` opens with a symptom index spanning every guide, and the root README is a front door again rather than a second CLI reference
-  guide pages that were all flatly grouped under "Getting Started" get topic-specific frontmatter sections (Networking, Storage & Performance, Reference, Troubleshooting)
-  explanations that appeared on two pages now have one owner and a link: S3 reserved service labels, the status-token legend and the six-field `cron(...)` rule were each written out twice
-  `docker run` examples pull `:latest` instead of `:alpha`, matching the moving tag every build now publishes
+  `docs/README.md` splits into standalone pages — configuration, debug endpoints, storage, networking, troubleshooting; `docs/persistence.md` folds into `docs/storage.md`, the networking pages into one
+  `docs/troubleshooting.md` opens with a symptom index spanning every guide, the root README is a front door rather than a second CLI reference, and pages under "Getting Started" get real sections
+  explanations written out twice now have one owner and a link — S3 reserved service labels, the status-token legend, the six-field `cron(...)` rule — and `docker run` examples pull `:latest`
 
 - [docs] heading anchors in the console and the anchor checker match GitHub's, so a section link resolves on github.com, the website and the console alike.
-  punctuation is dropped rather than folded into a hyphen and repeats are numbered from `-1`, the way github-slugger does it; `Data-plane endpoints — RDS…` is `#data-plane-endpoints--rds…`, which the four links to it had guessed with a single hyphen and so only resolved in the console
+  punctuation is dropped rather than folded into a hyphen and repeats are numbered from `-1`, as github-slugger does it; `Data-plane endpoints — RDS…` is `#data-plane-endpoints--rds…`, not one hyphen
   the console's docs viewer ids headings with inline code, which it used to id as `object-object`, and a `#` comment inside a fenced example no longer counts as a heading
 
 - [docs] the LocalStack migration guide and compatibility matrix describe LocalStack's March 2026 editions instead of the retired "Community Edition".
   the guide says which services on LocalStack's paid plans carry over unchanged, and that a carried-over `LOCALSTACK_AUTH_TOKEN` is logged once as inert
-  the matrix states the one behavioural divergence plainly: LocalStack isolates no network, so a gateway-less VPC there still has egress — which is what `OVERCAST_VPC_EGRESS=open`, the default, already gives you
+  the matrix states the one behavioural divergence plainly: LocalStack isolates no network, so a gateway-less VPC there still has egress — which `OVERCAST_VPC_EGRESS=open`, the default, also gives you
 
 - [lambda] the container-image deployment path is documented end to end, and pinned by an ECR-push-to-invoke integration test.
-  `docs/services/lambda/examples.md` carries the minimal `PackageType=Image` recipe — push to `repositoryUri`, deploy the `amazonaws.com` `ImageUri`, override with `ImageConfig` — troubleshooting gains a section on containers that cannot reach the Runtime API
+  `docs/services/lambda/examples.md` carries the minimal `PackageType=Image` recipe — push to `repositoryUri`, deploy the `amazonaws.com` `ImageUri`, override with `ImageConfig`
+  troubleshooting gains a section on containers that cannot reach the Runtime API
 
 - [docs/cdk] the local VPC guide leads with a local resources stack that creates the VPC in CDK, replacing the bootstrap-script-plus-metadata-file pattern.
-  application stacks still take an `ec2.IVpc` and stay environment-agnostic, and the `fromLookup`/`fromVpcAttributes` provider pattern is kept for VPCs created outside CDK; the page intro is cut to the content charter's two-sentence budget
+  application stacks still take an `ec2.IVpc` and stay environment-agnostic, and the `fromLookup`/`fromVpcAttributes` provider pattern is kept for VPCs created outside CDK
+  the page intro is cut to the content charter's two-sentence budget
 
 - [cloudfront/appsync] capability notes say what the origin proxy, TestFunction and the AppSync data source types actually do
 
@@ -251,57 +243,56 @@ can be applied mechanically rather than reconstructed from memory.
 ### Fixed
 
 - [networking] a Docker network Overcast could not read, or that is no longer there, is no longer reported as correct.
-  an inspect that failed for any reason other than "no such network" fell straight into the create, and Docker returns an existing network *unchanged* — so a drifted network stayed drifted while `/_overcast/health` showed no mismatch, no advisory, and the isolation this run asked for rather than the one the network had
-  a failed read is retried once, and a network that still cannot be read is reported as unverified: health degrades, the advisory fires, and the reason is quoted
-  every create is verified afterwards, whichever way it got there — a create issued after "no such network" was returned on without a second look, and Docker resolves a name conflict by handing back the existing network *unchanged*, so a network another process created between the two calls was reported as freshly built to this configuration, drift and all. It costs one inspect per network per start, and finds nothing on the ordinary path
-  a destroyed network is dropped from the report when the Docker watcher sees it go, and a deleted VPC takes its network out with it — except where a sharer on the `shared` strategy still has it. The report used to keep the last thing Overcast knew about every network forever, so the advisory telling you to run `overcast network reset` outlived the reset that fixed it
-  `overcast network reset` says when it could not judge a network instead of calling it already correct: a per-VPC network from before Overcast recorded the internet-gateway state is declined, rightly, and the repair for those is a restart, which it now says
+  an inspect that failed for any reason other than "no such network" fell straight into the create, and Docker returns an existing network *unchanged* — so a drifted network stayed drifted, unreported
+  a failed read is retried once and a network that still cannot be read is reported as unverified; every create is verified afterwards, whichever way it got there, at one inspect per network per start
+  a destroyed network is dropped from the report when the Docker watcher sees it go, and reset says when it could not judge one — see [docs/networking.md](docs/networking.md#network-state-verification)
 
 - [networking] a Docker network whose isolation disagrees with the configuration is recreated at startup, when nothing is attached to it.
   Docker never applies `--internal` retroactively, so a plane created before alpha.37 silently kept egress forever — the machine that "still worked" in the report that prompted this
   a network that still has containers attached is left alone and warned about at WARN, naming the `overcast network reset` that fixes it; both planes are checked, not just the control plane
 
 - [ec2/state] one Overcast instance no longer deletes another's VPC networks, and a state reset no longer orphans its own.
-  the reconcile sweep removed every network labelled `overcast.service=ec2` that its own store did not claim, which on a shared daemon is a neighbour's live VPC network. Every network now carries `overcast.instance`, the identity of the instance that created it, and an instance removes only its own
-  that identity names the instance rather than its emulated state, so it survives a reset. It lived in the state store at first, which meant `overcast reset`, `POST /_overcast/reset` and `POST /_localstack/state/reset` wiped it: the next start minted a fresh one, could no longer prove it had created the networks carrying the old one, and left them alone for ever — one leaked network per VPC per reset, enough to exhaust Docker's address pools on a CI loop that resets between suites. `<service>:instance` is now exempt on every reset path, `overcast reset <service>` included
-  a reset's own leftovers are therefore collected again: still stamped as ours, no longer claimed by any record, so the next startup reconcile sweeps them as it did before the label existed. Networks already orphaned by an earlier version's reset are not — an identity that is genuinely gone is indistinguishable from a live neighbour's, which is what the label is for, so `overcast network status` reports them and `docker network rm` is the way out
-  networks created before this release carry no label; they are still adopted, and never removed. VPC networks are named `{OVERCAST_NETWORK}-vpc-{vpcID}`, unchanged at the default
+  the reconcile sweep removed every network labelled `overcast.service=ec2` its own store did not claim — on a shared daemon, a neighbour's live VPC network. Only the creating instance removes one
+  every network now carries `overcast.instance`, which names the instance rather than its emulated state: `<service>:instance` is exempt on every reset path, `overcast reset <service>` included
+  it used to be wiped, leaking one network per VPC per reset. Networks already orphaned that way are not collected — a gone identity looks like a live neighbour's — so `network status` reports them
 
 - [ec2] the startup reconcile covers VPCs in every region, so a VPC outside the default region gets its Docker network back after a restart.
   the default region's pass took every other region's network for an orphan and removed it; a network is unclaimed only when no VPC in any region names it
-  a region the startup pass did not cover is reconciled on the first placement into it — that lazy pass adopts what exists and creates what is missing, and never rebuilds a drifted network under its containers, since repairing isolation stays with the startup pass where a failed repair already reaches the health advisories
-  a placement that cannot read the daemon or the store waits 30 seconds before asking again, instead of paying a Docker round-trip on every RunTask or invoke while the daemon is down
-  a VPC created while the startup reconcile was reading the store keeps its network instead of being recorded unbacked: the orphan sweep takes only what the snapshot before the scan held and no record names afterwards
+  a region the startup pass missed is reconciled on the first placement into it — that lazy pass adopts what exists and creates what is missing, never rebuilding a drifted network under containers
+  a placement that cannot read the daemon or the store waits 30 seconds before asking again, and a VPC created while the reconcile read the store keeps its network instead of being recorded unbacked
 
 - [ec2] attaching an internet gateway takes a VPC network out of `--internal` even with containers on it, and fails the call when it cannot.
   containers are moved to the recreated network with their addresses and DNS aliases; a refusal answers `InternalError` and records no attachment
-  under the `shared` strategy a network shared by several VPCs is external while any of them has a gateway; a flag found stale at startup is repaired or reported as the `vpc-network-isolation-stale` health advisory
+  under the `shared` strategy a network shared by several VPCs is external while any of them has a gateway; a flag found stale at startup is repaired or raised as `vpc-network-isolation-stale`
 
 - [lambda] the Runtime API address is chosen by container reachability, not bindability, and a container that dies during INIT says why.
-  Overcast binds each candidate and has a throwaway container connect back, keeping the first one that actually answers — `host.docker.internal` now outranks the host's own interface address. On a Windows host whose firewall blocks a freshly built binary, that address bound fine and no container could reach it, so every invocation stranded at INIT and exited 139 with nothing saying why
-  when no candidate is reachable, `/_overcast/health` reports the Runtime API listener `unreachable`, a critical console advisory names every address tried and the observed error, and the `Runtime.InitError` carries the same explanation. The verdict is remembered per Docker daemon and control plane, so only the first startup pays for the probe
-  the probe's 60s image pull used to be nested inside the 45s budget for the whole candidate walk, so on a cold machine with a slow link it was truncated, every candidate came back unmeasured, and the address was chosen unverified. The pull happens once, before the walk, against its own clock
-  a container that dies during INIT is explained rather than reported bare: the log names its Runtime API endpoint, whether anything reached it, and what it printed. Only the INIT *timeout* asked for that evidence, so `lambda container exited during init (exit code 139)` arrived with nothing beside it
+  Overcast binds each candidate and has a throwaway container connect back, keeping the first that answers — `host.docker.internal` now outranks a host address that bound behind a Windows firewall
+  when none is reachable, `/_overcast/health` reports the listener `unreachable`, a critical advisory names every address tried, and `Runtime.InitError` says the same. The verdict is remembered
+  the probe's image pull happens once, before the candidate walk and on its own clock, not inside its 45s budget — see [docs/services/lambda/troubleshooting.md](docs/services/lambda/troubleshooting.md)
 
 - [lambda] the init volume is no longer deleted by another Overcast instance sharing the daemon.
-  it carries `overcast.instance`, the same identity stamped on VPC networks and containers. Reuse across instances of the same build is unaffected — the volume's name is already content-addressed — but pruning a superseded build's volume, or removing an empty one after a failed start, happens only for a volume this instance created; pruning is also scoped per architecture, so seeding an amd64 volume can no longer prune a current arm64 one
-  a volume found empty that this instance may not delete is never reused again — the next cold start copies the init in directly rather than repeating the same failure — and is surfaced as an informational advisory instead of only a debug-level log line
+  it carries `overcast.instance`, the same identity stamped on VPC networks and containers. Reuse across instances of the same build is unaffected, the volume's name being content-addressed already
+  pruning a superseded build's volume, or an empty one after a failed start, happens only for a volume this instance created; pruning is per architecture, so an amd64 seed cannot prune a live arm64 one
+  a volume found empty that this instance may not delete is never reused — the next cold start copies the init in directly — and is surfaced as an advisory rather than a debug-level log line
 
 - [lambda] `LastUpdateStatus` is reported, so `aws lambda wait function-updated` and the SDK, CDK and SAM waiters over it return instead of timing out (#1550).
-  every `FunctionConfiguration` carries `LastUpdateStatus` with its `LastUpdateStatusReason`/`LastUpdateStatusReasonCode`: a zip deployment and every configuration change answer `Successful` outright, because they are applied before the call returns, while an `UpdateFunctionCode` that points a `PackageType=Image` function at a new image answers `InProgress` and settles when the pull does — to `Successful`, or to `Failed` with `ImageAccessDenied`/`InvalidImage`/`InternalError`
-  a second update, or a `PublishVersion`, arriving inside that pull is refused with `ResourceConflictException` as on AWS, and CloudFormation's function stabilizer waits out an in-place update instead of only a create
+  every `FunctionConfiguration` carries `LastUpdateStatus` with its `LastUpdateStatusReason`/`LastUpdateStatusReasonCode`; a zip deploy and every config change answer `Successful` outright
+  an `UpdateFunctionCode` pointing a `PackageType=Image` function at a new image answers `InProgress` and settles when the pull does — `Successful`, or `Failed` with `ImageAccessDenied`/`InvalidImage`
+  a second update, or a `PublishVersion`, arriving inside that pull is refused with `ResourceConflictException` as on AWS, and CloudFormation's stabilizer waits out an in-place update, not only a create
 
 - [cloudformation/scheduler] a stack whose `AWS::Scheduler::Schedule` carries no `Name` deploys.
-  `Name` is optional on the resource and CDK's L2 Schedule leaves it out, but the handler forwarded the empty string, and `CreateSchedule` binds the schedule's name into its path — so the dispatch went to `/schedules/`, which no route matches, and fell through to the fallback that claims the bare `/schedules` DataBrew models and answers 501. Every default CDK schedule died on `CreateSchedule: HTTP 501` and took its stack down with it
+  `Name` is optional and CDK's L2 Schedule leaves it out, but the handler forwarded the empty string and `CreateSchedule` binds the name into its path, so the dispatch went to `/schedules/`, unmatched
+  it fell through to the fallback that claims the bare `/schedules` DataBrew models and answered 501, so every default CDK schedule died on `CreateSchedule: HTTP 501` and took its stack down with it
   the name is minted from the stack and logical ID the way `AWS::Scheduler::ScheduleGroup`'s already was, and an update reads it back off the physical ID rather than off the previous template
 
 - [cloudformation] a stack recreated under a deleted stack's name no longer inherits its events; `DescribeStackEvents` by name lists the current stack alone.
-  events are keyed by the stack generation — the uuid in its `StackId` — rather than by name, as on AWS. The CDK's bootstrap retry of a `ROLLBACK_COMPLETE` CDKToolkit stack read the deleted stack's `CREATE_FAILED` as the new one's and reported a failure against a resource the new template did not have
+  events are keyed by the stack generation — the uuid in its `StackId` — rather than by name, as on AWS. The CDK's retry of a `ROLLBACK_COMPLETE` CDKToolkit stack read the old `CREATE_FAILED` as its own
   a deleted generation's events stay readable by passing its `StackId`, even after the name has been reused; events written by earlier versions are moved to the new layout on first read
 
 - [docker/config] LocalStack-alias configuration works against the Docker images.
-  they baked ENV defaults for `OVERCAST_PORT`, `OVERCAST_LISTEN`, `OVERCAST_LOG_LEVEL`, `OVERCAST_DEFAULT_REGION`, `OVERCAST_ACCOUNT_ID` and `OVERCAST_DEBUG`, each indistinguishable from an explicit setting, so `docker run -e DEFAULT_REGION=eu-west-1` (or `EDGE_PORT`, `GATEWAY_LISTEN`, `DEBUG`) failed startup as a disagreement with the image itself
-  the images bake only `OVERCAST_DATA_DIR=/data` (plus its provenance marker), the binary defaults already cover everything removed, and the `DATA_DIR` alias overrides the image-owned data-dir default instead of conflicting with it
+  they baked ENV defaults for `OVERCAST_PORT`, `OVERCAST_LISTEN`, `OVERCAST_LOG_LEVEL`, `OVERCAST_DEFAULT_REGION`, `OVERCAST_ACCOUNT_ID` and `OVERCAST_DEBUG`, indistinguishable from explicit settings
+  so `docker run -e DEFAULT_REGION=eu-west-1` (or `EDGE_PORT`, `GATEWAY_LISTEN`, `DEBUG`) failed startup as a disagreement with the image itself
+  the images bake only `OVERCAST_DATA_DIR=/data` and its provenance marker, the binary defaults cover the rest, and the `DATA_DIR` alias overrides that default instead of conflicting with it
 
 - [cli] `overcast status` probed `/health`, a path the daemon does not serve, so it reported an error against a healthy daemon.
   it checks `/_overcast/health` and enriches its one-liner with the version and storage backend
@@ -323,14 +314,14 @@ can be applied mechanically rather than reconstructed from memory.
   it polls for up to 30 s and reports only the containers that survive the grace period
 
 - [web/dynamodb/sns/kinesis] an empty DynamoDB, SNS or Kinesis list in the console says when the resources are in another region.
-  a CLI deploying into the region `AWS_REGION` names while the console lists the server default read as "ListTables returns []"; the empty state names the region that has them and offers to switch, as the stack, queue and function pages already did
+  a CLI deploying into the region `AWS_REGION` names while the console lists the server default read as "ListTables returns []"; the empty state names the region that has them and offers to switch
   credentials never partition state: a signed CLI client and the console, in the same region, see the same tables, queues and buckets, and integration tests now pin that
 
 - [web] a DynamoDB table that fails to load says so instead of rendering an empty page.
   a failed `DescribeTable` returned nothing at all — no heading, no message; it follows the same error treatment as every other list in the app
 
 - [web] the Lambda VPC notices no longer say Overcast enforces no isolation.
-  a call to a resource outside the VPC is refused by name, and what is never enforced is the finer filtering: security groups, NACLs, and the public/private subnet distinction. The banner title said the opposite
+  a call to a resource outside the VPC is refused by name; what is never enforced is the finer filtering — security groups, NACLs, and the public/private subnet split. The banner title said the opposite
   the title claims only what holds on every host — placement is enforced through Overcast's DNS resolver, which does not run on a native Windows or macOS host — and the body carries the condition
 
 - [web/s3] the "Preview (first 1 MiB)" notice appeared on every ranged preview, a 36-byte object included, because S3 answers 206 for any satisfiable range.
@@ -340,22 +331,17 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [web] the console honours the saved theme from its first paint, and a missing bundle asset answers 404 rather than the SPA index page.
   the theme was applied after the connection gate, so the connect and cold-boot screens — the first thing a new user sees — rendered in the default one whatever they had chosen
-  the SPA fallback answered every unmatched path with `index.html`, so a stale or missing `/assets/*` file arrived as HTML and failed wherever it was parsed as script; only a real path under the app's own routes falls back now
+  the SPA fallback answered every unmatched path with `index.html`, so a stale or missing `/assets/*` file arrived as HTML and failed wherever it was parsed as script; only a real app route falls back
 
 - [docs] the networking pages agree with the code about egress, isolation and what an internet gateway decides.
-  three pages in `docs/dev/` said the gateway "no longer decides a VPC network's isolation" and that `open` "leaves all of them routable"; under `open` a VPC network is still `--internal` without a gateway, and one ASCII diagram contradicted itself two lines apart. What stopped being true is that the gateway decides *egress*
-  six places promised `OVERCAST_VPC_EGRESS=none` is hermetic without qualification. On Docker Desktop, with Overcast outside a container, isolating the control plane would sever the Lambda Runtime API, so it stays routable and containers keep a route out — the sharpest was the Lambda "not for CI" row, which offered `none` as the way to stop local code quietly reaching production
-  the Runtime API address is described as measured by having a container connect back, not inferred from where Overcast is running; the network-verification table said a rebuild is "logged at info" (it is WARN) and that a drifted network with containers attached is always left alone (true of the planes, false of VPC networks)
-  seven behaviours this release changes are written down, including that `none` isolates the default data plane too, that the planes mismatch on the first start after upgrading, that `overcast network status` exits non-zero on drift, and the `overcast.network.version`, `.egress` and `.gateway` labels
-  `docs/services/ec2/limitations.md` says CIDR overlap is judged per region, and that the same CIDR in a second region lands as `unbacked`
+  the gateway stopped deciding *egress*, not isolation: under `open` a VPC network is still `--internal` without one, which three pages and one self-contradicting ASCII diagram had inverted
+  six places promised `OVERCAST_VPC_EGRESS=none` is hermetic without qualification — on Docker Desktop the control plane stays routable so the Runtime API survives, and one Lambda row leaned on that
+  the Runtime API address is described as measured, not inferred, and the seven behaviours this release changes are written down — see [docs/networking.md](docs/networking.md)
 
-- [docs] stale claims across the service pages are corrected against the code.
-  cognito (sign-in flows, bcrypt cost, TOTP window), kms (EncryptionContext, key policies, grants, scheduled deletion), waf (7 operations, not 4), sts (assumed-role sessions are stored), cloudfront (routable `DomainName`, cascade delete, what the origin proxy executes, what is stored but unenforced), appsync (AWS_LAMBDA authorizers execute; Cognito/OIDC claims are read unverified; AWS_IAM is accepted unconditionally), elb (a redirect-only listener answers 503), apigateway (HTTP v2's invoke URL and per-version integration types), cloudwatch-logs (StartLiveTail over CBOR, Insights, subscription and metric filters all 501), cloudtrail (CloudFormation provisioning, JSON 1.0 and CBOR, global trails), backup (tagging exists), msk (readiness is a Kafka ApiVersions answer, plus VPC placement and serverless clusters), rds (the real image list per engine), s3 (object-level SSE headers are ignored; no `S3_ADDRESSING_STYLE` variable), glue (only five TableInput fields round-trip), scheduler (L, W, # and the name forms are supported; day-of-week is 1-7 from Sunday), pipes (LogConfiguration and KmsKeyIdentifier are discarded), eventbridge (ECS RunTask is a target for pattern-matched rules), ec2 (`strict` and `remapped` are implemented; only netns is not), and transfer, opensearch, msk and elasticache, which now name the fields their records drop
-  `docs/README.md`'s console feature table no longer claims the Inbox captures SNS mobile push: `application`-protocol subscriptions are rejected at Subscribe time
-  the resource-type counts read 127 provisioned and 9 stubs of 136 registered, matching the `resourceHandlers` map, and `docs/cdk.md` describes provisioning as asynchronous rather than synchronous
-  `docs/configuration.md` gains `OVERCAST_SERVICE_METRICS` and `OVERCAST_UI_PORT`, corrects the `LAMBDA_DOCKER_SOCKET` default on Windows, and its operation manifest is current again
-  the CDK examples on the Lambda page point `AWS_ENDPOINT_URL` at 4566 rather than 2456, which nothing listens on
-  dead citations to internal-only `docs/plans/**` and `docs/dev/**` are gone from published pages, along with links into `CONTRIBUTING.md` and `AGENTS.md` that the published site cannot open
+- [docs] stale claims across [the service pages](docs/services/README.md) are corrected against the code.
+  cognito, kms, waf, sts, cloudfront, appsync, elb, apigateway, cloudwatch-logs, cloudtrail, backup, msk, rds, s3, glue, scheduler, pipes, eventbridge, ec2, transfer, opensearch and elasticache.
+  `docs/README.md` no longer claims the Inbox captures SNS mobile push (`application` subscriptions are rejected at Subscribe time), the counts read 127 provisioned and 9 stubs of 136 registered
+  `docs/configuration.md` gains `OVERCAST_SERVICE_METRICS` and `OVERCAST_UI_PORT` and fixes the Windows `LAMBDA_DOCKER_SOCKET` default; the Lambda CDK examples point `AWS_ENDPOINT_URL` at 4566
 
 - [release] the `CHANGELOG.md` version compare links point at `github.com/overcast-sh`, so every one of them resolves.
   they still pointed at the pre-rename owner, which also failed the release gate that checks them
@@ -363,12 +349,13 @@ can be applied mechanically rather than reconstructed from memory.
 ### Removed
 
 - [cli] the dev-only `overcast mcp` workspace-MCP subcommand — never shipped in a release.
-  the workspace MCP server (repo-aware tools for agents/editors) is now its own standalone command, `cmd/overcast-mcp`, run with `go run ./cmd/overcast-mcp --stdio` instead of `overcast mcp --stdio`
+  the workspace MCP server (repo-aware tools for agents/editors) is now its own standalone command, `cmd/overcast-mcp`, run with `go run ./cmd/overcast-mcp --stdio`
 
 ### Deprecated
 
 - [networking] `OVERCAST_CONTROL_PLANE_INTERNAL` — set `OVERCAST_VPC_EGRESS` instead. Still honoured, and setting it logs a notice.
-  it pins one network, and a container takes its default route from whichever of its networks is routable, so isolating one of them settled nothing. `true` becomes `OVERCAST_VPC_EGRESS=none`, `false` becomes `open`
+  it pins one network, and a container takes its default route from whichever of its networks is routable, so isolating one of them settled nothing
+  `true` becomes `OVERCAST_VPC_EGRESS=none`, `false` becomes `open`
 
 ## [0.0.1-alpha.38] - 2026-08-31
 
