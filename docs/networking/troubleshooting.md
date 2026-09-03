@@ -75,8 +75,9 @@ real regional endpoint or a third-party API — works under the default `open`
 mode with no extra configuration. Overcast injects `AWS_ENDPOINT_URL` into every
 container it starts, so an SDK client picks Overcast up by default; construct
 the one client that should talk to real AWS with an explicit endpoint (or none)
-and real credentials, and leave the rest pointing at the emulator. There is a
-worked example in [Lambda examples](../services/lambda/examples.md#reaching-real-aws-from-a-local-function).
+and real credentials, and leave the rest pointing at the emulator. The variables, the
+rules and a worked client are in
+[Egress modes § Reaching real AWS from a container](./egress.md#reaching-real-aws-from-a-container).
 
 ## An endpoint name resolves nowhere
 

@@ -73,6 +73,52 @@ docker network inspect overcast-vpc-<id> --format '{{index .Labels "overcast.net
 and the startup log's `vpc network isolation` line, which names the mode and the
 route out for every VPC network as it is created.
 
+## Reaching real AWS from a container
+
+A hybrid stack — most of it emulated, one client talking to a real regional
+endpoint, a peered private endpoint, or a third-party API — works under `open`
+with no extra configuration: every container Overcast starts has a route out,
+`VpcConfig` or not. The only work is telling the SDK which client goes where.
+Overcast injects these into every container it starts:
+
+| Variable | Effect |
+| --- | --- |
+| `AWS_ENDPOINT_URL` | Every SDK client defaults to Overcast |
+| `AWS_ENDPOINT_URL_<SERVICE>` | Per-service override, same precedence as on AWS |
+| `AWS_REGION` | The emulator's region |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` | Dummy credentials the emulator accepts |
+
+So the default is "everything is local", and you opt one client out of it —
+with a real endpoint and real credentials:
+
+```javascript
+import { S3Client } from "@aws-sdk/client-s3";
+import { SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
+
+// Emulated: picks up AWS_ENDPOINT_URL, no configuration needed.
+const localS3 = new S3Client({});
+
+// Real AWS: an explicit endpoint beats the injected variable, and real
+// credentials beat the injected dummies.
+const realSecrets = new SecretsManagerClient({
+  region: "ap-southeast-2",
+  endpoint: "https://secretsmanager.ap-southeast-2.amazonaws.com",
+  credentials: {
+    accessKeyId: process.env.REAL_AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.REAL_AWS_SECRET_ACCESS_KEY,
+  },
+});
+```
+
+| Rule | Detail |
+| --- | --- |
+| Pass the real credentials in under names of your own | Never the `AWS_*` ones, which Overcast owns and would overwrite |
+| Explicit `endpoint` wins | Per-client configuration beats `AWS_ENDPOINT_URL` in every AWS SDK |
+| Real calls need real credentials | The injected dummies are rejected by AWS with `InvalidClientTokenId` |
+| Costs are real | This is your account. A loop in a local function bills like a loop in a deployed one |
+| Not for CI | Set `none` there, so the same code fails fast with `ENETUNREACH` instead of quietly reaching production |
+| Or make it match your template | `routed` gives a function egress only where its subnet's route table does, so a `VpcConfig` in a private subnet with no NAT gateway fails locally as it would deployed |
+
 ## Control-plane isolation
 
 **Deprecated.** `OVERCAST_CONTROL_PLANE_INTERNAL=auto|true|false` pins the
