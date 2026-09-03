@@ -128,15 +128,21 @@ func TestIndex_everyDocumentIsUsable(t *testing.T) {
 func TestSearch_cdkLocalVpc(t *testing.T) {
 	// Given: the index built from the docs the binary embeds.
 
-	// When: we search for the local VPC CDK workflow.
-	results := idx(t).Search("cdk local vpc provider", 5)
+	// When: we search for the local VPC CDK workflow, and for the import half
+	// it was split away from.
+	for _, tc := range []struct{ query, want string }{
+		{"cdk local vpc stack", "cdk/local-vpc.md"},
+		{"cdk vpc lookup import", "cdk/vpc-lookups.md"},
+	} {
+		results := idx(t).Search(tc.query, 5)
 
-	// Then: the focused local VPC guide is ranked first.
-	if len(results) == 0 {
-		t.Fatal("expected search results")
-	}
-	if results[0].Href != "cdk/local-vpc.md" {
-		t.Fatalf("expected local VPC guide first, got %q", results[0].Href)
+		// Then: the page that answers the query is ranked first.
+		if len(results) == 0 {
+			t.Fatalf("%s: expected search results", tc.query)
+		}
+		if results[0].Href != tc.want {
+			t.Fatalf("%s: expected %q first, got %q", tc.query, tc.want, results[0].Href)
+		}
 	}
 }
 

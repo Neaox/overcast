@@ -37,7 +37,7 @@ The subdomain has to resolve to wherever Overcast is listening — see
 | AppSync (GraphQL) | `{apiId}.appsync-api.{region}.{base}/graphql` | Also reachable at `/realtime` on the same host — Overcast colocates the GraphQL and realtime endpoints. |
 | AppSync (subscriptions) | `{apiId}.appsync-realtime-api.{region}.{base}` | The host real AWS serves subscriptions on, and the one Amplify derives by substituting into the GraphQL URL. Routes to the same endpoint as `/realtime`. |
 | CloudFront | `{distributionId}.cloudfront.{base}` | Global, so there is no region segment. `DomainName` is minted on the hostname you reached Overcast on rather than the literal `cloudfront.net`. |
-| S3 (virtual-hosted style) | `{bucket}.s3[.{region}].{base}/...` or `{bucket}.{base}/...` | Both forms work. The second is what an AWS SDK emits against a custom endpoint with path-style disabled, and the only form CDK's asset publisher uses. See [sdk-cli.md](../sdk-cli.md#s3-addressing-styles) and [cdk.md](../cdk.md#s3-asset-upload-fails-on-windows). |
+| S3 (virtual-hosted style) | `{bucket}.s3[.{region}].{base}/...` or `{bucket}.{base}/...` | Both forms work. The second is what an AWS SDK emits against a custom endpoint with path-style disabled, and the only form CDK's asset publisher uses. See [sdk-cli.md](../sdk-cli.md#s3-addressing-styles) and [CDK troubleshooting](../cdk/troubleshooting.md#s3-asset-upload-fails-on-windows). |
 
 **The Host is case-insensitive in every part** — resource ID, service label,
 region segment and base domain alike — because a hostname is (RFC 4343). So

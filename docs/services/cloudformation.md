@@ -40,7 +40,7 @@ aws cloudformation describe-stacks --stack-name demo --query 'Stacks[0].Outputs'
 | Area | Behaviour |
 | --- | --- |
 | Templates | JSON and YAML, including the short-form tags (`!Ref`, `!Sub`, `!GetAtt`). Both of AWS's size quotas are enforced — 51,200 bytes inline, 1,000,000 via `TemplateURL`. |
-| Resource types | 136 registered types — 127 provisioned for real, 9 recognised as deliberate stubs — plus custom resources and nested stacks. The list is in [CDK § Supported resource types](../cdk.md#supported-resource-types). |
+| Resource types | 136 registered types — 127 provisioned for real, 9 recognised as deliberate stubs — plus custom resources and nested stacks. The list is in [CDK resource type coverage](../cdk/resource-types.md). |
 | Provisioning | Resources are created through internal HTTP requests to the emulated services, so anything implemented can be orchestrated. `DependsOn` and reference ordering are resolved by topological sort. |
 | Stack lifecycle | The full AWS status machine, including both cleanup states, and enforced transitions — a create is refused while the name exists, an update only from a last-known-stable state. |
 | Change sets | Create, describe, execute and list. `ExecuteChangeSet` advances `ExecutionStatus` to `EXECUTE_COMPLETE`/`EXECUTE_FAILED` when the stack reaches a terminal status. |

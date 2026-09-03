@@ -107,7 +107,7 @@ rejected, and named in a startup log line with the reason it does nothing.
 | Item | Status | Notes |
 | ---- | ------ | ----- |
 | `awslocal` | Works | Sets `--endpoint-url` to `localhost:4566` |
-| `cdklocal` | Works | See the [CDK guide](./cdk.md) for the asset-publishing caveat on Windows |
+| `cdklocal` | Works | See [CDK troubleshooting](./cdk/troubleshooting.md#s3-asset-upload-fails-on-windows) for the asset-publishing caveat on Windows |
 | `tflocal` | Works | Its `S3_HOSTNAME` default resolves and is recognised |
 | `samlocal` | Works | Sets `AWS_ENDPOINT_URL` and nothing else |
 | Overcast's Testcontainers module (Go) | Works | See [Testcontainers](./testcontainers.md) |

@@ -44,7 +44,7 @@ from either tool keeps working.
 > hosts-file entry (any OS).
 
 Plain `localhost` on Windows is what breaks CDK's S3 asset upload — see
-[cdk.md](../cdk.md#s3-asset-upload-fails-on-windows).
+[CDK troubleshooting](../cdk/troubleshooting.md#s3-asset-upload-fails-on-windows).
 
 ## In Docker Compose
 

@@ -116,7 +116,7 @@ aws dynamodb list-tables
 | **Security testing**             | Credentials are accepted. SigV4 validation is optional, and IAM policies are not enforced as an authorization layer.                                                               |
 | **Performance / load testing**   | AWS throttling, quotas, and latency are not emulated.                                                                                                                             |
 | **IAM policy testing**           | Enforcement is off by default and covers identity policies only ([details](./docs/services/iam.md#request-time-enforcement-opt-in)). A development aid, not a security boundary.                                                                    |
-| **CloudFormation / CDK deploys** | CloudFormation emulation supports 130+ resource types. `cdk deploy` works for stacks using [supported types](./docs/cdk.md#supported-resource-types). Coverage is not exhaustive.  |
+| **CloudFormation / CDK deploys** | CloudFormation emulation supports 130+ resource types. `cdk deploy` works for stacks using [supported types](./docs/cdk/resource-types.md). Coverage is not exhaustive.  |
 
 ## Running with Docker
 
