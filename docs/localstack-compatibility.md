@@ -48,7 +48,8 @@ Full mapping in
 | `/_localstack/health` | Aliased | Served in LocalStack's shape, plus an `emulator` field |
 | `/_localstack/init`, `/init/{stage}` | Aliased | Byte-identical: the shapes already matched |
 | `POST /_localstack/state/reset` | Aliased | Returns `{"status":"reset"}`; LocalStack returns nothing |
-| `/_localstack/info`, `/diagnose`, `/config`, `/usage`, `/plugins` | No equivalent | The 404 names the `/_overcast/debug/*` endpoint to use instead |
+| `/_localstack/info`, `/state`, `/diagnose`, `/config` | No equivalent | The 404 names the `/_overcast/debug/*` endpoint to use instead |
+| `/_localstack/usage`, `/plugins` | No equivalent | The 404 names `/_overcast/metrics` for usage; there are no plugins to list |
 | `/_localstack/state/save`, `/load` | No equivalent | Persistence is incremental, not snapshot-based |
 | `GET`/`DELETE /_aws/ses` | Aliased | LocalStack's shape, from the same inbox as `/_overcast/ses/inbox/messages`; `Region` and `RawData` are omitted — the capture does not hold them |
 | `/_aws/sqs/messages` | Aliased | XML `ReceiveMessageResponse`, or JSON under `Accept: application/json`; `?QueueUrl=`, `?QueueName=&QueueRegion=` and the `/{region}/{account}/{queue}` path form; `ShowInvisible`, `ShowDelayed` |

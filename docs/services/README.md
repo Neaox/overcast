@@ -96,7 +96,7 @@ x-emulator-unsupported: true
 
 {
   "__type": "NotImplemented",
-  "message": "This operation is not yet emulated. See https://github.com/overcast-sh/overcast/docs/services/<service>.md"
+  "message": "This operation is not yet emulated. Check docs/services/ for the support matrix."
 }
 ```
 
