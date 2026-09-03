@@ -866,7 +866,7 @@ stale generated output, or a red required check.
 | **I6** — JSON families in bulk | awsJson1_0 + awsJson1_1 in-scope services (≈130 services / ≈5,350 ops before never-list exclusions), batched ~10 services per PR. | L×n, parallelisable | Per-batch gate = §8.1. |
 | **I7** — REST-JSON in bulk | The big one: ≈238 services / ≈8,707 ops before exclusions. Expect the never-list to remove the majority. | L×n | Per-batch gate = §8.1. |
 | **I8** — Query + REST-XML remainder & backfill sweep | Remaining Query services; `s3-control` (restXml); the full `StatusUnsupported` backfill table (§7). | M | Goldens byte-identical on every pre-existing op; §8.1. |
-| **I9** — convergence | `stub-report` and `capgen` read generated tier data; STATUS.md tier tables become generated; `docs/operation-manifest.md` reports Tier 0/1/2 per op. | M | No hand-maintained tier inventory remains; STATUS.md drift becomes structurally impossible. |
+| **I9** — convergence | `stub-report` and `capgen` read generated tier data; STATUS.md tier tables become generated; `stub-report`'s output reports Tier 0/1/2 per op. | M | No hand-maintained tier inventory remains; STATUS.md drift becomes structurally impossible. |
 
 ### 8.1 The standing per-wave acceptance gate
 

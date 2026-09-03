@@ -147,15 +147,22 @@ func TestSearch_ignoresStopwords(t *testing.T) {
 	}
 }
 
-// TestSearch_servicePageOutranksTheOperationManifest guards a corpus-wide
-// consequence of weighting by field. docs/operation-manifest.md is a generated
-// listing of every modelled AWS operation, so it mentions every service name;
-// summed occurrence counts let that listing beat the page that actually
-// documents the service. (This used to have a TypeScript mirror in the vite
-// dev server's Hono BFF; that port was retired in #1104, so this is the only
-// copy of the guard.)
-func TestSearch_servicePageOutranksTheOperationManifest(t *testing.T) {
-	// Given: queries naming a service that the manifest also lists.
+// TestSearch_servicePageOutranksAGeneratedListing guards a corpus-wide
+// consequence of weighting by field: a generated listing beating the page that
+// documents the thing it lists. A listing is a row per operation, so it mentions
+// a service name as often as the service's own page does — and summed occurrence
+// counts hand it the win on bulk, however little it explains.
+//
+// The live instance is each service's operations table, held above by
+// docssearch's promoteServiceLandingPages rule. This is the corpus-wide check
+// that the queries a reader actually types land on the page that answers them.
+// It was written for docs/operation-manifest.md, a tree-wide listing of every
+// typed operation, deleted once it turned out to have no reader; the queries
+// outlived it because what they pin is the ranking, not that page. (This used
+// to have a TypeScript mirror in the vite dev server's Hono BFF; that port was
+// retired in #1104, so this is the only copy of the guard.)
+func TestSearch_servicePageOutranksAGeneratedListing(t *testing.T) {
+	// Given: queries naming a service that a generated listing also names.
 	for query, want := range map[string]string{
 		"msk cluster":         "services/msk.md",
 		"opensearch domain":   "services/opensearch.md",
@@ -218,8 +225,8 @@ func hrefs(results []docssearch.Result) []string {
 }
 
 // TestSearch_serviceLandingPageOutranksItsOwnOperationsTable is the guard
-// above, for the generated listing that now sits directly beneath each service
-// page rather than one shared manifest elsewhere in the tree.
+// above, narrowed to the one generated listing the corpus still has: the
+// operations table sitting directly beneath each service page.
 func TestSearch_serviceLandingPageOutranksItsOwnOperationsTable(t *testing.T) {
 	// Given: a query both the landing page and its operations table match.
 	// When: it is searched for.

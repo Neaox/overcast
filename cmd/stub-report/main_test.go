@@ -32,7 +32,7 @@ var typedOps = map[string]op.Operation{
 // internal/services/cloudwatch/logs. Before the fix, scanServices only
 // looked one level deep under root, so a typed_ops.go living in a
 // subdirectory of a top-level service directory (declared via subServices)
-// was silently skipped and never appeared in docs/operation-manifest.md.
+// was silently skipped and never appeared in the report.
 func TestScanServices_RecursesIntoNestedServiceDirs(t *testing.T) {
 	root := t.TempDir()
 
@@ -156,10 +156,10 @@ func TestExcludedServices_ListsDirsWithoutTypedOps(t *testing.T) {
 }
 
 // TestExcludedServices_RealServicesFromIssue748 pins that every service
-// reported missing from docs/operation-manifest.md by #748 (S3, Lambda, API
-// Gateway, CloudFront, Pipes) is captured by excludedServices against the real
-// internal/services tree, so it can no longer disappear from the doc without a
-// visible entry.
+// reported missing from the manifest by #748 (S3, Lambda, API Gateway,
+// CloudFront, Pipes) is captured by excludedServices against the real
+// internal/services tree, so it can no longer disappear from the report without
+// a visible entry.
 //
 // CloudWatch was #748's sixth name and is deliberately gone from this list:
 // #1280 gave it a typed_ops.go — the registry that lets it answer rpcv2Cbor —
