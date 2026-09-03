@@ -12,7 +12,7 @@ locally without an internet connection, a cloud account, or a bill.
 [![CI](https://github.com/overcast-sh/overcast/actions/workflows/test.yml/badge.svg)](https://github.com/overcast-sh/overcast/actions)
 [![GitHub release](https://img.shields.io/github/v/release/overcast-sh/overcast?include_prereleases)](https://github.com/overcast-sh/overcast/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Container image](https://img.shields.io/badge/ghcr.io-overcast-sh%2Fovercast-blue?logo=docker&logoColor=white)](https://github.com/overcast-sh/overcast/pkgs/container/overcast)
+[![Container image](https://img.shields.io/badge/ghcr.io-overcast--sh%2Fovercast-blue?logo=docker&logoColor=white)](https://github.com/overcast-sh/overcast/pkgs/container/overcast)
 
 Every change is tested against **eight official AWS clients** — the AWS CLI,
 the CDK, and the Go, JavaScript, Python, Java, .NET, and Rust SDKs — via the
