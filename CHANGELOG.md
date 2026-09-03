@@ -338,6 +338,10 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [web] the SES dashboard card no longer promises delivery history; the console SES page manages identities only, and sent mail is in the Inbox
 
+- [web] Apply the saved theme at boot, so the connection and cold-boot screens no longer ignore it
+
+- [web] Serve a real 404 for a missing bundle asset instead of the SPA index page
+
 - [docs] the networking pages agree with the code about egress, isolation and what an internet gateway decides.
   three pages in `docs/dev/` said the gateway "no longer decides a VPC network's isolation" and that `open` "leaves all of them routable"; under `open` a VPC network is still `--internal` without a gateway, and one ASCII diagram contradicted itself two lines apart. What stopped being true is that the gateway decides *egress*
   six places promised `OVERCAST_VPC_EGRESS=none` is hermetic without qualification. On Docker Desktop, with Overcast outside a container, isolating the control plane would sever the Lambda Runtime API, so it stays routable and containers keep a route out — the sharpest was the Lambda "not for CI" row, which offered `none` as the way to stop local code quietly reaching production
