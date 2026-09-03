@@ -24,7 +24,9 @@ Every `*.localhost.overcast.sh` subdomain resolves to `127.0.0.1` through public
 DNS, so host-routed URLs work with no hosts-file edits and behave the same on
 Linux, macOS and Windows. `localhost.localstack.cloud` and `localhost.floci.io`
 are recognised out of the box and work the same way, so a setup carried over
-from either tool keeps working.
+from either tool keeps working. None of the three sends traffic to the project
+that owns it — the domain is a DNS lookup and nothing else, and every request
+goes to Overcast on your machine.
 
 | Option | Resolves | Offline | Windows | Setup |
 | --- | --- | --- | --- | --- |

@@ -48,7 +48,9 @@ default, `auto`, costs whichever row it resolves to plus a negligible resolution
 check — see [The auto default](./storage.md#the-auto-default). The
 `overcast-slim` image and the `overcastd` binaries have no SQLite, so their
 durable option is `wal` — see [Builds without
-SQLite](./storage.md#builds-without-sqlite).
+SQLite](./storage.md#builds-without-sqlite). Where `/data` lives and how the
+hybrid backend flushes are what move these numbers on a real machine — see
+[Storage tuning](./performance/storage-tuning.md).
 
 <details>
 <summary>Measurement conditions</summary>

@@ -27,8 +27,7 @@ Credentials, regions and per-language client setup are in
 | --- | --- |
 | [Using AWS SDKs and CLI](./sdk-cli.md) | Pointing the AWS CLI, Node.js, Python, Go, Java, .NET, Rust or Terraform at Overcast |
 | [CLI reference](./cli.md) | Every `overcast` subcommand — background instances, introspection, AWS helpers, mDNS and TLS |
-| [Using AWS CDK](./cdk.md) | `cdk bootstrap`, `cdk deploy`, which resource types provision for real |
-| [Local VPCs for CDK](./cdk/local-vpc.md) | Letting a local stack create the VPC instead of looking up IDs that change every teardown |
+| [Using AWS CDK](./cdk.md) | `cdk bootstrap`, `cdk deploy`, which resource types provision for real, and the local-VPC pattern |
 | [Testcontainers](./testcontainers.md) | Starting Overcast from integration tests |
 | [Migrating from LocalStack](./migration-from-localstack.md) | Swapping the image and keeping your environment block |
 | [LocalStack compatibility matrix](./localstack-compatibility.md) | Every port, URL, hostname, container convention and client tool, with its status |
@@ -40,17 +39,15 @@ Credentials, regions and per-language client setup are in
 | [Service reference](./services/README.md) | What each AWS service supports, operation by operation |
 | [Networking and host-based addressing](./networking.md) | Host-routed endpoints, wildcard DNS, sibling containers, VPC isolation |
 | [The inner loop](./local-dev.md) | Editing a file and seeing it take effect — `cdk watch`, Lambda and ECS hot reload |
-| [HTTPS and HTTP/2](./https.md) | Browser-trusted TLS in two commands, and why the console needs it |
+| [HTTPS and HTTP/2](./https.md) | Browser-trusted TLS in two commands, in Docker, and by hand |
 
 ## Tune and inspect
 
 | Guide | For |
 | --- | --- |
-| [Configuration](./configuration.md) | Where each setting lives, and the handful most people change |
-| [Environment variable reference](./configuration/reference.md) | Every variable Overcast reads, with its default |
+| [Configuration](./configuration.md) | Where each setting lives, the handful most people change, and every variable with its default |
 | [Storage and persistence](./storage.md) | Choosing a backend and knowing what survives a restart |
-| [Performance](./performance.md) | Startup and memory expectations, and where "feels slow" time goes |
-| [Storage tuning](./performance/storage-tuning.md) | Where `/data` should live, the slow-filesystem probe, and the hybrid flush knobs |
+| [Performance](./performance.md) | Startup and memory expectations, storage tuning, and where "feels slow" time goes |
 | [Debug endpoints](./debug-endpoints.md) | Health, metrics, state dump, request traces, pprof |
 | [Troubleshooting](./troubleshooting.md) | A symptom, and where its answer lives |
 
