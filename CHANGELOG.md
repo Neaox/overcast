@@ -70,96 +70,41 @@ can be applied mechanically rather than reconstructed from memory.
 
 ### Added
 
-- [docs] the house-style lint gains two self-narration rules and a check that no published page links outside docs/.
-  `This page explains ...` and `this section exists to ...`, plus "Under the hood", "Note that" and "In summary"; the seven corpus hits are rewritten, not allowlisted.
-
-- [docs] `make docs-lint` now fails a published page over 6,000 characters of prose or 12,000 characters of page
-  going over needs a stated reason on the page: `<!-- docs-length-review: … -->`, which fails if the reason is empty or if the page later comes inside the budget.
-  both measures exclude the generated capability block, so an operations sub-page passes on its own measurements rather than by being named in an exemption list.
-
-- [docs] `make docs-lint` now rejects the house-style tells — "not X — it's Y", "it's not about X", "seamless", "delve", the three-adjective slogan
-  a page-and-phrase allowlist beside the linter takes a genuine exception, and fails once the sentence it was granted for is rewritten.
+- [docs] `make docs-lint` now holds every published page to a length budget and the house style.
+  a page over 6,000 characters of prose, or 12,000 of page, fails unless it states a `<!-- docs-length-review: … -->` reason — which fails in turn once the page comes back inside the budget.
+  the stock tells go too: "not X — it's Y", "seamless", "delve", the three-adjective slogan, "Under the hood", "Note that", and openers that narrate the page. An allowlist takes a real exception.
+  both measures exclude the generated capability block, and no published page may link outside `docs/`, which is all the console can open.
 
 ### Changed
 
-- [ci] `changelog.py check` budgets an entry's detail: three continuation lines, 200 chars each
-  a breaking entry's `migration:` note does not count towards the three, and is held to the same length
-  `<!-- changelog-detail-review: why -->` above an entry buys it more, and fails once that entry is back inside the budget
+- [docs] the long guides are landing pages now, one sub-page per concern, and every link that named a section points at the page holding it.
+  networking gains ten sub-pages and CDK five; the CLI reference splits one page per command group, and configuration, HTTPS, performance and the migration guide each keep a short landing page.
+  the Docker mechanics behind an EC2 VPC move to `docs/networking/vpc-backing.md`: backing bridge, labels, gateway isolation and the `OVERCAST_EC2_VPC_STRATEGY` CIDR strategies.
+  the console serves the new pages, and the health advisories and reference rows that deep-linked a moved section were repointed with them.
 
-- [docs] the docs index opens with a runnable quick start, and the networking landing page routes from one table instead of two.
-  the hub's first link pointed at the repository root README, which the console cannot open: it embeds docs/ only.
-  the Docker Desktop egress caveat, the OVERCAST_VPC_EGRESS mode list and the `auto` storage default are each stated once and linked from the pages that repeated them.
+- [docs] a service's limitations page is a table now, with a concern page behind each row that needs one.
+  Lambda splits into concurrency, execution environments, event delivery and retries, logging and runtimes; ECS's scheduler and CloudFormation's updates, teardown and dynamic references follow.
+  a service directory may hold concern-named sub-pages beside operations, limitations, troubleshooting and examples: a hyphenated slug, linked from its landing page, opening its own Related with it.
+  the Lambda init-volume advisory and its troubleshooting entry deep-link `docs/services/lambda/execution-environments.md`, which now carries that section.
 
-- [docs] every published page now ends with a Related footer and opens with a line that says what it holds, and docs-lint keeps it that way
-  79 pages gained a Related section, the 50 generated operations pages included; 21 bare "Back to X." openers became the orientation form that carries the link
-  the ENETUNREACH diagnosis moves to docs/networking/troubleshooting.md, and the wildcard-DNS explanation is stated once on docs/networking/hostnames.md
-  the hub lists one line per guide, routing to the landing rather than to its sub-pages
+- [docs] each fact in the docs has one home, the hub routes to it, and every page ends with a Related footer.
+  79 pages gained a Related section and 21 bare "Back to X." openers became a line that says what the page holds; the hub opens with a runnable quick start and lists one line per guide.
+  the Docker Desktop egress caveat, the `OVERCAST_VPC_EGRESS` mode list and the `auto` storage default are each stated once and linked from the pages that repeated them.
+  five reference pages came inside the length budget, the Lambda examples page leads with its examples, and `docs/index.md` is titled "Reference index".
 
-- [docs] five reference pages come inside the length budget, so their LengthBacklog entries are deleted.
-  ECR, RDS and S3 limitations lose their design-rationale asides; the ECR registry probe detail and the RDS password-rotation rules move to each service's troubleshooting page.
-  storage.md drops the visibility table debug-endpoints.md already covers and folds the `auto` worked examples into the three signals.
+- [release] the 0.0.1-alpha.39 notes are re-curated to a summary line and at most three short detail lines per entry.
+  every fact is kept: what does not fit points at the page that carries it, and every `migration:` note stays, trimmed in wording only.
+  the section measures the same as a fragment now — 69 bullets, none over three detail lines or 200 characters, where 43 were over before.
 
-- [docs] the Lambda examples page leads with the examples: the prose between them is captions and tables now
-  the hot-reload change-detection detail moves to docs/local-dev.md, whose "when it does not work" section becomes a symptom table to make room
-  "reaching real AWS from a local function" becomes one row pointing at docs/networking/egress.md, which now carries the injected variables and the worked client
-
-- [docs] the docs index page is titled "Reference index", and says in a line what it indexes
-
-- [docs/cdk] the CDK guide splits into a landing page and five sub-pages, one concern each
-  the resource-type reference, the limitations and the troubleshooting entries each get their own page, and every doc link that named a section points at the page holding it
-  docs/cdk/local-vpc.md keeps the create-the-VPC pattern; lookups, availability zones and their troubleshooting move to docs/cdk/vpc-lookups.md
-
-- [docs] the CLI reference splits into a landing page and one page per command group
-  daemon, inspect, state, aws, networks, bridge and tls, each inside the docs length budget
-  the `overcast bridge` section moved to docs/cli/bridge.md, and README.md links there instead
-
-- [docs] the configuration guide is a short landing page, with the environment-variable reference and four area guides on their own pages
-  the full variable table keeps a page to itself at docs/configuration/reference.md
-  bind address, running two instances, log levels and exposing MCP each get one
-  LocalStack alias and ignored-variable rows point at the complete tables in the migration guide rather than listing a partial set
-
-- [docs] the EC2 limitations page keeps the metadata and filter tables; the Docker mechanics behind a VPC move to docs/networking/vpc-backing.md
-  the backing bridge, its labels, internet-gateway isolation and the OVERCAST_EC2_VPC_STRATEGY CIDR strategies are on one networking page now
-  the gateway-flip rebuild links network-state.md and egress.md instead of restating them
-  the vpc-network-isolation-stale advisory and the OVERCAST_EC2_VPC_STRATEGY reference row point at the new page
-
-- [docs] the HTTPS and performance guides split into landing pages with one sub-page per situation
-  Docker, installing the CA by hand, and how the local CA works each get their own page; storage tuning moves off the performance guide
-  the console serves the new pages, and every doc link and storage advisory that named a moved section points at the page holding it now
-
-- [docs] the LocalStack migration guide is a short landing page, with the variable, endpoint and difference detail on their own pages
-  the alias and ignored-variable tables move to docs/migration/environment-variables.md
-  endpoint mapping, health checks, init hooks and Testcontainers move to docs/migration/endpoints.md
-  the per-feature audit moves to docs/migration/differences.md and links the compatibility matrix rather than restating it
-
-- [docs/networking] the networking guide splits into a landing page and ten sub-pages, one concern each
-  the console serves the new pages too, and every doc and console link that named a section now points at the sub-page holding it
-
-- [docs/cloudformation] the CloudFormation limitations page is rebuilt around three tables and three concern pages
-  the divergence list, the states each operation may start from and the resources a stack waits on are the whole page now
-  stack updates, teardown and dynamic references get their own pages, and where a failure reason lives moves to troubleshooting
-
-- [docs/ecs] the ECS limitations page becomes three tables, and the scheduler narrative gets its own page
-  divergences, the four volume shapes and what an awsvpc namespace gives a task are the whole limitations page now
-  docs/services/ecs/scheduler.md carries the settle window, failed-task counting, rollout arithmetic and the circuit breaker
-
-- [docs] a service docs directory may now hold concern-named sub-pages beside the four fixed ones
-  operations, limitations, troubleshooting and examples keep their meanings and still come first in the landing page's Related list
-  an extra page has to be a lowercase hyphenated slug, be linked from its landing page, and open its own Related with that landing page
-
-- [docs/lambda] the Lambda limitations page becomes a divergence table with five concern pages behind it
-  concurrency, execution environments, event delivery and retries, logging and runtimes each get their own page, one click from the row that names them
-  the init-volume advisory and the troubleshooting entry deep-link docs/services/lambda/execution-environments.md, which now carries that section
-
-- [release] the 0.0.1-alpha.39 release notes are re-curated to a summary line and at most three short detail lines per entry
-  every fact is kept: what does not fit points at the page that carries it, and every `migration:` note stays, trimmed in wording only
-  the section measures the same as a fragment now — 69 bullets, none over three detail lines or 200 characters, where 43 were over before
+- [ci] `changelog.py check` budgets an entry's detail: three continuation lines, 200 characters each.
+  a breaking entry's `migration:` note does not count towards the three, and is held to the same length.
+  `<!-- changelog-detail-review: why -->` above an entry buys it more, and fails once that entry is back inside the budget.
 
 ### Removed
 
-- [docs] the operation manifest page, a hand-committed snapshot of `go run ./cmd/stub-report` output
-  it listed unexported Go type names, no target regenerated it, and nothing but docs search read it
-  `docs/dev/smithy.md` points at the command instead, so the inventory is produced on demand rather than read stale
+- [docs] the operation manifest page, a hand-committed snapshot of `go run ./cmd/stub-report` output.
+  it listed unexported Go type names, no target regenerated it, and nothing but docs search read it.
+  `docs/dev/smithy.md` points at the command instead, so the inventory is produced on demand rather than read stale.
 
 ## [0.0.1-alpha.39] - 2026-09-02
 
