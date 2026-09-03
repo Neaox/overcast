@@ -47,7 +47,7 @@ every later push and pull fail on its own. The probe carries this instance's
 credentials, which is what tells this registry from a sibling's — see
 [A port answering as another instance's registry](./troubleshooting.md#a-port-answering-as-another-instances-registry).
 
-## The ephemeral-port fallback is degraded, not equivalent
+## When the fixed port is taken
 
 If something else holds `OVERCAST_ECR_REGISTRY_PORT` (default `4510`), the
 registry falls back to an ephemeral port and says so in the log. Measured on
@@ -88,8 +88,7 @@ first read reconciles it against the registry.
 
 `DescribeImages` answers an `imageIds` entry it cannot resolve with
 `ImageNotFoundException`, as real ECR does, rather than a `200` carrying a short
-list. Only a call that named no `imageIds` returns an empty list, because only a
-requested identifier can be missing.
+list. Only a call that named no `imageIds` returns an empty list.
 
 That decides whether anything is ever pushed: cdk-assets treats *any*
 non-throwing `DescribeImages` as "already published" and skips building and
@@ -101,7 +100,7 @@ repository read, a manifest the registry serves is recorded and a record the
 registry 404s is dropped, so a restart that keeps the registry's storage but
 loses the in-memory records rediscovers them, and one that keeps the records but
 loses the storage drops them. A record written by `PutImage` is left alone either
-way — it was never in the registry.
+way.
 
 ## Related
 

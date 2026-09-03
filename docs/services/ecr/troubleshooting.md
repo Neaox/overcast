@@ -30,8 +30,7 @@ publishes across address families, leaving one instance's `localhost:<port>`
 pointing at the other's registry. The startup probe carries this instance's
 credentials so the two can be told apart: ours accepts them and reports the probe
 repository absent, a sibling's rejects them, and a port answering as someone
-else's is passed over. An anonymous probe cannot make the distinction, because
-every authenticated registry refuses an anonymous request alike.
+else's is passed over.
 
 The fixed default port never had the ambiguity — only the ephemeral fallback.
 
@@ -48,15 +47,11 @@ This is confined to registries on an ephemeral port. A registry on the fixed por
 is named after that port, so the next start finds the name, knows its holder can
 only be a predecessor, and replaces it.
 
-Overcast does not reclaim these automatically. A *running* registry Overcast does
-not own is indistinguishable from one a second instance is using right now: same
-image, same labels, same refusal of another instance's credentials. Removing a
-live sibling's registry mid-push is a real failure; leaving a dead one running is
-untidy. Any automatic sweep trades the second for a chance of the first.
-
-An operator has the one piece of information Overcast does not — whether any
-Overcast is running. With none running, every managed registry container is
-leaked:
+Overcast does not reclaim these automatically: a running registry it does not own
+is indistinguishable from one a second instance is using right now — same image,
+same labels, same refusal of another instance's credentials. Clearing them up
+needs the one piece of information Overcast does not have, whether any Overcast
+is running. With none running, every managed registry container is leaked:
 
 ```bash
 docker ps --filter label=overcast.service=ecr
@@ -71,9 +66,8 @@ the first before running the second.
 
 ## Reclaiming the storage volume
 
-A volume is not removed with its container — being outlived by one is the whole
-point of it — so discarding the images means removing it deliberately. It carries
-the same label the containers do:
+A volume outlives its container, so discarding the images means removing the
+volume itself. It carries the same label the containers do:
 
 ```bash
 docker volume ls --filter label=overcast.service=ecr
@@ -90,10 +84,9 @@ docker volume rm overcast-ecr-registry-data-4510
 > gets a 404 at pull time.
 
 Do it for a corrupt volume, a stale image you cannot otherwise displace, or to
-reclaim the disk — not as routine cleanup. Unlike a leaked container, a volume
-left behind by a killed Overcast is not a problem to fix: it holds no port and
-runs no process, and the next instance on the same fixed port picks it up and
-carries on with the images already in it.
+reclaim the disk. A volume left behind by a killed Overcast needs no cleanup: it
+holds no port and runs no process, and the next instance on the same fixed port
+picks it up and carries on with the images already in it.
 
 ## Related
 

@@ -32,11 +32,10 @@ Symptom, cause and fix for tasks that will not start or stay up behind
 
 ## A stack completes around a service that is not working
 
-It should not, and usually does not: CloudFormation waits for one deployment at
-its desired count with `rolloutState: COMPLETED`, and a settle window keeps a
-container that exits on startup from counting. The window buys evidence, not
-certainty — a container that survives it and then dies is still reported as a
-completed rollout first.
+CloudFormation waits for one deployment at its desired count with
+`rolloutState: COMPLETED`, and a [settle window](./scheduler.md#the-settle-window)
+keeps a container that exits on startup from counting. A container that survives
+the window and then dies is still reported as a completed rollout first.
 
 When a deploy *does* fail, the rollback destroys the evidence. Overcast reads it
 first and keeps it at

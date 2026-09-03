@@ -23,14 +23,11 @@ resolves, so pulling it as written leaves the machine and is refused anonymously
 
 When the address is this account's registry, Overcast pulls it from the registry
 it actually serves, with the credentials `ecr:GetAuthorizationToken` issues. Any
-other image is pulled exactly as written: a public image keeps its meaning, and
-another registry is never offered these credentials. The task still reports the
-image its definition asked for — the rewrite decides where the bytes come from,
-not what was deployed.
+other image is pulled exactly as written, and another registry is never offered
+these credentials. The task still reports the image its definition asked for.
 
 Nothing has to be pushed through ECR for this to apply. If the registry is not
-running, the reference is left alone rather than pointed at a registry that
-cannot answer. See [ECR](../ecr.md).
+running, the reference is left alone. See [ECR](../ecr.md).
 
 ## Secrets
 
@@ -46,9 +43,8 @@ Naming a key reads that field out of a JSON secret, which is what
 `ecs.Secret.fromSecretsManager(secret, "password")` produces and therefore the
 form most task definitions use.
 
-A secret that cannot be resolved is named in a warning and left out, rather than
-injected as an empty value — which would be indistinguishable from a secret whose
-value really is empty. (Real ECS fails the task outright.)
+A secret that cannot be resolved is named in a warning and left out rather than
+injected as an empty value. Real ECS fails the task outright.
 
 The value is read once per new container, immediately before it is created, so a
 running task keeps the value it started with. After rotating a secret, launch a
@@ -63,10 +59,10 @@ CloudWatch Logs, into `awslogs-group` and a stream named
 to every task however it was started and under either launch type, because the
 driver is a property of the container definition rather than of Fargate or EC2.
 
-Output is read back from the Docker daemon — where the real `awslogs` driver also
-lives — and that read reconnects if the daemon drops it, resuming from the last
-line delivered and recognising the ones the daemon replays, so a hiccup costs
-neither the rest of a task's logs nor a duplicate.
+Output is read back from the Docker daemon, and that read reconnects if the
+daemon drops it, resuming from the last line delivered and recognising the ones
+the daemon replays, so a hiccup costs neither the rest of a task's logs nor a
+duplicate.
 
 Separately, and whether or not `awslogs` is configured, Overcast retains the tail
 of each container's output when it exits — up to 200 lines, capped at 16 KiB.
@@ -120,16 +116,15 @@ The volume name lives in the tag **key**, so a Windows path in the value stays
 unambiguous. With exactly one redirectable volume you can drop the suffix and use
 the bare `overcast:hot-reload-path`, the same key Lambda takes.
 
-Only a volume declared with a name and **no configuration** can be redirected — an
-EFS, Docker or `host.sourcePath` volume already names its own storage, and
-overriding it would mean ignoring what the definition asked for. The container
-path and `readOnly` come from the container's own `mountPoints`, exactly as in
-production. Windows paths are normalised (`F:\dev\app` → `/f/dev/app`).
+Only a volume declared with a name and **no configuration** can be redirected: an
+EFS, Docker or `host.sourcePath` volume already names its own storage. The
+container path and `readOnly` come from the container's own `mountPoints`,
+exactly as in production. Windows paths are normalised
+(`F:\dev\app` → `/f/dev/app`).
 
 Anything that cannot be honoured — the flag off, an ambiguous bare tag, an unknown
 or unredirectable volume, a relative path — leaves the task running on the plain
-scratch volumes it declared, and says so in a warning naming what to fix. A task
-never silently starts with a mount you asked for and did not get.
+scratch volumes it declared, and says so in a warning naming what to fix.
 
 ## Related
 

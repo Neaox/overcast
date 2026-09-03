@@ -58,8 +58,7 @@ docker volume create --driver local \
 Task-lifetime volumes are named `overcast-ecs-task-<task-id-prefix>-<volume-name>`
 (the first eight characters of the task ID) and are removed when the task stops;
 anything left behind by a killed process is swept at the next startup.
-`ECS_KEEP_CONTAINERS=true` keeps volumes as well as containers, so a container
-kept for post-mortem inspection can still answer the question it was kept for.
+`ECS_KEEP_CONTAINERS=true` keeps volumes as well as containers.
 
 `efsVolumeConfiguration` mounts need EFS live mode, which is the default. Where
 they are skipped, the warning names which cause applied, once per mount point per

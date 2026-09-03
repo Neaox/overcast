@@ -65,9 +65,8 @@ in-memory ring that does not survive a restart.
 | Service-originated events          | Substantially more                                                          | Six publishers                                  |
 
 A target ARN naming an unsupported service comes back in `PutTargets`'s
-`FailedEntries` with `ErrorCode: UnsupportedTargetType`. That is deliberately
-stricter than AWS: a rule that provisions cleanly and never fires is worse than
-one that refuses up front.
+`FailedEntries` with `ErrorCode: UnsupportedTargetType`, rather than being
+stored as a rule that provisions cleanly and never fires.
 
 ## Gotchas
 
@@ -76,6 +75,9 @@ one that refuses up front.
 > is stored, the rule looks correct in `DescribeRule`, and no event ever
 > satisfies it. Filter on exact `source`, `detail-type` and `detail` values, and
 > do the rest in the target.
+
+Scheduled rules reach the same targets on an in-process clock, and are as strict
+about their expressions as AWS is.
 
 > [!IMPORTANT]
 > A `cron(...)` expression takes AWS's **six** fields, and day-of-week is 1-7

@@ -46,11 +46,8 @@ and add-on operation, access entries and access-policy associations, identity
 provider configs, pod identity associations, and the tagging operations for any
 EKS ARN that resolves to such a cluster.
 
-`DeleteCluster` is the deliberate exception, so mixed-mode leftovers can be
-cleaned up. `ListClusters` filters them out.
-
-The alternative — serving a mock record's synthetic endpoint and CA while live
-mode is on — hands out a kubeconfig that points at nothing.
+`DeleteCluster` is the exception, so mixed-mode leftovers can be cleaned up.
+`ListClusters` filters them out.
 
 ## `UpdateKubeconfig` and 503
 
@@ -60,7 +57,7 @@ mode is on — hands out a kubeconfig that points at nothing.
 - the cluster is ready but the CA is still missing after Overcast has tried to
   reconcile the runtime and read it back out of the k3s container.
 
-Both mean "not yet", not "never" — retry once the cluster settles.
+Both are temporary: retry once the cluster settles.
 
 ## Non-goals
 
