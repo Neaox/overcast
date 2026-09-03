@@ -42,7 +42,7 @@ directory before it accepts anything.
 | Area | Behaviour |
 | --- | --- |
 | Real engines | MySQL, PostgreSQL, MariaDB and both Aurora variants, in containers, with ports allocated from `RDS_PORT_BASE` (default 33060) |
-| Honest readiness | `available` means Overcast opened a TCP connection, ran the credential initialization, and the engine's own readiness client confirmed the final server is listening — on create and on start alike |
+| Honest readiness | `available` means Overcast opened a TCP connection, ran the credential initialisation, and the engine's own readiness client confirmed the final server is listening — on create and on start alike |
 | Failure is terminal | A container that exits, cannot be created, or misses engine readiness within five minutes goes to `failed`. Nothing is left in `creating` or `starting` forever |
 | Per-caller endpoints | `{id}.{region}.rds.{base}` resolves to the engine container from a Lambda or ECS task, on the engine's own port; the host gets the published port. One stack output works from both sides |
 | Aurora | Clusters, member instances that inherit the cluster's placement and credentials, writer promotion on deleting the writer, and both cluster endpoint names |
@@ -70,11 +70,10 @@ Full engine matrix, cluster-setting behaviour and master-account boundaries:
 
 ## Gotchas
 
-> [!WARNING]
-> `OVERCAST_RDS_MODE=mock` reaches `available` in a moment and starts no
-> container — but `DescribeDBInstances` still reports an address and port with
-> nothing listening on them. Use it when you are testing the control plane; keep
-> the default if your code connects.
+`OVERCAST_RDS_MODE=mock` reaches `available` in a moment and starts no
+container, while `DescribeDBInstances` still reports an address and port with
+nothing listening on them. Use it when you are testing the control plane; keep
+the default if your code connects.
 
 > [!CAUTION]
 > Promoting a new writer moves both cluster endpoint names onto its container,

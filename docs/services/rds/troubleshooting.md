@@ -47,9 +47,8 @@ one comes back empty.
 For the engine's own output, the console's Logs tab reads
 `GET /_overcast/rds/instances/{id}/logs`, an emulator-only endpoint. It returns
 the live container's output when there is one, and otherwise the bounded tail
-captured when that container died — which is the case that matters, because a
-database that failed to start usually has no container left by the time anyone
-looks.
+captured when that container died — a database that failed to start usually has
+no container left by the time anyone looks.
 
 ## A connection that used to work is refused
 
@@ -122,10 +121,10 @@ docker rm $(docker ps -aq --filter label=overcast.managed=true)
 **Cause.** Intended. An `AWS::RDS::DBInstance` is not `CREATE_COMPLETE` until
 the instance reports `available`, and `AWS::RDS::DBCluster` behaves the same
 way, so a `DependsOn`, a `Fn::GetAtt` on `Endpoint.Address` or a migration task
-waits behind it. That is what AWS does, and the point of it: a deploy that
-returns success is a deploy whose database accepts connections. An instance that
-fails takes the resource down with the reason RDS recorded, and the stack rolls
-back rather than leaving the database behind.
+waits behind it, as it does on AWS. A deploy that returns success is a deploy
+whose database accepts connections. An instance that fails takes the resource
+down with the reason RDS recorded, and the stack rolls back rather than leaving
+the database behind.
 
 **Fix.** If you want the control plane without the wait, set
 `OVERCAST_RDS_MODE=mock` — accepting that nothing will be listening on the

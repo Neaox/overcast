@@ -21,7 +21,7 @@ A bucket has three versioning states.
 
 | State | Behaviour |
 | --- | --- |
-| **Unversioned** | The initial state. Each key holds one object, a write replaces it, a delete removes it. `ListObjectVersions` reports each object as its key's `null` version, which is what AWS reports too |
+| **Unversioned** | The initial state. Each key holds one object, a write replaces it, a delete removes it. `ListObjectVersions` reports each object as its key's `null` version, as AWS reports it |
 | **Enabled** | Every write mints a version id, returned in `x-amz-version-id`, and the previous version becomes noncurrent. A delete with no `versionId` removes nothing — it adds a *delete marker* that becomes the current version. A delete naming a `versionId` removes that version permanently, and the newest survivor takes its place if it was current |
 | **Suspended** | Not "off". Recorded versions are kept and stay addressable; new writes become the key's single `null` version, replacing any previous null version; a delete still leaves a delete marker, with version id `null` |
 

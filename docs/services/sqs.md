@@ -47,9 +47,9 @@ endpoint with the queue URL's origin whenever the two differ, and .NET and
 Java v1 use the queue URL as the request URI outright.
 
 > [!IMPORTANT]
-> `AWS_ENDPOINT_URL` does not protect against this — it never becomes the
-> client's `endpoint` config field, which is what the middleware checks. Only
-> an endpoint passed explicitly to the client suppresses the override:
+> `AWS_ENDPOINT_URL` does not protect against this. The middleware checks the
+> client's `endpoint` config field, and the environment variable never reaches
+> it. Only an endpoint passed explicitly to the client suppresses the override:
 >
 > ```js
 > new SQSClient({ endpoint: process.env.AWS_ENDPOINT_URL });
@@ -92,4 +92,5 @@ Per-operation status, notes and AWS API links: [SQS operations](sqs/operations.m
 - [SNS](./sns.md) — `sqs` subscriptions deliver into them
 - [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [What host and port a URL carries](../networking/urls.md) — the rule behind the minted origin
 - [AWS API reference](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/Welcome.html)

@@ -60,9 +60,9 @@ aws sqs receive-message --queue-url "$QUEUE" --wait-time-seconds 20
 A target type Overcast cannot fire is **rejected at create and update** with a
 `ValidationException`, rather than accepted and dropped at fire time — as are an
 ECS target without `EcsParameters.TaskDefinitionArn` and an event-bus target
-without `EventBridgeParameters`. The refusal fails locally and loudly instead of
-leaving a schedule that reads correctly in `GetSchedule` and never fires. An
-expression the engine cannot evaluate is refused for the same reason.
+without `EventBridgeParameters`. An expression the engine cannot evaluate is
+refused the same way. Nothing is stored that would read correctly in
+`GetSchedule` and never fire.
 
 ## Gotchas
 
