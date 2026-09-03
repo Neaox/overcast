@@ -5,13 +5,30 @@ The rules below apply to everything under `docs/` that Overcast publishes
 `internal/docsindex`). They exist so a docs edit reads like it was written for
 the person hitting the page, not for whoever reviewed the PR. Follow them the
 same way whether you're a human or an agent; `scripts/docs-index.go --check`
-mechanically enforces the two rules that are checkable (3 and, partially, 2).
+mechanically enforces the rules that are checkable (1, 3, 9, and partially 2).
 
-1. **Every doc has one job.** Pick it from: *quickstart* (get to a working
-   command fast, under 150 words before the first code block), *task guide*
-   (walk a workflow end to end), *reference* (exhaustive, table-first,
-   scannable — not read start to finish), or *troubleshooting* (symptom →
-   cause → fix, one per entry).
+1. **One concern per page, under a length budget that proves it.** Massive info
+   dumps are the failure mode this charter exists to stop, and splitting a dump
+   into four dumps does not stop it. Every page:
+
+   - has **one job**, from: *quickstart* (get to a working command fast, under
+     150 words before the first code block), *task guide* (walk one workflow
+     end to end), *reference* (exhaustive, table-first, scannable — never read
+     start to finish), or *troubleshooting* (symptom → cause → fix, one per
+     entry);
+   - **opens with what the reader came for** — the command, the decision, the
+     answer — then the table or the short list, then the exceptions;
+   - keeps exhaustive detail (every flag, every field) in a **reference table
+     or a `<details>` block**, never in paragraphs;
+   - **links instead of repeating** what another page already says.
+
+   A guide too big for one page becomes a short landing page — what it is, the
+   three to five things most readers need, links — plus one sub-page per
+   concern, mirroring the `docs/services/<key>/` layout. **6,000 characters of
+   prose and 12,000 characters of page** is the mechanical floor under all of
+   this; see "Where this is enforced" for the measure and the opt-out. If a
+   rewrite still reads as a dump, the page is doing too much: split it again,
+   or delete it.
 2. **Intro budget: 2 sentences before the first actionable thing** — a
    command, a table, or a linked next step. If a third sentence of
    throat-clearing feels necessary, cut it or move it after the actionable
@@ -49,6 +66,12 @@ mechanically enforces the two rules that are checkable (3 and, partially, 2).
    in their head to follow it. Not warranted for a single API call, a single
    env var, or anything sequential enough that a numbered list already reads
    clearly.
+9. **No LLM tells.** "This isn't a proxy — it's a full emulator" is a sentence
+   that corrects an idea the reader never held; cut the negated half and state
+   what the thing is. Same for "it's not about X", "seamless(ly)", "delve",
+   "it's worth noting that", and the three-adjective slogan ("fast, simple and
+   powerful"). `internal/docslint` fails the build on the fixed shapes; the
+   allowlist beside it takes the rare genuine exception.
 
 ## Where this is enforced
 
@@ -58,6 +81,29 @@ mechanically enforces the two rules that are checkable (3 and, partially, 2).
   characters (a proxy for rule 2 — a long description is a reliable tell
   that the opening paragraph is doing too much before the first actionable
   thing).
+- **The length budget (rule 1)**, on every published page, generated ones
+  included: **6,000 characters of prose** and **12,000 characters of page**.
+  Prose is what is read top to bottom — headings, paragraphs, list items,
+  quotes. Page is all of that plus code blocks and tables. Both exclude the
+  generated capability block, which is why an operations sub-page made
+  entirely of it measures zero and passes on its own merits.
+
+  Going over is allowed, once it is a decision. Put the reason in an HTML
+  comment anywhere on the page:
+
+  ```md
+  <!-- docs-length-review: every environment variable in one table; splitting
+       it by area would make readers guess which page a variable is on -->
+  ```
+
+  A marker with no real reason fails, and so does one left on a page that has
+  since come under budget — the excuse cannot outlive its reason. Pages that
+  predate the budget sit in `LengthBacklog` in `internal/docslint` at the size
+  they were: they may shrink, never grow, and the entry is deleted (by failing
+  the build) the moment the page comes inside the budget.
+- **The house-style tells (rule 9)**, as fixed phrases and fixed shapes. The
+  failure prints the line to paste into the allowlist beside the linter if the
+  wording is genuinely right; an allowlist line that stops matching fails too.
 - The same check runs `internal/docslint` over `docs/services/`: required
   sections, template section order, the generated capability block last, the
   fixed set of sub-page names, and rule 2 counted literally on a landing

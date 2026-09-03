@@ -1,0 +1,16 @@
+# House-style exceptions for the tells check in internal/docslint/tells.go.
+#
+# One entry per line:
+#
+#     <docs path>: <the exact matched text, as the failure prints it>
+#
+# The failure message prints the line to paste here, so adding an entry is a
+# copy. Blank lines and lines starting with # are ignored.
+#
+# An entry is pinned to one page and one phrase. Rewrite the sentence and the
+# entry stops matching, at which point `make docs-lint` fails and tells you to
+# delete it — an exception cannot outlive the sentence it was argued for.
+#
+# Before adding one, try the rewrite. Every rule here fires on a fixed phrase,
+# and every one of them has a shorter sentence hiding behind it. The list is
+# empty because the corpus had one hit when the rule landed and it was wrong.

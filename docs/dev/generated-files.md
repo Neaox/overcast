@@ -87,7 +87,7 @@ navigation from the same place removes ~200 KB of JSON from the SPA bundle.
 
 | You changed | You run |
 | --- | --- |
-| a published doc under `docs/` | `make docs-lint` — checks frontmatter, in-page anchors, service page structure, the 220-character description budget. Nothing to regenerate, nothing extra to commit. |
+| a published doc under `docs/` | `make docs-lint` — checks frontmatter, in-page anchors, service page structure, the 220-character description budget, the page length budget and the house-style tells. Nothing to regenerate, nothing extra to commit. |
 | `docs/plans/**` or `docs/dev/**` | nothing — neither is published, embedded or indexed |
 | a service's `capabilities_dev.go` | `make docs` (regenerates `all.gen.go`, the service tables and `service-support.json`) |
 | a Go response struct the console reads | `make generate-ts` |

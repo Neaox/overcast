@@ -277,7 +277,7 @@ aws-models-check:
 			-shapes-out models/aws/shapes -shapes-services models/aws/shapes-services.txt -check; \
 	fi
 
-## docs-lint: check docs frontmatter, in-page anchors, service page structure and the description budget
+## docs-lint: check docs frontmatter, anchors, service page structure, the length budget and house-style tells
 # There is nothing to regenerate: the console derives its docs navigation and
 # search index from the docs the binary embeds (internal/docsindex), so editing
 # docs/ needs no follow-up command. This is the gate on the docs themselves.

@@ -14,8 +14,8 @@ tags:
 # HTTPS and HTTP/2
 
 Serve the Overcast API **and** the web console over browser-trusted HTTPS with
-two commands. The payoff is not the padlock — it is **HTTP/2 for the web
-console**, which keeps the UI responsive under load.
+two commands. The payoff is **HTTP/2 for the web console**, which keeps the UI
+responsive under load.
 
 ## Quick start
 

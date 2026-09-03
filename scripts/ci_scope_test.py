@@ -74,6 +74,12 @@ class NeedsCodeJobs(unittest.TestCase):
 		# index, so nothing reads them.
 		self.assertFalse(scope.needs_code_jobs(["docs/dev/content-charter.md", "docs/plans/x.md"]))
 
+	def test_the_tells_allowlist_is_code(self) -> None:
+		# It lives under docs/dev/, but `make docs-lint` reads it and fails on an
+		# entry that no longer matches, so it has to run the docs gate.
+		self.assertFalse(scope.is_prose("docs/dev/llm-tells-allowlist.txt"))
+		self.assertTrue(scope.needs_code_jobs(["docs/dev/llm-tells-allowlist.txt"]))
+
 	def test_markdown_outside_docs_is_still_prose(self) -> None:
 		self.assertFalse(scope.needs_code_jobs(["compat/AGENTS.md", "tests/AGENTS.md"]))
 

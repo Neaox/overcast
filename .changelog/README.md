@@ -42,7 +42,8 @@ every fragment here and fails if `[Unreleased]` gained content.
   [.agents/skills/pull-request/SKILL.md](../.agents/skills/pull-request/SKILL.md)).
   The first line is a standalone summary sentence, capped at 160 chars (see
   "Leading with a summary" below); an indented line adds detail beneath it,
-  which is how the long ones are written.
+  which is how the long ones are written — up to three of them, 200 chars each
+  (see "Budgeting the detail" below).
 
 File name: `.changelog/YYYYMMDD-<slug>.md`, UTC date and a lowercase slug —
 `changelog.py new` derives it from the branch.
@@ -73,6 +74,29 @@ versus a first line that makes a reader hunt for the point:
 
 The PR number stays the pointer to full detail; the summary and its
 continuation lines are what release notes actually show.
+
+## Budgeting the detail
+
+Moving the overflow down is not the same as keeping it: an entry gets **at
+most three detail lines, 200 chars each**, and `changelog.py check` fails one
+that runs past either. A breaking entry's `migration:` line does not count
+towards the three — it is the one line a reader cannot be sent to the PR for —
+but it is held to the same length. An entry that genuinely needs more says so
+on the line directly above it, and the reason has to be a real one (30 chars
+minimum):
+
+```
+<!-- changelog-detail-review: the four flags this replaces are each named in a runbook a reader has to retire -->
+~ [router] one `--route` rule per service, replacing the four routing flags
+  path rules win over host rules
+  an unmatched request still reaches the default backend
+  reloaded without restarting the daemon
+  `--route-host`, `--route-path` and `--route-prefix` keep working until alpha.45
+```
+
+The marker excuses the one entry beneath it and is rejected once that entry
+comes back inside the budget, so it cannot outlive the reason it was written
+for. It stays in the fragment; it never reaches `CHANGELOG.md`.
 
 ## Breaking changes
 
