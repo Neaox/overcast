@@ -83,10 +83,10 @@ const storageDocsPath = "storage.md"
 const noSQLiteDocsPath = storageDocsPath + "#builds-without-sqlite"
 
 // vpcNetworkDocsPath deep-links the stale-isolation advisory to the section
-// of the EC2 limitations page that explains what a gateway does to a VPC's
-// Docker network and what a failed flip leaves behind. The fragment is the
-// docs browser's slug for that heading — see dataDirDocsPath.
-const vpcNetworkDocsPath = "services/ec2/limitations.md#internet-gateways-and-isolation"
+// of the VPC backing page that explains what a gateway does to a VPC's Docker
+// network and what a failed flip leaves behind. The fragment is the docs
+// browser's slug for that heading — see dataDirDocsPath.
+const vpcNetworkDocsPath = "networking/vpc-backing.md#internet-gateways-and-isolation"
 
 // egressModeDocsPath points the egress advisory at the page that explains what
 // each mode can and cannot deliver, and on which hosts. It lands on the modes

@@ -65,7 +65,9 @@ docker network ls --filter label=overcast.vpc-id="$VPC"
 | Without Docker | Every networking feature degrades to metadata-only. API responses stay correct; container connectivity is lost |
 
 Overlapping CIDRs, the Docker-network model behind all of this, and the full
-filter rules are in [EC2 limitations](./ec2/limitations.md).
+filter rules are in [EC2 limitations](./ec2/limitations.md); the Docker
+network underneath a VPC is in
+[How a VPC is backed by a Docker network](../networking/vpc-backing.md).
 
 ## Gotchas
 
@@ -94,7 +96,7 @@ Per-operation status, notes and AWS API links: [EC2 / VPC operations](ec2/operat
 
 ## Related
 
-- [EC2 limitations](./ec2/limitations.md) — the networking model, CIDR strategies and filter rules
+- [EC2 limitations](./ec2/limitations.md) — what the stored metadata does not do, and the filter rules
 - [All service pages](./README.md)
 - [Local VPCs for CDK](../cdk/local-vpc.md) — the VPC-per-stack pattern that works locally
 - [AWS API reference](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/Welcome.html)

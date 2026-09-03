@@ -1,6 +1,6 @@
 ---
 title: "EC2 / VPC limitations"
-description: "How Overcast maps VPCs onto Docker networks, what the OVERCAST_EC2_VPC_STRATEGY values do about overlapping CIDRs, and the exact filter rules Describe* operations apply."
+description: "What EC2 stores and returns without acting on it — instances, security groups, subnets, route tables and the rest — and the exact filter rules every Describe* operation applies."
 section: "Service Reference"
 tags:
   - docs
@@ -12,89 +12,10 @@ tags:
 
 # EC2 / VPC limitations
 
-How the VPC emulation actually works, and where it stops. The working set is on
-[EC2 / VPC](../ec2.md).
-
-## The Docker backing
-
-Each non-default VPC is backed by a real Docker bridge network. The VPC's CIDR
-becomes the Docker subnet, and the network's isolation mode (`--internal`)
-reflects whether an internet gateway is attached — see
-[Internet gateways and isolation](#internet-gateways-and-isolation) for how
-that is kept true.
-
-That isolation only bites when the control plane is internal too, since every
-container sits on both, and `OVERCAST_VPC_EGRESS` is what decides it — see
-[Egress modes](../../networking/egress.md). Under `routed` a container also
-joins a second, routable network per VPC, `overcast-vpc-<vpc-id>-egress`, when
-its subnet's route table grants egress — see
-[`routed`](../../networking/routed-egress.md).
-
-| Label | Value |
-| --- | --- |
-| `overcast.managed` | `true` |
-| `overcast.service` | `ec2` |
-| `overcast.resource-id` | The VPC ID |
-| `overcast.vpc-id` | The VPC ID |
-| `overcast.instance` | The Overcast instance that created it. An instance only ever removes networks carrying its own value, so two instances on one daemon leave each other's alone |
-| `overcast.network.spec-hash` | The state the network was created in, checked on every start — see [Networking § Network state verification](../../networking/network-state.md) |
-| `overcast.network.vpc-role` | `plane` for the VPC's own network, `egress` for the routable one beside it under `OVERCAST_VPC_EGRESS=routed`. Both carry the same VPC ID, so this is what tells them apart |
-
-Networks are named `{OVERCAST_NETWORK}-vpc-{vpcID}` (`overcast-vpc-{vpcID}` by
-default). Docker network lifecycle events —
-create, destroy, connect, disconnect — are forwarded through the event bus, so
-they appear on the console's activity feed.
-
-The default VPC is the exception: its backing network is the shared data plane
-(`OVERCAST_NETWORK`), which is where every container that named no VPC already
-sits.
-
-## Internet gateways and isolation
-
-Under `OVERCAST_VPC_EGRESS=open` — the default — a VPC's network is created
-`--internal` and stays that way until an internet gateway is attached. Under
-`none` every network Overcast creates is `--internal` whatever the template
-says, and attaching a gateway changes nothing.
-
-The flag records your template rather than deciding egress — see
-[Egress modes](../../networking/egress.md).
-
-Docker fixes that flag when a network is created, so
-`AttachInternetGateway` and `DetachInternetGateway` recreate the network to
-change it — and they do so under whatever is already on it. Every container on
-the network (a Lambda function, an ECS task, an RDS instance, and one you
-attached by hand with `docker run --network overcast-vpc-…`) is disconnected,
-the network is recreated with the new flag, and each is reconnected with the
-address and DNS aliases it had. Their control-plane attachment is untouched, so
-an in-flight invocation keeps its Runtime API connection; only connections
-across the VPC bridge itself are dropped, as on AWS when routing changes under
-a live ENI. Gateway changes on one network are serialised, so two stacks
-attaching gateways to VPCs that share a network take turns.
-
-This matters because of the order every CloudFormation template produces:
-`AWS::EC2::VPC` first, `AWS::EC2::VPCGatewayAttachment` later, often after a
-function or task has already been placed in the VPC.
-
-A flip that cannot be completed fails the call with `InternalError`, naming
-what Docker refused, and records nothing: `DescribeInternetGateways` never
-reports a gateway the network does not reflect, and the same call can be
-retried. What still fails is the daemon itself — a container it will not
-disconnect, an address pool it cannot allocate the subnet from, an API error —
-so the reason quoted is the thing to look at. One partial case is treated as
-done: if the network was recreated but a container could not rejoin it, the
-gateway is recorded (the network is in the state asked for) and the container
-is reported through the advisory below.
-
-On startup, reconcile checks every adopted network's flag against the gateway
-state and repairs a mismatch the same way. One it cannot repair — or a
-container that could not rejoin — is reported as the
-`vpc-network-isolation-stale` advisory on the console's Metrics & Health page
-(and in `GET /_overcast/debug/metrics`), naming the VPC and Docker's reason,
-until a later flip succeeds or the VPC is deleted.
-
-The default VPC is the exception: its network is the shared data plane, which
-already has the internet, so a gateway change on it is recorded as metadata
-and the network is left alone.
+What the EC2 emulation records without acting on it, and how `Describe*` filters
+behave, behind [EC2 / VPC](../ec2.md). The Docker mechanics underneath a VPC —
+the backing network, internet gateways and overlapping CIDRs — are in
+[How a VPC is backed by a Docker network](../../networking/vpc-backing.md).
 
 ## What the metadata does not do
 
@@ -118,90 +39,6 @@ Lambda is the one place a VPC has a real data plane: a function with a
 security-group-level isolation is still not enforced, so a Lambda "in" one
 subnet reaches everything on the VPC's network.
 
-## VPC networking strategies
-
-Most setups can skip this section. It matters when you deliberately create VPCs
-with overlapping CIDRs.
-
-In AWS, two VPCs in one account may share a CIDR — `10.0.0.0/16` twice is legal,
-and overlap only matters when you connect them. Overcast backs each VPC with a
-Docker bridge so real containers can talk, and every bridge on a host shares one
-kernel routing table: Linux refuses two bridges claiming overlapping subnets
-(`Pool overlaps with other one on this address space`). AWS's model assumes
-per-VPC isolation; Docker's assumes host-global uniqueness.
-
-`OVERCAST_EC2_VPC_STRATEGY` picks how Overcast behaves when the two disagree.
-
-| Strategy | Status | On overlapping CIDRs |
-| --- | --- | --- |
-| `shared` *(default)* | ✅ Implemented | VPCs with the same CIDR share one Docker network. Isolation between sharers is not enforced |
-| `strict` | ✅ Implemented | `CreateVpc` rejects an overlapping CIDR with `InvalidVpc.Range`. Startup still tolerates pre-existing overlaps: first one wins, losers are marked `conflict` |
-| `remapped` | ✅ Implemented | A shadow `/16` is allocated from `100.64.0.0/10` when the requested CIDR collides. API responses still report the CIDR you asked for |
-| `netns` | ❌ Not implemented | Per-VPC Linux network namespace — real overlap with real isolation. Needs root or `CAP_NET_ADMIN` |
-
-`OVERCAST_EC2_VPC_STRATEGY=netns` fails startup with a configuration error
-naming the strategies that do exist. It is the one value this variable refuses
-outright; an unrecognised value — a typo — falls back to `shared` with a logged
-warning.
-
-Overlap is judged within a region. VPCs are stored per region, and every
-strategy compares a CIDR against the VPCs of the region it is created in — so
-the same CIDR in two regions, which is what CDK's default of `10.0.0.0/16` in
-every stack produces, is not a conflict to `strict`, is not shared under
-`shared`, and is not remapped under `remapped`. The host's routing table is
-still one: Docker refuses the second region's bridge, and that VPC lands as
-`unbacked` (see below). Give each region its own CIDR when more than one region
-needs a backed VPC.
-
-### Choosing one
-
-| Situation | Use |
-| --- | --- |
-| One VPC, or several with distinct CIDRs | `shared` — it never reaches the sharing path and costs nothing |
-| CI that should fail loudly on an accidental CIDR collision | `strict` |
-| CDK or Terraform apps with legitimate overlap that read API-visible IPs | `remapped` |
-| Testing real container-level isolation between same-CIDR VPCs | Not available |
-
-`shared` is the default because the overwhelmingly common workload is one VPC,
-or a handful with distinct CIDRs — in which case it is indistinguishable from
-perfect isolation. Where it does trigger, a container in `vpc-A` (10.0.0.0/16)
-can reach one in `vpc-B` (10.0.0.0/16) because they are on the same bridge.
-
-`remapped` has one cost worth knowing: containers that address each other by
-raw private IP, hardcoded rather than resolved, will not reach the fabricated
-address — only the shadow one is real. Anything using DNS, service discovery,
-or an RDS/ELB endpoint name is unaffected.
-
-### Edge behaviour under `shared`
-
-- **`CreateVpc` with Docker unavailable** stores the VPC as `unbacked`;
-  reconcile picks it up later. If Docker is available and the create fails, the
-  API call still succeeds and the network is best-effort.
-- **`DeleteVpc`** tears the Docker network down only when the VPC being deleted
-  was the last one using it.
-- **Internet gateway attach or detach** flips the network for every sharer at
-  once: a shared network is external while *any* VPC on it has a gateway
-  attached, and goes back to `--internal` only when the last gateway is
-  detached. Isolation between sharers is not enforced anyway, so the most
-  permissive one sets the mode — the alternative, one VPC's detach cutting off
-  another's internet, is a surprise nothing in the AWS model prepares a stack
-  for. Every sharer's record follows the recreated network.
-
-### Inspecting network state
-
-Every VPC carries a `NetworkStatus`, surfaced three ways: as an
-`overcast:network-status` tag on `DescribeVpcs`, in the startup reconcile logs,
-and on `/_overcast/debug/ec2/vpcs` alongside `DockerNetworkID` and
-`DockerCidrBlock`.
-
-| Value | Meaning |
-| --- | --- |
-| `ok` | This VPC owns its backing Docker network |
-| `shared` | It reuses a network owned by another VPC |
-| `unbacked` | No Docker network — Docker was unavailable, the last create failed, or a VPC in another region already holds the CIDR |
-| `conflict` | `strict` mode: its CIDR collided with another VPC. Container-backed operations on it are refused with `InvalidVpc.NetworkStatus` |
-| `remapped` | `remapped` mode: backed by a shadow CIDR |
-
 ## Filters
 
 Every `Describe*` refuses a filter name it does not implement, with AWS's
@@ -217,11 +54,13 @@ VPC in the region reads as "your VPC exists" to a find-or-create script, which
 then adopts the wrong one. If you hit one, drop the filter or narrow the call by
 resource ID.
 
-A filter **name** is matched exactly, as AWS matches it: `Name=VPC-ID` is
-refused, because real EC2 refuses it too.
-
-A filter **value** is a pattern, as on AWS: `*` stands for any run of characters
-including none, `?` for exactly one, and a backslash escapes either.
+| Part | Rule |
+| --- | --- |
+| Filter name | Matched exactly, as AWS matches it: `Name=VPC-ID` is refused, because real EC2 refuses it too |
+| Filter value | A pattern, as on AWS: `*` stands for any run of characters including none, `?` for exactly one, and a backslash escapes either |
+| Two or more filters | AND-ed with each other |
+| Two or more values in one filter | OR-ed |
+| A `<Resource>Id.N` parameter | AND-ed with the filters — all as on AWS |
 
 ```bash
 aws ec2 describe-vpcs    --filters 'Name=tag:Name,Values=overcast-*'
@@ -229,12 +68,10 @@ aws ec2 describe-images  --filters 'Name=name,Values=Amazon Linux 2*'
 aws ec2 describe-subnets --filters 'Name=availability-zone,Values=us-east-1?'
 ```
 
-Filters are AND-ed with each other, values within one are OR-ed, and a
-`<Resource>Id.N` parameter is AND-ed with them — all as on AWS.
-
 ## Related
 
 - [EC2 / VPC](../ec2.md) — quick start and what works
 - [EC2 / VPC operations](./operations.md) — per-operation status and supported filters
+- [How a VPC is backed by a Docker network](../../networking/vpc-backing.md) — the Docker bridge, gateways and CIDR strategies
 - [Local VPCs for CDK](../../cdk/local-vpc.md)
 - [Configuration reference](../../configuration.md)

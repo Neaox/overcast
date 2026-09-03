@@ -85,7 +85,7 @@ explaining.
 | `OVERCAST_HOT_RELOAD`            | `false`                | Umbrella switch for hot reload across every compute service — see [The inner loop](../local-dev.md) |
 | `OVERCAST_LAMBDA_HOT_RELOAD`     | _(`OVERCAST_HOT_RELOAD`)_ | Per-service override: hot reload for Lambda functions                             |
 | `OVERCAST_ECS_HOT_RELOAD`        | _(`OVERCAST_HOT_RELOAD`)_ | Per-service override: hot reload for ECS tasks                                    |
-| `OVERCAST_EC2_VPC_STRATEGY`      | `shared`               | How VPCs map to Docker networks when their CIDRs overlap: `shared`, `strict` or `remapped` — see [EC2 limitations § VPC networking strategies](../services/ec2/limitations.md#vpc-networking-strategies) |
+| `OVERCAST_EC2_VPC_STRATEGY`      | `shared`               | How VPCs map to Docker networks when their CIDRs overlap: `shared`, `strict` or `remapped` — see [How a VPC is backed by a Docker network](../networking/vpc-backing.md#overlapping-cidrs) |
 | `OVERCAST_MCP_REMOTE_EXPOSURE`   | `false`                | **Security-relevant.** Declares that `/_overcast/mcp` will be reachable by non-local clients, and requires `OVERCAST_MCP_AUTH_TOKEN`. See [Exposing MCP](./mcp.md) |
 | `OVERCAST_MCP_AUTH_TOKEN`        | —                      | Bearer token every MCP request must present once set. Treat it like any other credential |
 | `OVERCAST_NETWORK`               | `overcast`             | Docker network every container Overcast starts joins when it belongs to no VPC. Overcast derives `<name>_control` from it for the Lambda Runtime API — see [Networking](../networking.md) |
