@@ -133,7 +133,7 @@ that on Linux and macOS but **not on Windows**, so set
 the reserved service labels a bucket name cannot carry in the bare form,
 [Hostnames that resolve for every caller](./networking/hostnames.md) for the
 offline fallbacks, and the
-[CDK S3 asset upload troubleshooting](./cdk.md#s3-asset-upload-fails-on-windows)
+[CDK S3 asset upload troubleshooting](./cdk/troubleshooting.md#s3-asset-upload-fails-on-windows)
 for the CDK-specific case.
 
 ---

@@ -330,7 +330,7 @@ aws configure set s3.addressing_style path                                  # AW
 > [!WARNING]
 > CDK's asset publisher always uses virtual-hosted style and ignores
 > `forcePathStyle`, so on Windows it needs the hostname, not the setting — see
-> [CDK § S3 asset upload fails on Windows](./cdk.md#s3-asset-upload-fails-on-windows).
+> [CDK § S3 asset upload fails on Windows](./cdk/troubleshooting.md#s3-asset-upload-fails-on-windows).
 
 ### SQS: queue URLs follow the caller
 
@@ -395,7 +395,7 @@ For current coverage use the
 [generated service index](./README.md#services) — every emulated service with its
 operation count — and the per-service pages behind it for operation-level detail.
 CloudFormation coverage is listed separately under
-[supported resource types](./cdk.md#supported-resource-types).
+[supported resource types](./cdk/resource-types.md).
 
 Two defaults worth knowing when coming from LocalStack, both off unless you ask:
 

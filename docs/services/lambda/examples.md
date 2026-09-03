@@ -180,7 +180,7 @@ returns; see [Limitations](limitations.md#other-divergences).
 CDK's `DockerImageFunction` with `DockerImageCode.fromImageAsset` needs none of
 this by hand: `cdk deploy` builds the image, pushes it to the repository
 `cdk bootstrap` created, and writes the `amazonaws.com` URI itself. See
-[CDK § Container assets](../../cdk.md#container-assets-are-served-from-overcasts-own-registry).
+[CDK § Container assets](../../cdk/limitations.md#container-assets-are-served-from-overcasts-own-registry).
 
 ## Layers
 

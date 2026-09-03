@@ -23,8 +23,8 @@ Find the symptom, follow the link. If nothing matches, start the daemon with
 | A hostname will not resolve, or works from the shell but not a container | [Networking](./networking/hostnames.md#in-docker-compose) |
 | A Lambda or task cannot reach a database | [Lambda, ECS and VPCs](./networking/vpcs.md) |
 | A function cannot reach the internet or real AWS (`ENETUNREACH`) | [A function in a VPC fails with `ENETUNREACH`](#a-function-in-a-vpc-fails-with-enetunreach), below |
-| `cdk deploy` fails, or a stack sits in `CREATE_IN_PROGRESS` | [CDK § Troubleshooting](./cdk.md#troubleshooting) |
-| CDK reports no private subnet groups, or stale VPC IDs | [Local VPCs for CDK § Troubleshooting](./cdk/local-vpc.md#troubleshooting) |
+| `cdk deploy` fails, or a stack sits in `CREATE_IN_PROGRESS` | [CDK troubleshooting](./cdk/troubleshooting.md) |
+| CDK reports no private subnet groups, or stale VPC IDs | [Importing a VPC into CDK § Troubleshooting](./cdk/vpc-lookups.md#troubleshooting) |
 | A browser will not trust the certificate | [HTTPS and HTTP/2](./https.md) |
 | The console freezes while Lambdas run | [HTTPS and HTTP/2](./https.md) — it is the browser's 6-connection limit |
 | My file edits are not reaching a container | [The inner loop § When it does not work](./local-dev.md#when-it-does-not-work) |

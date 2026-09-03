@@ -83,8 +83,6 @@ type LengthBacklogEntry struct {
 // the page is waiting for, so the entry is a work item rather than a note that
 // the page is big.
 var LengthBacklog = map[string]LengthBacklogEntry{
-	"docs/cdk.md":                                 {Prose: 10000, Page: 26000, Measured: "9802/25748", Why: "split by task: getting a stack to deploy, the supported-resource reference, and the failure modes"},
-	"docs/cdk/local-vpc.md":                       {Prose: 7500, Page: 12000, Measured: "7186/10099", Why: "the provider walkthrough and the troubleshooting half are two pages"},
 	"docs/migration-from-localstack.md":           {Prose: 14000, Page: 22000, Measured: "13775/21941", Why: "the switch-over steps and the per-feature differences are two audiences"},
 	"docs/services/cloudformation/limitations.md": {Prose: 14500, Page: 16000, Measured: "14164/15943", Why: "the divergence list belongs in a table; the essays under it belong in troubleshooting"},
 	"docs/services/ec2/limitations.md":            {Prose: 10000, Page: 13500, Measured: "9534/13466", Why: "same: table the divergences, move the explanations out"},

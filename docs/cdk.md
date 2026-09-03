@@ -1,6 +1,6 @@
 ---
 title: "Using AWS CDK with Overcast"
-description: "Bootstrap and deploy a CDK stack against Overcast: the environment CDK needs, the supported resource types, Fn::GetAtt coverage, and the Windows asset-upload fix."
+description: "Bootstrap and deploy a CDK stack against Overcast: the environment CDK needs, the five calls a deploy makes, and where the resource coverage, limitations and fixes live."
 section: "Getting Started"
 tags:
   - aws
@@ -11,8 +11,8 @@ tags:
 
 # Using AWS CDK with Overcast
 
-Overcast supports `cdk deploy` and `cdk destroy` for stacks that use
-[supported resource types](#supported-resource-types).
+Overcast supports `cdk deploy` and `cdk destroy` for stacks built from the
+[supported resource types](./cdk/resource-types.md).
 
 > [!TIP]
 > Deploying anything with a VPC? Read
@@ -65,269 +65,21 @@ are no real resources or costs involved.
 npx cdk destroy --all --force
 ```
 
----
-
 ## How it works
 
-CDK's deploy workflow is:
+A deploy is five calls, and all of them are implemented:
 
-1. **`sts:GetCallerIdentity`** — determines account and region. Overcast
-   returns the configured `OVERCAST_ACCOUNT_ID` and `OVERCAST_DEFAULT_REGION`.
-2. **`sts:AssumeRole`** — assumes the CDK bootstrap roles. Overcast returns
-   valid temporary credentials (no real authentication).
-3. **S3 upload** — the synthesised CloudFormation template and assets are
-   uploaded to the CDK bootstrap bucket.
-4. **`CreateChangeSet`** / **`ExecuteChangeSet`** — CloudFormation provisions
-   resources by dispatching to the emulated services internally, on a
-   background goroutine that keeps running after the call returns.
-5. **`DescribeStacks`** — CDK polls until the stack reaches `CREATE_COMPLETE`
-   or `UPDATE_COMPLETE`. Overcast waits briefly (`OVERCAST_CFN_SYNC_WAIT_MS`,
-   default 1000ms) so a fast stack is already terminal on the first poll, but
-   this is a real poll, not a formality — a stack with more resources is
-   still `*_IN_PROGRESS` when step 5 starts.
+| # | Call | What Overcast does |
+| --- | --- | --- |
+| 1 | `sts:GetCallerIdentity` | Answers with the configured `OVERCAST_ACCOUNT_ID` and `OVERCAST_DEFAULT_REGION` |
+| 2 | `sts:AssumeRole` | Returns valid temporary credentials for the bootstrap roles; nothing is authenticated |
+| 3 | S3 upload | Takes the synthesised template and assets into the CDK bootstrap bucket |
+| 4 | `CreateChangeSet` / `ExecuteChangeSet` | Provisions resources by dispatching to the emulated services, on a background goroutine that outlives the call |
+| 5 | `DescribeStacks` | Answers CDK's poll for `CREATE_COMPLETE` or `UPDATE_COMPLETE` |
 
-All of these operations are implemented.
-
----
-
-## Supported resource types
-
-Overcast's CloudFormation provisioner supports **136 resource types** today:
-127 fully provisioned, 9 recognised as stubs, plus custom resources and
-nested stacks (resolved dynamically). Resources with real handlers are
-provisioned through the emulated services — they create real state that you
-can query via the AWS APIs.
-
-### Real handlers (resources are fully provisioned)
-
-| Service         | Resource Types                                                                                                                                                                                                                                                                    |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| S3              | `AWS::S3::Bucket`, `AWS::S3::BucketPolicy`                                                                                                                                                                                                                                        |
-| SQS             | `AWS::SQS::Queue`                                                                                                                                                                                                                                                                 |
-| SNS             | `AWS::SNS::Topic`, `AWS::SNS::Subscription`                                                                                                                                                                                                                                       |
-| DynamoDB        | `AWS::DynamoDB::Table`, `AWS::DynamoDB::GlobalTable`                                                                                                                                                                                                                              |
-| Lambda          | `AWS::Lambda::Function`, `AWS::Lambda::Alias`, `AWS::Lambda::Url`, `AWS::Lambda::EventSourceMapping`, `AWS::Lambda::Permission`, `AWS::Lambda::LayerVersion`, `AWS::Lambda::CodeSigningConfig`                                                                                    |
-| IAM             | `AWS::IAM::Role`, `AWS::IAM::Policy`, `AWS::IAM::ManagedPolicy`, `AWS::IAM::InstanceProfile`, `AWS::IAM::ServiceLinkedRole`, `AWS::IAM::User`, `AWS::IAM::Group`, `AWS::IAM::AccessKey`                                                                                           |
-| EC2 / VPC       | `AWS::EC2::VPC`, `AWS::EC2::Subnet`, `AWS::EC2::SecurityGroup`, `AWS::EC2::InternetGateway`, `AWS::EC2::VPNGateway`, `AWS::EC2::VPCGatewayAttachment`, `AWS::EC2::RouteTable`, `AWS::EC2::Route`, `AWS::EC2::SubnetRouteTableAssociation`, `AWS::EC2::NatGateway`, `AWS::EC2::EIP` |
-| ECS             | `AWS::ECS::Cluster`, `AWS::ECS::TaskDefinition`, `AWS::ECS::Service`                                                                                                                                                                                                              |
-| ECR             | `AWS::ECR::Repository`                                                                                                                                                                                                                                                            |
-| API Gateway     | `AWS::ApiGateway::RestApi`, `AWS::ApiGateway::Resource`, `AWS::ApiGateway::Method`, `AWS::ApiGateway::Deployment`, `AWS::ApiGateway::Stage`, `AWS::ApiGateway::ApiKey`, `AWS::ApiGateway::UsagePlan`, `AWS::ApiGateway::UsagePlanKey`, `AWS::ApiGateway::Authorizer`, `AWS::ApiGateway::Model`, `AWS::ApiGateway::RequestValidator`                                             |
-| API Gateway V2  | `AWS::ApiGatewayV2::Api`, `AWS::ApiGatewayV2::Stage`, `AWS::ApiGatewayV2::Integration`, `AWS::ApiGatewayV2::Route`                                                                                                                                                                |
-| AppSync         | `AWS::AppSync::Api`, `AWS::AppSync::GraphQLApi`, `AWS::AppSync::GraphQLSchema`, `AWS::AppSync::ChannelNamespace`, `AWS::AppSync::ApiKey`, `AWS::AppSync::DataSource`, `AWS::AppSync::Resolver`, `AWS::AppSync::FunctionConfiguration`, `AWS::AppSync::DomainName`, `AWS::AppSync::DomainNameApiAssociation`, `AWS::AppSync::ApiCache`, `AWS::AppSync::SourceApiAssociation` |
-| AppConfig       | `AWS::AppConfig::Application`, `AWS::AppConfig::Environment`, `AWS::AppConfig::ConfigurationProfile`                                                                                                                                                                              |
-| RDS             | `AWS::RDS::DBInstance`, `AWS::RDS::DBCluster`, `AWS::RDS::DBSubnetGroup`, `AWS::RDS::DBParameterGroup`                                                                                                                                                                            |
-| ElastiCache     | `AWS::ElastiCache::CacheCluster`, `AWS::ElastiCache::ServerlessCache`, `AWS::ElastiCache::ReplicationGroup`, `AWS::ElastiCache::SubnetGroup`                                                                                                                                      |
-| EFS             | `AWS::EFS::FileSystem`, `AWS::EFS::MountTarget`, `AWS::EFS::AccessPoint`                                                                                                                                                                                                          |
-| EKS             | `AWS::EKS::Cluster`, `AWS::EKS::Nodegroup`, `AWS::EKS::FargateProfile`, `AWS::EKS::Addon`, `AWS::EKS::AccessEntry`, `AWS::EKS::PodIdentityAssociation`                                                                                                                            |
-| MSK             | `AWS::MSK::Cluster`, `AWS::MSK::Configuration`                                                                                                                                                                                                                                    |
-| EventBridge     | `AWS::Events::EventBus`, `AWS::Events::Rule`                                                                                                                                                                                                                                      |
-| Scheduler       | `AWS::Scheduler::Schedule`, `AWS::Scheduler::ScheduleGroup`                                                                                                                                                                                                                       |
-| Pipes           | `AWS::Pipes::Pipe`                                                                                                                                                                                                                                                                |
-| Step Functions  | `AWS::StepFunctions::StateMachine`                                                                                                                                                                                                                                                |
-| Kinesis         | `AWS::Kinesis::Stream`                                                                                                                                                                                                                                                            |
-| Firehose        | `AWS::KinesisFirehose::DeliveryStream`                                                                                                                                                                                                                                            |
-| CloudWatch      | `AWS::CloudWatch::Alarm`                                                                                                                                                                                                                                                          |
-| CloudWatch Logs | `AWS::Logs::LogGroup`, `AWS::Logs::LogStream`                                                                                                                                                                                                                                     |
-| KMS             | `AWS::KMS::Key`, `AWS::KMS::Alias`                                                                                                                                                                                                                                                |
-| SSM             | `AWS::SSM::Parameter`                                                                                                                                                                                                                                                             |
-| Secrets Manager | `AWS::SecretsManager::Secret`                                                                                                                                                                                                                                                     |
-| Cognito         | `AWS::Cognito::UserPool`, `AWS::Cognito::UserPoolClient`                                                                                                                                                                                                                          |
-| Route 53        | `AWS::Route53::HostedZone`, `AWS::Route53::RecordSet`, `AWS::Route53::HealthCheck`                                                                                                                                                                                                |
-| CloudFront      | `AWS::CloudFront::Distribution`                                                                                                                                                                                                                                                   |
-| ELBv2           | `AWS::ElasticLoadBalancingV2::LoadBalancer`, `AWS::ElasticLoadBalancingV2::TargetGroup`, `AWS::ElasticLoadBalancingV2::Listener`                                                                                                                                                  |
-| Auto Scaling    | `AWS::AutoScaling::AutoScalingGroup`, `AWS::AutoScaling::LaunchConfiguration`                                                                                                                                                                                                     |
-| SES             | `AWS::SES::Template`                                                                                                                                                                                                                                                              |
-| ACM             | `AWS::CertificateManager::Certificate`                                                                                                                                                                                                                                            |
-| CloudTrail      | `AWS::CloudTrail::Trail`                                                                                                                                                                                                                                                          |
-| Backup          | `AWS::Backup::BackupVault`, `AWS::Backup::BackupPlan`                                                                                                                                                                                                                             |
-| Transfer Family | `AWS::Transfer::Server`, `AWS::Transfer::User`                                                                                                                                                                                                                                    |
-| Glue            | `AWS::Glue::Database`, `AWS::Glue::Table`                                                                                                                                                                                                                                         |
-| Athena          | `AWS::Athena::WorkGroup`                                                                                                                                                                                                                                                          |
-| OpenSearch      | `AWS::OpenSearchService::Domain`                                                                                                                                                                                                                                                  |
-| Shield          | `AWS::Shield::Protection`                                                                                                                                                                                                                                                         |
-| WAF v2          | `AWS::WAFv2::WebACL`                                                                                                                                                                                                                                                              |
-| AppRegistry     | `AWS::ServiceCatalogAppRegistry::Application`, `AWS::ServiceCatalogAppRegistry::ResourceAssociation`                                                                                                                                                                              |
-| CloudFormation  | `AWS::CloudFormation::Stack` (nested stacks), `AWS::CloudFormation::CustomResource`, `Custom::*` (resolved dynamically, in addition to the 136 static handlers)                                                                                                                    |
-
-### Stubs (succeed silently, no real state)
-
-These resource types are recognised and return a synthetic physical ID so the
-stack can complete, but no real resources are created:
-
-- `AWS::SQS::QueuePolicy`
-- `AWS::ApiGateway::Account`
-- `AWS::ApiGatewayV2::Deployment`
-- `AWS::ElastiCache::ParameterGroup`
-- `AWS::SES::ConfigurationSet`
-- `AWS::Events::Connection`
-- `AWS::CDK::Metadata`
-- `AWS::CloudFormation::WaitConditionHandle`
-- `AWS::CloudFormation::WaitCondition`
-
-### Unknown resource types
-
-Resource types not in either list above are handled permissively — they receive
-a synthetic physical ID (`<stackName>-<logicalId>-stub`) and succeed. This means
-a template with unsupported types will deploy, but those resources won't have
-real backing state.
-
----
-
-## `Fn::GetAtt` support
-
-CloudFormation `Fn::GetAtt` references resolve to real attribute values for
-provisioned resources. For example, `!GetAtt MyVPC.VpcId` returns the actual
-VPC ID created by the EC2 service. See
-[cloudformation.md](./services/cloudformation.md) for the full list of supported
-attributes per resource type.
-
----
-
-## Limitations
-
-### Custom resource invocation requires Docker
-
-`AWS::CloudFormation::CustomResource` and `Custom::*` types invoke the Lambda
-function specified by `ServiceToken`. When Docker is available, the Lambda
-executes and the response (`PhysicalResourceId`, `Data`) is used as the
-resource's physical ID and attributes. When Docker is unavailable, the handler
-degrades gracefully to a stub physical ID so the stack can still deploy.
-
-### Container assets are served from Overcast's own registry
-
-A `DockerImageAsset` — an ECS `ContainerImage.fromAsset`, a Lambda
-`DockerImageFunction`, or any construct that builds an image — is pushed to a
-`registry:2` container Overcast starts on port `4510`, and the task or function
-that needs it pulls from there. It works out of the box on native Linux and
-Docker Desktop; only a remote Docker daemon needs an `insecure-registries` entry,
-which Overcast checks at registry startup and logs remediation for.
-
-Two consequences worth knowing:
-
-- **`repositoryUri` names `localhost`** even when `OVERCAST_HOSTNAME` is set to
-  something else, because the Docker daemon — not your API client — is what dials
-  it, and Docker trusts plain HTTP to `localhost` and bypasses proxies for it.
-- **Assets survive a restart.** The registry's storage is a named Docker volume,
-  so the next deploy skips rebuilding what the last one pushed. A registry that
-  fell back to an ephemeral port, or one started with
-  `OVERCAST_ECR_REGISTRY_PERSIST=false`, re-pushes — a few seconds, not a
-  failure.
-
-Details: [ECR § The repository URI](./services/ecr/limitations.md#the-repository-uri),
-[§ Asking whether an image is published](./services/ecr/limitations.md#asking-whether-an-image-is-published)
-and [§ Persistence](./services/ecr/limitations.md#persistence). What runs the
-image is [ECS § Images published to the emulated ECR](./services/ecs/examples.md#images-published-to-the-emulated-ecr).
-
-### Nested stack TemplateURL must be reachable
-
-`AWS::CloudFormation::Stack` (nested stacks) is supported. The `TemplateURL`
-must point to an S3 object or any URL reachable by the emulator. The child
-template is fetched, parsed, and provisioned synchronously within the parent
-stack's provisioning goroutine. Child outputs are exposed via
-`Fn::GetAtt ["NestedStack", "Outputs.OutputKey"]`.
-
-### Partial resource coverage
-
-Not every CDK construct maps to a supported resource type. If your stack uses
-resource types not listed above, those resources will be silently stubbed. Check
-the Overcast logs (`OVERCAST_LOG_LEVEL=debug`) to see which resources were
-stubbed during deployment.
-
-### No drift detection or stack policies
-
-`DetectStackDrift`, `SetStackPolicy`, and `GetStackPolicy` return `501`.
-
----
-
-## Troubleshooting
-
-### `cdk bootstrap` fails
-
-Ensure Overcast is running and `AWS_ENDPOINT_URL` is set. Bootstrap needs S3,
-SSM, IAM, and STS — all are supported.
-
-### Stack stuck in `CREATE_IN_PROGRESS`
-
-Overcast provisions resources asynchronously in a background goroutine, so
-`CREATE_IN_PROGRESS` on its own is expected — it clears once the goroutine
-finishes. If it never clears, a resource handler is likely hung or failing;
-check the server logs. A stack that does fail transitions to
-`ROLLBACK_COMPLETE`.
-
-### `Fn::GetAtt` returns unexpected values
-
-Only the attributes listed in [cloudformation.md](./services/cloudformation.md)
-are supported. Unsupported attributes fall back to the resource's physical ID.
-
-### `--hotswap` deployments
-
-CDK hotswap bypasses CloudFormation and calls service APIs directly (e.g.
-`UpdateFunctionCode` for Lambda). This works against Overcast as long as the
-underlying service operation is implemented.
-
-### S3 asset upload fails on Windows
-
-**Symptom:** `cdk deploy` fails on Windows with an S3 connection or DNS
-resolution error after a successful bootstrap. The error originates in the CDK
-asset publisher (Node.js), not in the CloudFormation create/update step.
-
-**Root cause:** CDK's asset publisher sends S3 requests using virtual-hosted
-style, constructing a bucket hostname from your endpoint URL:
-
-```
-cdk-hnb659fds-assets-<account>-<region>.localhost
-```
-
-On Windows, `*.localhost` subdomains do **not** resolve by default — only
-`localhost` itself is in the hosts file. On Linux and macOS the system resolver
-handles `*.localhost` automatically, so this issue does not affect those
-platforms.
-
-**Fix:** Use a wildcard-DNS hostname instead of `localhost`. Overcast treats
-the `OVERCAST_HOSTNAME` environment variable as an additional virtual-host base,
-so any `<bucket>.<hostname>` request is correctly rewritten to path-style.
-
-`localhost.overcast.sh` is a public domain whose DNS unconditionally resolves
-all `*.localhost.overcast.sh` subdomains to `127.0.0.1` (your local machine).
-No hosts-file edits required, and it behaves identically on every OS:
-
-```bash
-# Start Overcast with the wildcard-DNS hostname
-docker run --rm -p 4566:4566 \
-  -e OVERCAST_HOSTNAME=localhost.overcast.sh \
-  ghcr.io/overcast-sh/overcast:latest
-
-# Point CDK at that hostname
-export AWS_ENDPOINT_URL=http://localhost.overcast.sh:4566
-export AWS_ACCESS_KEY_ID=test
-export AWS_SECRET_ACCESS_KEY=test
-export AWS_DEFAULT_REGION=us-east-1
-
-npx cdk bootstrap aws://000000000000/us-east-1
-npx cdk deploy --require-approval never
-```
-
-With this configuration, CDK constructs a bucket hostname like
-`cdk-hnb659fds-assets-000000000000-us-east-1.localhost.overcast.sh:4566`,
-which resolves via public DNS to `127.0.0.1` and is rewritten by Overcast's
-S3 virtual-host middleware to the correct path-style route.
-
-> [!NOTE]
-> This fix also works on Linux and macOS, so
-> `OVERCAST_HOSTNAME=localhost.overcast.sh` is safe to use in a shared CI/CD
-> environment where developers are on different host operating systems.
->
-> `localhost.localstack.cloud` and `localhost.floci.io` are recognised too and
-> behave identically, so a setup carried over from either tool keeps working
-> unchanged. Neither sends any traffic to those projects — the domains are
-> purely a DNS convenience and every request goes to Overcast on your machine.
->
-> All three need a public DNS lookup, so none of them works offline or behind
-> DNS rebinding protection. See the caveat in
-> [Hostnames that resolve for every caller](./networking/hostnames.md) for
-> the fallbacks.
-
----
+Step 5 is a real poll. `OVERCAST_CFN_SYNC_WAIT_MS` (default 1000ms) is how long
+Overcast waits so that a small stack is already terminal on the first poll; a
+stack with more resources is still `*_IN_PROGRESS` when CDK starts asking.
 
 ## Example: deploy a Lambda + API Gateway stack
 
@@ -357,3 +109,20 @@ new apigw.LambdaRestApi(stack, "Api", { handler: fn });
 export AWS_ENDPOINT_URL=http://localhost:4566
 npx cdk deploy --require-approval never
 ```
+
+## The rest of CDK
+
+| Page | Answers |
+| --- | --- |
+| [CDK resource type coverage](./cdk/resource-types.md) | Whether a construct provisions real state, is stubbed, or is unknown |
+| [Local VPCs for CDK](./cdk/local-vpc.md) | A VPC whose IDs change on every teardown, and the stack pattern that survives it |
+| [Importing a VPC into CDK](./cdk/vpc-lookups.md) | `Vpc.fromLookup`, availability zones, and a VPC something else created |
+| [CDK limitations](./cdk/limitations.md) | Custom resources, container assets, nested stacks, drift detection |
+| [CDK troubleshooting](./cdk/troubleshooting.md) | A bootstrap that fails, a stack stuck in progress, the Windows asset upload |
+
+## Related
+
+- [CloudFormation service reference](./services/cloudformation.md) — the provisioner CDK deploys through
+- [Using AWS SDKs and CLI](./sdk-cli.md) — endpoint and credential configuration
+- [Configuration](./configuration.md) — every environment variable
+- [All documentation](./README.md) — every guide and service page
