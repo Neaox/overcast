@@ -48,9 +48,8 @@ export. `CreateMountTarget` starts one NFS-Ganesha container named
 publishing container port 2049 on a free host port at or above
 `EFS_NFS_PORT_BASE`; `DeleteMountTarget` removes it.
 
-It is opt-in because most testing does not need it: Lambda and ECS already
-share bytes through the volume, and an export costs a container and a port per
-mount target.
+It is opt-in: Lambda and ECS already share bytes through the volume, and an
+export costs a container and a port per mount target.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -63,8 +62,7 @@ Ganesha runs entirely in userspace — no `--privileged`, no kernel modules — 
 the export works on Linux, macOS and Windows Docker hosts alike. The container
 is granted exactly one Linux capability, `CAP_DAC_READ_SEARCH`: Ganesha's VFS
 backend resolves NFS file handles with `open_by_handle_at()`, which the kernel
-gates on it. Mounting the export needs `CAP_SYS_ADMIN` on the *client*, which is
-the client's business.
+gates on it. Mounting the export needs `CAP_SYS_ADMIN` on the *client*.
 
 ### Where to mount from
 
@@ -85,10 +83,9 @@ Exports follow the file system's access points: `/` is the volume root, and
   access point before it starts. Mounting `/<AccessPointId>` shows the access
   point's root directory, never the anchor.
 - **Exports are fixed when the mount target starts.** Ganesha reloads exports
-  only on restart, and churning a live NFS server on every `CreateAccessPoint`
-  would break clients holding open files. An access point created afterwards
-  has no pseudo-path until the mount target is deleted and recreated; its data
-  is reachable in the meantime at the equivalent path under the root export
+  only on restart. An access point created afterwards has no pseudo-path until
+  the mount target is deleted and recreated; its data is reachable in the
+  meantime at the equivalent path under the root export
   (an access point rooted at `/app/data` is `/app/data` below `/`), just
   without the `PosixUser` squash.
 

@@ -18,9 +18,8 @@ it does with a task that will not stay up.
 
 A **steady state** is one deployment left, running its desired count, with
 `rolloutState: COMPLETED`. That is what CloudFormation waits for on an
-`AWS::ECS::Service`, so a service that cannot place its tasks — or cannot keep
-them alive — fails the stack rather than leaving it `CREATE_COMPLETE` around a
-service running nothing.
+`AWS::ECS::Service`, so a service that cannot place its tasks, or cannot keep
+them alive, fails the stack.
 
 The rollout state goes further than the AWS CLI's `ecs wait services-stable`,
 which the counts alone satisfy. A service under a `CODE_DEPLOY` or `EXTERNAL`
@@ -35,11 +34,9 @@ failed a task and is replacing it on a backoff.
 
 A container that exits on startup is `RUNNING` for an instant first, and anything
 sampling the service in that instant sees a finished rollout around a service
-about to be at 0/1. AWS says the same thing in substance — a deployment completes
-when the service is "healthy and at the desired number of tasks" — but Overcast
-runs no health checks, so staying up is the only evidence of health it can
-collect. The window applies on the healthy path too, and costs a couple of
-seconds on every deploy.
+about to be at 0/1. Overcast runs no health checks, so staying up is the only
+evidence of health there is. The window applies on the healthy path too, and
+costs a couple of seconds on every deploy.
 
 ## A task definition change is a rollout
 
@@ -63,12 +60,10 @@ path, where a task goes `RUNNING` with nothing behind it, is reserved for
 Overcast running without a container runtime at all.
 
 The reason is recorded on the **one container it belongs to**, as AWS records it.
-Every other container in the task is `STOPPED` with no `reason` of its own: they
-stopped because the task did.
+Every other container in the task is `STOPPED` with no `reason` of its own.
 
 A service keeps its desired count, so a task that exits is replaced and so is one
-that never started. Replacements back off (500 ms doubling to 30 s), turning a
-crash loop into something that slows down rather than a hot loop. A task that
+that never started. Replacements back off, 500 ms doubling to 30 s. A task that
 dies on its own is a **failed task for the deployment that placed it**, exactly
 as one that never started is:
 

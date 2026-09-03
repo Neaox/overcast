@@ -67,10 +67,9 @@ Why the URI is re-minted on every read, why it says `localhost` rather than
 > `x-overcast-emulation-limitation`, which becomes the resource's
 > `ResourceStatusReason` inside a CloudFormation deploy.
 
-> [!CAUTION]
-> Removing the storage volume discards every image pushed to that registry, with
-> no warning and nothing to rebuild them from. See
-> [Troubleshooting](./ecr/troubleshooting.md).
+Removing the registry's storage volume discards every image pushed to it, with
+nothing to rebuild them from — see
+[Troubleshooting](./ecr/troubleshooting.md#reclaiming-the-storage-volume).
 
 <!-- BEGIN overcast:capabilities -->
 

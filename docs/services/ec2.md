@@ -38,12 +38,21 @@ docker network ls --filter label=overcast.vpc-id="$VPC"
 | Area | Behaviour |
 | --- | --- |
 | Default VPC | Seeded per region on first read: `172.31.0.0/16`, `IsDefault: true`, a subnet per AZ, an attached internet gateway, a main route table and a `default` security group |
-| VPCs | Each non-default VPC gets a Docker bridge network whose subnet is the VPC's CIDR. Under `OVERCAST_VPC_EGRESS=open`, the default, attaching an internet gateway takes the network out of `--internal` mode, moving any containers already on it; if Docker refuses, the call fails rather than recording a gateway the network does not reflect. Under `none` every network is `--internal` and the gateway changes nothing |
+| VPCs | Each non-default VPC gets a Docker bridge network whose subnet is the VPC's CIDR. `AttachInternetGateway` recreates that network to change its isolation, and fails rather than recording a gateway the network does not reflect |
 | Lambda in a VPC | A function with a `VpcConfig` is attached to that VPC's network, alongside the control plane — so it can reach an RDS instance or an ECS task in the same VPC |
 | CDK lookups | `Vpc.fromLookup`, subnet `tagSet`, NAT gateway routes in `DescribeRouteTables`, and `MapPublicIpOnLaunch` are all present, so subnet-group classification works |
 | Instances | `RunInstances` records state with async `pending` → `running`, emitting `EC2 Instance State-change Notification` to the default EventBridge bus |
-| Reconciliation | On startup, stored VPCs in every region are reconciled against actual Docker networks: missing ones recreated, drifted IDs updated, and networks this instance created for VPCs that no longer exist in any region removed. A region the startup pass did not cover is reconciled on the first placement into it — adopting and recreating networks, not repairing their isolation, which waits for the next startup pass (a restart, or Docker reappearing). A network another instance on the same daemon created (its `overcast.instance` label differs) is left alone. One with no label predates the label: it is never *removed*, because absence is not permission — but a VPC record that names it still adopts it, and the startup pass rebuilds it to spec |
+| Reconciliation | Stored VPCs are reconciled against actual Docker networks at startup: missing networks recreated, drifted IDs updated, networks left behind by VPCs that no longer exist removed |
 | Dependencies | `DeleteVpc`, `DeleteSubnet` and `DeleteSecurityGroup` fail with `DependencyViolation` while something still references them, as on AWS |
+
+Whether a VPC's containers reach the internet is decided by
+[`OVERCAST_VPC_EGRESS`](../networking/egress.md), not by the gateway alone. The
+startup pass reconciles every region; one it did not reach is reconciled on the
+first placement into it, which adopts and recreates networks without repairing
+their isolation until the next startup. A network another instance on the same
+daemon created is left alone, and an unlabelled one is adopted and rebuilt to
+spec but never removed — see
+[How a VPC is backed by a Docker network](../networking/vpc-backing.md).
 
 > [!NOTE]
 > The default VPC's backing network is Overcast's own shared data plane
@@ -71,13 +80,10 @@ network underneath a VPC is in
 
 ## Gotchas
 
-> [!WARNING]
-> A `Describe*` call refuses a filter name it does not implement, with AWS's
-> `InvalidParameterValue: The filter '<name>' is invalid`. That is stricter than
-> AWS, deliberately: a filter accepted and then ignored makes `describe-vpcs
-> --filters Name=tag:Name,…` return every VPC in the region, which reads as
-> "your VPC exists" to a find-or-create script. The error names every filter
-> that operation does support.
+A `Describe*` call refuses a filter name it does not implement, with AWS's
+`InvalidParameterValue: The filter '<name>' is invalid`, naming every filter
+that operation does support — see
+[the filter rules](./ec2/limitations.md#filters).
 
 > [!CAUTION]
 > `DeleteVpc` on the default VPC removes the record and leaves the network
@@ -97,6 +103,8 @@ Per-operation status, notes and AWS API links: [EC2 / VPC operations](ec2/operat
 ## Related
 
 - [EC2 limitations](./ec2/limitations.md) — what the stored metadata does not do, and the filter rules
+- [How a VPC is backed by a Docker network](../networking/vpc-backing.md) — the Docker bridge, gateways and CIDR strategies
 - [All service pages](./README.md)
+- [Service names and state overrides](../configuration.md#service-names)
 - [Local VPCs for CDK](../cdk/local-vpc.md) — the VPC-per-stack pattern that works locally
 - [AWS API reference](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/Welcome.html)

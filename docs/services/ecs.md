@@ -69,6 +69,8 @@ and the circuit breaker are in [Scheduler](./ecs/scheduler.md).
 > to deploy stop-then-start instead — see
 > [Scheduler](./ecs/scheduler.md#how-many-tasks-a-rollout-runs-at-once).
 
+The other common stall is a service that places no task at all.
+
 > [!IMPORTANT]
 > `networkConfiguration` is required whenever the **task definition's**
 > `networkMode` is `awsvpc`, not whenever `launchType` is `FARGATE`. CDK v2's

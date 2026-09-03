@@ -69,6 +69,8 @@ Supported engines: **redis** (`redis:6`, `redis:7`), **valkey**
 > with the same subnet group, or leave both out of one. See
 > [Lambda, ECS and VPCs](../networking/vpcs.md).
 
+The cache id is constrained too, by Docker rather than by AWS.
+
 > [!WARNING]
 > Container names derive from the cache id you choose, and Docker requires them
 > to be unique per daemon. Two Overcasts sharing a daemon can each hold a cache
