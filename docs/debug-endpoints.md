@@ -69,18 +69,22 @@ names, the same `UNKNOWN`/`RUNNING`/`SUCCESSFUL`/`ERROR` script states. Both
 paths run the same handler, so they cannot drift apart.
 
 The `/_aws/` pair is what a test suite carried over from LocalStack asserts
-against, one assertion per test that sends an email or a message. `/_aws/ses`
-lists emails only — the inbox also holds SMS, webhook and push captures — with
-`?id=` and `?email=` (source address) filters; `DELETE` clears the emails, or
-one by `?id=`, and answers 204. `Region` and `RawData` are not in the body:
-the capture does not hold a region, and cannot tell a raw send from a composed
-one. `/_aws/sqs/messages` takes `?QueueUrl=`, `?QueueName=` with an optional
-`?QueueRegion=`, or the path form `/{region}/{account}/{queue}`; like
-LocalStack it hides in-flight and delayed messages unless `ShowInvisible=true`
-or `ShowDelayed=true`, and it never consumes anything. Receipt handles are the
-messages' real ones rather than LocalStack's placeholder, so one read from the
-peek can be passed to `DeleteMessage`. An empty queue is `"Message": []` in
-the JSON form, not null.
+against, one assertion per test that sends an email or a message. The queue
+peek never consumes anything.
+
+| Path | Query parameters |
+| --- | --- |
+| `GET /_aws/ses` | `?id=` and `?email=` (source address) filter it. Emails only — the inbox also holds SMS, webhook and push captures |
+| `DELETE /_aws/ses` | `?id=` clears one email, no parameter clears them all. Answers 204 either way |
+| `GET /_aws/sqs/messages` | `?QueueUrl=`, or `?QueueName=` with an optional `?QueueRegion=`, or the path form `/{region}/{account}/{queue}` |
+| `GET /_aws/sqs/messages` | `?ShowInvisible=true` and `?ShowDelayed=true` reveal in-flight and delayed messages, hidden by default as in LocalStack |
+
+Three shapes differ from LocalStack's, and a test asserting on them literally
+will notice:
+
+- `Region` and `RawData` are absent from an `/_aws/ses` body. The capture does not hold a region, and cannot tell a raw send from a composed one.
+- An empty queue is `"Message": []` in the JSON form, not null.
+- Receipt handles are the messages' real ones rather than LocalStack's placeholder, so one read from the peek can be passed to `DeleteMessage`.
 
 Anything else under `/_localstack/` or `/_aws/` answers 404 with the Overcast
 endpoint that replaces it, rather than falling through to S3's `NoSuchBucket`
