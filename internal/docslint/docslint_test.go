@@ -195,12 +195,92 @@ func TestCheck_blockquotesAndAlertsDoNotCountTowardTheIntroBudget(t *testing.T) 
 	assertClean(t, Check([]Doc{doc(body)}))
 }
 
-func TestCheck_rejectsAnUnknownServiceSubPage(t *testing.T) {
-	// Given: a sub-page with a name nobody agreed on
-	sub := Doc{Path: "docs/services/s3/faq.md", Body: "# FAQ\n\nSee [S3](../s3.md).\n"}
+// concernPage builds an additional sub-page that satisfies every rule but the
+// one a test is about, and the landing page that links it.
+func concernPage(sub, body string) []Doc {
+	return []Doc{
+		{Path: "docs/services/s3.md", Body: landing("## Quick start\n\n```sh\naws s3 ls\n```\n\n- [Concern](./s3/" + sub + ")")},
+		{Path: "docs/services/s3/" + sub, Body: body},
+	}
+}
 
-	// When / Then: the fixed set is the point of the directory
-	assertReports(t, Check([]Doc{sub}), "unexpected service sub-page")
+func TestCheck_acceptsAConcernNamedServiceSubPage(t *testing.T) {
+	// Given: a page named after the one concern it covers, linked from the
+	// landing page and leading back to it.
+	docs := concernPage("multipart-uploads.md",
+		"# S3 multipart uploads\n\nWhat a multipart upload does differently behind [S3](../s3.md).\n\n"+
+			"## Related\n\n- [S3](../s3.md)\n- [All service pages](../README.md)\n")
+
+	// When / Then: the four fixed names are not the whole directory any more.
+	assertClean(t, Check(docs))
+}
+
+func TestCheck_rejectsAConcernSubPageNameThatIsNotASlug(t *testing.T) {
+	for name, file := range map[string]string{
+		"capitalised":     "Multipart.md",
+		"underscored":     "multipart_uploads.md",
+		"double-hyphened": "multipart--uploads.md",
+	} {
+		t.Run(name, func(t *testing.T) {
+			// Given: a file name the console and the website would route badly
+			docs := concernPage(file, "# S3\n\nSomething behind [S3](../s3.md).\n\n## Related\n\n- [S3](../s3.md)\n")
+
+			// When / Then: the name is the route
+			assertReports(t, Check(docs), "is not a concern slug")
+		})
+	}
+}
+
+func TestCheck_rejectsAConcernSubPageThatRespellsACanonicalName(t *testing.T) {
+	for name, file := range map[string]string{
+		"a singular":   "limitation.md",
+		"a truncation": "troubleshoot.md",
+		"a qualifier":  "examples-advanced.md",
+	} {
+		t.Run(name, func(t *testing.T) {
+			// Given: a second plausible home for material one of the four
+			// fixed names already owns
+			docs := concernPage(file, "# S3\n\nSomething behind [S3](../s3.md).\n\n## Related\n\n- [S3](../s3.md)\n")
+
+			// When / Then: the fixed names keep their meaning
+			assertReports(t, Check(docs), "which has a fixed meaning")
+		})
+	}
+}
+
+func TestCheck_requiresAConcernSubPageToBeLinkedFromItsLandingPage(t *testing.T) {
+	// Given: a concern page the landing page never mentions
+	docs := []Doc{
+		{Path: "docs/services/s3.md", Body: landing("## Quick start\n\n```sh\naws s3 ls\n```")},
+		{Path: "docs/services/s3/multipart-uploads.md", Body: "# S3 multipart uploads\n\nBehind [S3](../s3.md).\n\n## Related\n\n- [S3](../s3.md)\n"},
+	}
+
+	// When / Then: reachable only from search is not reachable
+	assertReports(t, Check(docs), "is not linked from docs/services/s3.md")
+}
+
+func TestCheck_requiresAConcernSubPagesRelatedToOpenWithItsLandingPage(t *testing.T) {
+	// Given: a footer that sends the reader to a sibling first
+	docs := concernPage("multipart-uploads.md",
+		"# S3 multipart uploads\n\nBehind [S3](../s3.md).\n\n"+
+			"## Related\n\n- [Limitations](./limitations.md)\n- [S3](../s3.md)\n")
+
+	// When / Then: orientation comes before anywhere else
+	assertReports(t, Check(docs), `"## Related" opens with "docs/services/s3/limitations.md"`)
+}
+
+func TestCheck_leavesTheCanonicalSubPagesRelatedOrderEditorial(t *testing.T) {
+	// Given: a canonical sub-page whose footer opens with a sibling. The
+	// landing-page-first rule is for the pages the reader has no map of; the
+	// four fixed names are the map.
+	sub := Doc{
+		Path: "docs/services/s3/troubleshooting.md",
+		Body: "# S3 troubleshooting\n\nSymptom, cause and fix behind [S3](../s3.md).\n\n" +
+			"## Related\n\n- [Limitations](./limitations.md)\n- [S3](../s3.md)\n",
+	}
+
+	// When / Then: nothing to report
+	assertClean(t, Check([]Doc{sub}))
 }
 
 func TestCheck_requiresAHandWrittenSubPageToLinkBackToItsLandingPage(t *testing.T) {

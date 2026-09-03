@@ -92,14 +92,29 @@ var TemplateSections = []string{
 // lets the split land before the prose is rewritten.
 var RequiredSections = []string{"Operations", "Related"}
 
-// SubPages are the only file names allowed under docs/services/<key>/.
-//
-// A fixed list is the point: the restructure exists because a single page per
-// service was an undifferentiated dump, and "break it up" degenerates into the
-// same thing one directory down if every writer invents their own filenames.
+// CanonicalSubPages are the four fixed names under docs/services/<key>/, each
+// with a meaning a reader learns once and carries to every service.
 // operations.md is generated; the other three are hand-written and created
 // only when there is enough content to warrant one.
-var SubPages = []string{"operations.md", "limitations.md", "troubleshooting.md", "examples.md"}
+//
+// The list used to be exhaustive. It is not any more: a service directory may
+// also hold additional pages named after a single concern
+// (docs/services/lambda/concurrency.md), which is what let the three largest
+// limitations pages be split by what a reader is looking for rather than
+// sliced into four dumps. The reasoning that put a fixed list here still
+// applies to the four names themselves — they keep their meaning, they come
+// first in the landing page's Related list, and an extra page may not be a
+// respelling of one of them.
+//
+// Reach for an extra page only when a canonical one would otherwise run past
+// the length budget or mix concerns; two pages that a reader has to read
+// together are one page.
+var CanonicalSubPages = []string{"operations.md", "limitations.md", "troubleshooting.md", "examples.md"}
+
+// concernSubPageRE is the shape an additional sub-page name has to take:
+// lowercase words joined by single hyphens, matching the slugs the docs
+// browser and the website build from a path.
+var concernSubPageRE = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*\.md$`)
 
 // RestructurePending lists the service landing pages that have not yet been
 // rewritten to the template. For these, the three rules that need real prose
@@ -170,6 +185,15 @@ func CheckWith(docs []Doc, opts Options) []Problem {
 	sorted := append([]Doc(nil), docs...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Path < sorted[j].Path })
 
+	// A sub-page rule that reads its landing page needs the landing page, so
+	// the set is indexed by stem before any of it is linted.
+	landings := map[string]Doc{}
+	for _, doc := range sorted {
+		if stem, _, kind := classify(doc.Path); kind == docLanding {
+			landings[stem] = doc
+		}
+	}
+
 	for _, doc := range sorted {
 		seen[doc.Path] = true
 		switch stem, sub, kind := classify(doc.Path); kind {
@@ -180,7 +204,7 @@ func CheckWith(docs []Doc, opts Options) []Problem {
 				waivedSatisfied[stem] = waived
 			}
 		case docSubPage:
-			problems = append(problems, checkSubPage(doc, stem, sub)...)
+			problems = append(problems, checkSubPage(doc, stem, sub, landings)...)
 		case docIgnored:
 			// Anything outside docs/services/, and the services index itself.
 		}
@@ -344,7 +368,11 @@ func checkTailAfterBlock(doc Doc, lines []string, end int) []Problem {
 }
 
 // checkSubPage applies the rules for docs/services/<key>/*.md.
-func checkSubPage(doc Doc, stem, sub string) []Problem {
+//
+// landings is every service landing page in the set, keyed by stem: an
+// additional concern page is part of the service's docs only if its landing
+// page links it, and that cannot be decided from the sub-page alone.
+func checkSubPage(doc Doc, stem, sub string, landings map[string]Doc) []Problem {
 	var problems []Problem
 	report := func(line int, format string, args ...any) {
 		// line 0 means "the whole file"; only a real line gets the
@@ -355,9 +383,12 @@ func checkSubPage(doc Doc, stem, sub string) []Problem {
 		problems = append(problems, Problem{Path: doc.Path, Line: line, Msg: fmt.Sprintf(format, args...)})
 	}
 
-	if !contains(SubPages, sub) {
-		report(0, "unexpected service sub-page; docs/services/%s/ may hold only %s (see docs/dev/service-doc-template.md)", stem, strings.Join(SubPages, ", "))
-		return problems
+	canonical := contains(CanonicalSubPages, sub)
+	if !canonical {
+		if msg := concernNameProblem(stem, sub); msg != "" {
+			report(0, "%s", msg)
+			return problems
+		}
 	}
 
 	lines := strings.Split(doc.Body, "\n")
@@ -384,7 +415,130 @@ func checkSubPage(doc Doc, stem, sub string) []Problem {
 	if !strings.Contains(doc.Body, "../"+stem+".md") {
 		report(0, "no link back to the landing page; link ../%s.md so a reader arriving from search knows where they are", stem)
 	}
+	if !canonical {
+		problems = append(problems, checkConcernPageIsReachable(doc, stem, landings)...)
+	}
 	return problems
+}
+
+// concernNameProblem vets an additional sub-page's file name and returns the
+// empty string when the name is allowed.
+//
+// Two rules. The name is a slug — lowercase words joined by single hyphens —
+// because both the console and the website build a route out of it. And it may
+// not read as a respelling of one of the four canonical names: a
+// "limitation.md" or a "troubleshooting-tasks.md" beside "troubleshooting.md"
+// gives a reader two plausible places to look for one thing, which is the
+// failure the fixed list was written to prevent.
+func concernNameProblem(stem, sub string) string {
+	if !concernSubPageRE.MatchString(sub) {
+		return fmt.Sprintf("service sub-page name %q is not a concern slug; docs/services/%s/ holds %s and additional lowercase, hyphenated <concern>.md pages (see docs/dev/service-doc-template.md)",
+			sub, stem, strings.Join(CanonicalSubPages, ", "))
+	}
+	name := strings.TrimSuffix(sub, ".md")
+	for _, canonical := range CanonicalSubPages {
+		fixed := strings.TrimSuffix(canonical, ".md")
+		if strings.HasPrefix(name, fixed) || strings.HasPrefix(fixed, name) {
+			return fmt.Sprintf("service sub-page %q reads as a variant of %s, which has a fixed meaning; put the material in %s, or name the page after the one concern it covers (see docs/dev/service-doc-template.md)",
+				sub, canonical, canonical)
+		}
+	}
+	return ""
+}
+
+// checkConcernPageIsReachable applies the two rules that keep an additional
+// sub-page attached to its service: the landing page links it, and its own
+// link footer leads back to that landing page first.
+//
+// Without the first rule the landing page stops being a map of the directory —
+// a concern page nothing links to is reachable from search and from nowhere
+// else. The second is the template's Related order stated where it can be
+// checked: a page whose footer opens with a sibling concern sends a reader
+// sideways before they know which service they are in.
+func checkConcernPageIsReachable(doc Doc, stem string, landings map[string]Doc) []Problem {
+	var problems []Problem
+	report := func(format string, args ...any) {
+		problems = append(problems, Problem{Path: doc.Path, Msg: fmt.Sprintf(format, args...)})
+	}
+
+	if landing, ok := landings[stem]; ok && !linksTo(landing, doc.Path) {
+		report("is not linked from docs/services/%s.md; an additional sub-page is reachable from its landing page or it is not part of the service's docs — link it from the body or from %q",
+			stem, "## Related")
+	}
+
+	first, ok := firstRelatedLink(doc)
+	switch {
+	case !ok:
+		// A missing or empty link footer is checkRelated's to report.
+	case first != "docs/services/"+stem+".md":
+		report("%q opens with %q; an additional sub-page lists its landing page (../%s.md) first, so a reader who arrived from search is oriented before they are sent anywhere else",
+			"## Related", first, stem)
+	}
+	return problems
+}
+
+// linksTo reports whether doc carries a Markdown link resolving to target.
+func linksTo(doc Doc, target string) bool {
+	dir := path.Dir(doc.Path)
+	for _, line := range eachOutsideFences(strings.Split(doc.Body, "\n")) {
+		if line == "" {
+			continue
+		}
+		for _, m := range markdownLinkRE.FindAllStringSubmatch(line, -1) {
+			dest, _, _ := strings.Cut(m[1], "#")
+			switch {
+			case dest == "", strings.Contains(dest, "://"), strings.HasPrefix(dest, "mailto:"):
+				continue
+			case strings.HasPrefix(dest, "/"):
+				dest = path.Clean("docs" + dest)
+			default:
+				dest = path.Clean(path.Join(dir, dest))
+			}
+			if dest == target {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// firstRelatedLink returns the first link in a page's "## Related" section,
+// resolved to a repo-relative path, and whether the section holds one at all.
+// An off-site link is returned verbatim: it is never the landing page, and the
+// raw URL is what the writer needs to see in the failure.
+func firstRelatedLink(doc Doc) (string, bool) {
+	lines := strings.Split(doc.Body, "\n")
+	visible := eachOutsideFences(lines)
+	related := -1
+	for _, h := range parseHeadings(lines) {
+		if h.depth == 2 && h.text == relatedHeading {
+			related = h.line
+			break
+		}
+	}
+	if related < 0 {
+		return "", false
+	}
+	dir := path.Dir(doc.Path)
+	for i := related + 1; i < len(visible); i++ {
+		if visible[i] == "" {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(visible[i]), "## ") {
+			break
+		}
+		for _, m := range markdownLinkRE.FindAllStringSubmatch(visible[i], -1) {
+			dest, _, _ := strings.Cut(m[1], "#")
+			switch {
+			case dest == "", strings.Contains(dest, "://"), strings.HasPrefix(dest, "mailto:"):
+				return m[1], true
+			case strings.HasPrefix(dest, "/"):
+				return path.Clean("docs" + dest), true
+			}
+			return path.Clean(path.Join(dir, dest)), true
+		}
+	}
+	return "", false
 }
 
 // markdownLinkRE matches an inline Markdown link's target. Reference-style

@@ -288,6 +288,17 @@ rather than at the bottom of the landing page. `internal/docslint` fails `make
 docs-check` on the structure; the template says what belongs in each section
 and which of the page's three readers it is for.
 
+`operations.md`, `limitations.md`, `troubleshooting.md` and `examples.md` keep
+fixed meanings and come first in the landing page's `## Related`. A service
+directory may also hold **concern pages** — `lambda/concurrency.md`,
+`ecs/scheduler.md` — but write one **only when a canonical page would otherwise
+exceed the length budget or mix two concerns a reader looks for separately**.
+The name is a lowercase hyphenated slug; it may not respell one of the four
+(`limitation.md`, `examples-advanced.md` are refused); the landing page must
+link it; and its own `## Related` opens with `../<key>.md`. `internal/docslint`
+enforces all of it. Material that belongs to a guide rather than to the service
+goes under `docs/networking/` or `docs/cli/` and is linked from there instead.
+
 ---
 
 ## Claiming an issue

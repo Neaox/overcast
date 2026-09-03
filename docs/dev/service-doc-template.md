@@ -120,8 +120,8 @@ Regenerate with `make docs`; never hand-edit it.
 
 ## Sub-pages
 
-Long-form material moves into `docs/services/<key>/`, which holds these four
-files and no others:
+Long-form material moves into `docs/services/<key>/`. Four file names are fixed,
+and mean the same thing for every service:
 
 | File                | Written by | Holds                                                        |
 | ------------------- | ---------- | ------------------------------------------------------------ |
@@ -134,6 +134,32 @@ Create one only when the content exists. An empty sub-page is worse than no
 sub-page: it costs a reader a click to learn nothing. Every hand-written
 sub-page links back to `../<key>.md`, so a reader arriving from search knows
 which service they are looking at.
+
+### Concern pages
+
+A directory may hold further pages named after one concern —
+`lambda/concurrency.md`, `lambda/runtimes.md`, `ecs/scheduler.md`. Write one
+**only when a canonical page would otherwise run past the length budget or
+cover two subjects a reader looks for separately.** Lambda's limitations page
+was five reference chapters under one H1; a platform engineer looking for the
+concurrency ceiling had to scroll past logging to find it. Two pages a reader
+has to read together are one page, and four dumps are not a split.
+
+| Rule                          | Detail                                                                     |
+| ----------------------------- | -------------------------------------------------------------------------- |
+| Name                          | Lowercase words joined by single hyphens, after the concern: `dead-letter-queues.md`. |
+| Not a respelling              | `limitation.md`, `troubleshoot.md`, `examples-advanced.md` are refused — the four fixed names keep their meaning. |
+| Linked from the landing page  | From `## Related` or from the body. A page nothing links to is reachable from search and nowhere else. |
+| `## Related` opens with `../<key>.md` | The canonical sub-pages are the reader's map of the directory; a concern page has to hand them back to it first. |
+| Budget                        | The 6,000/12,000 budget applies per page, so a concern page that is itself a dump has not solved anything. |
+
+`internal/docslint` enforces all five. The landing page's `## Related` still
+lists `limitations`, `troubleshooting` and `examples` before the concern pages,
+so the fixed names stay the first thing a reader sees.
+
+Where the material belongs to a guide rather than to the service — EC2's
+Docker-backing mechanics, say — put it under `docs/networking/` and link it.
+A concern page is for what is genuinely about this one service.
 
 **The link back goes inside the first sentence, not on a line of its own.**
 `Back to [ECS](../ecs.md).` spends the one line every reader reads on the one
