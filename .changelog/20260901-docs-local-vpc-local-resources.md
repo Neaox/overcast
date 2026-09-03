@@ -1,2 +1,0 @@
-~ [docs/cdk] the local VPC guide now leads with a local resources stack that creates the VPC in CDK, replacing the bootstrap-script-plus-metadata-file pattern.
-  application stacks still take an `ec2.IVpc` and stay environment-agnostic, and the `fromLookup`/`fromVpcAttributes` provider pattern is kept for VPCs created outside CDK

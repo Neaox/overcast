@@ -1,3 +1,0 @@
-* [cloudformation] a stack recreated under a deleted stack's name no longer inherits its events; `DescribeStackEvents` by name lists the current stack alone.
-  events are keyed by the stack generation — the uuid in its `StackId` — rather than by name, as on AWS. The CDK's bootstrap retry of a `ROLLBACK_COMPLETE` CDKToolkit stack read the deleted stack's `CREATE_FAILED` as the new one's and reported a failure against a resource the new template did not have
-  a deleted generation's events stay readable by passing its `StackId`, even after the name has been reused; events written by earlier versions are moved to the new layout on first read, each to the generation its own `StackId` names
