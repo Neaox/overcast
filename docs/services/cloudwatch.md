@@ -71,6 +71,8 @@ refuses to invent, is in [CloudWatch limitations](./cloudwatch/limitations.md).
 > one-hour metric window sees the missing periods and resolves them through
 > `TreatMissingData`. Long-window alarms are not a local test.
 
+An alarm the evaluator cannot decide at all announces itself instead.
+
 > [!TIP]
 > An alarm Overcast cannot evaluate never sits silently armed. It stays
 > `INSUFFICIENT_DATA` with a `StateReason` saying so, the `PutMetricAlarm`

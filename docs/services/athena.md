@@ -54,9 +54,9 @@ aws athena get-query-execution --query-execution-id <id>
 ## Gotchas
 
 > [!NOTE]
-> Athena is here so a stack that provisions workgroups deploys, and so code
-> calling `StartQueryExecution` gets an id-shaped answer it can poll.
-> Assertions about returned rows need real Athena.
+> A stack that provisions workgroups deploys, and code calling
+> `StartQueryExecution` gets an id-shaped answer it can poll. Any assertion
+> about the rows that come back needs real Athena.
 
 <!-- BEGIN overcast:capabilities -->
 

@@ -85,6 +85,8 @@ status machine and the waits. Behind it:
 > already polling. The console colours those as notices and badges the stack
 > "N of M stub or inert".
 
+A stack that fails outright leaves a separate trail.
+
 > [!TIP]
 > When a deploy fails, the rollback destroys the evidence. Overcast reads it
 > first — `GET /_overcast/cloudformation/stacks/{stackName}/diagnostics` returns

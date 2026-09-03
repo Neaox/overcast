@@ -37,11 +37,19 @@ aws appconfig create-hosted-configuration-version --application-id "$APP" \
 
 | Area | Behaviour |
 | --- | --- |
-| Resources | Applications, environments, configuration profiles and hosted configuration versions, with the hierarchy AWS models (application → environment, application → profile). |
-| Protocol | REST-JSON at AWS's own paths — `POST /applications`, `POST /applications/{ApplicationId}/environments`, and so on. There is no `X-Amz-Target` namespace, because the AWS models give AppConfig none. |
-| Hosted versions | The configuration travels as the HTTP payload with `Content-Type` required; `Description` and `VersionLabel` ride request headers, and the response echoes `Application-Id`, `Configuration-Profile-Id`, `Version-Number`, `Description`, `Content-Type` and `VersionLabel`, as AWS binds them. `Latest-Version-Number` gives optimistic concurrency, answering `409` on a mismatch. |
-| Tagging | `/tags/{ResourceArn}`, dispatched on the ARN, so an `arn:aws:appconfig:…` ARN reaches AppConfig's own tag store. |
-| Pagination | `max_results` and `next_token` query parameters, answering `{ "Items": [...], "NextToken": "..." }`. |
+| Resources | Applications, environments, configuration profiles and hosted configuration versions, in the hierarchy AWS models |
+| Protocol | REST-JSON at AWS's own paths — `POST /applications`, `POST /applications/{ApplicationId}/environments`, and so on. There is no `X-Amz-Target` namespace |
+| Hosted versions | The configuration travels as the HTTP payload, with the metadata on request and response headers — see below |
+| Tagging | `/tags/{ResourceArn}`, dispatched on the ARN, so an `arn:aws:appconfig:…` ARN reaches AppConfig's own tag store |
+| Pagination | `max_results` and `next_token` query parameters, answering `{ "Items": [...], "NextToken": "..." }` |
+
+### How a hosted version is carried
+
+`CreateHostedConfigurationVersion` requires a `Content-Type`, and takes
+`Description` and `VersionLabel` as request headers. The response echoes
+`Application-Id`, `Configuration-Profile-Id`, `Version-Number`, `Description`,
+`Content-Type` and `VersionLabel`, as AWS binds them. `Latest-Version-Number`
+gives optimistic concurrency, answering `409` on a mismatch.
 
 ## Differences from AWS
 

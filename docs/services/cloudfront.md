@@ -11,9 +11,9 @@ tags:
 
 # CloudFront — Amazon CloudFront
 
-A distribution is not metadata alone: a request through one is matched against
-the cache behaviours, proxied to the origin, cached, and passed through any
-CloudFront Function attached to it.
+A request through a distribution is matched against the cache behaviours,
+proxied to the origin, cached, and passed through any CloudFront Function
+attached to it.
 
 **Status:** ✅ Supported
 
@@ -89,6 +89,8 @@ on it, is in [CloudFront limitations](./cloudfront/limitations.md).
 > cookies and origin access control are stored and none are enforced, so an
 > "OAC-protected" bucket stays directly readable and a signed URL is never
 > checked. Do not use Overcast to test whether private content is private.
+
+The proxy is similarly relaxed about which version of a function it runs.
 
 > [!WARNING]
 > A CloudFront Function runs whether or not it has been published. The proxy

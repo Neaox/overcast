@@ -26,21 +26,14 @@ so, rather than being refused.
 | `ExtendedStatistic` — `p99`, `tm99`, … | Percentiles are not computed |
 | `LessThanLowerOrGreaterThanUpperThreshold`, `LessThanLowerThreshold`, `GreaterThanUpperThreshold` | Anomaly-band operators, with no band |
 
-An alarm that looks armed but is never watched is a real trap, so it is never
-left silent. It declares itself in three places:
+Such an alarm is never left silent. It declares itself in three places:
 
 - `StateValue` stays `INSUFFICIENT_DATA`, and `StateReason` says the state is
   not computed.
 - The `PutMetricAlarm` response carries `x-overcast-emulation-limitation`,
-  naming what is not emulated. Ordinary alarms carry no such header — a header
-  on every alarm would train people to ignore it.
+  naming what is not emulated. Ordinary alarms carry no such header.
 - `ResourceStatusReason` on the CloudFormation event, when the alarm came from
   a template, so it appears as the deploy goes past.
-
-Refusing these used to fail the CloudFormation resource, and with it the whole
-deploy: a monitoring stack building one alarm per function took the environment
-down with it. The alarm's defect is that Overcast will not act on it, which is
-not a reason to refuse everything standing behind it.
 
 ## Refused
 
@@ -53,10 +46,8 @@ not a reason to refuse everything standing behind it.
 Values AWS itself rejects still get AWS's `400 ValidationError`, not a `501`:
 an unknown `Statistic` or `ComparisonOperator`, an invalid `TreatMissingData`,
 a `Period` that is not 10, 20, 30 or a multiple of 60, or `DatapointsToAlarm`
-greater than `EvaluationPeriods`. The two claims are different — one says the
-request is wrong, the other says Overcast is incomplete. A metric-math alarm
-that *also* names a top-level `Namespace`/`MetricName` is one AWS rejects, and
-so does Overcast.
+greater than `EvaluationPeriods`. A metric-math alarm that *also* names a
+top-level `Namespace`/`MetricName` is one AWS rejects, and so does Overcast.
 
 ## Defaults
 
@@ -74,9 +65,7 @@ Five more are optional only because a PromQL alarm carries them inside
 `EvaluationCriteria`. For an alarm on a metric they are required, and omitting
 one gets a `400 ValidationError` rather than a substituted value:
 `Statistic` (or `ExtendedStatistic`), `ComparisonOperator`, `Period`,
-`EvaluationPeriods` and `Threshold`. Filling these in would not be a default so
-much as a different alarm from the one the caller half-described —
-`Threshold: 0` is a value, not an omission.
+`EvaluationPeriods` and `Threshold`.
 
 `AlarmName` is required by `PutMetricAlarm` and optional on
 `AWS::CloudWatch::Alarm`: CloudFormation generates
@@ -85,17 +74,15 @@ CDK relies on.
 
 ## Deliberate divergences
 
-| Behaviour | Overcast | AWS |
+| Area | On AWS | Overcast |
 | --- | --- | --- |
-| `SetAlarmState` | Protected for one full evaluation range (`Period × EvaluationPeriods`), so a forced state is observable and actually reaches its actions | Reverts at the next evaluation, which can be almost immediately |
-| Look-back | Exactly the configured range; gaps resolve through `TreatMissingData` | May reach further back to fill a range short of datapoints |
-| Alarm history | Bounded by count — 100 items per alarm | Bounded by age — 14 days |
-| A datapoint published with no unit | Counts towards an alarm that names a unit | Filed under `None`, so such an alarm never sees it and sits in `INSUFFICIENT_DATA` |
-| `EvaluationWindow` | Accepted and ignored; the period-aligned window is always used | Default sliding window |
+| `SetAlarmState` | Reverts at the next evaluation, which can be almost immediately | Protected for one full evaluation range (`Period × EvaluationPeriods`), so a forced state reaches its actions |
+| Look-back | May reach further back to fill a range short of datapoints | Exactly the configured range; gaps resolve through `TreatMissingData` |
+| Alarm history | Bounded by age — 14 days | Bounded by count — 100 items per alarm |
+| A datapoint published with no unit | Filed under `None`, so an alarm naming a unit never sees it and sits in `INSUFFICIENT_DATA` | Counts towards an alarm that names a unit |
+| `EvaluationWindow` | Default sliding window | Accepted and ignored; the period-aligned window is always used |
 
-The unit divergence exists because locally published metrics routinely omit the
-unit while the CDK construct that created the alarm supplied one. A datapoint
-that *does* name a unit is still held to it.
+A datapoint that *does* name a unit is still held to it.
 
 ## Tagging
 
