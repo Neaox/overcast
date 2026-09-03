@@ -261,6 +261,12 @@ can be applied mechanically rather than reconstructed from memory.
   Docker never applies `--internal` retroactively, so a plane created before alpha.37 silently kept egress forever — the machine that "still worked" in the report that prompted this
   a network that still has containers attached is left alone and warned about at WARN, naming the `overcast network reset` that fixes it; both planes are checked, not just the control plane
 
+- [networking/state] a state reset no longer orphans every Docker resource the instance created.
+  the sweep-domain identity stamped into `overcast.instance` lived in the state store, so `overcast reset`, `POST /_overcast/reset` and `POST /_localstack/state/reset` wiped it with everything else. The next start minted a fresh one, could no longer prove it had created the networks carrying the old one, and left them alone for ever — one leaked Docker network per VPC per reset, which on a CI loop that resets between suites exhausts Docker's address pools
+  the identity names the instance, not its emulated state, so it now survives a reset: `<service>:instance` is exempt on every path, including `overcast reset <service>`, which reached it through the same prefix
+  the reset's own leftovers are collected again as a result — still stamped as ours, no longer claimed by any record, so the next startup reconcile sweeps them exactly as it did before the ownership label existed
+  a network stamped by an identity that is genuinely gone is still never removed: it is indistinguishable from a live neighbour's, which is what the label is for. `overcast network status` reports those, and `docker network rm` is the way out
+
 - [ec2] one Overcast instance no longer deletes another's VPC networks.
   the reconcile sweep removed every network labelled `overcast.service=ec2` that its own store did not claim, which on a shared daemon is a neighbour's live VPC network. Every network now carries `overcast.instance`, the identity of the instance that created it, and an instance removes only its own
   networks created before this release carry no label; they are still adopted, and never removed. VPC networks are named `{OVERCAST_NETWORK}-vpc-{vpcID}`, unchanged at the default
