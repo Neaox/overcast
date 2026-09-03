@@ -36,7 +36,7 @@ aws ssm get-parameter --name /app/db/url --query Parameter.Value --output text
 | Path queries | `GetParametersByPath`, recursive or direct children only                                             |
 | Listing      | `DescribeParameters` with a name `BeginsWith` filter                                                 |
 | Pagination   | `MaxResults` + `NextToken` on `GetParametersByPath` and `DescribeParameters`                         |
-| Tags         | `AddTagsToResource`, `ListTagsForResource`                                                           |
+| Tags         | `AddTagsToResource`, `ListTagsForResource`, `RemoveTagsFromResource`                                 |
 | Deletes      | `DeleteParameter`, `DeleteParameters`                                                                |
 
 Every `PutParameter` — overwrite included — creates a new version, and
@@ -48,7 +48,6 @@ Every `PutParameter` — overwrite included — creates a new version, and
 | --------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | `SecureString`              | Encrypted with a KMS key                                              | Stored in plaintext; masked in the response unless `WithDecryption` is set |
 | Version labels              | `LabelParameterVersion` / `UnlabelParameterVersion`                   | Not implemented — `501 Not Implemented`                                    |
-| `RemoveTagsFromResource`    | Removes tag keys                                                      | Not implemented — `501 Not Implemented`                                    |
 | The rest of Systems Manager | Documents, automation, run command, patch baselines, service settings | Not implemented — `501 Not Implemented`                                    |
 
 ## Gotchas
