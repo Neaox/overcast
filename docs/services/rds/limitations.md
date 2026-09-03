@@ -28,8 +28,7 @@ The full divergence list behind [RDS](../rds.md). Everything here applies to
 Any `EngineVersion` is accepted. A version with no image of its own is served by
 the nearest one in its family — `8.0.39` runs `mysql:8.0`, `16.3` runs
 `postgres:16` — and the substitution is logged. Real stacks send precise
-versions (CDK's `MysqlEngineVersion.VER_8_0_39`), and refusing them used to
-leave the instance `available` with no database behind it.
+versions, such as CDK's `MysqlEngineVersion.VER_8_0_39`.
 
 Aurora uses its open-source counterpart's image because both speak the same wire
 protocol. The Aurora resource model — `CreateDBCluster`, then
@@ -58,9 +57,9 @@ the cluster engine.
 | `EngineVersion`, `Port` | The cluster's |
 | `DBName` | The cluster's `DatabaseName` |
 
-This is what makes the CDK shape work: `rds.DatabaseCluster` synthesises an
-`AWS::RDS::DBInstance` with a `DBClusterIdentifier` and nothing else, because on
-AWS the cluster supplies the rest.
+`rds.DatabaseCluster` synthesises an `AWS::RDS::DBInstance` with a
+`DBClusterIdentifier` and nothing else, because on AWS the cluster supplies the
+rest.
 
 An inherited subnet group counts as the instance's own for the
 `PubliclyAccessible` defaults below, so a member of a cluster in a subnet group
@@ -111,7 +110,7 @@ and Aurora PostgreSQL it is a non-superuser with `CREATEDB`, `CREATEROLE` and
 membership in the emulated `rds_superuser` role, matching the boundary AWS
 exposes rather than the stock image's unrestricted superuser.
 
-What this does **not** emulate: AWS's full catalog of protected internal
+What this does **not** emulate: AWS's full catalogue of protected internal
 accounts and `rds_*` procedures. PostgreSQL extension availability follows the
 backing image rather than the RDS extension allowlist, and reserved-word
 validation covers the engine system schemas and common SQL keywords rather than
@@ -143,28 +142,14 @@ valid and is escaped before it reaches the engine.
 > them by default. If a `{{resolve:secretsmanager:…}}` password is refused, set
 > `ExcludeCharacters` on the generated secret, as you would for AWS.
 
-## Changing a password on a live engine
+## Password changes
 
-`MasterUserPassword` is applied to the running database, not just the record, so
-rotating one in a CloudFormation template takes effect and never replaces the
-instance. A container reads `MYSQL_ROOT_PASSWORD` (or its equivalent) once, when
-it initialises its data directory, so two rules follow:
-
-- **The instance must be `available`.** A stopped or failed one is refused with
-  `InvalidDBInstanceState` rather than accepted and remembered — there is no
-  later moment at which a pending password could be applied.
-- **An engine that refuses the change fails the whole call.** Neither the
-  password nor anything else in the same request is recorded. Storing a password
-  the database does not honour would report a rotation that leaves every
-  connection refused.
-
-With Docker unavailable the new password is simply stored, and a container built
-for that instance later is seeded from it.
-
-`ModifyDBCluster` rotates a cluster's password once per member through the same
-code. If one member refuses, the call fails and names it; the members already
-rotated keep the new password, because rolling them back would need the old one
-to still work on engines that have stopped accepting it.
+`MasterUserPassword` is applied to the running database rather than only
+recorded, so rotating one in a CloudFormation template takes effect and never
+replaces the instance. The instance must be `available` for it, and with Docker
+unavailable the password is stored and seeded into the container built for that
+instance later. `ModifyDBCluster` rotates each member in turn — see
+[`ModifyDBInstance` refuses the new password](./troubleshooting.md#modifydbinstance-refuses-the-new-password).
 
 ## Cluster endpoint names
 

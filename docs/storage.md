@@ -65,30 +65,27 @@ persistence, in this order:
 
 1. **The data directory is a mounted volume or bind mount.** A Docker named
    volume or bind mount at `OVERCAST_DATA_DIR` (the container's `/data` by
-   default) is durable by construction — mounting it is itself the signal.
+   default) is durable by construction — `docker run -v mydata:/data …/overcast`
+   resolves to `hybrid`.
 2. **`OVERCAST_DATA_DIR` was explicitly configured.** Setting it yourself
    (native installs, or a Docker image customisation) is evidence you intend
    that directory to be used, whether or not it happens to be a mount.
 3. **An existing Overcast database is already in the resolved data directory.**
-   A regression guard: state persisted there by a previous run is never
-   stranded in memory mode.
+   A native install with data already at `~/.overcast/data` resolves to
+   `hybrid`, so state persisted by a previous run is never stranded in memory.
 
-None of them, and `auto` resolves to **`memory`** — persisting into a directory
-nobody asked for and nothing mounts is pointless. In practice:
-
-| Command                                                          | Resolves to                                     |
-| ---------------------------------------------------------------- | ----------------------------------------------- |
-| `docker run -v mydata:/data …/overcast`                          | `hybrid` (signal 1)                             |
-| `docker run …/overcast` (no volume — including CI)               | `memory`                                        |
-| A native install with data already at `~/.overcast/data`         | `hybrid` (signal 3)                             |
-| `docker run -v mydata:/data …/overcast-slim`                     | `memory` — no SQLite, signals not even consulted |
+None of them, and `auto` resolves to **`memory`** — `docker run …/overcast` with
+no volume, which is the CI case. An artifact without SQLite short-circuits before
+the signals are weighed and resolves to `memory` whatever is mounted.
 
 Any explicit `OVERCAST_STATE` (including `memory`) wins outright; `auto` applies
-only when the variable is unset or literally `auto`. To see what it chose, read
-the startup log line —
-`storage mode auto-detected: <mode> (<reason>) — set OVERCAST_STATE to override`
-— or the Metrics & Health page in the web console, which raises an advisory
-whenever the resolved mode is `memory`.
+only when the variable is unset or literally `auto`. Three places report what it
+chose: the startup log line
+(`storage mode auto-detected: <mode> (<reason>) — set OVERCAST_STATE to override`),
+the `storage` object in `GET /_overcast/health` (resolved default, what was
+configured, per-service overrides, backend health), and the console dashboard
+footer, whose tooltip lists the overrides and which raises an advisory whenever
+the resolved mode is `memory`.
 
 ## Builds without SQLite
 
@@ -108,11 +105,10 @@ In an artifact without SQLite:
   The container starts normally, serves normally, and every bucket, queue and
   table is gone on restart.
 - **`hybrid` and `persistent` refuse to start**, exiting non-zero with
-  `init state backend: hybrid store: not compiled with SQLite support`. Failing
-  loudly is deliberate: the alternative is pretending to persist.
-- **`wal` works, and is how you get durability here.** It is an append-only log
-  with no SQLite dependency, so it is compiled into every build. Its one
-  constraint is in the table above: the whole dataset lives in memory.
+  `init state backend: hybrid store: not compiled with SQLite support`.
+- **`wal` works, and is how you get durability here.** An append-only log with
+  no SQLite dependency, compiled into every build; the whole dataset lives in
+  memory, as the table above says.
 
 So a persistent slim container needs the volume **and** the backend:
 
@@ -183,14 +179,6 @@ under `$OVERCAST_DATA_DIR/<service>/`.
 > owns all stream state), `STS` (its session state lives under IAM's storage),
 > and `BEDROCK`/`ORGANIZATIONS` (stateless stubs). Every other service's
 > override works.
-
-## Where the active configuration is visible
-
-| Where                        | Shows                                                                                                                      |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `GET /_overcast/health`      | The `storage` object: resolved default (`default`), what was configured (`configured`), per-service overrides, backend health |
-| Web console dashboard footer | The storage mode, with a tooltip listing overrides                                                                          |
-| Startup log                  | Which mode `auto` picked and why                                                                                            |
 
 ## Related
 
