@@ -30,7 +30,7 @@ aws --endpoint-url http://localhost:4566 sqs list-queues
 aws --endpoint-url http://localhost:4566 dynamodb list-tables
 ```
 
-This is the simplest way to try Overcast without changing any configuration.
+This is the quickest way to try Overcast without changing any configuration.
 
 ### `overcast aws` and `overcast env`
 
@@ -63,7 +63,7 @@ aws s3 ls        # any AWS tool in this shell now talks to Overcast
 ```
 
 One thing `overcast env` deliberately leaves alone is `~/.aws` itself: your
-config and credentials files stay readable, and the exported variables simply
+config and credentials files stay readable, and the exported variables
 outrank them everywhere it matters (credentials, region, endpoint). For a
 single call with total isolation from local AWS configuration, use
 `overcast aws`, which also points the config-file variables at an empty file.
@@ -159,7 +159,7 @@ const s3 = new S3Client({
 await s3.send(new CreateBucketCommand({ Bucket: "my-bucket" }));
 ```
 
-The same pattern works for any service client — just set `endpoint`:
+The same pattern works for any service client — set `endpoint`:
 
 ```typescript
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
@@ -394,5 +394,6 @@ the CA with `AWS_CA_BUNDLE=~/.overcast/data/ca/rootCA.pem`. See
 ## Related
 
 - [CLI reference](./cli.md) — `overcast env` and `overcast aws`
+- [Environment variable reference](./configuration/reference.md) — `OVERCAST_ACCOUNT_ID`, `OVERCAST_TLS` and the rest
 - [Networking and host-based addressing](./networking.md) — path-style versus host-routed endpoints
 - [Service reference](./services/README.md) — what each service supports

@@ -49,7 +49,7 @@ overcast bridge --http-port 8080  # avoid needing root/admin for port 80
 > [!NOTE]
 > Port 80 is often held by a local web server, or needs elevated privileges. If
 > the bind fails, `bridge` logs a warning with platform-specific instructions
-> and carries on — mDNS still works, you just need the port in the URL
+> and carries on — mDNS still works, you need the port in the URL
 > (`http://overcast.local:4566`). `--http-port 0` skips the proxy entirely.
 
 ## Platform setup

@@ -21,8 +21,9 @@ eval "$(overcast env)"    # point every AWS tool in this shell at it
 overcast status           # check it is up, and see what it is running
 ```
 
-Every command takes `--endpoint` (default `http://localhost:4566`), and
-`overcast <command> --help` prints that command's flags.
+Every command takes `--endpoint` (default `http://localhost:4566`),
+`overcast --version` prints the build, and `overcast <command> --help` prints
+that command's flags.
 
 ## Command groups
 

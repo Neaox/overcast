@@ -23,6 +23,8 @@ overcast network status          # read-only; non-zero exit means drift
 overcast network reset --dry-run # the repair plan, before doing it
 ```
 
+Part of the [CLI reference](../cli.md).
+
 ## `overcast network status`
 
 Compares every network Overcast manages — the two planes, each per-VPC network,
@@ -76,7 +78,7 @@ rejoin on their next start.
 
 **The daemon stops reporting the network rather than reporting the new state.**
 It sees the removal and drops the entry, so the drift and its advisory clear,
-but nothing re-inspects: the network is simply absent from `/_overcast/health`
+but nothing re-inspects: the network is absent from `/_overcast/health`
 until the next startup or Docker reconnect. Absence there means "nothing to
 say" — run `overcast network status` to confirm the rebuild in the meantime.
 Reporting a positive result instead is
