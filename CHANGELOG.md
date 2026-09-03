@@ -66,6 +66,46 @@ can be applied mechanically rather than reconstructed from memory.
 
 ## [Unreleased]
 
+## [0.0.1-alpha.40] - 2026-09-03
+
+### Added
+
+- [docs] `make docs-lint` now holds every published page to a length budget and the house style.
+  a page over 6,000 characters of prose, or 12,000 of page, fails unless it states a `<!-- docs-length-review: … -->` reason — which fails in turn once the page comes back inside the budget.
+  the stock tells go too: "not X — it's Y", "seamless", "delve", the three-adjective slogan, "Under the hood", "Note that", and openers that narrate the page. An allowlist takes a real exception.
+  both measures exclude the generated capability block, and no published page may link outside `docs/`, which is all the console can open.
+
+### Changed
+
+- [docs] the long guides are landing pages now, one sub-page per concern, and every link that named a section points at the page holding it.
+  networking gains ten sub-pages and CDK five; the CLI reference splits one page per command group, and configuration, HTTPS, performance and the migration guide each keep a short landing page.
+  the Docker mechanics behind an EC2 VPC move to `docs/networking/vpc-backing.md`: backing bridge, labels, gateway isolation and the `OVERCAST_EC2_VPC_STRATEGY` CIDR strategies.
+  the console serves the new pages, and the health advisories and reference rows that deep-linked a moved section were repointed with them.
+
+- [docs] a service's limitations page is a table now, with a concern page behind each row that needs one.
+  Lambda splits into concurrency, execution environments, event delivery and retries, logging and runtimes; ECS's scheduler and CloudFormation's updates, teardown and dynamic references follow.
+  a service directory may hold concern-named sub-pages beside operations, limitations, troubleshooting and examples: a hyphenated slug, linked from its landing page, opening its own Related with it.
+  the Lambda init-volume advisory and its troubleshooting entry deep-link `docs/services/lambda/execution-environments.md`, which now carries that section.
+
+- [docs] each fact in the docs has one home, the hub routes to it, and every page ends with a Related footer.
+  79 pages gained a Related section and 21 bare "Back to X." openers became a line that says what the page holds; the hub opens with a runnable quick start and lists one line per guide.
+  the Docker Desktop egress caveat, the `OVERCAST_VPC_EGRESS` mode list and the `auto` storage default are each stated once and linked from the pages that repeated them.
+  five reference pages came inside the length budget, the Lambda examples page leads with its examples, and `docs/index.md` is titled "Reference index".
+
+- [release] the 0.0.1-alpha.39 notes are re-curated to a summary line and at most three short detail lines per entry.
+  every fact is kept: what does not fit points at the page that carries it, and every `migration:` note stays, trimmed in wording only.
+  the section measures the same as a fragment now — 69 bullets, none over three detail lines or 200 characters, where 43 were over before.
+
+- [ci] `changelog.py check` budgets an entry's detail: three continuation lines, 200 characters each.
+  a breaking entry's `migration:` note does not count towards the three, and is held to the same length.
+  `<!-- changelog-detail-review: why -->` above an entry buys it more, and fails once that entry is back inside the budget.
+
+### Removed
+
+- [docs] the operation manifest page, a hand-committed snapshot of `go run ./cmd/stub-report` output.
+  it listed unexported Go type names, no target regenerated it, and nothing but docs search read it.
+  `docs/dev/smithy.md` points at the command instead, so the inventory is produced on demand rather than read stale.
+
 ## [0.0.1-alpha.39] - 2026-09-02
 
 ### Added
@@ -2625,7 +2665,8 @@ can be applied mechanically rather than reconstructed from memory.
 [x.y.z]: https://github.com/overcast-sh/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.39...HEAD
+[Unreleased]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.40...HEAD
+[0.0.1-alpha.40]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.39...v0.0.1-alpha.40
 [0.0.1-alpha.39]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.38...v0.0.1-alpha.39
 [0.0.1-alpha.38]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.37...v0.0.1-alpha.38
 [0.0.1-alpha.37]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.36...v0.0.1-alpha.37
