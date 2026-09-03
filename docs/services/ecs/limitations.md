@@ -212,5 +212,5 @@ outside the VPC, exactly as on AWS. The way out is AWS's own field:
 
 Overcast's own API endpoint stays reachable from every task either way, so
 `AWS_ENDPOINT_URL` keeps working. See
-[Networking § Lambda, ECS and VPCs](../../networking.md) for what is and is not
+[Lambda, ECS and VPCs](../../networking/vpcs.md) for what is and is not
 enforced, and for what a refused connection looks like.

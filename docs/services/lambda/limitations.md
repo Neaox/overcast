@@ -426,7 +426,7 @@ subtracts rather than adds.
 > the function joins its VPC network *and* the shared data plane, and reaches
 > everything on both — so a test that proves your VPC wiring works passes
 > whether or not it is correct. Run Overcast in a container to get the
-> restriction. See [Networking § The Docker networks Overcast uses](../../networking.md#the-docker-networks-overcast-uses).
+> restriction. See [Networking § The Docker networks Overcast uses](../../networking/docker-networks.md).
 
 Overcast's own API endpoint is the exception and stays reachable from every
 function regardless of placement. `AWS_ENDPOINT_URL` and the Lambda Runtime API
@@ -439,4 +439,4 @@ The common mistake this catches is a database in a VPC and a function without a
 `VpcConfig` — which never worked on AWS. The fix is the AWS one: put the function
 in the VPC, or set `PubliclyAccessible` on the instance. A refused connection is
 named rather than left to hang; see
-[Networking § Lambda, ECS and VPCs](../../networking.md).
+[Lambda, ECS and VPCs](../../networking/vpcs.md).

@@ -39,7 +39,7 @@ type FunctionURLConfig struct {
 
 // CorsConfig mirrors AWS's Cors shape for a function URL config. Overcast
 // stores and returns it faithfully but does not enforce it — see
-// docs/networking.md "Host-based addressing" AuthType/CORS caveat.
+// docs/networking/host-routing.md's AuthType/CORS caveat.
 type CorsConfig struct {
 	AllowCredentials *bool    `json:"allow_credentials,omitempty"`
 	AllowHeaders     []string `json:"allow_headers,omitempty"`

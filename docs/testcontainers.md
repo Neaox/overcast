@@ -86,7 +86,7 @@ in CI — Docker never re-pulls a moving tag it already has, so `:latest` (or
 ### Options
 
 Every standard `testcontainers.ContainerCustomizer` works (`WithEnv` for the
-[configuration variables](./configuration.md), network and
+[configuration variables](./configuration/reference.md), network and
 mount options, …). The module adds two of its own:
 
 | Option             | Effect                                                                                                                                                              |

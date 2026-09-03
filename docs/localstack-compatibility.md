@@ -135,8 +135,8 @@ egress is granted where the route tables withhold it. A startup warning says so
 either way, and `/_overcast/health` reports it. Run Overcast in a container, or
 against a native Linux Docker daemon, for the whole of either mode.
 
-See [Egress modes](./networking.md#egress-modes) and
-[`routed`](./networking.md#routed-egress-from-your-route-tables).
+See [Egress modes](./networking/egress.md) and
+[`routed`](./networking/routed-egress.md).
 
 Persistence is the row worth reading twice. The published image defaults to
 **in-memory** state: `OVERCAST_STATE=auto` resolves to a durable backend only

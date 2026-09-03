@@ -1401,7 +1401,7 @@ already answered `202`, so a throttle is retried internally, as on AWS.
 | How do wire protocols get identified and dispatched? | [docs/dev/smithy.md](./smithy.md) |
 | How do the storage backends actually work? | [docs/dev/storage-backends.md](./storage-backends.md) |
 | Why can't my Lambda reach my database? | [docs/dev/container-networking.md](./container-networking.md) |
-| Which host and port will a returned URL carry? | [docs/networking.md](../networking.md) |
+| Which host and port will a returned URL carry? | [docs/networking/urls.md](../networking/urls.md) |
 | How do I test an endpoint change properly? | [docs/dev/manual-testing.md](./manual-testing.md) |
 | How do I add a service or an endpoint? | [CONTRIBUTING.md](../../CONTRIBUTING.md#how-to-add-a-service) |
 | What are the rules for agents working here? | [AGENTS.md](../../AGENTS.md) |

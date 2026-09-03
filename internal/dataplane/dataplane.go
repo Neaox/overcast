@@ -874,8 +874,8 @@ func Networks(cfg *config.Config, p Placement) []string {
 // plus any address the stored record already advertises.
 //
 // The set, not the canonical name. An endpoint address is minted on the host
-// the *calling client* reached Overcast on (docs/networking.md § Data-plane
-// endpoints), so the same node is `x.us-east-1.cfg.localhost.overcast.sh` to
+// the *calling client* reached Overcast on (docs/networking/data-plane-endpoints.md),
+// so the same node is `x.us-east-1.cfg.localhost.overcast.sh` to
 // one caller and `x.us-east-1.cfg.localhost` to another — and whichever
 // process resolves the name later is often not the one that received it.
 // Docker aliases are exact-match, so a name that was not registered does not

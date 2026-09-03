@@ -67,7 +67,7 @@ Supported engines: **redis** (`redis:6`, `redis:7`), **valkey**
 > A cache in a VPC is reachable only from that VPC, as on AWS — ElastiCache has
 > no `PubliclyAccessible` escape hatch. Create both the cache and its caller
 > with the same subnet group, or leave both out of one. See
-> [Networking § Lambda, ECS and VPCs](../networking.md).
+> [Lambda, ECS and VPCs](../networking/vpcs.md).
 
 > [!WARNING]
 > Container names derive from the cache id you choose, and Docker requires them
@@ -89,5 +89,5 @@ Per-operation status, notes and AWS API links: [ElastiCache operations](elastica
 - [RDS](./rds.md) — the same Docker-backed lifecycle for databases
 - [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
-- [Networking § Lambda, ECS and VPCs](../networking.md)
+- [Lambda, ECS and VPCs](../networking/vpcs.md)
 - [AWS API reference](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/Welcome.html)

@@ -309,7 +309,8 @@ All subcommands are available in both `overcast` and `overcastd` (the web consol
 ### overcast serve
 
 Starts the emulator on port 4566. All emulator configuration is environment
-variables — the [configuration reference](./docs/configuration.md) has every one:
+variables — the [environment variable
+reference](./docs/configuration/reference.md) has every one:
 
 ```bash
 overcast serve
@@ -345,7 +346,7 @@ are there too.
 `overcast bridge` publishes `overcast.local` and `overcast-app.local` over mDNS
 and proxies port 80 by `Host` header, so `.local` names work with no hosts-file
 edits and no port numbers. Flags and the per-platform mDNS/port-80 setup are in
-the [CLI reference](./docs/cli.md#overcast-bridge).
+the [CLI reference](./docs/cli/bridge.md).
 
 
 ---
@@ -400,7 +401,8 @@ Full documentation lives in [`docs/`](./docs/README.md):
 | [Using AWS CDK](./docs/cdk.md) | `cdk bootstrap`, `cdk deploy`, supported resource types |
 | [Networking and host-based addressing](./docs/networking.md) | Host-routed endpoints, wildcard DNS, sibling containers, VPCs |
 | [Service reference](./docs/services/) | Per-service endpoint coverage |
-| [Configuration reference](./docs/configuration.md) | Every environment variable |
+| [Configuration](./docs/configuration.md) | Where each setting lives, by area |
+| [Environment variable reference](./docs/configuration/reference.md) | Every variable Overcast reads, with its default |
 | [Storage and persistence](./docs/storage.md) | Backends, and what survives a restart |
 | [HTTPS and HTTP/2](./docs/https.md) | Browser-trusted TLS in two commands |
 | [The inner loop](./docs/local-dev.md) | Hot reload for Lambda and ECS, `cdk watch` |

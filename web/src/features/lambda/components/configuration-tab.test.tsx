@@ -77,7 +77,7 @@ describe("ConfigurationTab", () => {
     it("links to the section of the docs that explains what to do", async () => {
       renderTab(TabWithVpc)
       const link = await screen.findByRole("link", { name: /What this means for your tests/ })
-      expect(link).toHaveAttribute("href", "/docs?path=networking.md#lambda-ecs-and-vpcs")
+      expect(link).toHaveAttribute("href", "/docs?path=networking%2Fvpcs.md")
     })
 
     it("stays out of the way when no VPC is configured", async () => {

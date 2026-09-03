@@ -161,8 +161,8 @@ deploy.
 Run Overcast in a container, or against a native Linux Docker daemon, to get
 the whole of either — on Docker Desktop the control plane has to stay routable,
 so containers keep a route out and Overcast says so at startup. See
-[Egress modes](./networking.md#egress-modes) and
-[`routed`](./networking.md#routed-egress-from-your-route-tables).
+[Egress modes](./networking/egress.md) and
+[`routed`](./networking/routed-egress.md).
 
 ---
 
@@ -356,7 +356,8 @@ Overcast inside the containers it starts. Drop `SQS_ENDPOINT_STRATEGY`.
 Functions run in containers built on the official AWS base images
 (`public.ecr.aws/lambda/<runtime>`), so the Docker socket has to be reachable —
 see `LAMBDA_DOCKER_SOCKET` and `OVERCAST_NETWORK` in the
-[configuration reference](./configuration.md). Without Docker, functions can
+[environment variable reference](./configuration/reference.md). Without Docker,
+functions can
 still be created and managed; invocations degrade to a built-in Node.js runtime
 for simple handlers.
 

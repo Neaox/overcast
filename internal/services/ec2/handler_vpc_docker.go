@@ -669,7 +669,7 @@ func (h *Handler) changeVPCGateway(ctx context.Context, vpcID string, attach boo
 	// Under `none` the flag is true whatever the gateway says, and under
 	// `routed` so is it: there the gateway decides which *subnets* route out,
 	// which is a second network rather than this flag. See
-	// dataplane.VPCNetworkInternal and docs/networking.md § Egress modes.
+	// dataplane.VPCNetworkInternal and docs/networking/egress.md.
 	internal := dataplane.VPCNetworkInternal(h.cfg, hasGateway)
 
 	if netID, err := h.applyVPCNetworkInternal(ctx, vpc, internal, hasGateway); err != nil {

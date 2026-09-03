@@ -37,7 +37,8 @@ command that runs it. Everything else is below.
 
 | Guide | For |
 | --- | --- |
-| [Configuration reference](./configuration.md) | Every environment variable, its default, and the LocalStack aliases |
+| [Configuration](./configuration.md) | Where each setting lives, and the handful most people change |
+| [Environment variable reference](./configuration/reference.md) | Every variable Overcast reads, with its default |
 | [Storage and persistence](./storage.md) | Choosing a backend and knowing what survives a restart |
 | [Performance](./performance.md) | Startup and memory expectations, storage tuning, where "feels slow" time goes |
 | [Debug endpoints](./debug-endpoints.md) | Health, metrics, state dump, request traces, pprof |

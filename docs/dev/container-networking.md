@@ -318,7 +318,7 @@ err = dataplane.Attach(ctx, h.docker, h.cfg, containerID, placement)
 ```
 
 Note the **set**, not the one name. Endpoint names are minted on the hostname
-the caller reached Overcast on (`docs/networking.md` § Data-plane endpoints), so
+the caller reached Overcast on (`docs/networking/data-plane-endpoints.md`), so
 the same instance is `db.us-east-1.rds.localhost.overcast.sh` to one caller and
 `db.us-east-1.rds.localhost` to another. Docker aliases are exact-match: a name
 that was not registered does not resolve — and under a split-horizon domain it

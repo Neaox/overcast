@@ -44,9 +44,9 @@ const (
 	advisoryCodeRuntimeAPIUnreachable     = "lambda-runtime-api-unreachable"
 )
 
-// networkingDocsPath deep-links the network-state advisory at the section that
+// networkingDocsPath points the network-state advisory at the page that
 // explains what is verified and what `overcast network reset` does.
-const networkingDocsPath = "networking.md#network-state-verification"
+const networkingDocsPath = "networking/network-state.md"
 
 // performanceDocsPath is the docs-browser-relative path (see
 // web/src/routes/docs.tsx's `path` search param, and internal/bff/bff.go's
@@ -87,12 +87,12 @@ const noSQLiteDocsPath = storageDocsPath + "#builds-without-sqlite"
 // docs browser's slug for that heading — see dataDirDocsPath.
 const vpcNetworkDocsPath = "services/ec2/limitations.md#internet-gateways-and-isolation"
 
-// egressModeDocsPath deep-links the egress advisory to the section of the
-// networking page that explains what each mode can and cannot deliver, and on
-// which hosts. `none` and `routed` are explained in one section because they
-// fail on the same host for the same reason — see checkEgressNotWithheld,
-// which is one rule for the same reason.
-const egressModeDocsPath = "networking.md#egress-modes"
+// egressModeDocsPath points the egress advisory at the page that explains what
+// each mode can and cannot deliver, and on which hosts. It lands on the modes
+// page rather than on `routed`'s own, because `none` and `routed` fail on the
+// same host for the same reason — see checkEgressNotWithheld, which is one rule
+// for the same reason.
+const egressModeDocsPath = "networking/egress.md"
 
 // lambdaInitVolumeDocsPath deep-links the lambda-init-volume-foreign advisory
 // to the section of the Lambda limitations page explaining why a foreign

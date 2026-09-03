@@ -871,8 +871,7 @@ function VpcNotEnforcedNotice() {
         </p>
         <Link
           to="/docs"
-          search={{ path: "networking.md" }}
-          hash="lambda-ecs-and-vpcs"
+          search={{ path: "networking/vpcs.md" }}
           className="mt-2 inline-flex w-fit items-center gap-1 text-xs underline underline-offset-2"
         >
           What this means for your tests

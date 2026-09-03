@@ -30,7 +30,8 @@ package ec2
 //     A network that drew on Docker's own address pools would count against
 //     the ~31 a stock daemon has in total, shared with every other tool on the
 //     machine — the ceiling that made this mode unsafe to ship as a second
-//     network per VPC. See docs/networking.md § The address-pool ceiling.
+//     network per VPC. See docs/networking/routed-egress.md § The address-pool
+//     ceiling.
 
 import (
 	"context"

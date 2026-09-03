@@ -118,7 +118,7 @@ const (
 // Egress is a property of the whole topology, so it is set on the whole
 // topology.
 //
-// See docs/networking.md § Egress modes for what each mode grants, and
+// See docs/networking/egress.md for what each mode grants, and
 // docs/plans/container-networking-egress.md for the decision this encodes.
 type VPCEgressMode string
 
@@ -595,15 +595,15 @@ type Config struct {
 	// "routed" (per subnet, from the template's route tables).
 	//
 	// Corresponds to env var OVERCAST_VPC_EGRESS. Defaults to "open". See
-	// VPCEgressMode and docs/networking.md § Egress modes.
+	// VPCEgressMode and docs/networking/egress.md.
 	VPCEgress VPCEgressMode
 
 	// VPCEgressPool is the IPv4 range the per-VPC egress networks are carved
 	// from under VPCEgress=routed, one /24 each. It exists so those networks
 	// never draw on Docker's own default address pools, which on a stock
 	// daemon stretch to about 31 networks in total and are shared with every
-	// other tool on the machine — see docs/networking.md § The address-pool
-	// ceiling.
+	// other tool on the machine — see docs/networking/routed-egress.md § The
+	// address-pool ceiling.
 	//
 	// Corresponds to env var OVERCAST_VPC_EGRESS_POOL. Defaults to
 	// "198.18.0.0/16" — the benchmarking range (RFC 2544), which is never
@@ -1732,8 +1732,7 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	                                           same daemon.
 //	LAMBDA_RUNTIME_API_PORT            9001    (shared Runtime API listener; 0 = ephemeral. The default
 //	                                           falls back to an ephemeral port when busy; any other
-//	                                           value is pinned — see docs/configuration.md § Running
-//	                                           two instances on one host)
+//	                                           value is pinned — see docs/configuration/two-instances.md)
 //	LAMBDA_RUNTIME_API_HOST            auto    (the address containers dial for the Runtime API.
 //	                                           auto: established by having a container connect to
 //	                                           each candidate. Set a bare address — host.docker.internal,

@@ -75,9 +75,14 @@ func TestIndex_loads(t *testing.T) {
 }
 
 // TestIndex_coversEveryPublishedDoc catches an indexer that silently drops a
-// page, and a new docs/ subdirectory this package picks up but embed.go's
-// pattern in the repo root does not — which would leave the page searchable but
-// unopenable.
+// page: every .md file under docs/ outside the contributor-only trees has to
+// come back out of the index, and nothing else.
+//
+// Both sides of the comparison read the same tree from disk, so this says
+// nothing about what the binary embeds. The guard on embed.go's //go:embed
+// pattern — the one that decides whether an indexed page can actually be
+// opened — is TestDocsEmbed_coversEveryPublishedDoc in the repo root, which is
+// the only package that can see the embedded FS.
 func TestIndex_coversEveryPublishedDoc(t *testing.T) {
 	// Given: the published docs on disk.
 	want := publishedDocs(t)

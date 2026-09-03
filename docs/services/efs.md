@@ -96,5 +96,5 @@ Per-operation status, notes and AWS API links: [EFS operations](efs/operations.m
 - [EFS examples](./efs/examples.md) — mounting a file system over NFS
 - [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
-- [Networking § Lambda, ECS and VPCs](../networking.md)
+- [Lambda, ECS and VPCs](../networking/vpcs.md)
 - [Storage and persistence](../storage.md)

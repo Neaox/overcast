@@ -526,8 +526,8 @@ const hintFileVersion = 1
 //
 // One file *per plane*, not one for the data directory. Two Overcast instances
 // sharing the default data dir with different OVERCAST_NETWORK values is a
-// documented configuration (docs/configuration.md § Running two instances on
-// one host), and a single file makes them fight: each rejects the other's
+// documented configuration (docs/configuration/two-instances.md), and a single
+// file makes them fight: each rejects the other's
 // record on the network check, re-probes, and overwrites it, for ever. The
 // record still names the plane it is about, so a file read for the wrong one is
 // caught either way — the name is what stops the two from thrashing.

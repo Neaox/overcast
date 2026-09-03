@@ -234,7 +234,7 @@ When a tool like the CDK drives Overcast, most of the wall-clock time
 the user experiences is spent in the client, not the emulator. Before
 assuming Overcast itself is slow, establish which side owns the time —
 the request log (every real AWS API call is logged at `INFO` by default —
-see [`OVERCAST_LOG_LEVEL`](./configuration.md#log-levels)) with
+see [`OVERCAST_LOG_LEVEL`](./configuration/log-levels.md)) with
 `docker logs --timestamps` shows every request's duration and, by omission,
 every gap where the emulator was idle.
 

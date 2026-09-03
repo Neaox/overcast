@@ -85,12 +85,9 @@ type LengthBacklogEntry struct {
 var LengthBacklog = map[string]LengthBacklogEntry{
 	"docs/cdk.md":                                 {Prose: 10000, Page: 26000, Measured: "9802/25748", Why: "split by task: getting a stack to deploy, the supported-resource reference, and the failure modes"},
 	"docs/cdk/local-vpc.md":                       {Prose: 7500, Page: 12000, Measured: "7186/10099", Why: "the provider walkthrough and the troubleshooting half are two pages"},
-	"docs/cli.md":                                 {Prose: 9500, Page: 18500, Measured: "9150/18363", Why: "one page per command group, with the landing page listing the groups"},
-	"docs/configuration.md":                       {Prose: 6000, Page: 28500, Measured: "5618/28265", Why: "split by area, with the env-var reference as its own table page"},
 	"docs/https.md":                               {Prose: 15500, Page: 18000, Measured: "15398/17822", Why: "turning it on is one page; certificate trust per platform is another"},
 	"docs/localstack-compatibility.md":            {Prose: 6000, Page: 12500, Measured: "4697/12469", Why: "mostly the compatibility matrix, which is the page's job — trim the prose around it"},
 	"docs/migration-from-localstack.md":           {Prose: 14000, Page: 22000, Measured: "13775/21941", Why: "the switch-over steps and the per-feature differences are two audiences"},
-	"docs/networking.md":                          {Prose: 34500, Page: 47500, Measured: "34351/47448", Why: "split into egress modes, VPC networks, control plane and Runtime API, and troubleshooting"},
 	"docs/performance.md":                         {Prose: 10000, Page: 14000, Measured: "9993/13785", Why: "what to expect, and what to tune, are two pages"},
 	"docs/services/cloudformation/limitations.md": {Prose: 14500, Page: 16000, Measured: "14164/15943", Why: "the divergence list belongs in a table; the essays under it belong in troubleshooting"},
 	"docs/services/ec2/limitations.md":            {Prose: 10000, Page: 13500, Measured: "9534/13466", Why: "same: table the divergences, move the explanations out"},
