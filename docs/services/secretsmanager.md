@@ -50,10 +50,9 @@ throughout. Before the first invocation the token is made a version staged
 `AWSPENDING` with no value in it, exactly as AWS does, so a rotation function
 copied from an AWS blueprint works unmodified.
 
-Two deliberate divergences, both so a local failure is visible rather than
-silent:
+Rotation itself diverges in two places:
 
-| Behaviour       | On AWS                                              | Here                                                        |
+| Area            | On AWS                                              | Overcast                                                    |
 | --------------- | --------------------------------------------------- | ------------------------------------------------------------- |
 | Timing          | Returns immediately, rotates in the background      | Returns once the sequence has finished                        |
 | A failed step   | Answers `200`; the failure surfaces in CloudTrail   | `InvalidRequestException` naming the step, staging labels left as the function left them |

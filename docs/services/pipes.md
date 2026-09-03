@@ -61,7 +61,7 @@ do nothing.
 | -------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `FilterCriteria`                       | Server-side filtering                   | Rejected outright rather than stored and ignored — filter inside a Lambda enrichment instead                                         |
 | Stream retries                         | Retry until expiry                      | Capped at 5 retries (an explicit `0` means one attempt); unset means the cap, standing in for AWS's "retry until the record expires" |
-| Dead-letter payload                    | A shard/sequence-range failure envelope | The source records themselves, which is what makes the batch replayable without a second read                                        |
+| Dead-letter payload                    | A shard/sequence-range failure envelope | The source records themselves, so the batch is replayable without a second read                                                      |
 | DynamoDB Streams batching              | `BatchSize` applies                     | Bus-driven one record at a time, so always a batch of one                                                                            |
 | SQS dead-lettering                     | Same                                    | Left to the queue's own `RedrivePolicy`, as on AWS — `DeadLetterConfig` does not apply to an SQS source                              |
 | `ParallelizationFactor`                | Honoured                                | Stored and never read                                                                                                                |
@@ -80,12 +80,11 @@ topic is refused at create and update time.
 > `LogConfiguration` and `KmsKeyIdentifier` are dropped, not stored inert. A
 > `DescribePipe` assertion that round-trips either field will fail.
 
-> [!NOTE]
-> Only a Lambda **target** reports partial batch failures. A Step Functions
-> target's asynchronous `StartExecution` has no response to read, and a Lambda
-> **enrichment**'s return value AWS defines as *replacing* the batch rather than
-> reporting on it. AWS offers no partial-batch reporting for any other target
-> type either.
+Only a Lambda **target** reports partial batch failures. A Step Functions
+target's asynchronous `StartExecution` has no response to read, and a Lambda
+**enrichment**'s return value AWS defines as *replacing* the batch rather than
+reporting on it. AWS offers no partial-batch reporting for any other target
+type either.
 
 <!-- BEGIN overcast:capabilities -->
 

@@ -22,8 +22,8 @@ Every divergence from real Route 53. The working set is on
 | Health checks | Configuration, with AWS's defaults — `RequestInterval` 30, `FailureThreshold` 3, port 80 or 443 by type — versioned by `UpdateHealthCheck` | No endpoint is ever probed. `GetHealthCheckStatus` and `GetHealthCheckLastFailureReason` return `501` |
 | Traffic policies | — | `CreateTrafficPolicy` returns `501` |
 
-Routing policies are the honest gap: real Route 53 routing is about multi-region
-infrastructure a single local node does not have.
+Routing policies choose between multi-region infrastructure a single local node
+does not have, so none of the selection logic is emulated.
 
 ## Private zones and VPCs
 

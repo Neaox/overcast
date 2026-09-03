@@ -37,7 +37,7 @@ aws stepfunctions get-execution-history --execution-arn "$EX"
 > Anything Overcast cannot interpret **fails the execution loudly** — never a
 > silent pass-through, and never a fake `SUCCEEDED`. The error is
 > `States.Runtime` and the `cause` names the feature. `States.Runtime` is
-> deliberately neither retriable nor catchable, matching AWS, so a `Catch` on
+> neither retriable nor catchable, matching AWS, so a `Catch` on
 > `States.ALL` cannot swallow an Overcast gap.
 
 ## What works

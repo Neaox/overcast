@@ -12,11 +12,11 @@ tags:
 # SNS limitations
 
 Divergences from AWS, in full. The summary is on the
-[SNS](../sns.md).
+[SNS page](../sns.md).
 
 ## Subscriptions
 
-| Behaviour             | On AWS                                                       | Here                                                     |
+| Area                  | On AWS                                                       | Overcast                                                 |
 | --------------------- | ------------------------------------------------------------ | ---------------------------------------------------------- |
 | `ConfirmSubscription` | A token is emailed or POSTed and must be echoed back          | Every subscription is confirmed on creation; any token is accepted |
 | `application` (mobile push) | Requires a platform application and device endpoint     | `Subscribe` returns `400 InvalidParameter`                 |
@@ -62,8 +62,7 @@ written to that SQS queue.
 
 A protocol whose dependency was never wired into the running instance fails the
 same way, with a one-time warning per topic and protocol saying what is
-missing. A notification that vanishes without a trace is the failure mode this
-exists to prevent.
+missing.
 
 ## CloudFormation
 
