@@ -49,7 +49,7 @@ aws dynamodb get-item --table-name orders --key '{"id": {"S": "o-1"}}'
 
 | Area                            | Overcast                                                                                                                                                                                                             |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GSIs are immediately consistent | An item is visible to a GSI query the instant it is written. `ConsistentRead=true` with an `IndexName` is still rejected, exactly as AWS rejects it, so code cannot come to depend on a read mode AWS will not serve |
+| GSIs are immediately consistent | An item is visible to a GSI query the instant it is written. `ConsistentRead=true` with an `IndexName` is still rejected, exactly as AWS rejects it |
 | TTL is swept, not lazy          | Expired items are deleted by an hourly sweeper rather than being hidden on read, so an expired item can still be returned                                                                                            |
 | No PartiQL                      | `ExecuteStatement`, `ExecuteTransaction` and `BatchExecuteStatement` are out of scope                                                                                                                                |
 | No global tables                | Overcast emulates one region per request; the global-table operations answer `501`                                                                                                                                   |

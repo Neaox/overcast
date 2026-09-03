@@ -16,9 +16,9 @@ tags:
 
 # ELBv2 — Elastic Load Balancing v2 (ALB/NLB)
 
-A load balancer is not metadata alone: a request addressed to its DNS name is
-forwarded to a target registered behind it, which is what makes a service
-deployed behind one reachable at the URL it was given.
+A request addressed to a load balancer's DNS name is forwarded to a target
+registered behind it, so a service deployed behind one is reachable at the URL
+it was given.
 
 **Status:** ⚠️ Partial
 
@@ -49,8 +49,9 @@ Overcast's network, or a port on your host. An ECS service with a
 The DNS name does not resolve on its own — nothing listens on port 80. Send it
 as the `Host` header to Overcast's own port, or set `OVERCAST_HOSTNAME` to a
 resolvable base, which puts the name in the split-horizon DNS zone where it
-resolves like any other Overcast endpoint. A bare `localhost` base cannot: the
-zone deliberately excludes it.
+resolves like any other Overcast endpoint — see
+[Hostnames and DNS](../networking/hostnames.md). A bare `localhost` base cannot;
+the zone excludes it.
 
 ## What works
 

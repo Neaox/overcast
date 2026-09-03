@@ -67,10 +67,10 @@ docker volume ls --filter name=overcast-efs-"$FS"
 
 | Mode | Behaviour |
 | --- | --- |
-| `live` | A Docker volume per file system. Without a reachable Docker daemon it creates nothing and behaves exactly like `mock`, so it asks nothing of a machine that cannot provide it |
+| `live` | A Docker volume per file system. Without a reachable Docker daemon it creates nothing and behaves exactly like `mock` |
 | `mock` | Metadata-only control plane; EFS touches Docker for nothing |
 
-Reach for `mock` only to keep EFS away from Docker deliberately.
+Set `mock` to keep EFS away from Docker even where a daemon is running.
 
 ## Gotchas
 

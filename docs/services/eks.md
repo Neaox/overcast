@@ -64,6 +64,8 @@ are in [Limitations](./eks/limitations.md).
 > and the first cluster on a machine that has never run one waits on the k3s
 > image download.
 
+Switching the mode does not carry existing clusters across.
+
 > [!WARNING]
 > Clusters created in `mock` mode are not usable after switching to `live`.
 > Every read, update and mutation answers `501`; only `DeleteCluster` still

@@ -73,5 +73,6 @@ aws ec2 describe-subnets --filters 'Name=availability-zone,Values=us-east-1?'
 - [EC2 / VPC](../ec2.md) — quick start and what works
 - [EC2 / VPC operations](./operations.md) — per-operation status and supported filters
 - [How a VPC is backed by a Docker network](../../networking/vpc-backing.md) — the Docker bridge, gateways and CIDR strategies
+- [Egress modes](../../networking/egress.md) — what `open`, `routed` and `none` decide
 - [Local VPCs for CDK](../../cdk/local-vpc.md)
 - [Configuration reference](../../configuration.md)
