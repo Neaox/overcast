@@ -1084,3 +1084,18 @@ image, and where it matters by dating the code with `git log -S` and
 `git tag --contains`. A fault present in every tag is not this release's problem
 and must not hold it up; a fault this release introduced is a blocker. Deciding
 which, in writing, is what makes the release notes trustworthy.
+
+## Docs-only candidates
+
+There is no docs-only release path. Every release bumps `VERSION` once and
+publishes both images and every binary together, so their versions and the
+`:latest`/`:alpha` tags stay in sync — a release cut for a docs fix ships the
+same artefacts as any other.
+
+When the curated section contains only `[docs]` entries, the candidate still
+gets a full RC build, but the slim image needs no separate scrutiny: it
+differs from the previous release by nothing but its version string, since
+slim embeds no docs. The `release` skill's testing pass is reduced
+accordingly — see [.agents/skills/release/SKILL.md § Docs-only
+candidates](.agents/skills/release/SKILL.md#docs-only-candidates). Anything
+non-docs in the section restores the full pass.
