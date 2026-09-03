@@ -16,7 +16,7 @@ state each operation may start from, and the resources a stack waits on.
 
 ## Divergences
 
-| Area | Divergence | Detail |
+| Area | Overcast | Detail |
 | --- | --- | --- |
 | `AWS::NoValue` | Substitutes the empty string rather than removing the property | — |
 | `{{resolve:s3:…}}` | Not resolved; fails the resource | [Dynamic references](./dynamic-references.md) |

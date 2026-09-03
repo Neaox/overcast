@@ -99,9 +99,11 @@ The full list, including which trigger fires on which call, is in
 > A client clock running *ahead* of the emulator fails; running behind is
 > tolerated.
 
+Existing users do not have to be recreated by hand.
+
 > [!TIP]
-> Moving off a real pool? `overcast import cognito-users` copies users across —
-> see [Examples](./cognito/examples.md).
+> `overcast import cognito-users` copies users out of a real pool into a local
+> one — see [Examples](./cognito/examples.md).
 
 <!-- BEGIN overcast:capabilities -->
 

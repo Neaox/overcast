@@ -34,10 +34,25 @@ aws servicecatalog-appregistry list-associated-resources --application "$APP"
 
 | Area | Behaviour |
 | --- | --- |
-| Resources | Applications, attribute groups, resource associations and tagging — all 22 modelled operations, over REST-JSON under `/applications`. |
-| CloudFormation | `AWS::ServiceCatalogAppRegistry::Application` and `::ResourceAssociation` are provisioned resource types. The application exposes `Id`, `Arn`, `Name`, `ApplicationName`, `ApplicationTagKey` and `ApplicationTagValue` to `Fn::GetAtt`; an association's physical ID is `<appId>/<resourceType>/<resource>`, and `ResourceType` defaults to `CFN_STACK`. |
-| CDK `awsApplication` tags | The provisioner scans each resource's `Tags` for an `awsApplication=<app-arn>` entry — the one CDK's `Application` L2 construct propagates — and records a direct association immediately after provisioning, under AWS's `RESOURCE_TAG_VALUE` resource type. Those resources come back from `ListAssociatedResources` without the console having to expand the parent stack. |
-| Web console | A resource detail page shows a "belongs to application X" banner when a match is found. |
+| Resources | Applications, attribute groups, resource associations and tagging — all 22 modelled operations, over REST-JSON under `/applications` |
+| CloudFormation | `AWS::ServiceCatalogAppRegistry::Application` and `::ResourceAssociation` are provisioned resource types |
+| CDK `awsApplication` tags | Recorded as direct associations during a deploy |
+| Web console | A resource detail page shows a "belongs to application X" banner when a match is found |
+
+### CloudFormation attributes
+
+The application exposes `Id`, `Arn`, `Name`, `ApplicationName`,
+`ApplicationTagKey` and `ApplicationTagValue` to `Fn::GetAtt`. An association's
+physical ID is `<appId>/<resourceType>/<resource>`, and `ResourceType` defaults
+to `CFN_STACK`.
+
+### CDK `awsApplication` tags
+
+The provisioner scans each resource's `Tags` for the `awsApplication=<app-arn>`
+entry that CDK's `Application` L2 construct propagates, and records a direct
+association immediately after provisioning under AWS's `RESOURCE_TAG_VALUE`
+resource type. Those resources come back from `ListAssociatedResources` without
+the console having to expand the parent stack.
 
 ## Differences from AWS
 

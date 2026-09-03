@@ -27,7 +27,7 @@ of three strategies in order:
 | Replacement | An immutable property changed, or no `Update` is registered | Delete, then create |
 | Retain on replace | `UpdateReplacePolicy: Retain` or `Snapshot` | The new resource is created and the old one is orphaned and no longer tracked by the stack, as on AWS |
 
-The identity properties that force a replacement are the obvious ones:
+The identity properties that force a replacement:
 `BucketName`, `TableName`/`KeySchema`, `QueueName`/`FifoQueue`, `TopicName`,
 `Name`, `LogGroupName`, `RoleName`, `FunctionName`, `Name`/`GroupName`.
 

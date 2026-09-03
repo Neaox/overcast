@@ -41,7 +41,7 @@ A Lambda function gets `/aws/lambda/<function-name>` created for it at
 | Retention | `PutRetentionPolicy` is enforced by a background sweep every 5 minutes, in every storage mode. A group with no policy keeps events indefinitely |
 | Stream cleanup | The same sweep removes a stream once its last event has aged out and nothing is left buffered. A stream that never received an event is never removed |
 | Tagging | `CreateLogGroup` applies `tags` atomically — a rejected request creates nothing. `TagLogGroup` merges |
-| Live tail | `StartLiveTail` over the JSON protocol, which is what the console's tail view uses |
+| Live tail | `StartLiveTail` over the JSON protocol, which the console's tail view uses |
 | Storage | In SQLite-backed modes, events live in a dedicated indexed table, so appends and time-range reads stay fast regardless of stream size |
 | Protocols | AWS JSON 1.1 (`X-Amz-Target: Logs_20140328.<Operation>`) and Smithy RPC v2 CBOR |
 
@@ -56,9 +56,8 @@ half-applies.
 | Tags | At most 50 per group, keys 1–128 characters, values 0–256, no key beginning `aws:` |
 
 Both return `InvalidParameterException` and leave existing state untouched.
-`AWS::Logs::LogGroup` inherits them from the service rather than duplicating
-them, so a template carrying an unsupported `RetentionInDays` fails the
-resource and rolls the stack back.
+`AWS::Logs::LogGroup` inherits them from the service, so a template carrying an
+unsupported `RetentionInDays` fails the resource and rolls the stack back.
 
 ## Differences from AWS
 
@@ -84,4 +83,5 @@ Per-operation status, notes and AWS API links: [CloudWatch Logs operations](clou
 - [CloudWatch](./cloudwatch.md) — metrics and alarms
 - [Lambda](./lambda.md) — function logging configuration
 - [All service pages](./README.md)
+- [Service names and state overrides](../configuration.md#service-names)
 - [AWS API reference](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/Welcome.html)

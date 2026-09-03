@@ -93,6 +93,8 @@ The full list is in [AppSync limitations](./appsync/limitations.md).
 > proven on AWS — but a Lambda authorizer *is* executed here, so that path can
 > be tested locally.
 
+Failures inside a resolver surface in the GraphQL response, not only in logs.
+
 > [!TIP]
 > `$util.error` errorType and data are propagated into
 > `extensions.errorType`/`extensions.data`, and a field resolver error carries a

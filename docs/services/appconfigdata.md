@@ -41,10 +41,13 @@ version is readable as soon as it is created.
 
 | Area | Behaviour |
 | --- | --- |
-| Bindings | The two AWS models: `POST /configurationsessions` and `GET /configuration?configuration_token={token}`. The token is a **query parameter**, not a path segment — that is how every AWS SDK sends it. `StartConfigurationSession` answers `201`. |
-| Token rotation | Every `GetLatestConfiguration` response carries a `Next-Poll-Configuration-Token` header, and **you must use it for the next poll**. Tokens are single-use, rotate on every call, and expire 24 hours after they are issued. |
-| Unchanged configuration | HTTP `200` with an **empty payload** and no `Content-Type`, which is what stops a well-behaved polling SDK re-applying config it already has. |
-| Poll interval | `RequiredMinimumPollIntervalInSeconds` (15–86400) is honoured and echoed as `Next-Poll-Interval-In-Seconds`, defaulting to `60`. A poll arriving inside the window is refused while the token stays valid. |
+| Bindings | `POST /configurationsessions` and `GET /configuration?configuration_token={token}`, with the token as a query parameter. `StartConfigurationSession` answers `201` |
+| Token rotation | Every `GetLatestConfiguration` response carries a `Next-Poll-Configuration-Token` header. Tokens are single-use, rotate on every call, and expire 24 hours after they are issued |
+| Unchanged configuration | HTTP `200` with an empty payload and no `Content-Type`, so a polling SDK does not re-apply configuration it already has |
+| Poll interval | `RequiredMinimumPollIntervalInSeconds` (15–86400) is honoured and echoed as `Next-Poll-Interval-In-Seconds`, defaulting to `60` |
+
+A poll arriving inside the interval window is refused, and the token it used
+stays valid for the retry.
 
 ## Differences from AWS
 
@@ -58,9 +61,11 @@ version is readable as soon as it is created.
 
 > [!WARNING]
 > A configuration token is spent by the call that uses it. Re-polling with the
-> token you already used fails; keep the `Next-Poll-Configuration-Token` from each
-> response. This is AWS's own contract, and the mistake is easy to make when a
-> test retries a request.
+> token you already used fails; keep the `Next-Poll-Configuration-Token` from
+> each response, as you would against AWS.
+
+AppConfigData reads only; the configuration itself is created on the control
+plane.
 
 > [!IMPORTANT]
 > Configuration content is written through the AppConfig **control plane**

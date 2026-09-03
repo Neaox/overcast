@@ -37,7 +37,7 @@ Change detection and the stored resource properties both keep the literal text:
   template. No `GetSecretValue` call is made for an unchanged containing resource,
   so a no-op stack update also succeeds if the secret is no longer available.
 - A resolved secret is never written to Overcast's state. Only the service the
-  property belongs to ever sees it, which is the one exposure AWS also allows.
+  property belongs to ever sees it, as on AWS.
 - **Outputs leave references literal.** A `{{resolve:…}}` in an `Outputs` value
   comes back as the reference text, matching CloudFormation, so a secret is not
   published through `DescribeStacks`.
