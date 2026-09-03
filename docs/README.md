@@ -49,7 +49,8 @@ Credentials, regions and per-language client setup are in
 | [Configuration](./configuration.md) | Where each setting lives, and the handful most people change |
 | [Environment variable reference](./configuration/reference.md) | Every variable Overcast reads, with its default |
 | [Storage and persistence](./storage.md) | Choosing a backend and knowing what survives a restart |
-| [Performance](./performance.md) | Startup and memory expectations, storage tuning, where "feels slow" time goes |
+| [Performance](./performance.md) | Startup and memory expectations, and where "feels slow" time goes |
+| [Storage tuning](./performance/storage-tuning.md) | Where `/data` should live, the slow-filesystem probe, and the hybrid flush knobs |
 | [Debug endpoints](./debug-endpoints.md) | Health, metrics, state dump, request traces, pprof |
 | [Troubleshooting](./troubleshooting.md) | A symptom, and where its answer lives |
 

@@ -55,14 +55,15 @@ const networkingDocsPath = "networking/network-state.md"
 // storage tuning guide. Every advisory whose remediation is "move your data
 // dir" or "your storage backend needs attention" points here, per the
 // project's docs-reorganization guidance that user-facing tuning content
-// stays at docs/performance.md.
-const performanceDocsPath = "performance.md"
+// stays under docs/performance/.
+const performanceDocsPath = "performance/storage-tuning.md"
 
 // dataDirDocsPath deep-links the slow-filesystem advisory straight to the
 // relevant section. The fragment is the heading's id — GitHub's slug, which
 // internal/docsindex.Slug and web/src/lib/slug.ts both produce: lowercase,
 // punctuation dropped, each space a hyphen, so the " — " in "Data dir
-// placement — avoid host bind mounts on Docker Desktop" (docs/performance.md)
+// placement — avoid host bind mounts on Docker Desktop"
+// (docs/performance/storage-tuning.md)
 // is the "--". web/src/routes/docs.slug.test.ts pins this literal to that
 // heading; the UI splits DocsPath on "#" into path + hash.
 const dataDirDocsPath = performanceDocsPath + "#data-dir-placement--avoid-host-bind-mounts-on-docker-desktop"

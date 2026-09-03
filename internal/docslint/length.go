@@ -85,9 +85,7 @@ type LengthBacklogEntry struct {
 var LengthBacklog = map[string]LengthBacklogEntry{
 	"docs/cdk.md":                                 {Prose: 10000, Page: 26000, Measured: "9802/25748", Why: "split by task: getting a stack to deploy, the supported-resource reference, and the failure modes"},
 	"docs/cdk/local-vpc.md":                       {Prose: 7500, Page: 12000, Measured: "7186/10099", Why: "the provider walkthrough and the troubleshooting half are two pages"},
-	"docs/https.md":                               {Prose: 15500, Page: 18000, Measured: "15398/17822", Why: "turning it on is one page; certificate trust per platform is another"},
 	"docs/migration-from-localstack.md":           {Prose: 14000, Page: 22000, Measured: "13775/21941", Why: "the switch-over steps and the per-feature differences are two audiences"},
-	"docs/performance.md":                         {Prose: 10000, Page: 14000, Measured: "9993/13785", Why: "what to expect, and what to tune, are two pages"},
 	"docs/services/cloudformation/limitations.md": {Prose: 14500, Page: 16000, Measured: "14164/15943", Why: "the divergence list belongs in a table; the essays under it belong in troubleshooting"},
 	"docs/services/ec2/limitations.md":            {Prose: 10000, Page: 13500, Measured: "9534/13466", Why: "same: table the divergences, move the explanations out"},
 	"docs/services/ecs/limitations.md":            {Prose: 10000, Page: 12000, Measured: "9666/10641", Why: "table the divergences, move the explanations out"},

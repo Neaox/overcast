@@ -56,7 +56,7 @@ Which one to reach for:
 `hybrid`, `persistent` and `wal` all store their files under `OVERCAST_DATA_DIR`:
 `overcast.db` for the two SQLite backends, `overcast.wal` for the log. On a slow
 filesystem those files are the bottleneck — see
-[Performance § Data dir placement](./performance.md#data-dir-placement--avoid-host-bind-mounts-on-docker-desktop).
+[Storage tuning § Data dir placement](./performance/storage-tuning.md#data-dir-placement--avoid-host-bind-mounts-on-docker-desktop).
 
 ## The `auto` default
 
@@ -185,5 +185,6 @@ under `$OVERCAST_DATA_DIR/<service>/`.
 - [Environment variable reference](./configuration/reference.md) — every
   `OVERCAST_STATE*`, `OVERCAST_HYBRID_*` and `OVERCAST_WAL_*` variable with its
   default.
-- [Performance](./performance.md) — flush tuning, the slow-filesystem probe, and
-  why a Docker Desktop bind mount is the wrong home for `/data`.
+- [Storage tuning](./performance/storage-tuning.md) — flush tuning, the
+  slow-filesystem probe, and why a Docker Desktop bind mount is the wrong home
+  for `/data`.

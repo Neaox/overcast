@@ -1,6 +1,6 @@
 ---
-title: "Performance and memory guide"
-description: "Startup and memory targets with per-backend measurements, storage flush tuning, why a Docker Desktop bind mount is the wrong home for /data, and where client-side wall time goes."
+title: "Performance and memory"
+description: "The startup, memory and image-size targets, what each storage backend costs at startup, and where client-side wall time goes when a workflow feels slow."
 section: "Storage & Performance"
 tags:
   - docs
@@ -9,249 +9,104 @@ tags:
   - performance
 ---
 
-# Performance and memory guide
+# Performance and memory
 
-Overcast aims to be fast and lean: sub-50ms startup, under 15 MiB at idle,
-and low per-request overhead. CI pipelines should not wait for the emulator.
+Overcast aims to be fast and lean: sub-50 ms startup, under 15 MiB at idle, and
+low per-request overhead. CI pipelines should not wait for the emulator.
 
-## Goals
+## Targets
 
-| Metric                                    | Target                                       |
-| ----------------------------------------- | --------------------------------------------- |
-| Startup time                              | < 50ms (currently ~22ms p50, hybrid backend) |
-| Idle memory                               | < 15 MiB                                     |
-| Docker image (slim)                       | < 40 MiB — Go binary only, no web console         |
-| Docker image (console)                    | < 100 MiB — includes web management console  |
-| Request overhead (emulator-added latency) | < 1ms for simple operations                  |
+| Metric | Target |
+| --- | --- |
+| Startup time | < 50 ms (currently ~22 ms p50, hybrid backend) |
+| Idle memory | < 15 MiB |
+| Docker image (slim) | < 40 MiB — Go binary only, no web console |
+| Docker image (console) | < 100 MiB — includes web management console |
+| Request overhead (emulator-added latency) | < 1 ms for simple operations |
 
-Performance claims above are measured with default settings, including `OVERCAST_EKS_MODE=mock`.
-The opt-in EKS live mode (`OVERCAST_EKS_MODE=live`) launches k3s containers and has materially higher
-startup and memory cost by design; treat that mode as a separate operating profile.
+Every claim here is measured with default settings, including
+`OVERCAST_EKS_MODE=mock`. The opt-in EKS live mode
+(`OVERCAST_EKS_MODE=live`) launches k3s containers and costs materially more at
+startup and in memory by design; treat it as a separate operating profile.
 
-### Per-backend startup (cold start, empty data dir)
+## Per-backend startup (cold start, empty data dir)
+
+| Backend | Internal startup_ms | Wall spawn-to-ready |
+| --- | --- | --- |
+| `memory` | 1–2 ms | ~40 ms |
+| `hybrid` (auto, when persisting) | 4–5 ms | ~40 ms |
+| `wal` (append log, async fsync) | 5–8 ms | ~40 ms |
+| `persistent` (SQLite) | 2–6 ms | ~40 ms |
 
 The two SQLite-backed backends (`hybrid` and `persistent`) defer the
-modernc/sqlite cold-migrate cost (~200–340 ms) off the critical path. The
-migration runs in a background goroutine; the first DB-touching request blocks
-on it. `memory` and `wal` use no SQLite and never pay it at all.
+modernc/sqlite cold-migrate cost (~200–340 ms) off the critical path: the
+migration runs in a background goroutine and the first DB-touching request
+blocks on it. `memory` and `wal` use no SQLite and never pay it at all.
 
-| Backend                     | Internal startup_ms | Wall spawn-to-ready |
-| ---------------------------- | ------------------- | ------------------- |
-| `memory`                     | 1–2 ms              | ~40 ms              |
-| `hybrid` (auto, when persisting) | 4–5 ms          | ~40 ms              |
-| `wal` (append log, async fsync) | 5–8 ms           | ~40 ms              |
-| `persistent` (SQLite)        | 2–6 ms              | ~40 ms              |
+Each row was measured with `OVERCAST_STATE` set explicitly to that backend. The
+default, `auto`, costs whichever row it resolves to plus a negligible resolution
+check — see [The auto default](./storage.md#the-auto-default). The
+`overcast-slim` image and the `overcastd` binaries have no SQLite, so their
+durable option is `wal` — see [Builds without
+SQLite](./storage.md#builds-without-sqlite).
 
-Each row was measured with `OVERCAST_STATE` set explicitly to that backend. The default,
-`auto`, costs whichever row it resolves to plus a negligible resolution check — see
-[The auto default](./storage.md#the-auto-default). The `overcast-slim` image and the
-`overcastd` binaries have no SQLite, so their durable option is `wal` — see
-[Builds without SQLite](./storage.md#builds-without-sqlite).
+<details>
+<summary>Measurement conditions</summary>
 
 Measured 2026-04-17 in the dev container (Debian 12, x86_64, Go 1.23,
 modernc/sqlite pure-Go driver, every service registered, no SDK clients
-connected) with `OVERCAST_STATE=<backend>`,
-`OVERCAST_DATA_DIR=<empty tmp>`, polling `/_overcast/metrics` every 5 ms from a
-sibling Go process. Wall time is `os.Process.Start` → first HTTP 200
-on `/_overcast/metrics`. Internal startup is `startup_duration_ms` from that
-endpoint (package-init `startTime` → end of `router.New()`). Numbers
-are best-of-5 cold runs (fresh `tmp` dir each iteration); warm-cache
-runs are 1–2 ms faster across the board and not reported.
+connected) with `OVERCAST_STATE=<backend>`, `OVERCAST_DATA_DIR=<empty tmp>`,
+polling `/_overcast/metrics` every 5 ms from a sibling Go process. Wall time is
+`os.Process.Start` → first HTTP 200 on `/_overcast/metrics`. Internal startup is
+`startup_duration_ms` from that endpoint (package-init `startTime` → end of
+`router.New()`). Numbers are best-of-5 cold runs (fresh `tmp` dir each
+iteration); warm-cache runs are 1–2 ms faster across the board and not reported.
 
----
-
-## Storage backend tuning
-
-These are the levers for a specific case — crash-recovery testing, or a slow
-bind-mounted data directory. For which backend to pick in the first place, see
-[Storage and persistence](./storage.md).
-
-### Fast, disposable state in CI
-
-CI needs no `OVERCAST_STATE` setting: a CI container mounts no data volume, so `auto`
-already resolves to `memory` and skips disk I/O entirely. Setting it explicitly is still
-the right call if your CI mounts a volume you do not want used. The same applies per
-service via `OVERCAST_STATE_<SERVICE>=memory` for a single noisy service; see
-[Storage and persistence § Per-service storage overrides](./storage.md#per-service-storage-overrides)
-for the override syntax.
-
-### Data dir placement — avoid host bind mounts on Docker Desktop
-
-SQLite (all persistent backends) fsyncs on every commit. When `/data`
-is a **bind mount from a Windows or macOS host path**, each fsync
-crosses Docker Desktop's file-sharing layer and costs orders of
-magnitude more than a native filesystem write. Measured 2026-07-19
-(Docker Desktop on Windows 11 / WSL2, hybrid backend, `/data` bound to
-an NTFS path): background flushes of **3–8 entries took 0.6–1.0 s**
-(`hybrid flush slow` warnings in the log; threshold 500 ms). The hybrid
-backend's flush is asynchronous — it steals the dirty map first, so
-requests are not blocked — but shutdown's final synchronous flush, lazy
-namespace loads, and the `persistent`/`wal` backends' commit path all
-pay this tax directly.
-
-If you see `hybrid flush slow` in the logs, move the data dir off the
-bind mount: use a **named Docker volume** for `/data` (data lives in the
-Docker Desktop VM's native filesystem) and, if you need the state on the
-host, export it explicitly instead of bind-mounting it.
-
-The ideal setup with `docker run`:
-
-```bash
-docker volume create overcast-data
-docker run -d --name overcast \
-  -p 4566:4566 -p 4567:4567 \
-  -e OVERCAST_STATE=hybrid \
-  -v overcast-data:/data \
-  ghcr.io/overcast-sh/overcast
-```
-
-The same with `docker compose`:
-
-```yaml
-services:
-  overcast:
-    image: ghcr.io/overcast-sh/overcast
-    ports:
-      - "4566:4566" # AWS API endpoint
-      - "4567:4567" # web management console
-    environment:
-      OVERCAST_STATE: hybrid
-    volumes:
-      - overcast-data:/data # named volume — NOT ./some/host/path:/data
-volumes:
-  overcast-data:
-```
-
-When you need the state on the host (backup, inspection), export it
-explicitly rather than bind-mounting:
-
-```bash
-docker cp overcast:/data ./overcast-data-backup
-```
-
-**Sharing a Lambda layer cache from the host is still fine.** The
-bind-mount penalty is about SQLite's per-commit fsyncs — read-mostly
-files like cached layer zips don't pay it. To pre-download layers on the
-host (or share one cache across containers), bind-mount just the layer
-directory and point `LAMBDA_LAYER_CACHE_DIR` at it, while `/data` stays
-on the named volume:
-
-```yaml
-services:
-  overcast:
-    image: ghcr.io/overcast-sh/overcast
-    ports:
-      - "4566:4566"
-      - "4567:4567"
-    environment:
-      OVERCAST_STATE: hybrid
-      LAMBDA_LAYER_CACHE_DIR: /layers
-    volumes:
-      - overcast-data:/data # SQLite state: named volume (fsync-sensitive)
-      - ./layer-cache:/layers # layer zips: host bind mount is fine (read-mostly)
-volumes:
-  overcast-data:
-```
-
-### Startup slow-filesystem probe
-
-The `hybrid` backend runs a one-time fsync micro-probe in the background
-right after startup (never on the request path): it writes a few KB to a
-throwaway file in the data dir, fsyncs it, times the round trip, and
-removes the file. If that takes longer than **75ms**, it logs one `WARN`
-line naming the data dir and suggesting a named Docker volume.
-
-75ms is deliberately well above native/container-native filesystem noise
-(a healthy fsync of a few KB is low single digits of milliseconds, even on
-a loaded CI runner) and well below the bind-mount tax measured above
-(600ms–1s for a multi-entry flush) — it exists to catch exactly that
-pathology early, at startup, rather than waiting for the first `hybrid
-flush slow` warning under real write load.
-
-The probe's outcome is also queryable, not just logged: `GET
-/_overcast/debug/metrics` includes a `dataDirProbe` object per store
-(`{fsyncMillis, slow, probedAt}`) alongside the flush-history and
-pending-log diagnostics. A probe that fails outright (a permission error,
-say) reports as absent (`dataDirProbe: null`) rather than a false "fast" or
-"slow" reading.
-
-**What to do if you see the warning:** same remedy as `hybrid flush slow`
-above — move `/data` off the bind mount and onto a named Docker volume.
-
-### Hybrid flush knobs — and when not to touch them
-
-The default `hybrid` backend batches writes to SQLite in the background rather than
-committing synchronously. A few environment variables control that batching:
-
-| Variable                                  | Default    | What it does                                                     |
-| ------------------------------------------ | ---------- | ------------------------------------------------------------------ |
-| `OVERCAST_HYBRID_FLUSH_INTERVAL`           | `5s`       | How often the background flush loop runs.                         |
-| `OVERCAST_HYBRID_DIRTY_ENTRY_THRESHOLD`    | `10000`    | Flush early once this many entries are dirty.                     |
-| `OVERCAST_HYBRID_DIRTY_BYTE_THRESHOLD`     | `8MiB`     | Flush early once the dirty set reaches this size.                 |
-| `OVERCAST_HYBRID_SYNC`                     | `interval` | fsync policy for the pending log: `always`, `interval`, or `never`. |
-| `OVERCAST_HYBRID_SYNC_INTERVAL`            | `100ms`    | fsync cadence when `OVERCAST_HYBRID_SYNC=interval`.                |
-
-These defaults are tuned for typical local-dev and CI usage — fast enough that writes
-never block a request, durable enough that a crash loses at most a fraction of a second
-of data (see [docs/storage.md](./storage.md) for the full durability picture). Don't
-change them unless you've measured a specific problem:
-
-- Lowering `OVERCAST_HYBRID_SYNC_INTERVAL` or setting `OVERCAST_HYBRID_SYNC=always`
-  trades write throughput for a smaller durability window — only worth it if you're
-  reproducing a scenario that needs sub-100ms durability guarantees.
-- Raising the dirty thresholds delays flushes further, which increases the amount of
-  data at risk on an OS crash or power loss without measurably speeding up requests
-  (writes are already async and non-blocking).
-- If you see a `hybrid flush slow` warning in the logs, the fix is almost always to
-  move `/data` off a Docker Desktop bind mount, not to change these knobs — see
-  "Data dir placement" above.
-
-Also worth knowing: `OVERCAST_SHUTDOWN_TIMEOUT` (default 5s) bounds how long a graceful
-shutdown waits for the final flush to finish before exiting anyway. Nothing is lost either
-way — the remaining writes replay from the pending log on the next start — so raise it only
-if you want shutdown to reliably wait for the flush (for example, to avoid the `store close
-exceeded shutdown timeout` log line), not because data is at risk.
-
----
+</details>
 
 ## Client-perceived latency — where "Overcast feels slow" actually goes
 
-Fast request handling does not guarantee a fast-*feeling* workflow.
-When a tool like the CDK drives Overcast, most of the wall-clock time
-the user experiences is spent in the client, not the emulator. Before
-assuming Overcast itself is slow, establish which side owns the time —
-the request log (every real AWS API call is logged at `INFO` by default —
-see [`OVERCAST_LOG_LEVEL`](./configuration/log-levels.md)) with
-`docker logs --timestamps` shows every request's duration and, by omission,
-every gap where the emulator was idle.
+Fast request handling does not guarantee a fast-*feeling* workflow. When a tool
+like the CDK drives Overcast, most of the wall-clock time the user experiences
+is spent in the client. Establish which side owns the time before assuming it is
+the emulator: every real AWS API call is logged at `INFO` by default (see
+[`OVERCAST_LOG_LEVEL`](./configuration/log-levels.md)), so `docker logs
+--timestamps` shows every request's duration and, by omission, every gap where
+the emulator was idle.
 
-Worked example, measured 2026-07-19 (Docker Desktop on Windows 11 /
-WSL2, hybrid backend; a CDK v2 bootstrap-and-deploy of four application
-stacks that took ~45 s wall-clock while every Overcast response completed
-in <200 ms):
+Worked example, measured 2026-07-19 (Docker Desktop on Windows 11 / WSL2, hybrid
+backend; a CDK v2 bootstrap-and-deploy of four application stacks that took
+~45 s wall-clock while every Overcast response completed in <200 ms):
 
-| Segment                      | Wall time | Owner    | Notes                                                                 |
-| ----------------------------- | --------- | -------- | --------------------------------------------------------------------- |
-| CDK CLI (Node.js) startup    | ~5 s      | client   | before the first request reaches Overcast                             |
-| Toolkit stack check/deploy   | ~5.4 s    | client   | dominated by CDK poll intervals; responses <200 ms                    |
-| `cdk synth`                  | ~8.4 s    | client   | zero requests hit the emulator during this gap                        |
-| 4 × app stack deploy         | ~21 s     | client   | ~5.1 s per stack = one SDK waiter `minDelay`; see below               |
-| Emulator processing (total)  | <2 s      | Overcast | sum of all request durations across the entire window                 |
+| Segment | Wall time | Owner | Notes |
+| --- | --- | --- | --- |
+| CDK CLI (Node.js) startup | ~5 s | client | before the first request reaches Overcast |
+| Toolkit stack check/deploy | ~5.4 s | client | dominated by CDK poll intervals; responses <200 ms |
+| `cdk synth` | ~8.4 s | client | zero requests hit the emulator during this gap |
+| 4 × app stack deploy | ~21 s | client | ~5.1 s per stack = one SDK waiter `minDelay`; see below |
+| Emulator processing (total) | <2 s | Overcast | sum of all request durations across the entire window |
 
-**The SDK-waiter tax.** Stack provisioning is asynchronous: `CreateStack`
-/ `ExecuteChangeSet` return `*_IN_PROGRESS` and a goroutine provisions
-the resources — typically in milliseconds (probe: a 3-resource stack
-reached `CREATE_COMPLETE` **184 ms** after `CreateStack`, measured by
-polling `DescribeStacks` every 100 ms with `curl`). But the AWS SDK
-waiter checks immediately — sees `IN_PROGRESS` because provisioning
-started microseconds earlier — then sleeps its 5 s `minDelay` before
-looking again. Every fast stack therefore costs one full waiter cycle
-regardless of emulator speed. Overcast shortens that window with a bounded
-synchronous wait (`OVERCAST_CFN_SYNC_WAIT_MS`, default 1000 ms) so the
-waiter's first check on a fast stack already sees the terminal status — see
+**The SDK-waiter tax.** Stack provisioning is asynchronous: `CreateStack` /
+`ExecuteChangeSet` return `*_IN_PROGRESS` and a goroutine provisions the
+resources, typically in milliseconds (probe: a 3-resource stack reached
+`CREATE_COMPLETE` **184 ms** after `CreateStack`, measured by polling
+`DescribeStacks` every 100 ms with `curl`). But the AWS SDK waiter checks
+immediately, sees `IN_PROGRESS` because provisioning started microseconds
+earlier, then sleeps its 5 s `minDelay` before looking again. Every fast stack
+therefore costs one full waiter cycle regardless of emulator speed. Overcast
+shortens that window with a bounded synchronous wait
+(`OVERCAST_CFN_SYNC_WAIT_MS`, default 1000 ms) so the waiter's first check on a
+fast stack already sees the terminal status — see
 [CloudFormation](./services/cloudformation.md).
 
-**What the emulator cannot fix:** CDK CLI startup, `cdk synth`, and any
-other client-side work show up as request-log silence. Report those
-upstream or restructure the workflow (e.g. `cdk deploy --concurrency`);
-no Overcast change will touch them.
+**What the emulator cannot fix:** CDK CLI startup, `cdk synth`, and any other
+client-side work show up as request-log silence. Report those upstream or
+restructure the workflow (for example `cdk deploy --concurrency`); no Overcast
+change will touch them.
+
+## Related
+
+- [Storage tuning](./performance/storage-tuning.md) — where `/data` should live, the slow-filesystem probe, and the hybrid flush knobs
+- [Storage and persistence](./storage.md) — which backend to pick, and what each one guarantees
+- [Debug endpoints](./debug-endpoints.md) — the metrics these numbers come from
+- [Troubleshooting](./troubleshooting.md) — when something is failing rather than slow
