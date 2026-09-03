@@ -73,6 +73,31 @@ aws --endpoint-url http://localhost:4566 lambda create-function \
 Full detail, including CDK tagging and the TypeScript caveats, is in
 [Lambda examples § Hot reload](./services/lambda/examples.md#hot-reload).
 
+### What counts as a change
+
+Overcast fingerprints the mounted tree — every entry's path, and every file's
+size and modification time — before each invocation. When the fingerprint moves
+the warm container is retired and the next invocation starts a fresh one against
+the edited source, exactly as `UpdateFunctionCode` does, so editing an
+already-loaded file works on runtimes that cache modules.
+
+The read is bounded so it stays cheap:
+
+| Bound | Effect |
+| --- | --- |
+| Dependency and VCS directories are not looked inside | `node_modules`, `.git`, `__pycache__`, `.venv`, `.mypy_cache`, `.pytest_cache` are fingerprinted by name only |
+| 20,000 entries, 24 directory levels | A larger or deeper tree is covered up to the limit; edits past it are not noticed |
+| A read costing more than 25 ms is rate-limited | Re-read at most once per 20× the previous read's cost, and at least once every 2 seconds |
+| Symbolic links are not followed | A symlink is fingerprinted by name |
+
+| Situation | What you get |
+| --- | --- |
+| Below the 25 ms budget | The tree is read before every invocation and an edit is live on the next one. A local disk takes 4–11 µs per entry, so a few thousand files stays under it |
+| A Docker Desktop file share | About 2 ms per entry, so an edit can take up to 2 seconds rather than one invocation to be seen |
+| Overcast itself in a container | The bind mount is the daemon's, but the fingerprint is read by Overcast from its own filesystem. Mount the source into Overcast at the same path too, or the first invocation runs the mounted source and every later one keeps that container |
+| Filesystem timestamps at 1–2 second granularity | Two saves within one tick that leave the file the same size are one change; the second waits for something else to change |
+| A very large tree, a slow file share, or dependencies you edit directly | Use `cdk watch` instead |
+
 ## ECS
 
 A task definition declares an ordinary **name-only scratch volume**, mounts it
@@ -188,22 +213,14 @@ or add a `hostPort` under the same local guard as the volume.
 
 ## When it does not work
 
-Nothing here degrades silently. A tag that cannot be honoured — the flag off, an
-unknown or unredirectable volume, a relative path, an ambiguous bare key —
-leaves the task running on the plain scratch volumes it declared and logs a
-warning naming exactly what to fix. A task never starts with a mount you asked
-for and did not get.
+Nothing here degrades silently: a task never starts with a mount you asked for
+and did not get.
 
-If the daemon refuses the bind outright, the task stops with
-`CannotStartContainerError` and a `stoppedReason` naming the host paths and
-pointing at Docker Desktop's **File Sharing** settings, which is the usual
-cause: a path outside the shared set cannot be bound. Add the directory there
-and run the task again.
-
-If edits reach the container but the application ignores them, the mount is
-working and the problem is upstream of it — OPcache, a compiled bundle, or a
-worker holding the old code in memory. Check the mount first with a file the
-framework does not cache:
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| A startup warning, and the task running on the plain scratch volumes it declared | The tag cannot be honoured — the flag is off, the volume is unknown or not redirectable, the path is relative, or a bare key is ambiguous | The warning names exactly what to correct |
+| `CannotStartContainerError`, with a `stoppedReason` naming the host paths | The daemon refused the bind, usually a path outside Docker Desktop's **File Sharing** set | Add the directory there and run the task again |
+| Edits reach the container and the application ignores them | The mount is working and the problem is upstream — OPcache, a compiled bundle, or a worker holding the old code in memory | Check the mount with a file the framework does not cache |
 
 ```bash
 docker exec $(docker ps -q -f name=overcast-ecs) ls -la /var/www/html
