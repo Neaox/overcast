@@ -56,8 +56,9 @@ aws ecs list-tasks --cluster dev
 | Port collisions                                              | Each `awsvpc` task has its own ENI       | A `hostPort` is published on the one Docker host, so two deployments contend for it |
 | Capacity providers, placement constraints, service discovery | Enforced                                 | Accepted and ignored                                                                |
 
-Rollout arithmetic, the settle window, the circuit breaker, volume rules and
-what a VPC placement restricts: [Limitations](./ecs/limitations.md).
+Every divergence, the volume rules and what a VPC placement restricts are in
+[Limitations](./ecs/limitations.md); the rollout arithmetic, the settle window
+and the circuit breaker are in [Scheduler](./ecs/scheduler.md).
 
 ## Gotchas
 
@@ -66,7 +67,7 @@ what a VPC placement restricts: [Limitations](./ecs/limitations.md).
 > defaults (`maximumPercent: 200`), because the replacement needs the port the
 > old task still holds. Set `maximumPercent: 100` with `minimumHealthyPercent: 0`
 > to deploy stop-then-start instead — see
-> [Limitations](./ecs/limitations.md#how-many-tasks-a-rollout-runs-at-once).
+> [Scheduler](./ecs/scheduler.md#how-many-tasks-a-rollout-runs-at-once).
 
 > [!IMPORTANT]
 > `networkConfiguration` is required whenever the **task definition's**
@@ -85,8 +86,9 @@ Per-operation status, notes and AWS API links: [ECS operations](ecs/operations.m
 
 ## Related
 
-- [ECS limitations](./ecs/limitations.md) — rollouts, volumes, networking
+- [ECS limitations](./ecs/limitations.md) — every divergence, volumes, networking
 - [ECS troubleshooting](./ecs/troubleshooting.md) — tasks that will not start or stay up
+- [ECS scheduler](./ecs/scheduler.md) — rollouts, the settle window, the circuit breaker
 - [ECS examples](./ecs/examples.md) — hot reload, ECR images, secrets, logs
 - [ECR](./ecr.md) — where task images come from
 - [ELBv2](./elb.md) — where a service registers its tasks as targets
