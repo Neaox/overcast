@@ -85,7 +85,6 @@ type LengthBacklogEntry struct {
 var LengthBacklog = map[string]LengthBacklogEntry{
 	"docs/services/cloudformation/limitations.md": {Prose: 14500, Page: 16000, Measured: "14164/15943", Why: "the divergence list belongs in a table; the essays under it belong in troubleshooting"},
 	"docs/services/ecs/limitations.md":            {Prose: 10000, Page: 12000, Measured: "9666/10641", Why: "table the divergences, move the explanations out"},
-	"docs/services/lambda/limitations.md":         {Prose: 22000, Page: 26500, Measured: "21976/26103", Why: "the largest service page in the tree; table the divergences and split the runtime notes out"},
 }
 
 // LengthReviewed records a page's authored size as the linter measures it.

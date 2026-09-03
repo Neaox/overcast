@@ -96,11 +96,11 @@ const vpcNetworkDocsPath = "networking/vpc-backing.md#internet-gateways-and-isol
 const egressModeDocsPath = "networking/egress.md"
 
 // lambdaInitVolumeDocsPath deep-links the lambda-init-volume-foreign advisory
-// to the section of the Lambda limitations page explaining why a foreign
+// to the section of the Lambda execution environments page explaining why a foreign
 // init volume is safe to reuse but only its own creating instance can prune
 // or remove it. The fragment is the docs browser's slug for that
 // heading — see dataDirDocsPath.
-const lambdaInitVolumeDocsPath = "services/lambda/limitations.md#init-delivery-is-shared-across-instances"
+const lambdaInitVolumeDocsPath = "services/lambda/execution-environments.md#init-delivery-is-shared-across-instances"
 
 // Advisory is one actionable diagnostic surfaced alongside the storage
 // diagnostics in GET /_overcast/debug/metrics (see debugMetricsResponse.Advisories).
