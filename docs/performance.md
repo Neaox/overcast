@@ -42,16 +42,11 @@ on it. `memory` and `wal` use no SQLite and never pay it at all.
 | `wal` (append log, async fsync) | 5–8 ms           | ~40 ms              |
 | `persistent` (SQLite)        | 2–6 ms              | ~40 ms              |
 
-Each row was measured with `OVERCAST_STATE` set explicitly to that backend. The default
-(`OVERCAST_STATE` unset, i.e. `auto`) resolves to one of these at startup — `hybrid` when
-a volume/bind mount or existing database is found, `memory` otherwise — so its measured
-cost is whichever row it resolves to, plus the (negligible) resolution check itself. See
-[docs/storage.md § The auto default](./storage.md#the-auto-default).
-
-The `overcast-slim` image and the `overcastd` binaries are built without SQLite, so
-`hybrid` and `persistent` do not exist in them and `auto` there always resolves to
-`memory` — a mounted volume does not change that. Their durable option is `wal`. See
-[docs/storage.md § Builds without SQLite](./storage.md#builds-without-sqlite).
+Each row was measured with `OVERCAST_STATE` set explicitly to that backend. The default,
+`auto`, costs whichever row it resolves to plus a negligible resolution check — see
+[The auto default](./storage.md#the-auto-default). The `overcast-slim` image and the
+`overcastd` binaries have no SQLite, so their durable option is `wal` — see
+[Builds without SQLite](./storage.md#builds-without-sqlite).
 
 Measured 2026-04-17 in the dev container (Debian 12, x86_64, Go 1.23,
 modernc/sqlite pure-Go driver, every service registered, no SDK clients
@@ -67,23 +62,15 @@ runs are 1–2 ms faster across the board and not reported.
 
 ## Storage backend tuning
 
-Overcast's default (`OVERCAST_STATE` unset, i.e. `auto`) picks `hybrid` or `memory` at
-startup based on whether there's evidence you want persistence — see
-[docs/storage.md § The auto default](./storage.md#the-auto-default) for the exact rule,
-and [§ Builds without SQLite](./storage.md#builds-without-sqlite) for the two artifacts
-where `hybrid` is not an option at all.
-If you're tuning for a specific case — crash-recovery testing, or a slow bind-mounted data
-directory — these are the levers. See [docs/storage.md](./storage.md) for a full comparison
-of the four concrete backends by durability and what survives a restart.
+These are the levers for a specific case — crash-recovery testing, or a slow
+bind-mounted data directory. For which backend to pick in the first place, see
+[Storage and persistence](./storage.md).
 
 ### Fast, disposable state in CI
 
-CI needs no `OVERCAST_STATE` setting at all: a CI container typically runs with no data
-volume mounted, so `auto` already resolves to `memory` — skipping disk I/O entirely, with
-no durability, which is exactly right for a pipeline that starts fresh every run. Setting
-`OVERCAST_STATE=memory` explicitly remains fine (and is still the right call if your CI
-setup happens to mount a volume you don't want used, or you just prefer to be explicit
-about it) — it's simply no longer necessary for the common case. The same applies per
+CI needs no `OVERCAST_STATE` setting: a CI container mounts no data volume, so `auto`
+already resolves to `memory` and skips disk I/O entirely. Setting it explicitly is still
+the right call if your CI mounts a volume you do not want used. The same applies per
 service via `OVERCAST_STATE_<SERVICE>=memory` for a single noisy service; see
 [Storage and persistence § Per-service storage overrides](./storage.md#per-service-storage-overrides)
 for the override syntax.

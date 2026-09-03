@@ -7,10 +7,19 @@ tags:
   - documentation
 ---
 
-# Documentation
+# Reference index
 
-Start with the [root README](../README.md) for what Overcast is and the one
-command that runs it. Everything else is below.
+Every guide and reference below, grouped by the job you are doing. To get a
+container answering the AWS APIs first:
+
+```bash
+docker run --rm -p 4566:4566 ghcr.io/overcast-sh/overcast:latest
+export AWS_ENDPOINT_URL=http://localhost:4566
+aws s3 mb s3://demo
+```
+
+Credentials, regions and per-language client setup are in
+[Using AWS SDKs and CLI](./sdk-cli.md).
 
 ## Get running
 

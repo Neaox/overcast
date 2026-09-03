@@ -238,3 +238,45 @@ func TestCheck_reportsALineNumberThatMatchesTheFileNotTheBody(t *testing.T) {
 	// Then: it is reported at file line 12
 	assertReports(t, problems, "docs/services/demo.md:12: intro is 3 sentences")
 }
+
+func TestCheck_rejectsALinkOutsideDocs(t *testing.T) {
+	for name, doc := range map[string]Doc{
+		"the hub's root README link": {Path: "docs/README.md", Body: "# Docs\n\nStart with the [root README](../README.md).\n"},
+		"a contributor file":         {Path: "docs/services/s3.md", Body: "# S3\n\nSee [contributing](../../CONTRIBUTING.md#how-to-add-a-service).\n"},
+		"an escape through docs":     {Path: "docs/networking/egress.md", Body: "# Egress\n\nSee [the file](../../embed.go).\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// Given: a link that works on GitHub and 404s in the console,
+			// which embeds docs/ and nothing else.
+			// When / Then: it is reported at its line.
+			assertReports(t, Check([]Doc{doc}), "which is outside docs/")
+		})
+	}
+}
+
+func TestCheck_acceptsLinksTheConsoleCanOpen(t *testing.T) {
+	body := "# Docs\n\n" +
+		"- [a sibling](./sdk-cli.md)\n" +
+		"- [a sub-page](./networking/egress.md#what-none-covers)\n" +
+		"- [an anchor](#related)\n" +
+		"- [the repository](https://github.com/overcast-sh/overcast/blob/main/CONTRIBUTING.md)\n" +
+		"- [the site](/console/)\n" +
+		"- [mail](mailto:hi@overcast.sh)\n"
+	assertClean(t, Check([]Doc{{Path: "docs/README.md", Body: body}}))
+}
+
+func TestCheck_readsAnUpwardLinkFromASubPage(t *testing.T) {
+	// Given: a service sub-page linking back up two levels, which lands on
+	// docs/networking.md and is therefore fine.
+	doc := Doc{Path: "docs/services/ec2/limitations.md", Body: "# EC2\n\nBack to [../ec2.md](../ec2.md) and [networking](../../networking.md).\n"}
+
+	// When / Then: only a target outside docs/ is a problem.
+	assertClean(t, Check([]Doc{doc}))
+}
+
+func TestCheck_ignoresLinksInsideFencedCode(t *testing.T) {
+	// Given: a sample the writer is quoting, not linking.
+	body := "# Docs\n\n```md\n[root README](../README.md)\n```\n"
+
+	assertClean(t, Check([]Doc{{Path: "docs/README.md", Body: body}}))
+}

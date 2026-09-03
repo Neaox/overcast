@@ -41,21 +41,17 @@ anything in a **default VPC**, whose subnets are public on AWS.
 > [!IMPORTANT]
 > **Run Overcast in a container for this mode.** On Docker Desktop with Overcast
 > running natively — and on any native Windows or macOS host — `routed` **cannot
-> withhold egress**: every container has a route out whatever its route table
-> says, so a subnet with no `0.0.0.0/0` route still reaches the internet and the
-> missing NAT gateway this mode exists to catch goes uncaught. Overcast says so
-> rather than pretending: **two warnings in the startup log**, and the
-> `vpc-egress-not-withheld` advisory on the console's **Metrics & Health** page —
-> the same advisory `none` raises, naming whichever mode you set. Running
-> Overcast **in a container**, or against a **native Linux Docker daemon**, is
-> what makes the mode enforceable.
+> withhold egress**: a subnet with no `0.0.0.0/0` route still reaches the
+> internet. **Two warnings in the startup log** and the
+> `vpc-egress-not-withheld` advisory on the console's **Metrics & Health** page
+> say so, naming whichever mode you set. Running Overcast **in a container**, or
+> against a **native Linux Docker daemon**, is what makes the mode enforceable.
 >
 > Two host limits cause it, and both the warnings and the advisory name whichever
 > applies:
 >
-> - The control plane cannot be isolated where containers reach the Lambda
->   Runtime API at the host's own address — `--internal` would strand every
->   invocation at INIT. The same limit [`none` has](./egress.md).
+> - The control plane stays routable, so containers keep a route out — [the same
+>   limit `none` has](./egress.md).
 > - VPC placement is not enforced where Overcast's DNS resolver cannot start (no
 >   `/etc/resolv.conf` on those hosts), so a VPC-placed container also joins the
 >   routable shared data plane — see

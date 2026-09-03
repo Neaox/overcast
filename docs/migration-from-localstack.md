@@ -151,17 +151,10 @@ release: egress on your machine may have been withheld and is not any more, and
 set it to `false` to restore LocalStack's behaviour, you can drop it — that is
 now the default.
 
-Overcast can also do two things LocalStack cannot. `OVERCAST_VPC_EGRESS=none`
-gives nothing it starts a route out of the machine, for deterministic CI or to
-prove a stack has no hidden external dependency. `OVERCAST_VPC_EGRESS=routed`
-decides egress per subnet from its route table, so a function in a private
-subnet with no NAT gateway fails with `ENETUNREACH` locally rather than in a
-deploy.
-
-Run Overcast in a container, or against a native Linux Docker daemon, to get
-the whole of either — on Docker Desktop the control plane has to stay routable,
-so containers keep a route out and Overcast says so at startup. See
-[Egress modes](./networking/egress.md) and
+Overcast can also do two things LocalStack cannot: `none` withholds egress from
+everything it starts, and `routed` decides it per subnet from the route table.
+Both need Overcast running in a container — on Docker Desktop the control plane
+stays routable. See [Egress modes](./networking/egress.md) and
 [`routed`](./networking/routed-egress.md).
 
 ---
@@ -363,12 +356,11 @@ for simple handlers.
 
 ### Persistence: auto-detected, like LocalStack's `DATA_DIR` presence
 
-LocalStack enables persistence when `DATA_DIR` is set. Overcast's default
-(`OVERCAST_STATE` unset, i.e. `auto`) behaves the same way: `hybrid` when a
-volume or bind mount is present at `OVERCAST_DATA_DIR` — or a database is already
-there — and `memory` otherwise. Set `OVERCAST_STATE` explicitly for a specific
-backend regardless of what is mounted. See
-[Storage and persistence § The auto default](./storage.md#the-auto-default).
+LocalStack enables persistence when `DATA_DIR` is set. Overcast's default,
+`auto`, infers it the same way — see
+[Storage and persistence § The auto default](./storage.md#the-auto-default). Set
+`OVERCAST_STATE` explicitly for a specific backend regardless of what is
+mounted.
 
 A volume carried over at LocalStack's own path is read where it is. Overcast
 keeps state in `/data`, but a compose file migrated line by line still mounts
@@ -399,8 +391,7 @@ Every response, errors included, carries `x-amz-request-id` (or
 
 ## Coverage
 
-A hand-maintained list of missing services rots quickly, so this guide carries
-none. For current coverage use the
+For current coverage use the
 [generated service index](./README.md#services) — every emulated service with its
 operation count — and the per-service pages behind it for operation-level detail.
 CloudFormation coverage is listed separately under
