@@ -17,7 +17,6 @@ Running your application against Overcast gets you a realistic AWS. It does not,
 on its own, get you a fast edit-run cycle: a Lambda still wants a zip and an ECS
 task still wants an image, so a one-character fix costs a rebuild and a redeploy.
 
-
 ## Which one to use
 
 | | How it works | Best for |

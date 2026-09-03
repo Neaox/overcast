@@ -29,7 +29,7 @@ docker run --rm -p 4566:4566 ghcr.io/overcast-sh/overcast:latest
 
 ### 2. Configure environment
 
-CDK needs credentials and an endpoint override. The simplest approach:
+CDK needs credentials and an endpoint override:
 
 ```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
