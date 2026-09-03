@@ -50,7 +50,7 @@ Which one to reach for:
 | State to survive a restart, without thinking about it                 | Nothing — mount a volume and let `auto` pick `hybrid`            |
 | Every write durable *before the call returns* (crash-recovery tests)  | `OVERCAST_STATE=persistent`                                      |
 | Durability without SQLite (slim image, `overcastd`, small datasets)   | `OVERCAST_STATE=wal`                                             |
-| The fastest possible run, nothing kept (tests, CI)                    | `OVERCAST_STATE=memory` — or just don't mount a volume           |
+| The fastest possible run, nothing kept (tests, CI)                    | `OVERCAST_STATE=memory` — or don't mount a volume                |
 | One service durable and the rest ephemeral                            | `OVERCAST_STATE_<SERVICE>` — see [below](#per-service-storage-overrides) |
 
 `hybrid`, `persistent` and `wal` all store their files under `OVERCAST_DATA_DIR`:
@@ -173,12 +173,11 @@ DynamoDB now writes synchronously to disk, S3 flushes asynchronously, and every
 other service is ephemeral. Each overridden service gets its own SQLite file
 under `$OVERCAST_DATA_DIR/<service>/`.
 
-> [!NOTE]
-> Four services accept an override that can have no effect, and log a startup
-> warning when one is set: `DYNAMODBSTREAMS` (a facade over `dynamodb`, which
-> owns all stream state), `STS` (its session state lives under IAM's storage),
-> and `BEDROCK`/`ORGANIZATIONS` (stateless stubs). Every other service's
-> override works.
+Four services accept an override that can have no effect, and log a startup
+warning when one is set: `DYNAMODBSTREAMS` (a facade over `dynamodb`, which owns
+all stream state), `STS` (its session state lives under IAM's storage), and
+`BEDROCK`/`ORGANIZATIONS` (stateless stubs). Every other service's override
+works.
 
 ## Related
 

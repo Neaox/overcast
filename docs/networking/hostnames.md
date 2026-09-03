@@ -37,8 +37,9 @@ goes to Overcast on your machine.
 > [!WARNING]
 > **Public wildcard DNS needs internet access, and may be blocked.** Routers,
 > corporate networks and DNS filtering software often implement **DNS rebinding
-> protection**, which stops a public hostname resolving to a loopback address —
-> exactly what `localhost.overcast.sh` does on purpose. `nslookup
+> protection**, which stops a public hostname resolving to a loopback address.
+> `localhost.overcast.sh` resolves to `127.0.0.1`, so a filtering network
+> refuses it. `nslookup
 > localhost.overcast.sh` should answer `127.0.0.1`; anything else means your
 > network is filtering it. Fall back to plain `localhost` (Linux and macOS) or a
 > hosts-file entry (any OS).
