@@ -82,9 +82,10 @@ type LengthBacklogEntry struct {
 // Every entry was measured on the day the budget landed. `Why` names the split
 // the page is waiting for, so the entry is a work item rather than a note that
 // the page is big.
-var LengthBacklog = map[string]LengthBacklogEntry{
-	"docs/services/ecs/limitations.md": {Prose: 10000, Page: 12000, Measured: "9666/10641", Why: "table the divergences, move the explanations out"},
-}
+// The list is empty: every page that predated the budget has been rewritten.
+// Adding an entry back is not the way to land a long page — write the reason on
+// the page in a LengthReviewMarker, where a reader can see it too.
+var LengthBacklog = map[string]LengthBacklogEntry{}
 
 // LengthReviewed records a page's authored size as the linter measures it.
 type LengthReviewed struct {

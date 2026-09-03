@@ -17,7 +17,7 @@ Symptom, cause and fix for tasks that will not start or stay up behind
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | `CreateService` succeeds but no task is ever placed | The task definition is `awsvpc` and the service has no `networkConfiguration` | Supply it. The requirement follows the task definition's `networkMode`, not `launchType` |
-| `was unable to place a task. Reason: … port is already allocated` | A `hostPort` mapping, and both deployments are alive at once | Set `maximumPercent: 100` / `minimumHealthyPercent: 0` — see [Limitations](./limitations.md#how-many-tasks-a-rollout-runs-at-once) |
+| `was unable to place a task. Reason: … port is already allocated` | A `hostPort` mapping, and both deployments are alive at once | Set `maximumPercent: 100` / `minimumHealthyPercent: 0` — see [Scheduler](./scheduler.md#how-many-tasks-a-rollout-runs-at-once) |
 | Task `STOPPED` with `CannotPullContainerError` | The image is not in the registry, or the address is not this account's ECR | Push it, or check the `repositoryUri` in [ECR](../ecr.md) |
 | Task `STOPPED` with `ResourceInitializationError` | The task's network namespace or ENI could not be set up | Check the VPC's Docker network exists and that Overcast can reach it |
 | Task `STOPPED` with `CannotStartContainerError` naming host paths | Docker refused a bind mount | Allow the directory in Docker Desktop's File Sharing settings |
@@ -46,6 +46,7 @@ first and keeps it at
 ## Related
 
 - [ECS](../ecs.md) — quick start and what works
-- [ECS limitations](./limitations.md) — rollouts, volumes, networking
+- [ECS limitations](./limitations.md) — every divergence, volumes, networking
+- [ECS scheduler](./scheduler.md) — rollouts, the settle window, the circuit breaker
 - [ECS examples](./examples.md) — ECR images, secrets, logs, load balancers, hot reload
 - [ECR](../ecr.md) — where task images come from
