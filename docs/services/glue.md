@@ -58,8 +58,10 @@ aws glue get-tables --database-name analytics
 > that reads columns or an S3 `Location` back out of `GetTable` will find
 > neither.
 
+Nothing downstream consumes what you define here either.
+
 > [!NOTE]
-> [Athena](./athena.md) does not read this catalog. It records queries and
+> [Athena](./athena.md) does not read this catalogue. It records queries and
 > returns empty result sets, so a table defined here changes nothing about
 > what a query answers.
 

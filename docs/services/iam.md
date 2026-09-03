@@ -49,8 +49,8 @@ aws iam attach-role-policy --role-name app \
 Simulation reads nothing else and changes nothing, and it works whether or not
 enforcement is switched on. `MatchedStatements` names the deciding policy and
 statement, with `StartPosition` / `EndPosition` pointing at that statement's
-braces in the exact document text supplied — which is what tells two statements
-in the *same* document apart.
+braces in the exact document text supplied, so two statements in the *same*
+document are told apart.
 
 ## Request-time enforcement (opt-in)
 

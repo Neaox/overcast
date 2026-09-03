@@ -11,7 +11,7 @@ tags:
 
 # IAM limitations
 
-What the policy evaluator covers, and where it stops. The summary is on the
+What the policy evaluator covers and where it stops, behind the summary on
 [IAM](../iam.md).
 
 ## What the evaluator covers
@@ -55,8 +55,8 @@ and request-time enforcement read the stored boundary, so one attached out of
 band takes effect on the very next call.
 
 Supplying `PermissionsBoundaryPolicyInputList` to `SimulatePrincipalPolicy`
-uses that boundary *instead of* the stored one — AWS allows only one boundary
-per simulation, and "what would this boundary do" is the reason to supply it.
+uses that boundary *instead of* the stored one; AWS allows only one boundary
+per simulation.
 
 | Case                                            | Behaviour                                                     |
 | ----------------------------------------------- | --------------------------------------------------------------- |
@@ -65,8 +65,8 @@ per simulation, and "what would this boundary do" is the reason to supply it.
 | Boundary attached but unreadable                | Allows nothing, and the reason is logged at warn level          |
 | Boundary plus a simulated `ResourcePolicy`      | The boundary still applies — AWS would let a direct-principal resource policy bypass it |
 
-That last row is the one divergence, and it only shows up when a simulation
-supplies a `ResourcePolicy` *and* the principal carries a boundary.
+That last row is the one divergence, and it needs a simulation supplying a
+`ResourcePolicy` *and* a principal carrying a boundary to appear at all.
 
 ## What enforcement does not see
 
@@ -90,8 +90,8 @@ Login profiles, signing certificates, SSH public keys, Git credentials and MFA
 devices do not exist here, so the AWS delete conflicts for those cannot arise.
 Managed policy *versions* are a counter rather than a history:
 `CreatePolicyVersion` with `SetAsDefault=true` replaces the operative document
-and bumps `DefaultVersionId`, which is what `AWS::IAM::ManagedPolicy` updates
-dispatch, but superseded documents are not retained.
+and bumps `DefaultVersionId` — the call `AWS::IAM::ManagedPolicy` updates
+dispatch — but superseded documents are not retained.
 
 ## Related
 

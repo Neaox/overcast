@@ -25,7 +25,7 @@ carries the detail.
 | Runtime environment validation | Minimal | [Runtimes](./runtimes.md) |
 | Extension telemetry (Logs API / Telemetry API) | HTTP destinations only | [Logging](./logging.md) |
 | SnapStart | Not emulated — no restore records; `platform.runtimeDone` reports only `responseLatency` | [Logging](./logging.md) |
-| `LoggingConfig: {}` (explicitly empty) | `UpdateFunctionConfiguration` returns `501` rather than guessing no-op vs. reset | [Logging](./logging.md) |
+| `LoggingConfig: {}` (explicitly empty) | `UpdateFunctionConfiguration` returns `501` | [Logging](./logging.md) |
 | `TracingConfig` / `EphemeralStorage` / `KMSKeyArn` | Stored and returned, never enforced | Below |
 | Resource policies | `AddPermission` stores and validates; statements are not evaluated at invoke time | Below |
 | Update status | Every update but an image `UpdateFunctionCode` answers `Successful` rather than `InProgress` | Below |
@@ -52,10 +52,10 @@ the function does.
 ## Update status
 
 AWS answers every update `LastUpdateStatus: InProgress` and settles a moment
-later. Overcast answers `Successful`, because a zip deployment and every
+later. Overcast answers `Successful`: a zip deployment and every
 `UpdateFunctionConfiguration` are durably applied before the call returns, so
-`aws lambda wait function-updated` returns on its first poll rather than never
-(#1550). The one update that really is asynchronous — `UpdateFunctionCode`
+`aws lambda wait function-updated` returns on its first poll. The one update
+that really is asynchronous — `UpdateFunctionCode`
 pointing a `PackageType=Image` function at a new image — answers `InProgress` and
 settles to `Successful`, or `Failed` with
 `ImageAccessDenied`/`InvalidImage`/`InternalError`, when the pull does.
@@ -95,8 +95,8 @@ Tags attach to the **unqualified** function ARN, never to a version or alias, so
 `TagResource`, `UntagResource` and `ListTags` reject a qualified ARN with
 `InvalidParameterValueException`. They take an ARN, not a bare function name.
 Event source mappings are taggable through the same three operations, and
-`CreateEventSourceMapping` accepts a `Tags` map — which is what CloudFormation
-does on every deploy carrying stack tags. Their tags are stored separately and
+`CreateEventSourceMapping` accepts a `Tags` map, as CloudFormation sends on
+every deploy carrying stack tags. Their tags are stored separately and
 never appear in `EventSourceMappingConfiguration`, so `ListTags` is the only way
 to read them back. Code signing configurations, capacity providers and network
 connectors return `501` from the tag operations.
@@ -104,17 +104,15 @@ connectors return `501` from the tag operations.
 ## VPC placement — `VpcConfig`
 
 A function with a `VpcConfig` naming subnets is placed on that VPC's network and
-nothing else. It can reach what is in the VPC with it, and cannot reach a
-container outside it — which is what a `VpcConfig` means on AWS, where placement
-subtracts rather than adds.
+nothing else. It can reach what is in the VPC with it and cannot reach a
+container outside it, matching AWS, where placement subtracts rather than adds.
 
 > [!IMPORTANT]
-> **On a native Windows or macOS host the restriction is not applied.** It is
-> only safe where a forbidden connection fails by *name*, which needs Overcast's
-> DNS resolver, which needs an `/etc/resolv.conf` those hosts do not have. There
-> the function joins its VPC network *and* the shared data plane, and reaches
-> everything on both — so a test that proves your VPC wiring works passes
-> whether or not it is correct. Run Overcast in a container to get the
+> **On a native Windows or macOS host the restriction is not applied.** It needs
+> Overcast's DNS resolver, and that needs an `/etc/resolv.conf` those hosts do
+> not have. There the function joins its VPC network *and* the shared data
+> plane and reaches everything on both, so a test of your VPC wiring passes
+> whether or not the wiring is correct. Run Overcast in a container to get the
 > restriction. See [Networking § The Docker networks Overcast uses](../../networking/docker-networks.md).
 
 Overcast's own API endpoint is the exception and stays reachable from every
@@ -122,10 +120,9 @@ function regardless of placement. `AWS_ENDPOINT_URL` and the Lambda Runtime API
 ride a separate control plane, so calling S3 or DynamoDB from inside a VPC works
 here without the NAT gateway or VPC endpoint AWS would need.
 
-The mistake this catches is a database in a VPC and a function outside it, which
-never worked on AWS either. Put the function in the VPC, or set
-`PubliclyAccessible` on the instance; a refused connection is named rather than
-left to hang.
+A database in a VPC with the function outside it never worked on AWS either.
+Put the function in the VPC, or set `PubliclyAccessible` on the instance; the
+refused connection is named rather than left to hang.
 
 ## Related
 

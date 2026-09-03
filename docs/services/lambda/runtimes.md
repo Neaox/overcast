@@ -14,11 +14,10 @@ tags:
 Which runtime identifiers [Lambda](../lambda.md) accepts, and what a rejection
 means.
 
-Every runtime identifier comes from one table, so request validation, the
-runtime-to-image mapping, AWS's deprecation dates and the web console's create
-wizard cannot disagree. Identifiers are the modelled `Runtime` enum from the
-pinned AWS Smithy model; deprecation, block-create and block-update dates come
-from AWS's published runtime lifecycle table.
+Identifiers are AWS's modelled `Runtime` enum; the deprecation, block-create and
+block-update dates are AWS's published runtime lifecycle dates. Request
+validation, the runtime-to-image mapping and the console's create wizard all
+read the same table.
 
 ## What each rejection means
 
@@ -28,8 +27,8 @@ from AWS's published runtime lifecycle table.
 | Modelled, but past AWS's deprecation phase for the operation | `400 InvalidParameterValueException` naming the recommended successor |
 | Modelled and accepted by AWS, but Overcast has no execution image for it | `501 NotImplemented` — an emulator gap; nothing is persisted |
 
-The third case is the important one: a missing execution image is **not** a bad
-request, so Overcast never invents a `400` for it. The check applies to `Zip`
+A missing execution image answers `501` rather than an invented `400`: the
+request was valid and AWS would have accepted it. The check applies to `Zip`
 packages; an `Image` function brings its own.
 
 ## Deprecation is observed in three steps
@@ -66,4 +65,4 @@ runtime's `supported`, `deprecated`, `createBlocked` and `updateBlocked` flags.
 - [Lambda limitations](./limitations.md) — the divergence table
 - [Lambda examples](./examples.md) — container images, layers, extensions
 - [Lambda troubleshooting](./troubleshooting.md) — throttles, layer errors, extension endpoints
-- [Configuration reference](../../configuration.md) — every `LAMBDA_*` environment variable
+- [Environment variable reference](../../configuration/reference.md) — every `LAMBDA_*` variable

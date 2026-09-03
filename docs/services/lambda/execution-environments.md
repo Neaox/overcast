@@ -43,8 +43,8 @@ is dropped from the warm set as soon as the Docker event stream reports it.
 `GET /_overcast/lambda/instances` reports one entry per execution environment,
 each carrying an `initOrigin` of `on-demand`, `proactive` or `provisioned`, fixed
 for the environment's lifetime. The `lambda:InstanceEvicted` event additionally
-carries `evictedReason`: `idle-ttl`, `config-change`, `function-deleted`,
-`container-died`, `unhealthy`, `surplus`, `memory-pressure` or `shutdown`.
+carries an `evictedReason` — the eight values and what each means are in
+[Troubleshooting § Working out why a warm environment went away](./troubleshooting.md#working-out-why-a-warm-environment-went-away).
 
 ## CPU is shared with the init, and small functions feel it in bursts
 
@@ -61,9 +61,9 @@ the period rolls over. Measured on a 128 MB `nodejs22.x` hello-world driven with
 no think time: warm p50 is unchanged at ~5 ms, but roughly one invocation in eight
 stalls for ~80 ms, taking p95 from ~15 ms to ~80 ms.
 
-Throttling a container that overruns its CPU allocation is what Lambda does, so it
-is not emulated away. It disappears with more memory (at 1769 MB, a full vCPU,
-there are no stalls) or any gap between invocations.
+Real Lambda throttles a container that overruns its CPU allocation the same way.
+The stalls disappear with more memory (at 1769 MB, a full vCPU, there are none)
+or with any gap between invocations.
 
 ## Init delivery is shared across instances
 

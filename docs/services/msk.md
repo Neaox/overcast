@@ -65,6 +65,8 @@ aws kafka get-bootstrap-brokers --cluster-arn "$ARN"
 > A cluster name already in use in the region is a `ConflictException`, and
 > `CreateCluster` and `CreateClusterV2` share that namespace.
 
+Broker containers are scoped to the instance that created them.
+
 > [!NOTE]
 > Two Overcasts on one Docker daemon do not disturb each other's brokers:
 > containers carry the identity of the instance that created them, and the
