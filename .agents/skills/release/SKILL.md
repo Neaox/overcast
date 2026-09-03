@@ -148,6 +148,22 @@ Concretely, the agent — not the user — does all of this:
 
 ---
 
+## Docs-only candidates
+
+When every entry in the curated section carries a `[docs]` prefix, the pass
+below shrinks to smoke plus one console check — nothing built from Go or the
+web UI changed, only the docs it serves. Run:
+
+- **Smoke** on both images (§1): start each on a remapped port, hit
+  `/_overcast/health`, and make one bare-SDK call.
+- **Console docs viewer**, driven headlessly: the nav renders, one split
+  guide and one service sub-page open, and search finds both.
+
+Cite the targeted (§3) and compat (§2) suites from CI rather than re-running
+them. Anything non-docs in the section restores the full pass below.
+
+---
+
 ## What to test
 
 ### 1. Smoke — is it alive and correctly wired
