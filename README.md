@@ -287,7 +287,7 @@ go build -trimpath -tags slim,nosqlite -o overcastd ./cmd/overcast
 
 ### Commands
 
-All subcommands are available in both `overcast` and `overcastd` (the web console is simply absent in the slim binary). Run `overcast --help` or `overcast <command> --help` for the full flag reference, or see the [CLI reference](./docs/cli.md) for every command's flags, defaults, and examples in one place.
+All subcommands are available in both `overcast` and `overcastd` (the web console is absent in the slim binary). Run `overcast --help` or `overcast <command> --help` for the full flag reference, or see the [CLI reference](./docs/cli.md) for every command's flags, defaults, and examples in one place.
 
 | Command                       | Description                                                              |
 | ------------------------------ | ---------------------------------------------------------------------------- |
@@ -298,6 +298,7 @@ All subcommands are available in both `overcast` and `overcastd` (the web consol
 | `overcast logs`               | Tail a background instance's output                                      |
 | `overcast services`           | List enabled services and their emulation tiers                          |
 | `overcast reset`              | Wipe emulated state, all or one service                                  |
+| `overcast network`            | Report Docker networks that have drifted from your configuration, and rebuild them |
 | `overcast config`             | Show the daemon's effective configuration (needs `OVERCAST_DEBUG=true`)  |
 | `overcast env`                | Print AWS environment exports for pointing tools at Overcast             |
 | `overcast aws`                | Run the host AWS CLI against Overcast, environment scrubbed first        |
@@ -329,8 +330,8 @@ and `auto` always resolves to `memory`. Use `OVERCAST_STATE=wal`, or the full
 
 ### Browser-trusted HTTPS
 
-Serving the API and console over TLS unlocks browser HTTP/2, which is what keeps
-the console responsive under load:
+Serving the API and console over TLS unlocks browser HTTP/2, which keeps the
+console responsive under load:
 
 ```bash
 overcast https enable            # once per machine; approve the OS prompt
