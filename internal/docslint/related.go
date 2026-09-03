@@ -46,11 +46,12 @@ func (t relatedTier) String() string {
 	switch t {
 	case tierOwnSubPage:
 		return "one of this page's own sub-pages"
+	case tierElsewhereInDocs:
+		return "another page under docs/"
 	case tierOffSite:
 		return "a link off the site"
-	default:
-		return "another page under docs/"
 	}
+	return "another page under docs/"
 }
 
 // linkTier resolves one Markdown link target against the page that carries it.
