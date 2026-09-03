@@ -69,7 +69,7 @@ const localStackServiceStatus = "running"
 
 // localStackEndpointMap names the Overcast endpoint that replaces each
 // LocalStack one, for the hint served in place of a bare 404. It mirrors the
-// table in docs/migration-from-localstack.md.
+// table in docs/migration/endpoints.md.
 //
 // A path Overcast actually serves does not belong here — health, init and
 // state/reset are answered rather than pointed at (see localstack_compat.go),

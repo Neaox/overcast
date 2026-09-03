@@ -41,7 +41,7 @@ short version.
 ## Endpoints
 
 Full mapping in
-[Migrating from LocalStack § Endpoint mapping](./migration-from-localstack.md#endpoint-mapping).
+[Endpoints and init hooks](./migration/endpoints.md#endpoint-mapping).
 
 | Item | Status | Notes |
 | ---- | ------ | ----- |
@@ -79,7 +79,7 @@ Every row here is verified against a running instance.
 
 | Item | Status | Notes |
 | ---- | ------ | ----- |
-| Every documented LocalStack variable | Aliased or inert | One with an Overcast equivalent is read as an alias; every other is recognised, does nothing, and says so in a startup log line. Full table: [Migrating from LocalStack § Environment variables](./migration-from-localstack.md#environment-variables) |
+| Every documented LocalStack variable | Aliased or inert | One with an Overcast equivalent is read as an alias; every other is recognised, does nothing, and says so in a startup log line. Full table: [LocalStack environment variables](./migration/environment-variables.md) |
 
 ## Container conventions
 
@@ -96,7 +96,7 @@ Every row here is verified against a running instance.
 | `HEALTHCHECK` | Differs | Probes `/_overcast/health`; a compose healthcheck on `/_localstack/health` also works |
 | `VOLUME /var/lib/localstack` | No equivalent | Overcast declares no volume, so a volume-less run stays ephemeral by default |
 | `LOCALSTACK_AUTH_TOKEN` | Works | Recognised and inert: nothing here is auth-gated |
-| `LAMBDA_DOCKER_NETWORK`, `MAIN_DOCKER_NETWORK` | No equivalent | Both name the network containers join; Overcast puts everything it starts on `OVERCAST_NETWORK` and the control plane derived from it. Recognised and inert — see [why they are not aliased](./migration-from-localstack.md#why-lambda_docker_network-is-inert-rather-than-aliased) |
+| `LAMBDA_DOCKER_NETWORK`, `MAIN_DOCKER_NETWORK` | No equivalent | Both name the network containers join; Overcast puts everything it starts on `OVERCAST_NETWORK` and the control plane derived from it. Recognised and inert — see [why they are not aliased](./migration/environment-variables.md#why-lambda_docker_network-is-inert-rather-than-aliased) |
 | Egress from compute in a VPC | Works | `OVERCAST_VPC_EGRESS=open`, the default, matches LocalStack: a VPC-attached Lambda has full egress. `none` and `routed` withhold it, which LocalStack cannot express; both need Overcast in a container — see [Egress modes](./networking/egress.md) and [`routed`](./networking/routed-egress.md) |
 | Persistence by default | Differs | The image mounts no volume, so `OVERCAST_STATE=auto` resolves to memory and a restart is a wipe. Set `OVERCAST_STATE` to decide rather than infer — see [Storage and persistence](./storage.md#the-auto-default) |
 

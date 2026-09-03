@@ -84,7 +84,7 @@ the JSON form, not null.
 
 Anything else under `/_localstack/` or `/_aws/` answers 404 with the Overcast
 endpoint that replaces it, rather than falling through to S3's `NoSuchBucket`
-— see [Migrating from LocalStack](./migration-from-localstack.md#endpoint-mapping)
+— see [Endpoints and init hooks](./migration/endpoints.md#endpoint-mapping)
 for the full table.
 
 ## Trace retention

@@ -33,7 +33,7 @@ package config
 // Where LocalStack's semantics differ fundamentally from anything Overcast
 // has, or the "equivalent" would be a false-friend trap rather than a true
 // match, the variable is deliberately *not* aliased -- see
-// docs/migration-from-localstack.md's "Not aliased" section for the
+// docs/migration/environment-variables.md's inert-variable table for the
 // reasoning on each.
 
 import (
@@ -298,7 +298,7 @@ var enforceIAMAlias = stringAlias{
 // exactly as it does under LocalStack.
 //
 // Inverting is safe here in a way it is not for LAMBDA_DOCKER_NETWORK (see
-// the "Not aliased" section of docs/migration-from-localstack.md): the two
+// the inert-variable table in docs/migration/environment-variables.md): the two
 // variables mean the same thing about the same containers, and the polarity
 // is the whole of the difference.
 var lambdaRemoveContainersAlias = stringAlias{
