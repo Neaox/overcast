@@ -338,9 +338,9 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [web] the SES dashboard card no longer promises delivery history; the console SES page manages identities only, and sent mail is in the Inbox
 
-- [web] Apply the saved theme at boot, so the connection and cold-boot screens no longer ignore it
-
-- [web] Serve a real 404 for a missing bundle asset instead of the SPA index page
+- [web] the console honours the saved theme from its first paint, and a missing bundle asset answers 404 rather than the SPA index page.
+  the theme was applied after the connection gate, so the connect and cold-boot screens — the first thing a new user sees — rendered in the default one whatever they had chosen
+  the SPA fallback answered every unmatched path with `index.html`, so a stale or missing `/assets/*` file arrived as HTML and failed wherever it was parsed as script; only a real path under the app's own routes falls back now
 
 - [docs] the networking pages agree with the code about egress, isolation and what an internet gateway decides.
   three pages in `docs/dev/` said the gateway "no longer decides a VPC network's isolation" and that `open` "leaves all of them routable"; under `open` a VPC network is still `--internal` without a gateway, and one ASCII diagram contradicted itself two lines apart. What stopped being true is that the gateway decides *egress*
