@@ -26,8 +26,8 @@ explaining.
 > `DEFAULT_REGION`, `DEBUG=1`, `LS_LOG`, `PERSISTENCE=1`, `ENFORCE_IAM`,
 > `LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT`, `LAMBDA_REMOVE_CONTAINERS=0` and
 > `DNS_ADDRESS=0`. Those, and the thirty-odd LocalStack variables Overcast
-> recognises but ignores, are mapped in [Migrating from LocalStack § Environment
-> variables](../migration-from-localstack.md#environment-variables).
+> recognises but ignores, are mapped in [LocalStack environment
+> variables](../migration/environment-variables.md).
 
 <!--
   This table mirrors the authoritative enumeration in the doc comment on
@@ -38,7 +38,7 @@ explaining.
   (OVERCAST_SERVICES, OVERCAST_MCP_REPLAY_LIMIT, and the per-service
   LAMBDA_NETWORK/ECS_NETWORK/RDS_NETWORK/ELASTICACHE_NETWORK/MSK_NETWORK/
   EKS_NETWORK/EFS_NETWORK, replaced by OVERCAST_NETWORK). The LocalStack alias
-  and ignored-variable tables live in docs/migration-from-localstack.md.
+  and ignored-variable tables live in docs/migration/environment-variables.md.
 -->
 | Variable                         | Default                | Description                                                                          |
 | --------------------------------- | ---------------------- | ------------------------------------------------------------------------------------ |
@@ -141,7 +141,7 @@ explaining.
 | `OVERCAST_SMTP_TLS`              | `false`                | Enable implicit TLS (port 465) for external relay                                    |
 | `OVERCAST_SMTP_INBOX_MAX`        | `500`                  | Maximum number of captured messages retained before eviction                         |
 | `OVERCAST_INIT_ENABLED`          | `true`                 | Run init-hook scripts found in `OVERCAST_INIT_DIRS` at startup; set `false` to disable |
-| `OVERCAST_INIT_DIRS`             | `/etc/localstack/init,/etc/overcast/init` | Comma-separated base directories scanned for init-hook scripts in `boot.d/`, `start.d/`, `ready.d/` and `shutdown.d/` — see [Migrating from LocalStack](../migration-from-localstack.md#init-hooks) |
+| `OVERCAST_INIT_DIRS`             | `/etc/localstack/init,/etc/overcast/init` | Comma-separated base directories scanned for init-hook scripts in `boot.d/`, `start.d/`, `ready.d/` and `shutdown.d/` — see [Endpoints and init hooks](../migration/endpoints.md#init-hooks) |
 | `OVERCAST_INIT_TIMEOUT`          | `30s`                  | Per-script timeout for init hooks                                                    |
 
 ## Related

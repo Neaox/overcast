@@ -44,7 +44,7 @@ reference](./configuration/reference.md).
 | [Storage and persistence](./storage.md)                                           | What `OVERCAST_STATE=auto` picks, and per-service overrides   |
 | [Networking](./networking.md)                                                     | Hostnames, Docker networks and VPC egress                     |
 | [HTTPS and HTTP/2](./https.md)                                                    | `OVERCAST_TLS` and getting the local CA trusted               |
-| [Migrating from LocalStack](./migration-from-localstack.md#environment-variables) | Which LocalStack variables are read as aliases                |
+| [LocalStack environment variables](./migration/environment-variables.md)          | Which LocalStack variables are read as aliases                |
 
 ## Service names
 
