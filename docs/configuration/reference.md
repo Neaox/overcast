@@ -59,7 +59,7 @@ explaining.
 | `OVERCAST_WAL_FSYNC_INTERVAL`    | `100ms`                | Periodic fsync interval used when `OVERCAST_WAL_FSYNC=interval`                      |
 | `OVERCAST_WAL_MAX_LOG_BYTES`     | `67108864`             | WAL log compaction threshold in bytes (default 64 MiB)                               |
 | `OVERCAST_DATA_DIR`              | `~/.overcast/data`     | Directory for store files and other on-disk state; the Docker images bake `/data`. LocalStack's `DATA_DIR` is an alias, and setting either counts as an explicit data directory for `OVERCAST_STATE=auto` |
-| `OVERCAST_CA_DIR`                | `$OVERCAST_DATA_DIR/ca` | Where the local CA lives — separable from the data dir because a CA outlives disposable state. May be read-only; see [HTTPS § Docker](../https.md#docker) |
+| `OVERCAST_CA_DIR`                | `$OVERCAST_DATA_DIR/ca` | Where the local CA lives — separable from the data dir because a CA outlives disposable state. May be read-only; see [Overcast in Docker over HTTPS](../https/docker.md) |
 | `OVERCAST_DEFAULT_REGION`        | `us-east-1`            | Fallback region used in ARNs when the SigV4 header carries none. LocalStack's `DEFAULT_REGION` is an alias |
 | `OVERCAST_ACCOUNT_ID`            | `000000000000`         | Account ID embedded in ARNs                                                          |
 | `OVERCAST_LOG_LEVEL`             | `info`                 | `trace`, `debug`, `info`, `warn`, `error` — see [Log levels](./log-levels.md). LocalStack's `DEBUG=1` is an alias for `debug` |

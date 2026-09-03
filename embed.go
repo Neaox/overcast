@@ -23,5 +23,5 @@ var WebDistFS embed.FS
 // that is searchable in the console and 404s when opened. TestDocsEmbed in
 // embed_test.go fails when the two sets diverge.
 //
-//go:embed docs/*.md docs/cdk docs/cli docs/configuration docs/networking docs/services
+//go:embed docs/*.md docs/cdk docs/cli docs/configuration docs/https docs/networking docs/performance docs/services
 var DocsServicesFS embed.FS

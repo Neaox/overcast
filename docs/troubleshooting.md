@@ -66,7 +66,7 @@ advisories, on the web console's **Metrics & Health** page and in the
 | Advisory | Means |
 | --- | --- |
 | `Running in memory-only mode` | Nothing is mounted and no `OVERCAST_DATA_DIR` is set, so state will not survive a restart. Expected outside a persistent setup — see [Storage and persistence](./storage.md). |
-| `Data directory filesystem is slow` | An fsync probe of the data dir took over 75 ms, the signature of a Docker Desktop bind mount. See [Performance § Data dir placement](./performance.md#data-dir-placement--avoid-host-bind-mounts-on-docker-desktop). |
+| `Data directory filesystem is slow` | An fsync probe of the data dir took over 75 ms, the signature of a Docker Desktop bind mount. See [Storage tuning § Data dir placement](./performance/storage-tuning.md#data-dir-placement--avoid-host-bind-mounts-on-docker-desktop). |
 | `Storage degraded to memory-only` | The SQLite file became unreadable; `hybrid` keeps serving from memory for the rest of the run rather than crashing. |
 | `Memory mode is ignoring an existing database` | The runtime form of the startup warning above. |
 | `Docker network is not in its configured state` | A network Overcast reuses differs from what this configuration would create — usually one made by an older version, or with a different `OVERCAST_VPC_EGRESS`. It has containers on it, could not be read, or belongs to somebody else, so Overcast left it alone. The advisory names the command that fixes it — see [Network state verification](./networking/network-state.md). |
