@@ -86,7 +86,7 @@ server to an ephemeral port; the Inbox follows, and the startup log says where
 it went. Only a pinned `OVERCAST_SMTP_PORT` that is taken leaves capture
 unavailable — sends then fail naming the variable, and `/_overcast/health`
 reports the failed listener. See
-[Running two instances on one host](../configuration.md#running-two-instances-on-one-host).
+[Running two instances on one host](../configuration/two-instances.md).
 
 <!-- BEGIN overcast:capabilities -->
 

@@ -85,7 +85,6 @@ type LengthBacklogEntry struct {
 var LengthBacklog = map[string]LengthBacklogEntry{
 	"docs/cdk.md":                                 {Prose: 10000, Page: 26000, Measured: "9802/25748", Why: "split by task: getting a stack to deploy, the supported-resource reference, and the failure modes"},
 	"docs/cdk/local-vpc.md":                       {Prose: 7500, Page: 12000, Measured: "7186/10099", Why: "the provider walkthrough and the troubleshooting half are two pages"},
-	"docs/configuration.md":                       {Prose: 6000, Page: 28500, Measured: "5618/28265", Why: "split by area, with the env-var reference as its own table page"},
 	"docs/https.md":                               {Prose: 15500, Page: 18000, Measured: "15398/17822", Why: "turning it on is one page; certificate trust per platform is another"},
 	"docs/localstack-compatibility.md":            {Prose: 6000, Page: 12500, Measured: "4697/12469", Why: "mostly the compatibility matrix, which is the page's job — trim the prose around it"},
 	"docs/migration-from-localstack.md":           {Prose: 14000, Page: 22000, Measured: "13775/21941", Why: "the switch-over steps and the per-feature differences are two audiences"},

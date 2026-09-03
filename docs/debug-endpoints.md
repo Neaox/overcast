@@ -110,5 +110,5 @@ CDK deploy dispatches hundreds of hops through one trace, and a stack for every
 one of them would cost more than it tells you. Hops past that budget show
 "Stack trace not captured" in the console.
 
-See [Configuration reference](./configuration.md) for the full list of
-`OVERCAST_DEBUG_TRACE_*` variables and their defaults.
+See the [environment variable reference](./configuration/reference.md) for the
+full list of `OVERCAST_DEBUG_TRACE_*` variables and their defaults.

@@ -194,7 +194,8 @@ under `$OVERCAST_DATA_DIR/<service>/`.
 
 ## Related
 
-- [Configuration reference](./configuration.md) — every `OVERCAST_STATE*`,
-  `OVERCAST_HYBRID_*` and `OVERCAST_WAL_*` variable with its default.
+- [Environment variable reference](./configuration/reference.md) — every
+  `OVERCAST_STATE*`, `OVERCAST_HYBRID_*` and `OVERCAST_WAL_*` variable with its
+  default.
 - [Performance](./performance.md) — flush tuning, the slow-filesystem probe, and
   why a Docker Desktop bind mount is the wrong home for `/data`.

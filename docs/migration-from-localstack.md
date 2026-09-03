@@ -356,7 +356,8 @@ Overcast inside the containers it starts. Drop `SQS_ENDPOINT_STRATEGY`.
 Functions run in containers built on the official AWS base images
 (`public.ecr.aws/lambda/<runtime>`), so the Docker socket has to be reachable —
 see `LAMBDA_DOCKER_SOCKET` and `OVERCAST_NETWORK` in the
-[configuration reference](./configuration.md). Without Docker, functions can
+[environment variable reference](./configuration/reference.md). Without Docker,
+functions can
 still be created and managed; invocations degrade to a built-in Node.js runtime
 for simple handlers.
 

@@ -1732,8 +1732,7 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	                                           same daemon.
 //	LAMBDA_RUNTIME_API_PORT            9001    (shared Runtime API listener; 0 = ephemeral. The default
 //	                                           falls back to an ephemeral port when busy; any other
-//	                                           value is pinned — see docs/configuration.md § Running
-//	                                           two instances on one host)
+//	                                           value is pinned — see docs/configuration/two-instances.md)
 //	LAMBDA_RUNTIME_API_HOST            auto    (the address containers dial for the Runtime API.
 //	                                           auto: established by having a container connect to
 //	                                           each candidate. Set a bare address — host.docker.internal,

@@ -91,7 +91,7 @@ environment is handed its own per-container address, so nothing notices. Pin
 `LAMBDA_RUNTIME_API_PORT` and a taken port instead disables the container
 runtime: the startup warning names the variable, and `/_overcast/health`
 reports the failed listener. See
-[Running two instances on one host](../configuration.md#running-two-instances-on-one-host).
+[Running two instances on one host](../configuration/two-instances.md).
 
 ## Reaching Overcast from function code
 
