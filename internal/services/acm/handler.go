@@ -2,7 +2,6 @@ package acm
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	"github.com/overcast-sh/overcast/internal/clock"
@@ -76,11 +75,7 @@ func (h *Handler) describeCertificate(w http.ResponseWriter, r *http.Request) {
 	}
 	cert, found := h.store.getCert(r.Context(), req.CertificateArn)
 	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("Certificate %s not found", req.CertificateArn),
-			HTTPStatus: http.StatusNotFound,
-		})
+		protocol.WriteJSONError(w, r, errCertificateNotFound(req.CertificateArn))
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Certificate": cert})
@@ -112,11 +107,7 @@ func (h *Handler) deleteCertificate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, found := h.store.getCert(r.Context(), req.CertificateArn); !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("Certificate %s not found", req.CertificateArn),
-			HTTPStatus: http.StatusNotFound,
-		})
+		protocol.WriteJSONError(w, r, errCertificateNotFound(req.CertificateArn))
 		return
 	}
 	if err := h.store.deleteCert(r.Context(), req.CertificateArn); err != nil {

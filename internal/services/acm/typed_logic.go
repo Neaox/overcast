@@ -144,11 +144,7 @@ func (h *Handler) requestCertificateTyped(ctx context.Context, req *requestCerti
 func (h *Handler) describeCertificateTyped(ctx context.Context, req *describeCertificateRequest) (*describeCertificateResponse, *protocol.AWSError) {
 	cert, found := h.store.getCert(ctx, req.CertificateArn)
 	if !found {
-		return nil, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("Certificate %s not found", req.CertificateArn),
-			HTTPStatus: http.StatusNotFound,
-		}
+		return nil, errCertificateNotFound(req.CertificateArn)
 	}
 	return &describeCertificateResponse{Certificate: cert}, nil
 }
@@ -172,11 +168,7 @@ func (h *Handler) listCertificatesTyped(ctx context.Context, req *listCertificat
 
 func (h *Handler) deleteCertificateTyped(ctx context.Context, req *deleteCertificateRequest) (*struct{}, *protocol.AWSError) {
 	if _, found := h.store.getCert(ctx, req.CertificateArn); !found {
-		return nil, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("Certificate %s not found", req.CertificateArn),
-			HTTPStatus: http.StatusNotFound,
-		}
+		return nil, errCertificateNotFound(req.CertificateArn)
 	}
 	if err := h.store.deleteCert(ctx, req.CertificateArn); err != nil {
 		return nil, protocol.ErrInternalError
@@ -241,13 +233,22 @@ func (h *Handler) requireCert(ctx context.Context, arn string) *protocol.AWSErro
 		}
 	}
 	if _, found := h.store.getCert(ctx, arn); !found {
-		return &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("Certificate %s not found", arn),
-			HTTPStatus: http.StatusNotFound,
-		}
+		return errCertificateNotFound(arn)
 	}
 	return nil
+}
+
+// errCertificateNotFound is ACM's answer for every operation that fails to
+// find a certificate by ARN. AWS documents ResourceNotFoundException as HTTP
+// Status Code: 400 on every ACM operation that can raise it (e.g.
+// https://docs.aws.amazon.com/acm/latest/APIReference/API_DescribeCertificate.html#API_DescribeCertificate_Errors),
+// not 404 — see https://github.com/overcast-sh/overcast/issues/1729.
+func errCertificateNotFound(arn string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ResourceNotFoundException",
+		Message:    fmt.Sprintf("Certificate %s not found", arn),
+		HTTPStatus: http.StatusBadRequest,
+	}
 }
 
 func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest) (*struct{}, *protocol.AWSError) {
