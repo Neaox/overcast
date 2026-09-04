@@ -348,7 +348,7 @@ func newHandler(cfg *config.Config, store *mskStore, log *serviceutil.ServiceLog
 		log:       log,
 		clk:       clk,
 		scheduler: lifecycle.NewScheduler(clk),
-		instances: serviceutil.NewInstanceDomain(store.store, nsInstance),
+		instances: serviceutil.NewAnchoredInstanceDomain(store.store, nsInstance, serviceutil.DataDirAnchor(cfg.DataDir)),
 	}
 }
 

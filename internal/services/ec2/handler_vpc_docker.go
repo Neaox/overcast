@@ -50,6 +50,25 @@ func (h *Handler) reconcileNetworks(ctx context.Context, snapshot []docker.Netwo
 	h.reconciledAll.Store(false)
 	h.reconciledRegions.Clear()
 
+	// A store still completing its startup migration lists no VPCs however
+	// many it holds, and this pass reads the store to decide what the daemon's
+	// networks mean. Every one of them then looks unclaimed — by no VPC in any
+	// region — and the orphan sweep at the end *removes* them: the pass does
+	// not merely miss the chance to heal a record, it deletes the network the
+	// record names. What the seed then loads is a VPC pointing at a network
+	// that no longer exists, and every ECS task and Lambda placed in it fails
+	// with "network … not found" until the next restart.
+	//
+	// So nothing is done at all, and reconciledAll is left clear: the
+	// per-region backstop (ensureRegionReconciled) then covers each region on
+	// the first placement into it, against a store that has since finished.
+	// The router waits for the store before calling this at all
+	// (router.awaitStoreReady), so this is the path a wait that expired takes.
+	if h.store.notReady() {
+		log.Warn("reconcile networks: the state store is still migrating — skipping this pass; regions will be reconciled on first use")
+		return
+	}
+
 	byRegion, aerr := h.store.vpcsByRegion(ctx)
 	if aerr != nil {
 		log.Error("reconcile networks: list VPCs", zap.String("error", aerr.Message))
@@ -169,6 +188,7 @@ func (h *Handler) indexNetworks(ctx context.Context, networks []docker.NetworkSu
 func (h *Handler) adoptRegionNetworks(ctx context.Context, region string, vpcs []*VPC, index *vpcNetworkIndex) {
 	index.enter(region)
 	h.vpcStrategy.Reconcile(ctx, vpcs, index)
+	h.clearBackedVPCs(vpcs)
 }
 
 // joinRegionNetworks attaches Overcast to every network the region's records
@@ -487,8 +507,50 @@ func (h *Handler) createDockerVPCNetwork(ctx context.Context, vpc *VPC) (string,
 	defer docker.LockNetwork(h.cfg.VPCNetwork(vpc.VpcID))()
 
 	hasGateway := h.vpcHasInternetGateway(ctx, vpc.VpcID)
-	return h.createDockerVPCNetworkInternal(ctx, vpc,
+	netID, err := h.createDockerVPCNetworkInternal(ctx, vpc,
 		dataplane.VPCNetworkInternal(h.cfg, hasGateway), hasGateway)
+	if err != nil {
+		h.noteUnbackedVPC(vpc.VpcID, err)
+		return "", err
+	}
+	h.netProblems.Delete(unbackedProblemKey(vpc.VpcID))
+	return netID, nil
+}
+
+// unbackedProblemKey separates a VPC's "no network at all" problem from the
+// isolation and egress problems recorded against the same VPC, so clearing one
+// cannot clear another.
+func unbackedProblemKey(vpcID string) string { return vpcID + "/unbacked" }
+
+// noteUnbackedVPC records that the daemon refused to create vpcID's network,
+// with the reason it gave, for the health advisories.
+//
+// The strategies swallow the failure: CreateVpc answers 200 and the record is
+// written `unbacked`, because a VPC is metadata AWS never refuses and the next
+// reconcile may well succeed where this create did not (Docker was mid-restart,
+// say). What they must not do is swallow it *silently*. A VPC with no network
+// is a VPC nothing can be placed in, and without this the first sign was an
+// RDS instance failing its launchability check minutes later, or an ECS task
+// failing to find a network that was never made — far from the cause, which
+// the advisory now names the moment it happens.
+func (h *Handler) noteUnbackedVPC(vpcID string, err error) {
+	h.netProblems.Store(unbackedProblemKey(vpcID), dataplane.VPCNetworkProblem{
+		VpcID:    vpcID,
+		Unbacked: true,
+		Detail:   fmt.Sprintf("the Docker network could not be created: %v", err),
+	})
+}
+
+// clearBackedVPCs drops the unbacked problem of every VPC in vpcs that now
+// names a network. Adoption backs a VPC without a create — the network was
+// there all along, or another VPC's is being shared — so the create path's own
+// clearing does not reach it.
+func (h *Handler) clearBackedVPCs(vpcs []*VPC) {
+	for _, vpc := range vpcs {
+		if vpc != nil && vpc.DockerNetworkID != "" {
+			h.netProblems.Delete(unbackedProblemKey(vpc.VpcID))
+		}
+	}
 }
 
 // createDockerVPCNetworkInternal is createDockerVPCNetwork with the isolation
@@ -1280,6 +1342,7 @@ func (h *Handler) forgetVPCNetwork(ctx context.Context, vpc *VPC) {
 		return
 	}
 	h.netProblems.Delete(vpc.VpcID)
+	h.netProblems.Delete(unbackedProblemKey(vpc.VpcID))
 	// Read before OnDelete: the strategy may clear the record's network fields
 	// on its way out, and this is the last moment the name is knowable.
 	name, netID := h.vpcNetworkLockKey(vpc), vpc.DockerNetworkID

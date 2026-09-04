@@ -81,7 +81,7 @@ func newHandler(cfg *config.Config, store *cacheStore, log *serviceutil.ServiceL
 		scheduler: lifecycle.NewScheduler(clk),
 		bgCtx:     bgCtx,
 		bgCancel:  bgCancel,
-		instances: serviceutil.NewInstanceDomain(store.store, nsInstance),
+		instances: serviceutil.NewAnchoredInstanceDomain(store.store, nsInstance, serviceutil.DataDirAnchor(cfg.DataDir)),
 	}
 	h.typedOp = h.typedOps()
 	return h

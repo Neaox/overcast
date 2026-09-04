@@ -221,6 +221,15 @@ func (s *ec2Store) region(ctx context.Context) string {
 	return middleware.RegionFromContext(ctx, s.defaultRegion)
 }
 
+// notReady reports whether the backing store is still completing the one-time
+// startup migration, during which a list reads none of the records that exist.
+// A store with no such phase implements neither reporter, and its absence
+// means ready — the convention state.NotReadyReporter documents.
+func (s *ec2Store) notReady() bool {
+	r, ok := s.store.(state.NotReadyReporter)
+	return ok && r.NotReady()
+}
+
 // ── VPCs ──────────────────────────────────────────────────────────────────────
 
 func (s *ec2Store) putVPC(ctx context.Context, v *VPC) *protocol.AWSError {

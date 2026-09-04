@@ -51,6 +51,20 @@ const router = createRouter({
   defaultPendingComponent: RoutePending,
   defaultPendingMs: 50,
   defaultPendingMinMs: 300,
+  // Back must land where you left, not at the top. Reading a trace means
+  // scrolling a long list, opening one, and coming back — and coming back to
+  // row one means finding your place again by hand, every time.
+  //
+  // The offsets are cached per history entry, so Back restores what that entry
+  // had while a fresh navigation to the same URL still starts at the top.
+  //
+  // <main> in the app shell owns the scroll, not the window (see
+  // app-shell.tsx), so it has to be named twice: once as the container whose
+  // offset is tracked, through the data-scroll-restoration-id the router reads
+  // off the scroll event's target, and again here as the element a navigation
+  // with nothing cached resets to the top.
+  scrollRestoration: true,
+  scrollToTopSelectors: ['[data-scroll-restoration-id="app-main"]'],
   // Without this the router's built-in fallback prints the message and nothing
   // else — no retry, no stack, and no hint that a dead endpoint is the usual
   // cause. See route-error.tsx.

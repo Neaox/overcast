@@ -39,6 +39,7 @@ const (
 	advisoryCodeMemoryModeIgnoresExisting = "memory-mode-ignores-existing-database"
 	advisoryCodeNetworkStateMismatch      = "network-state-mismatch"
 	advisoryCodeVPCNetworkIsolationStale  = "vpc-network-isolation-stale"
+	advisoryCodeVPCNetworkUnbacked        = "vpc-network-unbacked"
 	advisoryCodeEgressNotWithheld         = "vpc-egress-not-withheld"
 	advisoryCodeLambdaInitVolumeForeign   = "lambda-init-volume-foreign"
 	advisoryCodeRuntimeAPIUnreachable     = "lambda-runtime-api-unreachable"
@@ -87,6 +88,12 @@ const noSQLiteDocsPath = storageDocsPath + "#builds-without-sqlite"
 // network and what a failed flip leaves behind. The fragment is the docs
 // browser's slug for that heading — see dataDirDocsPath.
 const vpcNetworkDocsPath = "networking/vpc-backing.md#internet-gateways-and-isolation"
+
+// vpcNetworkUnbackedDocsPath deep-links the unbacked-VPC advisory to the
+// section of the same page that says what a refused create leaves behind and
+// what frees the address range the daemon refused. The fragment is the docs
+// browser's slug for that heading — see dataDirDocsPath.
+const vpcNetworkUnbackedDocsPath = "networking/vpc-backing.md#when-a-network-cannot-be-created"
 
 // egressModeDocsPath points the egress advisory at the page that explains what
 // each mode can and cannot deliver, and on which hosts. It lands on the modes
@@ -310,6 +317,9 @@ func computeAdvisories(in advisoryInput) []Advisory {
 	if a := checkNetworkStateMismatch(in.Networks); a != nil {
 		advisories = append(advisories, *a)
 	}
+	if a := checkVPCNetworkUnbacked(in.VPCNetworkProblems); a != nil {
+		advisories = append(advisories, *a)
+	}
 	if a := checkVPCNetworkIsolation(in.VPCNetworkProblems); a != nil {
 		advisories = append(advisories, *a)
 	}
@@ -521,18 +531,11 @@ const vpcNetworkAdvisoryMaxListed = 5
 // changing anything records nothing: that path fails the API call instead,
 // and the network still matches the record.
 func checkVPCNetworkIsolation(problems []dataplane.VPCNetworkProblem) *Advisory {
+	problems = vpcProblemsWhere(problems, false)
 	if len(problems) == 0 {
 		return nil
 	}
-	shown := min(len(problems), vpcNetworkAdvisoryMaxListed)
-	lines := make([]string, 0, shown)
-	for _, p := range problems[:shown] {
-		lines = append(lines, p.VpcID+": "+p.Detail)
-	}
-	listed := strings.Join(lines, "; ")
-	if rest := len(problems) - len(lines); rest > 0 {
-		listed += fmt.Sprintf("; and %d more", rest)
-	}
+	listed := listVPCProblems(problems)
 	title := "A VPC's network does not match its internet gateway or route tables"
 	if len(problems) > 1 {
 		title = fmt.Sprintf("%d VPC networks do not match their internet gateways or route tables", len(problems))
@@ -547,6 +550,66 @@ func checkVPCNetworkIsolation(problems []dataplane.VPCNetworkProblem) *Advisory 
 			"delete and recreate the route. " + listed,
 		DocsPath: vpcNetworkDocsPath,
 	}
+}
+
+// checkVPCNetworkUnbacked is critical-severity: a VPC exists whose Docker
+// network the daemon refused to create, so nothing can be placed in it. The
+// EC2 service keeps `CreateVpc` answering 200 in that case — a VPC is metadata
+// AWS never refuses, and the next reconcile retries the create — which is
+// exactly why the failure has to be reported here, at the moment it happens.
+// Left to surface on its own, it did so minutes later and somewhere else: an
+// RDS instance refused for a VPC "not launchable", an ECS task that could not
+// find a network that was never made.
+//
+// Critical rather than a warning because, unlike a network in the wrong
+// isolation state, nothing in the VPC works at all until it is resolved.
+func checkVPCNetworkUnbacked(problems []dataplane.VPCNetworkProblem) *Advisory {
+	problems = vpcProblemsWhere(problems, true)
+	if len(problems) == 0 {
+		return nil
+	}
+	listed := listVPCProblems(problems)
+	title := "A VPC has no Docker network — nothing can be placed in it"
+	if len(problems) > 1 {
+		title = fmt.Sprintf("%d VPCs have no Docker network — nothing can be placed in them", len(problems))
+	}
+	return &Advisory{
+		Severity: advisorySeverityCritical,
+		Code:     advisoryCodeVPCNetworkUnbacked,
+		Title:    title,
+		Detail: "Docker refused to create the network backing these VPCs, so every ECS task, Lambda function " +
+			"and database instance placed in them fails. Overcast retries the create at its next restart; " +
+			"until then, check the reason quoted. An address pool that overlaps another network is the " +
+			"usual one: `docker network ls` shows what holds it, `overcast network status` says whether it is " +
+			"Overcast's, and OVERCAST_EC2_VPC_STRATEGY=remapped gives the VPC a subnet of its own. " + listed,
+		DocsPath: vpcNetworkUnbackedDocsPath,
+	}
+}
+
+// vpcProblemsWhere narrows problems to the unbacked ones, or to the rest.
+func vpcProblemsWhere(problems []dataplane.VPCNetworkProblem, unbacked bool) []dataplane.VPCNetworkProblem {
+	var out []dataplane.VPCNetworkProblem
+	for _, p := range problems {
+		if p.Unbacked == unbacked {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// listVPCProblems renders the first vpcNetworkAdvisoryMaxListed problems as
+// "vpc: detail" for an advisory's Detail, and counts the rest.
+func listVPCProblems(problems []dataplane.VPCNetworkProblem) string {
+	shown := min(len(problems), vpcNetworkAdvisoryMaxListed)
+	lines := make([]string, 0, shown)
+	for _, p := range problems[:shown] {
+		lines = append(lines, p.VpcID+": "+p.Detail)
+	}
+	listed := strings.Join(lines, "; ")
+	if rest := len(problems) - len(lines); rest > 0 {
+		listed += fmt.Sprintf("; and %d more", rest)
+	}
+	return listed
 }
 
 // lambdaInitVolumeAdvisoryMaxListed bounds how many volumes the advisory

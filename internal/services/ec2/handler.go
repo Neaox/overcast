@@ -52,9 +52,11 @@ type Handler struct {
 	// netProblems records, per VPC ID, a dataplane.VPCNetworkProblem: a VPC
 	// whose Docker network could not be brought to the isolation its gateway
 	// state calls for, or — under egressProblemKey — whose containers could
-	// not be given the egress their route tables call for. Read by
-	// Service.NetworkProblems for the health advisories; cleared when a later
-	// flip or move succeeds or the VPC is deleted.
+	// not be given the egress their route tables call for, or — under
+	// unbackedProblemKey — that has no network because the daemon refused to
+	// create one. Read by Service.NetworkProblems for the health advisories;
+	// cleared when a later flip, move or create succeeds or the VPC is
+	// deleted.
 	netProblems sync.Map // vpcID, or vpcID+"/egress" -> dataplane.VPCNetworkProblem
 
 	// egressMu serialises egress-network CIDR allocation across VPCs, and
@@ -107,7 +109,7 @@ func newHandler(cfg *config.Config, store state.Store, log *serviceutil.ServiceL
 		log:       log,
 		clk:       clk,
 		scheduler: lifecycle.NewScheduler(clk),
-		instances: serviceutil.NewInstanceDomain(store, nsInstance),
+		instances: serviceutil.NewAnchoredInstanceDomain(store, nsInstance, serviceutil.DataDirAnchor(cfg.DataDir)),
 	}
 	h.keyMaterialFor = func() (string, string) { return randomFingerprint(), dummyKeyMaterial() }
 	// The guard wraps whichever strategy is configured: the default VPC's

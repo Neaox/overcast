@@ -54,6 +54,19 @@ reports `status: degraded` with the failed listener, its bind error and the fix
 under `listeners`. A listener that fell back appears there too, with
 `fellBack: true` and its actual address.
 
+## The data directory is the instance's identity
+
+Every Docker network, container and volume an instance creates is labelled with
+an identity derived from its data directory, and an instance only ever removes
+what carries its own label. Two instances on separate data directories therefore
+leave each other's resources alone, whatever they share otherwise. Two on one
+data directory share the label and the sweep: each treats the other's networks
+as its own, and one's startup or shutdown can remove what the other is using.
+That holds for memory-backed instances too — `OVERCAST_STATE=memory` does not
+write to the directory, but the directory still names the instance — so give
+the second instance its own `OVERCAST_DATA_DIR` even when neither persists
+anything.
+
 ## DNS and the Docker network
 
 Port `53` cannot be shared, so the second instance runs without the built-in

@@ -93,7 +93,7 @@ reached Overcast on.
 
 ## Operations
 
-18 of 21 listed operations are implemented.
+20 of 22 listed operations are implemented.
 Per-operation status, notes and AWS API links: [ELBv2 operations](elb/operations.md).
 
 <!-- END overcast:capabilities -->

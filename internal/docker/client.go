@@ -172,9 +172,12 @@ const (
 	// unreferenced is the resource's normal resting state, this label is how
 	// a sweep stays inside its own scope.
 	//
-	// The value is the identity of the *state store* that owns the resource,
-	// not of the process: instances sharing a data directory share records, so
-	// they share a sweep domain. See serviceutil.InstanceIdentity.
+	// The value is the identity of the *data directory* whose store owns the
+	// resource, not of the process and not of the store's contents: instances
+	// sharing a data directory share records, so they share a sweep domain,
+	// and a store that is wiped or memory-backed still resolves to the same
+	// identity, so the resources of the run before it are still its own to
+	// reclaim. See serviceutil.InstanceIdentity and serviceutil.DataDirAnchor.
 	//
 	// Absence is not permission. A resource without this label predates the
 	// label or belongs to something else; either way its owner cannot be

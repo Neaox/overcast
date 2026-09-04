@@ -83,7 +83,13 @@ export interface StackDiagnosticsResource {
   type: string
   /** What CloudFormation recorded — the AWS surface, repeated for comparison. */
   statusReason?: string
-  sections: StackDiagnosticsSection[]
+  /**
+   * Optional, because the server omits it (`json:"sections,omitempty"`) for a
+   * resource type no collector covers — today anything but AWS::ECS::Service.
+   * Such a resource is still a legitimate entry: it carries the reason
+   * CloudFormation recorded and offers no evidence beyond it.
+   */
+  sections?: StackDiagnosticsSection[]
 }
 
 /**

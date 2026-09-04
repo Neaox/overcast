@@ -244,7 +244,7 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock
 		clk:          clk,
 		log:          serviceutil.NewServiceLogger(logger, serviceName),
 		liveRuntimes: make(map[string]*liveClusterRuntime),
-		instances:    serviceutil.NewInstanceDomain(st, nsInstance),
+		instances:    serviceutil.NewAnchoredInstanceDomain(st, nsInstance, serviceutil.DataDirAnchor(cfg.DataDir)),
 	}
 	s.liveCtx, s.liveCancel = context.WithCancel(context.Background())
 	return s

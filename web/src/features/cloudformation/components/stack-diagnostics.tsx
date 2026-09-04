@@ -106,7 +106,7 @@ function ResourceDiagnosis({ resource }: { resource: StackDiagnosticsResource })
         )}
       </header>
 
-      {resource.sections.map((section) => (
+      {resource.sections?.map((section) => (
         <Section key={section.id} section={section} />
       ))}
     </section>

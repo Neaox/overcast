@@ -19,16 +19,16 @@ func TestInstanceIdentity_stableWithinAStore(t *testing.T) {
 	ctx := context.Background()
 	st := state.NewMemoryStore()
 
-	first := serviceutil.InstanceIdentity(ctx, st, testNS)
+	first := serviceutil.InstanceIdentity(ctx, st, testNS, serviceutil.Anchor{})
 	if first == "" {
 		t.Fatal("expected an identity to be minted")
 	}
-	if again := serviceutil.InstanceIdentity(ctx, st, testNS); again != first {
+	if again := serviceutil.InstanceIdentity(ctx, st, testNS, serviceutil.Anchor{}); again != first {
 		t.Fatalf("identity changed within one store: %q then %q", first, again)
 	}
 	// A separate store is a separate sweep domain — a memory-backed restart,
 	// or another instance with its own data directory.
-	if other := serviceutil.InstanceIdentity(ctx, state.NewMemoryStore(), testNS); other == first {
+	if other := serviceutil.InstanceIdentity(ctx, state.NewMemoryStore(), testNS, serviceutil.Anchor{}); other == first {
 		t.Fatal("separate stores must not yield the same identity")
 	}
 }
@@ -45,10 +45,10 @@ func (failingStore) Get(context.Context, string, string) (string, bool, error) {
 // read "" as "sweep nothing" — a store being briefly unavailable is not
 // evidence that anything on the Docker daemon is litter.
 func TestInstanceIdentity_unavailableStoreYieldsNoIdentity(t *testing.T) {
-	if got := serviceutil.InstanceIdentity(context.Background(), failingStore{}, testNS); got != "" {
+	if got := serviceutil.InstanceIdentity(context.Background(), failingStore{}, testNS, serviceutil.Anchor{}); got != "" {
 		t.Fatalf("expected no identity from a failing store, got %q", got)
 	}
-	if got := serviceutil.InstanceIdentity(context.Background(), nil, testNS); got != "" {
+	if got := serviceutil.InstanceIdentity(context.Background(), nil, testNS, serviceutil.Anchor{}); got != "" {
 		t.Fatalf("expected no identity from a nil store, got %q", got)
 	}
 }
@@ -86,7 +86,7 @@ func TestInstanceDomain_resolvesOnceAndAgreesWithInstanceIdentity(t *testing.T) 
 	}
 	// The label the creation path stamps must be the value the sweep compares
 	// against, or a service sweeps away its own containers — or none of them.
-	if got := serviceutil.InstanceIdentity(ctx, st, testNS); got != first {
+	if got := serviceutil.InstanceIdentity(ctx, st, testNS, serviceutil.Anchor{}); got != first {
 		t.Errorf("domain %q disagrees with the identity in the store %q", first, got)
 	}
 }

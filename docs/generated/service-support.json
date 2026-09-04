@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1461,
+  "total_ops": 1462,
   "services": [
     {
       "service": "s3",
@@ -8394,8 +8394,8 @@
     {
       "service": "elbv2",
       "display_name": "ELBv2",
-      "total_ops": 21,
-      "implemented_ops": 18,
+      "total_ops": 22,
+      "implemented_ops": 20,
       "operations": [
         {
           "operation": "CreateLoadBalancer",
@@ -8491,7 +8491,13 @@
         {
           "operation": "ModifyLoadBalancerAttributes",
           "category": "Load Balancers",
-          "status": "❌ Unsupported"
+          "status": "✅ Supported",
+          "notes": "Stores and echoes attributes such as idle_timeout.timeout_seconds and deletion_protection.enabled; not enforced by the data plane"
+        },
+        {
+          "operation": "DescribeLoadBalancerAttributes",
+          "category": "Load Balancers",
+          "status": "✅ Supported"
         },
         {
           "operation": "AddTags",

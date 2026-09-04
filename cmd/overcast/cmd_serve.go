@@ -181,6 +181,7 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	defer closeStore()
 
 	logStoreMode(logger, cfg)
+	logSweepDomain(logger, cfg)
 	prof.mark("buildStore")
 
 	// Per-service overrides: build a NamespacedStore when any service requests
@@ -696,6 +697,25 @@ func buildStore(cfg *config.Config, mode config.StateBackend, dataDir string, lo
 	default: // memory
 		return state.NewMemoryStore(), nil
 	}
+}
+
+// logSweepDomain logs what this instance's sweep-domain identity is anchored
+// to: the data directory's volume, bind or host path, from which every Docker
+// resource's overcast.instance label is derived (serviceutil.DataDirAnchor).
+// One line at startup, because it is the first thing to check when an
+// instance fails to reclaim its own networks after a wipe, or two instances
+// turn out to be reclaiming each other's — and nothing else says it.
+func logSweepDomain(logger *zap.Logger, cfg *config.Config) {
+	anchor := serviceutil.DataDirAnchor(cfg.DataDir)
+	if anchor.ID == "" {
+		logger.Warn("sweep domain: no durable identity can be derived for the data directory — "+
+			"Docker resources will be labelled with an identity minted per state store, "+
+			"which a wiped or memory-backed store does not carry forward",
+			zap.String("data_dir", cfg.DataDir))
+		return
+	}
+	logger.Info("sweep domain: Docker resources are labelled for this data directory",
+		zap.String("instance", anchor.ID), zap.String("anchor", anchor.Source))
 }
 
 // logStoreMode logs a structured INFO event describing the active storage backend.

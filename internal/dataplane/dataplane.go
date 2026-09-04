@@ -328,7 +328,7 @@ type VPCNetwork struct {
 	// stamped into docker.LabelInstance.
 	//
 	// Passed in rather than derived from cfg because it has to be the same
-	// store-scoped identity every other Docker resource is stamped with. A VPC
+	// data-directory identity every other Docker resource is stamped with. A VPC
 	// network is the one Overcast resource whose name comes from an emulated
 	// resource id rather than from configuration, so two instances on one daemon
 	// can mint the same name — and it is the label, not the name, that decides
@@ -596,12 +596,12 @@ func runtimeAPIReachableOnInternalPlane(ctx context.Context, dc *docker.Client) 
 // per VPC, from VPCNetworkSpec.
 //
 // Neither plane carries an owner. docker.LabelInstance is the EC2 service's
-// store-scoped identity, and Probe runs before any store is read — so a plane
-// is scoped by its *name*, which is what OVERCAST_NETWORK is for, and two
+// data-directory identity, and Probe runs before any store is read — so a
+// plane is scoped by its *name*, which is what OVERCAST_NETWORK is for, and two
 // instances sharing that name share the plane deliberately. Stamping
-// cfg.Network into the same label a VPC network uses for a store identity would
-// make one label mean two unrelated things depending on which network you read
-// it off.
+// cfg.Network into the same label a VPC network uses for an instance identity
+// would make one label mean two unrelated things depending on which network
+// you read it off.
 //
 // One definition, used by both the supervisor and Lambda's independent probe,
 // so the two cannot disagree about what exists or how it is isolated.
