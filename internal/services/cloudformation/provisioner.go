@@ -2679,6 +2679,7 @@ var resourceHandlers = map[string]resourceHandler{
 	"AWS::EC2::SubnetRouteTableAssociation": &ec2SubnetRouteTableAssociationHandler{},
 	"AWS::EC2::NatGateway":                  &ec2NatGatewayHandler{},
 	"AWS::EC2::EIP":                         &ec2EIPHandler{},
+	"AWS::EC2::LaunchTemplate":              &ec2LaunchTemplateHandler{},
 	// Step Functions
 	"AWS::StepFunctions::StateMachine": &sfnStateMachineHandler{},
 	// EventBridge
