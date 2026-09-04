@@ -21,3 +21,6 @@ servicediscovery       # AWS JSON 1.1 (Cloud Map)
 
 # Phase I2's hand-wired smoke-test service.
 organizations
+
+# compat-coverage-modelgen G2 pilot (docs/plans/compat-coverage-modelgen.md §4.1).
+sqs
