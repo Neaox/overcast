@@ -53,6 +53,13 @@ type Handler struct {
 	// routes cost an atomic load rather than a store read. See lifecycle.go.
 	lifecycle lifecycleIndex
 
+	// objectLocks serialises a conditional write's check-then-commit against
+	// other conditional writes to the same bucket+key, which is what makes
+	// If-None-Match: * the mutual-exclusion primitive AWS documents. Only a
+	// request carrying a condition takes one, so the unconditional PutObject
+	// path is unchanged. See conditional_write.go.
+	objectLocks serviceutil.RecordLocks
+
 	bucketGetRoutes    []s3Route
 	bucketPutRoutes    []s3Route
 	bucketDeleteRoutes []s3Route

@@ -130,6 +130,24 @@ func (h *Handler) PutObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cond, aerr := parseConditionalWrite(r)
+	if aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
+	}
+	if cond.active() {
+		// Held until the handler returns, so the condition and the write it
+		// guards are one step against any other conditional writer for this
+		// key. It covers the body stream too: for an unversioned bucket the
+		// body file *is* the key's current bytes, so a check that released
+		// before the stream would let a loser overwrite the winner's object.
+		defer h.objectLocks.Lock(objectStoreKey(bucket, key))()
+		if aerr := h.checkConditionalWrite(r.Context(), cond, bucket, key); aerr != nil {
+			protocol.WriteXMLError(w, r, aerr)
+			return
+		}
+	}
+
 	// Extract x-amz-meta-* headers into the metadata map.
 	meta := serviceutil.HeaderPrefix(r, "X-Amz-Meta-")
 

@@ -42,7 +42,7 @@ func init() {
 
 		// Objects
 		capabilities.Capability{Service: "s3", Operation: "PutObject", Category: "Objects",
-			Status: capabilities.StatusSupported, Notes: "Stores body + x-amz-meta-* headers"},
+			Status: capabilities.StatusSupported, Notes: "Stores body + x-amz-meta-* headers; If-None-Match: * and If-Match make the write conditional, failing 412 — or 404 when If-Match finds no current version"},
 		capabilities.Capability{Service: "s3", Operation: "GetObject", Category: "Objects",
 			Status: capabilities.StatusSupported, Notes: "Returns body, ETag, metadata headers; versionId selects a specific version, and a delete-marked key answers 404 with x-amz-delete-marker"},
 		capabilities.Capability{Service: "s3", Operation: "HeadObject", Category: "Objects",
@@ -78,7 +78,7 @@ func init() {
 		capabilities.Capability{Service: "s3", Operation: "UploadPartCopy", Category: "Multipart uploads",
 			Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		capabilities.Capability{Service: "s3", Operation: "CompleteMultipartUpload", Category: "Multipart uploads",
-			Status: capabilities.StatusSupported},
+			Status: capabilities.StatusSupported, Notes: "Honours the same If-None-Match: * and If-Match conditional writes as PutObject, evaluated at completion time"},
 		capabilities.Capability{Service: "s3", Operation: "AbortMultipartUpload", Category: "Multipart uploads",
 			Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "s3", Operation: "ListMultipartUploads", Category: "Multipart uploads",
