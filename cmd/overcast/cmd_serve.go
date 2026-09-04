@@ -40,7 +40,7 @@ func newServeCmd() *cobra.Command {
 		Short: "Start the AWS service emulator daemon",
 		Long: `Start the emulator daemon and serve AWS API requests on the configured port.
 
-All configuration is via environment variables. See internal/config/config.go.
+All configuration is via environment variables. See https://overcast.sh/docs/configuration/reference.
 
 Examples:
   overcast serve

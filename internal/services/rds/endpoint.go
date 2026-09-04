@@ -137,7 +137,7 @@ const loopbackAddress = "127.0.0.1"
 // **Deviation: AWS always reports the engine port here, and a host caller is
 // given the published one instead.** The constraint is Docker's, not ours. The
 // engine listens on 3306/5432 inside the network and that port is not bound on
-// the host — only the published mapping is (OVERCAST_RDS_PORT_BASE, 33060
+// the host — only the published mapping is (RDS_PORT_BASE, 33060
 // upwards, because 3306 is usually taken by a local install). So the AWS-shaped
 // answer is a port nothing accepts a connection on, and the rule this file
 // exists to keep (a value Overcast returns must be dialable by whoever asked
