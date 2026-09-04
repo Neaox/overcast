@@ -51,8 +51,9 @@ type liveTailSessionStart struct {
 }
 
 // StartLiveTail streams CloudWatch Logs Live Tail sessionStart/sessionUpdate
-// events using the AWS event-stream binary format. Per AWS docs, callers pass
-// one or more logGroupIdentifiers and may scope by stream names/prefixes and a
+// events using the AWS event-stream binary format, behind the initial-response
+// event that opens every AWS JSON event stream. Per AWS docs, callers pass one
+// or more logGroupIdentifiers and may scope by stream names/prefixes and a
 // standard CloudWatch Logs filter pattern.
 func (h *Handler) StartLiveTail(w http.ResponseWriter, r *http.Request) {
 	var req startLiveTailRequest
@@ -105,6 +106,13 @@ func (h *Handler) StartLiveTail(w http.ResponseWriter, r *http.Request) {
 
 	session := newLiveTailSession(r.Context(), h.bus, req, groups, matcher, h.clk.Now)
 	defer session.Close()
+
+	// StartLiveTail's output is the response stream and nothing else, so its
+	// initial response document is empty — but it still has to be sent, and
+	// sent first. The AWS JSON protocols carry it in the opening
+	// initial-response event, and the SDKs' deserializers park on that frame
+	// before they hand the session to the caller.
+	h.writeLiveTailEvent(w, flusher, eventstream.InitialResponseEventType, struct{}{})
 
 	sessionID := "overcast-" + h.clk.Now().Format("20060102150405.000000000")
 	h.writeLiveTailEvent(w, flusher, "sessionStart", liveTailSessionStart{

@@ -72,6 +72,29 @@ unsupported `RetentionInDays` fails the resource and rolls the stack back.
 | `StartLiveTail` over CBOR | Supported                          | Returns `501`; only the JSON protocol serves it                                                                                                                                    |
 | Write timing              | No documented write buffer         | Events are buffered per stream for about 50 ms — flushed early on a burst, and synchronously on graceful shutdown — so a read immediately after a write may not see the last event |
 
+## Gotchas
+
+> [!WARNING]
+> `StartLiveTail` carries a `streaming-` host prefix. The AWS SDK for Go v2
+> prepends it to whatever host you configure — `streaming-localhost:4566`,
+> which resolves nowhere — so a `BaseEndpoint` alone is not enough.
+
+Pin the endpoint as immutable, which is the one resolver switch that suppresses
+the prefix. Only the legacy resolver has it:
+
+```go
+client := cloudwatchlogs.NewFromConfig(cfg, func(o *cloudwatchlogs.Options) {
+    o.EndpointResolver = cloudwatchlogs.EndpointResolverFromURL(
+        "http://localhost:4566",
+        func(e *aws.Endpoint) { e.HostnameImmutable = true },
+    )
+})
+```
+
+Every other operation works from `o.BaseEndpoint` as usual — see
+[Using AWS SDKs and CLI](../sdk-cli.md#go-aws-sdk-v2). The JavaScript SDK,
+which the console's tail view uses, needs nothing extra.
+
 <!-- BEGIN overcast:capabilities -->
 
 ## Operations
