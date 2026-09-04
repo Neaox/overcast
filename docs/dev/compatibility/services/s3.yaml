@@ -2,7 +2,7 @@ service: s3
 status: in_progress
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-08
+last_updated: 2026-09-05
 protocols: [rest_xml]
 implementation: [internal/services/s3]
 integration_tests: [tests/integration/s3]
@@ -115,6 +115,96 @@ operations:
       - name: encoding-type=url
         status: unsupported
         gap: Response values are never URL-encoded, matching ListObjectsV2's existing gap.
+  GetObject:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
+    implementation:
+      - internal/services/s3/handler_object.go
+    tests:
+      - tests/integration/s3/s3_test.go::TestGetObject_missingBucketReturnsNoSuchBucket
+      - tests/integration/s3/s3_test.go::TestGetObject_notFound
+    scenarios:
+      - name: read against a bucket that does not exist
+        status: fixed
+        notes: >-
+          readTarget's unversioned branch called store.getObjectMeta directly — a
+          single composite-key lookup that cannot distinguish "no such bucket" from
+          "no such key in an existing bucket" — so both answered NoSuchKey. Real
+          AWS (confirmed against real AWS in #1635's own repro, and matched by
+          floci, kumo and ministack) answers NoSuchBucket. Fixed via a new
+          readObjectMeta helper that checks the bucket first, mirroring what
+          resolveVersion already did for the ?versionId= path. Shared by
+          HeadObject (readTarget), GetObjectTagging and CopyObject's source
+          lookup — see those operations below.
+      - name: read of a missing key in an existing bucket
+        status: fixed
+        notes: Unaffected by the fix — still NoSuchKey (regression-tested).
+  HeadObject:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html
+    implementation:
+      - internal/services/s3/handler_object.go
+    tests:
+      - tests/integration/s3/s3_test.go::TestHeadObject_bucketNotFound
+      - tests/integration/s3/s3_test.go::TestHeadObject_existingBucketMissingKeyReturnsNotFound
+    scenarios:
+      - name: read against a bucket that does not exist
+        status: fixed
+        notes: >-
+          Shares readTarget's unversioned branch with GetObject, so the same
+          internal fix applies (#1635). Wire-invisible for HEAD specifically:
+          AWS's own HeadObject reference says a HEAD error is always a generic,
+          bodyless status code and "it's not possible to retrieve the exact
+          exception" — Overcast sets no x-amz-error-code or similar header
+          either — so both the missing-bucket and missing-key-in-an-existing-
+          bucket cases were and remain HTTP 404 with no body on the wire. Tests
+          pin that pair down at the status-code level; the operation's own
+          error-code correctness is verified through GetObject instead, since
+          that is where it is observable.
+  GetObjectTagging:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectTagging.html
+    implementation:
+      - internal/services/s3/handler_tagging.go
+    tests:
+      - tests/integration/s3/s3_test.go::TestGetObjectTagging_missingBucketReturnsNoSuchBucket
+      - tests/integration/s3/s3_test.go::TestGetObjectTagging_missingKeyInExistingBucketReturnsNoSuchKey
+    scenarios:
+      - name: tagging read against a bucket that does not exist
+        status: fixed
+        notes: currentObjectForTagging called store.getObjectMeta directly with the same NoSuchKey-for-everything defect as GetObject; now routed through readObjectMeta (#1635). PutObjectTagging and DeleteObjectTagging share currentObjectForTagging and are corrected as a side effect.
+  CopyObject:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html
+    implementation:
+      - internal/services/s3/handler_object.go
+    tests:
+      - tests/integration/s3/s3_test.go::TestCopyObject_missingSourceBucket
+      - tests/integration/s3/s3_test.go::TestCopyObject_missingSourceKey
+    scenarios:
+      - name: source bucket does not exist
+        status: fixed
+        notes: >-
+          The source lookup called store.getObjectMeta(srcBucket, srcKey)
+          directly, never checking srcBucket — which is independent of destBucket
+          and was already resolved separately — so a missing source bucket
+          answered NoSuchKey. AWS's CopyObject reference does not enumerate
+          NoSuchBucket/NoSuchKey in its own Errors section (it lists only
+          ObjectNotInActiveTierError), consistent with GetObject's reference page
+          also omitting an Errors section — S3's generic-error set is evidently
+          not restated per operation. Fixed on tier 2/3 evidence: the identical
+          mechanism already confirmed for GetObject, applied via the same
+          readObjectMeta helper.
+      - name: destination bucket does not exist
+        status: fixed
+        notes: Already correct — CopyObject resolves destBucket via getBucket before doing anything else, so it already answered NoSuchBucket. Unaffected by this change.
+      - name: source key missing in an existing source bucket
+        status: fixed
+        notes: Unaffected by the fix — still NoSuchKey (regression-tested, pre-existing test).
   DeleteObject:
     status: fixed
     aws_docs:
@@ -278,6 +368,7 @@ findings:
     - Object version history, delete markers, version-targeted reads/deletes, ListObjectVersions ordering/pagination, and sweeper execution of NoncurrentVersionExpiration, NoncurrentVersionTransition and ExpiredObjectDeleteMarker (#645).
     - DeleteBucketCors and DeleteBucketWebsite now clear stored configurations and return 204.
     - CloudFormation AWS::S3::Bucket uses the S3 handlers for lifecycle, versioning, notifications, encryption, tags, CORS, and website configuration.
+    - GetObject, GetObjectTagging and CopyObject's source lookup now answer NoSuchBucket for a bucket that does not exist, instead of NoSuchKey (#1635); HeadObject is wire-identical either way per AWS's own documented HEAD limitation.
   remaining_gaps:
     - Finish ListObjectsV2 optional-parameter review before marking the operation reviewed.
     - Verify CDK bootstrap bucket flows and policy/versioning/tagging edge cases.
