@@ -15,22 +15,22 @@ func SNS() ServiceGroup {
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
 			// sns-topics
-			"CreateTopic":        g.CreateTopic,
-			"ListTopics":         g.ListTopics,
-			"GetTopicAttributes": g.GetTopicAttributes,
-			"SetTopicAttributes": g.SetTopicAttributes,
-			"DeleteTopic":        g.DeleteTopic,
+			"sns-topics:CreateTopic":        g.CreateTopic,
+			"sns-topics:ListTopics":         g.ListTopics,
+			"sns-topics:GetTopicAttributes": g.GetTopicAttributes,
+			"sns-topics:SetTopicAttributes": g.SetTopicAttributes,
+			"sns-topics:DeleteTopic":        g.DeleteTopic,
 			// sns-publish
-			"Publish":               g.Publish,
-			"PublishWithAttributes": g.PublishWithAttributes,
-			"PublishBatch":          g.PublishBatch,
+			"sns-publish:Publish":               g.Publish,
+			"sns-publish:PublishWithAttributes": g.PublishWithAttributes,
+			"sns-publish:PublishBatch":          g.PublishBatch,
 			// sns-subscriptions
-			"SubscribeSQS":              g.SubscribeSQS,
-			"ListSubscriptionsByTopic":  g.ListSubscriptionsByTopic,
-			"GetSubscriptionAttributes": g.GetSubscriptionAttributes,
-			"PublishDeliveredToSQS":     g.PublishDeliveredToSQS,
-			"SetSubscriptionAttributes": g.SetSubscriptionAttributes,
-			"Unsubscribe":               g.Unsubscribe,
+			"sns-subscriptions:SubscribeSQS":              g.SubscribeSQS,
+			"sns-subscriptions:ListSubscriptionsByTopic":  g.ListSubscriptionsByTopic,
+			"sns-subscriptions:GetSubscriptionAttributes": g.GetSubscriptionAttributes,
+			"sns-subscriptions:PublishDeliveredToSQS":     g.PublishDeliveredToSQS,
+			"sns-subscriptions:SetSubscriptionAttributes": g.SetSubscriptionAttributes,
+			"sns-subscriptions:Unsubscribe":               g.Unsubscribe,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"sns-topics":        g.setupTopics,

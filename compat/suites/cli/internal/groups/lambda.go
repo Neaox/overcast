@@ -23,8 +23,6 @@ func Lambda() ServiceGroup {
 			// DeleteFunction are also declared by appsync-functions, so they
 			// must be group-qualified: a bare key cannot say which group it
 			// implements and the loader refuses it.
-			"UpdateFunctionCode":                      g.UpdateFunctionCode,
-			"UpdateFunctionConfiguration":             g.UpdateFunctionConfiguration,
 			"lambda-crud:CreateFunction":              g.CreateFunction,
 			"lambda-crud:GetFunction":                 g.GetFunction,
 			"lambda-crud:ListFunctions":               g.ListFunctions,
@@ -35,25 +33,25 @@ func Lambda() ServiceGroup {
 			"lambda-policy:GetPolicy":                 g.GetPolicy,
 			"lambda-policy:RemovePermission":          g.RemovePermission,
 			// lambda-invoke
-			"InvokeDryRun": g.InvokeDryRun,
-			"InvokeSync":   g.InvokeSync,
-			"InvokeAsync":  g.InvokeAsync,
+			"lambda-invoke:InvokeDryRun": g.InvokeDryRun,
+			"lambda-invoke:InvokeSync":   g.InvokeSync,
+			"lambda-invoke:InvokeAsync":  g.InvokeAsync,
 			// lambda-aliases
-			"PublishVersion":         g.PublishVersion,
-			"ListVersionsByFunction": g.ListVersionsByFunction,
-			"CreateAlias":            g.CreateAlias,
-			"GetAlias":               g.GetAlias,
-			"ListAliases":            g.ListAliases,
-			"UpdateAlias":            g.UpdateAlias,
-			"DeleteAlias":            g.DeleteAlias,
+			"lambda-aliases:PublishVersion":         g.PublishVersion,
+			"lambda-aliases:ListVersionsByFunction": g.ListVersionsByFunction,
+			"lambda-aliases:CreateAlias":            g.CreateAlias,
+			"lambda-aliases:GetAlias":               g.GetAlias,
+			"lambda-aliases:ListAliases":            g.ListAliases,
+			"lambda-aliases:UpdateAlias":            g.UpdateAlias,
+			"lambda-aliases:DeleteAlias":            g.DeleteAlias,
 			// lambda-invoke-stream
-			"InvokeWithResponseStream": nil, // invoke-with-response-stream is not available in the installed CLI version
+			"lambda-invoke-stream:InvokeWithResponseStream": nil, // invoke-with-response-stream is not available in the installed CLI version
 			// lambda-invoke-error
-			"InvokeWithError": g.InvokeWithError,
+			"lambda-invoke-error:InvokeWithError": g.InvokeWithError,
 			// lambda-layers
-			"PublishLayerVersion": g.PublishLayerVersion,
-			"ListLayers":          g.ListLayers,
-			"DeleteLayerVersion":  g.DeleteLayerVersion,
+			"lambda-layers:PublishLayerVersion": g.PublishLayerVersion,
+			"lambda-layers:ListLayers":          g.ListLayers,
+			"lambda-layers:DeleteLayerVersion":  g.DeleteLayerVersion,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"lambda-crud":          g.setupCRUD,

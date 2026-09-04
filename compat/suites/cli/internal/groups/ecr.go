@@ -26,39 +26,39 @@ func ECR() ServiceGroup {
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
 			// ecr-repositories
-			"CreateRepository":              g.CreateRepository,
-			"DescribeRepositories":          g.DescribeRepositories,
-			"DescribeRepositoriesAll":       g.DescribeRepositoriesAll,
-			"DescribeRepositoriesPaginated": g.DescribeRepositoriesPaginated,
-			"DescribeRepositoriesSigned":    g.DescribeRepositoriesSigned,
-			"DescribeRepositoriesNotFound":  g.DescribeRepositoriesNotFound,
-			"CreateRepositoryAlreadyExists": g.CreateRepositoryAlreadyExists,
-			"DeleteRepository":              g.DeleteRepository,
-			"DeleteRepositoryNotEmpty":      g.DeleteRepositoryNotEmpty,
-			"DeleteRepositoryForce":         g.DeleteRepositoryForce,
+			"ecr-repositories:CreateRepository":              g.CreateRepository,
+			"ecr-repositories:DescribeRepositories":          g.DescribeRepositories,
+			"ecr-repositories:DescribeRepositoriesAll":       g.DescribeRepositoriesAll,
+			"ecr-repositories:DescribeRepositoriesPaginated": g.DescribeRepositoriesPaginated,
+			"ecr-repositories:DescribeRepositoriesSigned":    g.DescribeRepositoriesSigned,
+			"ecr-repositories:DescribeRepositoriesNotFound":  g.DescribeRepositoriesNotFound,
+			"ecr-repositories:CreateRepositoryAlreadyExists": g.CreateRepositoryAlreadyExists,
+			"ecr-repositories:DeleteRepository":              g.DeleteRepository,
+			"ecr-repositories:DeleteRepositoryNotEmpty":      g.DeleteRepositoryNotEmpty,
+			"ecr-repositories:DeleteRepositoryForce":         g.DeleteRepositoryForce,
 
 			// ecr-registry
-			"GetAuthorizationToken": g.GetAuthorizationToken,
-			"DescribeRegistry":      g.DescribeRegistry,
+			"ecr-registry:GetAuthorizationToken": g.GetAuthorizationToken,
+			"ecr-registry:DescribeRegistry":      g.DescribeRegistry,
 
 			// ecr-images. EC2 models a DescribeImages of its own, so that key
 			// is ambiguous bare and the loader refuses it.
-			"PutImage":                  g.PutImage,
-			"ListImages":                g.ListImages,
-			"ListImagesPaginated":       g.ListImagesPaginated,
-			"ecr-images:DescribeImages": g.DescribeImages,
-			"BatchGetImage":             g.BatchGetImage,
-			"BatchDeleteImage":          g.BatchDeleteImage,
-			"DescribeImagesNotFound":    g.DescribeImagesNotFound,
+			"ecr-images:PutImage":               g.PutImage,
+			"ecr-images:ListImages":             g.ListImages,
+			"ecr-images:ListImagesPaginated":    g.ListImagesPaginated,
+			"ecr-images:DescribeImages":         g.DescribeImages,
+			"ecr-images:BatchGetImage":          g.BatchGetImage,
+			"ecr-images:BatchDeleteImage":       g.BatchDeleteImage,
+			"ecr-images:DescribeImagesNotFound": g.DescribeImagesNotFound,
 
 			// ecr-policies
-			"PutLifecyclePolicy":         g.PutLifecyclePolicy,
-			"GetLifecyclePolicy":         g.GetLifecyclePolicy,
-			"DeleteLifecyclePolicy":      g.DeleteLifecyclePolicy,
-			"GetLifecyclePolicyNotFound": g.GetLifecyclePolicyNotFound,
-			"SetRepositoryPolicy":        g.SetRepositoryPolicy,
-			"GetRepositoryPolicy":        g.GetRepositoryPolicy,
-			"DeleteRepositoryPolicy":     g.DeleteRepositoryPolicy,
+			"ecr-policies:PutLifecyclePolicy":         g.PutLifecyclePolicy,
+			"ecr-policies:GetLifecyclePolicy":         g.GetLifecyclePolicy,
+			"ecr-policies:DeleteLifecyclePolicy":      g.DeleteLifecyclePolicy,
+			"ecr-policies:GetLifecyclePolicyNotFound": g.GetLifecyclePolicyNotFound,
+			"ecr-policies:SetRepositoryPolicy":        g.SetRepositoryPolicy,
+			"ecr-policies:GetRepositoryPolicy":        g.GetRepositoryPolicy,
+			"ecr-policies:DeleteRepositoryPolicy":     g.DeleteRepositoryPolicy,
 
 			// ecr-tags. AppSync and Secrets Manager model the same three
 			// operations, so every bare key here is ambiguous and the suite
