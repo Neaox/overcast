@@ -50,8 +50,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The PR's own changes are a three-dot diff from the base, so the
-          # merge base has to be in the clone.
+          # The PR's own changes are a diff from the merge base, computed
+          # below against the base branch's live tip rather than the event
+          # payload's base.sha (#813) — 0 fetches every branch as a
+          # remote-tracking ref, so origin/<base> is in the clone to diff
+          # against.
           fetch-depth: 0
 
       # Fork PRs get no secrets, so they get no comment. The check still runs
@@ -119,7 +122,7 @@ jobs:
       - name: Decide
         id: decide
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           RELEASE_CANDIDATE: ${{ steps.release.outputs.candidate }}
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
           # For the dependency-bot exemption. A bot suffix ([bot]) cannot be
@@ -129,19 +132,28 @@ jobs:
         run: |
           set -euo pipefail
 
+          # NOT github.event.pull_request.base.sha (#813): that sha is a
+          # snapshot of the base branch taken when the event fired, stale the
+          # moment another PR merges to it and unchanged by a re-run (which
+          # replays the same payload). scripts/pr-merge-base.sh has the full
+          # reasoning and the regression test; here it just needs the base
+          # branch's live tip, which fetch-depth: 0 above already fetched as
+          # origin/$BASE_REF.
+          MERGE_BASE="$(bash scripts/pr-merge-base.sh "origin/$BASE_REF")"
+
           # Added or modified only: a fragment this PR deletes is not its
           # release note, and neither is one already sitting on main.
           #
           # Two steps, not one pipeline: '|| true' for grep finding nothing
           # would also swallow a failing diff, and an empty list reads as "no
           # fragment" — the PR would be asked for one it already has.
-          git diff --name-only --diff-filter=AM "$BASE_SHA...HEAD" -- .changelog > fragments.txt
+          git diff --name-only --diff-filter=AM "$MERGE_BASE..HEAD" -- .changelog > fragments.txt
           readarray -t fragments < <(grep -v '^\.changelog/README\.md$' fragments.txt || true)
 
           # Everything the PR touches, for the never-release-noted areas.
           # Deletions included; --no-renames so a file moved *into* an exempt
           # area still shows the path it came from.
-          git diff --name-only --no-renames "$BASE_SHA...HEAD" > changed.txt
+          git diff --name-only --no-renames "$MERGE_BASE..HEAD" > changed.txt
 
           # Which of the two release-window messages to use, if one is needed
           # at all. A PR that moves VERSION to the untagged version *is* the
