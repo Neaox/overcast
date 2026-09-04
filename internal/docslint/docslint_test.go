@@ -83,7 +83,8 @@ func assertReports(t *testing.T, problems []Problem, want string) {
 
 func TestCheck_acceptsATemplateShapedLandingPage(t *testing.T) {
 	// Given: a page with every template section, in order
-	body := landing("## Quick start\n\n```sh\naws s3 ls\n```", "## What works\n\n- Buckets", "## Differences from AWS\n\n| A | B |\n| - | - |\n| c | d |")
+	body := landing("## Quick start\n\n```sh\naws s3 ls\n```", "## What works\n\n- Buckets",
+		"## Differences from AWS\n\n| Area | On AWS | Overcast |\n| - | - | - |\n| Health checks | Probed | Always healthy |")
 
 	// When / Then: nothing to report
 	assertClean(t, Check([]Doc{doc(body)}))

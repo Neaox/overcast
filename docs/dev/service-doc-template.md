@@ -109,9 +109,21 @@ the alert vocabulary on the least surprising fact in the corpus.
 `internal/docslint` requires the `sdk-cli.md#credentials` link inside the
 Quick start section, so it cannot quietly go missing from one page.
 
-**Differences from AWS.** `| Area | On AWS | Overcast |`, AWS before Overcast.
-Drop the middle column when the rows genuinely have no AWS half to state —
-`| Area | Overcast |` — rather than inventing one.
+**Differences from AWS.** `| Area | On AWS | Overcast |`, AWS before Overcast —
+the reader is comparing two behaviours and can only do that when both are on the
+row. `internal/docslint` requires that header, because half the corpus drifted
+to `| Area | Overcast |` one page at a time, with the AWS half buried inside the
+Overcast cell ("Real CloudWatch keeps 15 months") or negated into the Area cell
+("No query engine"). Drop the middle column only when the rows genuinely have no
+AWS half to state, rather than inventing one, and say why on the page:
+
+```md
+<!-- docs-differences-two-column: every row names a resource type AWS has and
+     Overcast does not model at all, so "On AWS" would read "Full API" nine times -->
+```
+
+That marker is self-deleting, like the length one: it fails once the table it
+excuses has three columns.
 
 **Related.** One link per bullet, in this order: this page's own sub-pages
 (limitations, troubleshooting, examples), sibling service pages,
