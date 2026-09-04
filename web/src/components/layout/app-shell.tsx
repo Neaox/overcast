@@ -1,5 +1,4 @@
-import { useState, useEffect, useRef } from "react"
-import { useRouterState } from "@tanstack/react-router"
+import { useState } from "react"
 import { Sidebar } from "./sidebar/sidebar"
 import { Header } from "./header/header"
 import { ConnectionToast } from "./connection-toast"
@@ -38,8 +37,6 @@ export function AppShell({ children }: AppShellProps) {
 
 function AppShellInner({ children }: AppShellProps) {
   const [searchOpen, setSearchOpen] = useState(false)
-  const mainRef = useRef<HTMLElement>(null)
-  const pathname = useRouterState({ select: (s) => s.location.pathname })
 
   useGlobalSearchShortcut(() => setSearchOpen(true))
 
@@ -48,12 +45,11 @@ function AppShellInner({ children }: AppShellProps) {
   // Query invalidation happens synchronously inside onMessage.
   useEventStreamSubscription()
 
-  // Scroll the main content area back to the top whenever the route changes.
-  // TanStack Router's built-in scroll reset targets window, but since <main>
-  // owns its own scroll container the window scroll is always already at 0.
-  useEffect(() => {
-    mainRef.current?.scrollTo({ top: 0, behavior: "instant" })
-  }, [pathname])
+  // Scrolling <main> back to the top on a route change is the router's job now
+  // (scrollToTopSelectors in main.tsx), not an effect here. An effect on the
+  // pathname cannot tell a new navigation from going Back, and resetting on
+  // both is what lost your place in the trace list; the router resets only
+  // when it has no cached offset for that history entry.
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -71,8 +67,13 @@ function AppShellInner({ children }: AppShellProps) {
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header onSearchOpen={() => setSearchOpen(true)} />
         <main
-          ref={mainRef}
           id="main-content"
+          // Names this element to the router's scroll restoration, which reads
+          // the attribute off the scroll event's target to decide what it is
+          // caching an offset for. Without it the router would key the offset
+          // by a generated nth-child selector, or track the window — which
+          // never scrolls here. See main.tsx.
+          data-scroll-restoration-id="app-main"
           tabIndex={-1}
           className="flex-1 overflow-auto bg-bg p-6 focus:outline-none"
         >
