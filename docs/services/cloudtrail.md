@@ -42,13 +42,13 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 
 ## Differences from AWS
 
-| Area | Overcast |
-| --- | --- |
-| Event ingestion | None. No API call is recorded anywhere |
-| `LookupEvents` | Always returns an empty `Events` list, whatever the filters |
-| S3 delivery | No log file is ever written to the trail's bucket |
-| Event data stores, channels, Insights | Not emulated. Tagging operations accept trail ARNs only |
-| Region scoping | Trails are global to the emulator; `HomeRegion` always reports the configured default region |
+| Area                                  | On AWS                                      | Overcast                                                                                     |
+| ------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Event ingestion                       | Every API call is recorded                  | None is recorded anywhere                                                                    |
+| `LookupEvents`                        | Returns the matching events                 | Always an empty `Events` list, whatever the filters                                          |
+| S3 delivery                           | Log files are written to the trail's bucket | No log file is ever written                                                                  |
+| Event data stores, channels, Insights | Full API                                    | Not emulated; tagging operations accept trail ARNs only                                      |
+| Region scoping                        | A trail belongs to its home region          | Trails are global to the emulator; `HomeRegion` always reports the configured default region |
 
 ## Gotchas
 

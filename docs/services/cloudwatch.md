@@ -54,15 +54,15 @@ a datapoint to evaluate.
 
 ## Differences from AWS
 
-| Area | Overcast |
-| --- | --- |
-| Metric retention | About one hour, in every storage backend. Real CloudWatch keeps 15 months at declining resolution |
-| Alarm history | The most recent 100 items per alarm. Real CloudWatch keeps 14 days |
-| Metric math, anomaly detection, percentiles | The alarm is **created and says so**, but never evaluated |
-| `PutCompositeAlarm`, `PutAnomalyDetector`, PromQL `EvaluationCriteria` | `501 NotImplemented` |
-| Dashboards, metric streams, Contributor Insights | Not emulated. A tagging call naming one gets `ResourceNotFoundException` |
-| `SetAlarmState` | Held for one full evaluation range, rather than reverting at the next evaluation |
-| Unqualified datapoints | A datapoint published without a unit feeds an alarm that names one |
+| Area                                                                   | On AWS                                | Overcast                                                                 |
+| ---------------------------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------ |
+| Metric retention                                                       | 15 months at declining resolution     | About one hour, in every storage backend                                 |
+| Alarm history                                                          | 14 days                               | The most recent 100 items per alarm                                      |
+| Metric math, anomaly detection, percentiles                            | Evaluated                             | The alarm is **created and says so**, but never evaluated                |
+| `PutCompositeAlarm`, `PutAnomalyDetector`, PromQL `EvaluationCriteria` | Full API                              | `501 NotImplemented`                                                     |
+| Dashboards, metric streams, Contributor Insights                       | Full API                              | Not emulated; a tagging call naming one gets `ResourceNotFoundException` |
+| `SetAlarmState`                                                        | Reverts at the next evaluation        | Held for one full evaluation range                                       |
+| Unqualified datapoints                                                 | Ignored by an alarm that names a unit | A datapoint published without a unit feeds an alarm that names one       |
 
 The full list, with the defaults `PutMetricAlarm` applies and the ones it
 refuses to invent, is in [CloudWatch limitations](./cloudwatch/limitations.md).
