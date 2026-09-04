@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 // fakeEKS is an EKS endpoint that walks one cluster through a scripted sequence
@@ -26,11 +28,16 @@ type fakeEKS struct {
 	// notFound answers DescribeCluster with a 404, as a cluster deleted from
 	// under the stack does.
 	notFound bool
+	// deletedNames records every name DeleteCluster was called with, in
+	// order — used to confirm Delete resolves an ARN-shaped physical ID back
+	// to the plain name before dispatching (#1690).
+	deletedNames []string
 }
 
-// ServeHTTP answers EKS's own REST bindings — POST /clusters and
-// GET /clusters/{name} — the surface the provisioner dispatches to since
-// #1226 retired the invented "EKS.<Op>" X-Amz-Target prefix.
+// ServeHTTP answers EKS's own REST bindings — POST /clusters,
+// GET /clusters/{name} and DELETE /clusters/{name} — the surface the
+// provisioner dispatches to since #1226 retired the invented "EKS.<Op>"
+// X-Amz-Target prefix.
 func (f *fakeEKS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	const arn = "arn:aws:eks:us-east-1:000000000000:cluster/app-eks"
@@ -50,6 +57,12 @@ func (f *fakeEKS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if len(f.issues) > 0 {
 			cluster["health"] = map[string]any{"issues": f.issues}
 		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"cluster": cluster})
+
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/clusters/"):
+		name := strings.TrimPrefix(r.URL.Path, "/clusters/")
+		f.deletedNames = append(f.deletedNames, name)
+		cluster := map[string]any{"name": name, "arn": arn, "status": "DELETING"}
 		_ = json.NewEncoder(w).Encode(map[string]any{"cluster": cluster})
 
 	default:
@@ -80,8 +93,12 @@ func TestEKSClusterCreate_waitsForTheClusterToBecomeActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("provisionResource: %v", err)
 	}
-	if !strings.HasSuffix(id, "cluster/app-eks") {
-		t.Errorf("physical ID = %q, want the cluster ARN", id)
+	// Per AWS docs, Ref on AWS::EKS::Cluster returns the cluster name, not
+	// its ARN — see eksClusterNameFromPhysicalID in
+	// provisioner_query_rest_coverage.go (#1690). The ARN is still available
+	// via Fn::GetAtt Arn.
+	if id != "app-eks" {
+		t.Errorf("physical ID = %q, want the cluster name %q", id, "app-eks")
 	}
 	if got := f.script.count(); got != 3 {
 		t.Errorf("DescribeCluster calls = %d, want 3 — the resource completed before the control "+
@@ -149,5 +166,49 @@ func TestEKSClusterCreate_failsWhenTheClusterDisappears(t *testing.T) {
 	if _, err := p.provisionResource(context.Background(), "Cluster",
 		TemplateResource{Type: "AWS::EKS::Cluster"}, eksClusterProps(), rCtx); err == nil {
 		t.Fatal("expected the resource to fail for a cluster that no longer exists")
+	}
+}
+
+// eksClusterNameFromPhysicalID must resolve both the current physical-ID
+// shape (the cluster name, per AWS docs — Ref returns the name, not the ARN)
+// and the pre-#1690 shape (the ARN an older Overcast build recorded), so a
+// stack whose state predates the fix still deletes and updates cleanly.
+func TestEKSClusterNameFromPhysicalID(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		physicalID string
+		want       string
+	}{
+		{name: "current: plain cluster name", physicalID: "app-eks", want: "app-eks"},
+		{name: "pre-#1690: cluster ARN", physicalID: "arn:aws:eks:us-east-1:000000000000:cluster/app-eks", want: "app-eks"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := eksClusterNameFromPhysicalID(tc.physicalID); got != tc.want {
+				t.Errorf("eksClusterNameFromPhysicalID(%q) = %q, want %q", tc.physicalID, got, tc.want)
+			}
+		})
+	}
+}
+
+// A stack whose state predates #1690 has the cluster ARN recorded as the
+// physical ID. Delete must resolve it to the plain name DeleteCluster
+// expects rather than sending the ARN itself as a path segment (which would
+// double-encode "/" and 404).
+func TestEKSClusterDelete_toleratesARNShapedPhysicalID(t *testing.T) {
+	// Given: a physical ID shaped the way a pre-fix Overcast build persisted it
+	f := &fakeEKS{}
+	h := &eksClusterHandler{}
+	rCtx := &resolveContext{Region: "us-east-1", AccountID: "000000000000"}
+	const preFixPhysicalID = "arn:aws:eks:us-east-1:000000000000:cluster/app-eks"
+
+	// When: the stack is deleted
+	err := h.Delete(context.Background(), f, &config.Config{}, preFixPhysicalID, rCtx)
+
+	// Then: DeleteCluster was called with the plain name, and succeeded
+	if err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if len(f.deletedNames) != 1 || f.deletedNames[0] != "app-eks" {
+		t.Errorf("DeleteCluster called with %v, want a single call for %q", f.deletedNames, "app-eks")
 	}
 }

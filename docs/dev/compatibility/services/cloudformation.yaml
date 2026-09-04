@@ -23,6 +23,10 @@ operations:
       - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-attribute-deletionpolicy.html
       - https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_RollbackStack.html
       - https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-event-messages.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-eks-cluster.html#aws-resource-eks-cluster-return-values
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-eks-nodegroup.html#aws-resource-eks-nodegroup-return-values
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-eks-fargateprofile.html#aws-resource-eks-fargateprofile-return-values
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-eks-addon.html#aws-resource-eks-addon-return-values
     tests:
       - tests/integration/cloudformation/cloudformation_test.go
     scenarios:
@@ -31,6 +35,29 @@ operations:
         tests:
           - tests/integration/cloudformation/cloudformation_test.go
         notes: AWS::SQS::Queue Ref returns the queue URL, while Fn::GetAtt Arn returns the queue ARN. The SQS resource handler now preserves that Ref override on create and update.
+      - name: eks cluster ref resolves to cluster name
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/eks_cluster_ref_test.go::TestCreateStack_eksNodegroupWiredByClusterRef_reachesCreateComplete
+          - tests/integration/cloudformation/eks_cluster_ref_test.go::TestDeleteStack_eksCluster_deletesByName
+          - internal/services/cloudformation/provisioner_eks_test.go::TestEKSClusterNameFromPhysicalID
+          - internal/services/cloudformation/provisioner_eks_test.go::TestEKSClusterDelete_toleratesARNShapedPhysicalID
+        notes: >-
+          AWS::EKS::Cluster Ref now returns the cluster name (physical ID),
+          matching https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-eks-cluster.html#aws-resource-eks-cluster-return-values-ref;
+          Fn::GetAtt Arn still returns the ARN. Before this fix the physical ID was
+          the ARN, so any AWS::EKS::Nodegroup/FargateProfile/Addon wired to its
+          cluster by {"Ref": "Cluster"} (the pattern CDK's L2 constructs use)
+          failed locally with "No cluster found for name: arn:...:cluster%2F<name>"
+          (#1690) while it deploys on real AWS. Stabilize/Delete/Update now resolve
+          the cluster name via eksClusterNameFromPhysicalID, which also tolerates a
+          physical ID persisted as the ARN by a pre-fix Overcast build. Checked
+          AWS::EKS::Nodegroup ("<cluster>/<nodegroup>") and AWS::EKS::FargateProfile
+          ("<cluster>/<Fargate_profile_name>") against their own CloudFormation
+          docs — both already match. AWS::EKS::Addon's documented Ref is
+          "cluster-name|vpc-cni" (pipe-separated); Overcast's eksAddonHandler uses
+          "/" instead — filed as a separate follow-up rather than fixed here,
+          since eksAddonHandler was concurrently owned by another change (#1692).
       - name: sqs fifo generated queue name and attributes
         status: fixed
         tests:
@@ -168,9 +195,11 @@ findings:
     - No-op updates no longer retrieve Secrets Manager dynamic references before literal-property change detection, preserving AWS's intentionally stale resource value and avoiding unnecessary internal API calls.
     - AWS::ECS::Service stabilization preserves the actionable scheduler failure when a newer task-start progress event exists.
     - Automatic create rollback honors DeletionPolicy Retain and records DELETE_SKIPPED for the retained resource; RetainExceptOnCreate distinguishes initial create rollback from ordinary deletion.
+    - AWS::EKS::Cluster Ref now resolves to the cluster name instead of the ARN, so a nodegroup, Fargate profile, or add-on wired to its cluster by Ref reaches CREATE_COMPLETE instead of failing with a "No cluster found for name" error; Fn::GetAtt Arn is unchanged (#1690).
   remaining_gaps:
     - Audit resource-type tracking against provisioner registrations.
     - Add CloudFormation Ref compatibility tests for resource handlers whose physical ID differs from documented Ref semantics.
+    - AWS::EKS::Addon's physical ID uses "/" between cluster name and add-on name; AWS documents "|" ("cluster-name|vpc-cni"). Not fixed here — eksAddonHandler was concurrently owned by another change (#1692).
     - Implement cross-region AWS::SNS::Subscription Region semantics (tracked in #633).
     - Review update/delete semantics and unsupported-resource stubbing.
     - Add support for S3 EventBridge notifications (#635), lifecycle transition minimum object size (#636), and website redirects/routing rules (#637); CloudFormation currently fails these shapes loudly.
