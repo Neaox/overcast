@@ -5136,13 +5136,22 @@ func validateRequiredPropertyRemovals(props, prior map[string]any, logicalID, re
 		if value, present := props[property]; present && value != nil && fmt.Sprint(value) != "" {
 			continue
 		}
-		resource := logicalID
-		if resource == "" {
-			resource = resourceType
-		}
-		return fmt.Errorf("Properties validation failed for resource %s with message: #: required key [%s] not found", resource, property)
+		return requiredPropertyMissing(logicalID, resourceType, property)
 	}
 	return nil
+}
+
+// requiredPropertyMissing formats the same "Properties validation failed for
+// resource ..." error CloudFormation returns for a template-required property
+// that is entirely absent — the Create-time counterpart to
+// validateRequiredPropertyRemovals, which checks the same shape when an
+// in-place update instead drops a property a prior template set.
+func requiredPropertyMissing(logicalID, resourceType, property string) error {
+	resource := logicalID
+	if resource == "" {
+		resource = resourceType
+	}
+	return fmt.Errorf("Properties validation failed for resource %s with message: #: required key [%s] not found", resource, property)
 }
 
 func updateLambdaTags(ctx context.Context, router http.Handler, region, resourceARN string, stackTags, priorStackTags []Tag, rawTags, rawPrior any) (bool, error) {

@@ -8353,7 +8353,7 @@
           "operation": "CreateAddon",
           "category": "Addons",
           "status": "✅ Supported",
-          "notes": "Stores add-on metadata including addonVersion, configurationValues, and serviceAccountRoleArn; describe returns inline tags"
+          "notes": "Stores add-on metadata including addonVersion, configurationValues, and serviceAccountRoleArn; describe returns inline tags. addonName is validated against the same catalog DescribeAddonVersions publishes and an unpublished name is rejected as InvalidParameterException (#1692)"
         },
         {
           "operation": "DescribeAddon",
@@ -8387,7 +8387,7 @@
           "operation": "DescribeAddonVersions",
           "category": "Addons",
           "status": "✅ Supported",
-          "notes": "Returns the synthetic version catalog for vpc-cni, coredns, kube-proxy and aws-ebs-csi-driver, filtered by the addonName/kubernetesVersion/types/publishers/owners query members and paged by maxResults/nextToken"
+          "notes": "Returns the synthetic version catalog for vpc-cni, coredns, kube-proxy, aws-ebs-csi-driver and eks-pod-identity-agent, filtered by the addonName/kubernetesVersion/types/publishers/owners query members and paged by maxResults/nextToken. This is the same catalog CreateAddon validates addonName against"
         }
       ]
     },

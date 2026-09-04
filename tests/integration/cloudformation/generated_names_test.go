@@ -477,13 +477,10 @@ func TestCreateStack_resourcesWithoutNames_areNamedByCloudFormation(t *testing.T
         "ClusterName": "dep-cluster",
         "PodExecutionRoleArn": "arn:aws:iam::000000000000:role/fp"}}`,
 		},
-		{
-			name:      "AWS::EKS::Addon",
-			logicalID: "Addon",
-			deps:      depEKSCluster,
-			properties: `{"Type": "AWS::EKS::Addon", "DependsOn": "DepEksCluster", "Properties": {
-        "ClusterName": "dep-cluster"}}`,
-		},
+		// AWS::EKS::Addon is deliberately absent from this table: unlike the
+		// resources above, AddonName is Required: Yes and CloudFormation
+		// never mints one when a template omits it — see
+		// eks_addon_name_test.go in tests/integration/cloudformation.
 		{
 			name:      "AWS::MSK::Cluster",
 			logicalID: "MskCluster",
@@ -750,12 +747,9 @@ func TestCreateStack_twoUnnamedResourcesOfOneType_doNotCollide(t *testing.T) {
 				"ClusterName": "dep-cluster",
 				"PodExecutionRoleArn": "arn:aws:iam::000000000000:role/fp"}}`,
 		},
-		{
-			name: "AWS::EKS::Addon",
-			deps: depEKSCluster,
-			resource: `{"Type": "AWS::EKS::Addon", "DependsOn": "DepEksCluster", "Properties": {
-				"ClusterName": "dep-cluster"}}`,
-		},
+		// AWS::EKS::Addon is deliberately absent from this table — see the
+		// same note in TestCreateStack_resourcesWithoutNames_areNamedByCloudFormation
+		// above.
 		{
 			name: "AWS::MSK::Cluster",
 			resource: `{"Type": "AWS::MSK::Cluster", "Properties": {

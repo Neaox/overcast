@@ -1413,14 +1413,15 @@ func (h *eksAddonHandler) Create(ctx context.Context, router http.Handler, cfg *
 	clusterName, _ := props["ClusterName"].(string)
 	addonName, _ := props["AddonName"].(string)
 	if addonName == "" {
-		// AddonName is Required: Yes on AWS::EKS::Addon, and CreateAddon only
-		// accepts a name DescribeAddonVersions publishes ("vpc-cni",
-		// "coredns", ...) — so any value minted here is a placeholder real AWS
-		// would reject, exactly as the stack-name-only one was. It exists so a
-		// template that omits the property does not send an empty path
-		// segment, and it is generated so that two of them are still two
-		// resources rather than one.
-		addonName = rCtx.generatedName()
+		// AddonName is Required: Yes on AWS::EKS::Addon
+		// (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-eks-addon.html),
+		// unlike almost every other AWS::*::* name property, so there is no
+		// AWS behaviour to emulate by minting a placeholder here — a template
+		// that omits it fails template validation on real CloudFormation
+		// before any resource is touched. #788 made the old placeholder
+		// unique per resource; this issue (#1692) removes it rather than
+		// generating a name real AWS would never accept.
+		return "", nil, requiredPropertyMissing(rCtx.LogicalID, "AWS::EKS::Addon", "AddonName")
 	}
 
 	body := map[string]any{
