@@ -20,22 +20,6 @@ const (
 	maxMaxSessionDuration     = 43200
 )
 
-// parseMaxSessionDuration reads a MaxSessionDuration parameter, substituting
-// AWS's 3600-second default when absent and enforcing AWS's 3600–43200 range.
-func parseMaxSessionDuration(value string) (int, *protocol.AWSError) {
-	if value == "" {
-		return defaultMaxSessionDuration, nil
-	}
-	duration, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, errInvalidMaxSessionDuration(value)
-	}
-	if aerr := checkMaxSessionDuration(duration); aerr != nil {
-		return 0, aerr
-	}
-	return duration, nil
-}
-
 func checkMaxSessionDuration(duration int) *protocol.AWSError {
 	if duration < defaultMaxSessionDuration || duration > maxMaxSessionDuration {
 		return errInvalidMaxSessionDuration(strconv.Itoa(duration))

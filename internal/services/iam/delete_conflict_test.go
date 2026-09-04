@@ -23,11 +23,15 @@ func newTestHandler(t *testing.T) *Handler {
 	return New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.New()).handler
 }
 
-// legacyDelete invokes a legacy Query handler directly. The legacy table is
-// still reachable through Handler.dispatch (see service.go) whenever the
-// protocol middleware has not identified a codec, so its behaviour has to
-// match the typed path exactly.
-func legacyDelete(t *testing.T, fn http.HandlerFunc, params url.Values) *httptest.ResponseRecorder {
+// noCodecDelete invokes a delete operation through the no-codec dispatch
+// fallback (Handler.dispatch, see service.go), the path DispatchQuery falls
+// back to whenever the protocol middleware has not identified a codec for
+// the request (e.g. the AWS Query GET form). Every entry in Handler.ops
+// reaches its operation through typedHandler (see initOps), so this
+// exercises the same typed implementation as the codec-identified path —
+// there is no separate legacy implementation left to drift from it — but it
+// still guards the wire-level XML this fallback produces.
+func noCodecDelete(t *testing.T, fn http.HandlerFunc, params url.Values) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(params.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -36,18 +40,20 @@ func legacyDelete(t *testing.T, fn http.HandlerFunc, params url.Values) *httptes
 	return rec
 }
 
-// TestDeleteConflict_typedAndLegacyAgree runs each delete through both dispatch
-// paths against identical state and asserts they return the same status and the
-// same AWS message. IAM is mid-migration to typed dispatch (#671); until the
-// legacy table is removed, the two must not drift.
-func TestDeleteConflict_typedAndLegacyAgree(t *testing.T) {
+// TestDeleteConflict_typedAndNoCodecAgree runs each delete through both the
+// typed Go path and the no-codec dispatch fallback against identical state,
+// and asserts they return the same status and the same AWS message. Both
+// paths invoke the same typed implementation (#671 removed the separate
+// legacy handlers), so this pins the wire-level XML the fallback produces
+// rather than guarding against drift between two implementations.
+func TestDeleteConflict_typedAndNoCodecAgree(t *testing.T) {
 	policyArn := "arn:aws:iam::000000000000:policy/managed"
 
 	cases := []struct {
 		name    string
 		seed    func(t *testing.T, h *Handler)
 		typed   func(ctx context.Context, h *Handler) *protocol.AWSError
-		legacy  func(h *Handler) http.HandlerFunc
+		action  string
 		params  url.Values
 		message string
 	}{
@@ -60,7 +66,7 @@ func TestDeleteConflict_typedAndLegacyAgree(t *testing.T) {
 				_, aerr := h.deleteUserTyped(ctx, &deleteUserReq{UserName: "alice"})
 				return aerr
 			},
-			legacy:  func(h *Handler) http.HandlerFunc { return h.DeleteUser },
+			action:  "DeleteUser",
 			params:  url.Values{"UserName": {"alice"}},
 			message: "Cannot delete entity, must delete access keys first.",
 		},
@@ -73,7 +79,7 @@ func TestDeleteConflict_typedAndLegacyAgree(t *testing.T) {
 				_, aerr := h.deleteRoleTyped(ctx, &deleteRoleReq{RoleName: "app"})
 				return aerr
 			},
-			legacy:  func(h *Handler) http.HandlerFunc { return h.DeleteRole },
+			action:  "DeleteRole",
 			params:  url.Values{"RoleName": {"app"}},
 			message: "Cannot delete entity, must detach all policies first.",
 		},
@@ -86,7 +92,7 @@ func TestDeleteConflict_typedAndLegacyAgree(t *testing.T) {
 				_, aerr := h.deleteGroupTyped(ctx, &deleteGroupReq{GroupName: "devs"})
 				return aerr
 			},
-			legacy:  func(h *Handler) http.HandlerFunc { return h.DeleteGroup },
+			action:  "DeleteGroup",
 			params:  url.Values{"GroupName": {"devs"}},
 			message: "Cannot delete entity, must remove users from group first.",
 		},
@@ -100,7 +106,7 @@ func TestDeleteConflict_typedAndLegacyAgree(t *testing.T) {
 				_, aerr := h.deletePolicyTyped(ctx, &deletePolicyReq{PolicyArn: policyArn})
 				return aerr
 			},
-			legacy:  func(h *Handler) http.HandlerFunc { return h.DeletePolicy },
+			action:  "DeletePolicy",
 			params:  url.Values{"PolicyArn": {policyArn}},
 			message: "Cannot delete a policy attached to entities.",
 		},
@@ -109,9 +115,9 @@ func TestDeleteConflict_typedAndLegacyAgree(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Typed path
-			typedHandler := newTestHandler(t)
-			tc.seed(t, typedHandler)
-			aerr := tc.typed(context.Background(), typedHandler)
+			typedHandlerUnderTest := newTestHandler(t)
+			tc.seed(t, typedHandlerUnderTest)
+			aerr := tc.typed(context.Background(), typedHandlerUnderTest)
 			if aerr == nil {
 				t.Fatal("typed path: expected DeleteConflict, got success")
 			}
@@ -122,19 +128,19 @@ func TestDeleteConflict_typedAndLegacyAgree(t *testing.T) {
 				t.Errorf("typed path message = %q, want %q", aerr.Message, tc.message)
 			}
 
-			// Legacy path, over identical state
-			legacyHandler := newTestHandler(t)
-			tc.seed(t, legacyHandler)
-			rec := legacyDelete(t, tc.legacy(legacyHandler), tc.params)
+			// No-codec dispatch fallback, over identical state
+			fallbackHandler := newTestHandler(t)
+			tc.seed(t, fallbackHandler)
+			rec := noCodecDelete(t, fallbackHandler.typedHandler(tc.action), tc.params)
 			if rec.Code != http.StatusConflict {
-				t.Fatalf("legacy path status = %d, want 409 (body: %s)", rec.Code, rec.Body.String())
+				t.Fatalf("no-codec path status = %d, want 409 (body: %s)", rec.Code, rec.Body.String())
 			}
 			body := rec.Body.String()
 			if !strings.Contains(body, "<Code>DeleteConflict</Code>") {
-				t.Errorf("legacy path body missing DeleteConflict code: %s", body)
+				t.Errorf("no-codec path body missing DeleteConflict code: %s", body)
 			}
 			if !strings.Contains(body, "<Message>"+tc.message+"</Message>") {
-				t.Errorf("legacy path body missing message %q: %s", tc.message, body)
+				t.Errorf("no-codec path body missing message %q: %s", tc.message, body)
 			}
 		})
 	}
