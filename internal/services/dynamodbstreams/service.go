@@ -69,11 +69,12 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 			typed.Invoke(w, r, c)
 			return
 		}
-		c.WriteError(w, r, &protocol.AWSError{
-			Code:       "UnknownOperationException",
-			Message:    "Unknown DynamoDB Streams operation: " + opName,
-			HTTPStatus: http.StatusBadRequest,
-		})
+		// A real DynamoDB Streams operation Overcast has not implemented gets
+		// an honest 501, in the request's own wire format;
+		// UnknownOperationException stays for a name AWS does not model
+		// (#1645). Every modeled Streams operation is implemented today, so
+		// the 501 arm is insurance against the next model refresh.
+		serviceutil.WriteUnhandledOperation(w, r, c, serviceName, opName, errUnknownOperation(opName))
 		return
 	}
 
@@ -86,11 +87,17 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 		fn(w, r)
 		return
 	}
-	protocol.WriteJSONError(w, r, &protocol.AWSError{
+	serviceutil.WriteUnhandledOperation(w, r, codec.JSON10, serviceName, target, errUnknownOperation(target))
+}
+
+// errUnknownOperation is AWS's answer for a target naming no DynamoDB Streams
+// operation at all.
+func errUnknownOperation(opName string) *protocol.AWSError {
+	return &protocol.AWSError{
 		Code:       "UnknownOperationException",
-		Message:    "Unknown DynamoDB Streams operation: " + target,
+		Message:    "Unknown DynamoDB Streams operation: " + opName,
 		HTTPStatus: http.StatusBadRequest,
-	})
+	}
 }
 
 // ---- internal handler ------------------------------------------------------

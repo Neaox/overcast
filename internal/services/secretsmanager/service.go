@@ -181,11 +181,10 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 			typed.Invoke(w, r, c)
 			return
 		}
-		c.WriteError(w, r, &protocol.AWSError{
-			Code:       "UnknownOperationException",
-			Message:    "Unknown operation: " + opName,
-			HTTPStatus: http.StatusBadRequest,
-		})
+		// A real Secrets Manager operation Overcast has not implemented gets
+		// an honest 501, in the request's own wire format;
+		// UnknownOperationException stays for a name AWS does not model (#1645).
+		serviceutil.WriteUnhandledOperation(w, r, c, serviceName, opName, errUnknownOperation(opName))
 		return
 	}
 
@@ -198,11 +197,20 @@ func (s *Service) dispatchLegacy(w http.ResponseWriter, r *http.Request, target 
 		fn(w, r)
 		return
 	}
-	protocol.WriteJSONError(w, r, &protocol.AWSError{
+	// This path serves the JSON families only — Dispatch sends RPC v2 CBOR to
+	// the typed operations — so JSON11 writes the bytes WriteJSONError always
+	// did for an unknown name.
+	serviceutil.WriteUnhandledOperation(w, r, codec.JSON11, serviceName, target, errUnknownOperation(target))
+}
+
+// errUnknownOperation is AWS's answer for a target naming no Secrets Manager
+// operation at all.
+func errUnknownOperation(opName string) *protocol.AWSError {
+	return &protocol.AWSError{
 		Code:       "UnknownOperationException",
-		Message:    "Unknown operation: " + target,
+		Message:    "Unknown operation: " + opName,
 		HTTPStatus: http.StatusBadRequest,
-	})
+	}
 }
 
 // ─── Admin handlers (web console) ──────────────────────────────────────────

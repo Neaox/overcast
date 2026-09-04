@@ -151,7 +151,10 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 			typed.Invoke(w, r, c)
 			return
 		}
-		c.WriteError(w, r, &protocol.AWSError{
+		// A real Logs operation Overcast has not implemented gets an honest
+		// 501, in the request's own wire format; UnknownOperationException
+		// stays for a name AWS does not model (#1645).
+		serviceutil.WriteUnhandledOperation(w, r, c, awsapiService, opName, &protocol.AWSError{
 			Code:       "UnknownOperationException",
 			Message:    "Unknown CloudWatch Logs operation: " + opName,
 			HTTPStatus: http.StatusBadRequest,
@@ -166,12 +169,16 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 		fn(w, r)
 		return
 	}
-	protocol.WriteJSONError(w, r, &protocol.AWSError{
+	serviceutil.WriteUnhandledOperation(w, r, codec.JSON11, awsapiService, target, &protocol.AWSError{
 		Code:       "UnknownOperationException",
 		Message:    "Unknown operation: " + target,
 		HTTPStatus: http.StatusBadRequest,
 	})
 }
+
+// awsapiService is Logs' key in the generated model corpus — the one
+// capabilities_dev.go declares under — which is not serviceName.
+const awsapiService = "cloudwatch-logs"
 
 // LogWriter returns an events.LogWriter backed by this service's store.
 // Lambda and other services use this to write invocation logs to CloudWatch

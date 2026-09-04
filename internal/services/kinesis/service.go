@@ -133,11 +133,10 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 			typed.Invoke(w, r, c)
 			return
 		}
-		c.WriteError(w, r, &protocol.AWSError{
-			Code:       "UnknownOperationException",
-			Message:    "Unknown Kinesis operation: " + opName,
-			HTTPStatus: http.StatusBadRequest,
-		})
+		// A real Kinesis operation Overcast has not implemented gets an honest
+		// 501, in the request's own wire format; UnknownOperationException
+		// stays for a name AWS does not model (#1645).
+		serviceutil.WriteUnhandledOperation(w, r, c, serviceName, opName, errUnknownOperation(opName))
 		return
 	}
 
@@ -150,5 +149,15 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 		fn(w, r)
 		return
 	}
-	protocol.NotImplementedJSON(w, r)
+	serviceutil.WriteUnhandledOperation(w, r, codec.JSON11, serviceName, suffix, errUnknownOperation(suffix))
+}
+
+// errUnknownOperation is AWS's answer for a target naming no Kinesis
+// operation at all.
+func errUnknownOperation(opName string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "UnknownOperationException",
+		Message:    "Unknown Kinesis operation: " + opName,
+		HTTPStatus: http.StatusBadRequest,
+	}
 }

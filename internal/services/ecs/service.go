@@ -169,7 +169,9 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 			typed.Invoke(w, r, c)
 			return
 		}
-		c.WriteError(w, r, protocol.ErrNotImplemented)
+		// Same split as dispatchLegacy, in CBOR: a name AWS does not model is
+		// InvalidAction here too, not a 501 claiming it is merely unemulated.
+		serviceutil.WriteUnhandledOperation(w, r, c, serviceName, opName, errInvalidAction(opName))
 		return
 	}
 
@@ -182,9 +184,18 @@ func (s *Service) dispatchLegacy(w http.ResponseWriter, r *http.Request, suffix 
 		fn(w, r)
 		return
 	}
-	protocol.WriteJSONError(w, r, &protocol.AWSError{
+	// A real ECS operation Overcast has not implemented gets an honest 501;
+	// InvalidAction stays for a name AWS does not model (#1645). This path
+	// serves the JSON families only — Dispatch sends RPC v2 CBOR to the typed
+	// operations — so JSON11 writes the bytes WriteJSONError always did.
+	serviceutil.WriteUnhandledOperation(w, r, codec.JSON11, serviceName, suffix, errInvalidAction(suffix))
+}
+
+// errInvalidAction is ECS's answer for a target naming no modeled operation.
+func errInvalidAction(action string) *protocol.AWSError {
+	return &protocol.AWSError{
 		Code:       "InvalidAction",
-		Message:    "The action " + suffix + " is not valid for this web service.",
+		Message:    "The action " + action + " is not valid for this web service.",
 		HTTPStatus: http.StatusBadRequest,
-	})
+	}
 }

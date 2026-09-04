@@ -63,6 +63,11 @@ type Operation struct {
 // It answers only "is this a real AWS operation name?". Use Operations when
 // the question is where AWS serves it — see that function's comment for why
 // the difference matters.
+//
+// Its one runtime caller is serviceutil.WriteUnhandledOperation, a service's
+// refusal of an operation every handler lookup has already missed — once per
+// refused request, off the routing path, where a linear scan costs nothing
+// that matters.
 func HasOperation(service, name string) bool {
 	for _, op := range manifest {
 		if overcastService(op.Service) == service && op.Name == name {
