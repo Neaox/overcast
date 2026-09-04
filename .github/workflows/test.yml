@@ -336,9 +336,24 @@ jobs:
       # A cold pull inside the function's Active wait is what times out; pull it
       # up front. Not best-effort: without the image there is no invoke to test,
       # and a silent skip is the failure mode this whole job exists to end.
+      # Retried: public.ecr.aws has intermittently failed pulls with a TLS
+      # handshake timeout unrelated to the change under test (run 33919940280,
+      # job 101176485363, on PR #1682), which otherwise fails this required
+      # check for a transient registry problem rather than a real regression.
       - name: Pre-pull the Lambda runtime image
         if: needs.changes.outputs.code == 'true'
-        run: docker pull --quiet public.ecr.aws/lambda/nodejs:20
+        run: |
+          image=public.ecr.aws/lambda/nodejs:20
+          for delay in 0 5 15; do
+            if [ "$delay" -gt 0 ]; then
+              sleep "$delay"
+            fi
+            if docker pull --quiet "$image"; then
+              exit 0
+            fi
+          done
+          echo "failed to pull $image after 3 attempts" >&2
+          exit 1
 
       # A free ephemeral port on loopback. 4566 and 4567 are never candidates —
       # the kernel hands out ports well above them — and picking one rather than
