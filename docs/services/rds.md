@@ -67,8 +67,9 @@ directory before it accepts anything.
 | Not every engine                      | SQL Server, Oracle and Db2 are not emulated — see [RDS limitations](./rds/limitations.md)                                                                                        |
 | No failover API                       | There is no `FailoverDBCluster`; deleting the writer is the only way to trigger a promotion                                                                                    |
 
-Full engine matrix, cluster-setting behaviour and master-account boundaries:
-[RDS limitations](./rds/limitations.md). Symptoms and fixes:
+Full engine matrix and cluster-setting behaviour:
+[RDS limitations](./rds/limitations.md). Privileges, password rules and rotation:
+[RDS master account and passwords](./rds/master-account.md). Symptoms and fixes:
 [RDS troubleshooting](./rds/troubleshooting.md).
 
 ## Gotchas
@@ -96,6 +97,7 @@ Per-operation status, notes and AWS API links: [RDS operations](rds/operations.m
 ## Related
 
 - [RDS limitations](./rds/limitations.md)
+- [RDS master account and passwords](./rds/master-account.md)
 - [RDS troubleshooting](./rds/troubleshooting.md)
 - [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)

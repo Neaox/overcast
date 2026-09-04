@@ -79,7 +79,7 @@ constraints; or the engine itself refused the `ALTER USER`, which fails the
 whole call so nothing partial is recorded.
 
 **Fix.** Start the instance first, and check the password against the
-[per-engine rules](./limitations.md#password-rules) — in particular that
+[per-engine rules](./master-account.md#password-rules) — in particular that
 `GetRandomPassword` and CDK's `Credentials.fromGeneratedSecret` can generate
 characters RDS forbids.
 
