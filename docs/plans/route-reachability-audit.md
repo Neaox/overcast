@@ -46,6 +46,16 @@
 > documented in Category B) reproduced a single red
 > `TestAllDeclaredCapabilitiesAreReachable` naming that operation; reverting
 > the flag turned it green again.
+>
+> **Update 2026-09-05 (#1413): the sweep has a blind spot, and it is not
+> fixable from here.** Route 53's `ChangeResourceRecordSets` 404'd every boto3
+> and AWS CLI caller while both the script and the in-process test reported it
+> reachable, because AWS's Smithy and botocore models spell its URI
+> differently — one with a trailing slash, one without — and every gate in this
+> repository is pinned to the Smithy half. See
+> [Trailing slashes](#trailing-slashes-the-class-this-sweep-cannot-see-1413)
+> below for what was fixed, what was audited, and what a reviewer has to do by
+> hand instead.
 
 ## Why this audit happened
 
@@ -149,6 +159,56 @@ Two supporting notes:
 - AGENTS.md's "router coverage" wording should be corrected regardless of whether a new gate is added. It currently implies a guarantee that does not exist, which is how four instances of this fault reached release.
 - `internal/services/appsync/rest_operations_dev.go` is the only per-service REST-operation inventory in the repo, and `rest_operations_inventory_test.go` asserts it matches the **registered routes** — not the model. It therefore currently certifies AppSync's two invented evaluation paths as correct (#860). That file is the natural place to hang a real model cross-check: declare each REST operation's method and path, and assert it equals the manifest's `@http` binding. Rolled out across services, that would turn this whole class of fault into a compile-time-ish failure, and `scripts/route-reachability.go` would become a belt-and-braces runtime confirmation rather than the only detector.
 
+## Trailing slashes: the class this sweep cannot see (#1413)
+
+**Added 2026-09-05.** `ChangeResourceRecordSets` 404'd every boto3 and
+`aws route53` caller since at least `v0.0.1-alpha.36`, and both this sweep and
+`TestAllDeclaredCapabilitiesAreReachable` reported it reachable throughout.
+Neither was lying: the fault is one this method structurally cannot detect,
+and it is worth naming so the next auditor does not read a clean sweep as more
+than it is.
+
+AWS publishes its APIs through two models, and they disagree about trailing
+slashes. Route 53's Smithy model — `api-models-aws`, the source
+`internal/awsapi/manifest.gen.go` is generated from — binds the operation to
+`POST /2013-04-01/hostedzone/{HostedZoneId}/rrset`. botocore's model, which
+boto3 and the AWS CLI serialise from, binds it to
+`POST /2013-04-01/hostedzone/{Id}/rrset/`. Real Route 53 answers both; chi
+answers exactly the patterns it is given. Overcast registered the manifest's
+spelling only, so Smithy-generated clients (Go v2, JS v3, Java v2) worked and
+botocore-generated ones got a bare 404.
+
+Every gate in this repository is pinned to the Smithy model, so **for an
+operation the two models spell differently, no gate here can fail.** The sweep
+probes the manifest's URI, `modelbinding_dev_test.go` compares routes to the
+manifest's URI, and `capgen --check-model` reads the same manifest. All three
+agreed with each other and with the code, and all three were measuring the
+half of the wire that already worked. Registering both spellings is the fix,
+and reviewing a new REST binding against botocore as well as the manifest is
+the only check that finds the next one.
+
+Two normalisations made the class invisible even where the manifest *does*
+carry a slash — 114 of its bindings do:
+
+- `internal/routecheck`'s `ConcretePath` dropped the empty final segment when
+  building a probe, so a slash-bearing binding was requested without it. Fixed
+  in #1413 (`keepTrailingSlash`, with `internal/routecheck/trailingslash_test.go`
+  pinning it); no verdict changed, because none of those 114 bindings belongs
+  to a service Overcast declares today. It is a trap disarmed before it is
+  sprung, not a finding.
+- `joinRoutePattern` (`internal/router/routeinventory_dev.go`) trims a trailing
+  slash from every registered pattern, so the static route-table gates cannot
+  see the difference between `/rrset` and `/rrset/` either. That is left as is
+  deliberately: those gates ask which *namespace* a path lives in, and a route
+  registered at both spellings would otherwise be reported as an invented path.
+
+The full extent was audited rather than estimated: eight declared capabilities
+are bound by botocore to a trailing-slash URI the Smithy manifest spells
+without one — five in `backup`, one each in `efs`, `opensearch` and `route53`.
+The first seven were already registered at both spellings (#963, #966, and
+EFS's `DescribeTags`); `route53/ChangeResourceRecordSets` was the last one
+left, and #1413 closed it.
+
 ## Results
 
 1,244 declared operations probed. **33 unreachable, 38 shared-path, 7 unmodeled, 1,166 reachable.**
@@ -206,4 +266,4 @@ In rough order of value:
 1. A model-vs-route gate, per the `rest_operations_dev.go` note above. This is the only option that fails *before* merge. **Done** — [manifest-enforcement.md](./manifest-enforcement.md), PR #876/#921.
 2. Correct the "router coverage" claim in AGENTS.md so the next contributor does not trust a guarantee that is not there. **Done**, same change.
 3. Keep `scripts/route-reachability.go` runnable and run it at release-candidate time. It needs a live instance so it does not belong in unit CI as-is, but it is cheap against an RC container. **Done (#1199)** — named as a required step with the exact command in [RELEASE.md](../../RELEASE.md#creating-an-alpha-release) and the [`release` skill](../../.agents/skills/release/SKILL.md#1-smoke--is-it-alive-and-correctly-wired); the live-instance requirement is satisfied by the RC container the Smoke pass already starts.
-4. When adding a service, the AGENTS.md checklist step "verify no custom endpoints were introduced" needs teeth. Every finding here is a custom endpoint that passed that step. **Done (#1199)** — `TestAllDeclaredCapabilitiesAreReachable` (`tests/integration/router/route_reachability_dev_test.go`) runs the same reachability sweep in-process on every PR under `-tags slim,dev`, via the shared `internal/routecheck` package, with no live instance or unit-CI cost the way the script itself would need. This is a stronger, per-PR version of point 3's release-time check, not a duplicate of it: the script proves the exact built RC binary/image is wired correctly (real build tags, real embedded assets, a real Docker daemon behind container-backed services); the in-process test proves the same wire-level claim continuously, at the moment a capability is declared, on plain `router.New` rather than the shipped artifact.
+4. When adding a service, the AGENTS.md checklist step "verify no custom endpoints were introduced" needs teeth. Every finding here is a custom endpoint that passed that step. **Done (#1199)** — `TestAllDeclaredCapabilitiesAreReachable` (`tests/integration/router/route_reachability_dev_test.go`) runs the same reachability sweep in-process on every PR under `-tags slim,dev`, via the shared `internal/routecheck` package, with no live instance or unit-CI cost the way the script itself would need. This is a stronger, per-PR version of point 3's release-time check, not a duplicate of it: the script proves the exact built RC binary/image is wired correctly (real build tags, real embedded assets, a real Docker daemon behind container-backed services); the in-process test proves the same wire-level claim continuously, at the moment a capability is declared, on plain `router.New` rather than the shipped artifact. Neither proves an operation is reachable at a URI only botocore models — see [Trailing slashes](#trailing-slashes-the-class-this-sweep-cannot-see-1413).

@@ -342,7 +342,24 @@ func ConcretePath(uri string) (path, query string) {
 	if b.Len() == 0 {
 		return "/", query
 	}
-	return b.String(), query
+	return keepTrailingSlash(uri, b.String()), query
+}
+
+// keepTrailingSlash re-attaches the trailing slash a modeled URI carries.
+//
+// 114 of the manifest's bindings end in one, and to a path router a trailing
+// slash is part of the path, not decoration: chi matches "/rrset" and
+// "/rrset/" with two separate patterns. Splitting a template on "/" yields an
+// empty final segment that both path builders skip, so without this a probe is
+// issued at the normalised path and a binding AWS models with a slash is
+// certified reachable by a request no SDK sends. That normalisation is half of
+// why #1413's 404 passed this sweep; see docs/plans/route-reachability-audit.md
+// § "Trailing slashes" for the other half, which no gate here can close.
+func keepTrailingSlash(uri, path string) string {
+	if len(uri) > 1 && strings.HasSuffix(uri, "/") && path != "/" {
+		return path + "/"
+	}
+	return path
 }
 
 // concretePathForProbe is ConcretePath, except a resourceArn-shaped label is
@@ -390,7 +407,7 @@ func concretePathForProbe(op awsapi.Operation) (path, query string) {
 	if b.Len() == 0 {
 		return "/", query
 	}
-	return b.String(), query
+	return keepTrailingSlash(uri, b.String()), query
 }
 
 // isARNLabel reports whether a Smithy URI label names a resource ARN member —
