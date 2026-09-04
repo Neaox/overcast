@@ -61,7 +61,7 @@ explaining.
 | `OVERCAST_DATA_DIR`              | `~/.overcast/data`     | Directory for store files and other on-disk state; the Docker images bake `/data`. LocalStack's `DATA_DIR` is an alias, and setting either counts as an explicit data directory for `OVERCAST_STATE=auto` |
 | `OVERCAST_CA_DIR`                | `$OVERCAST_DATA_DIR/ca` | Where the local CA lives — separable from the data dir because a CA outlives disposable state. May be read-only; see [Overcast in Docker over HTTPS](../https/docker.md) |
 | `OVERCAST_DEFAULT_REGION`        | `us-east-1`            | Fallback region used in ARNs when the SigV4 header carries none. LocalStack's `DEFAULT_REGION` is an alias |
-| `OVERCAST_ACCOUNT_ID`            | `000000000000`         | Account ID embedded in ARNs                                                          |
+| `OVERCAST_ACCOUNT_ID`            | `000000000000`         | Account ID embedded in ARNs; must be exactly 12 ASCII digits or startup fails         |
 | `OVERCAST_LOG_LEVEL`             | `info`                 | `trace`, `debug`, `info`, `warn`, `error` — see [Log levels](./log-levels.md). LocalStack's `DEBUG=1` is an alias for `debug` |
 | `OVERCAST_DEBUG`                 | `false`                | Enable `/_overcast/debug/*` endpoints — see [Debug endpoints](../debug-endpoints.md)  |
 | `OVERCAST_DEBUG_TRACE_BUFFER`    | `1000`                 | Request traces always retained — the floor. Only read when `OVERCAST_DEBUG=true`; see [Debug endpoints § Trace retention](../debug-endpoints.md#trace-retention) |
