@@ -37,6 +37,12 @@ import (
 
 const serviceName = "cloudwatch"
 
+// awsapiService is CloudWatch's key in the generated AWS model corpus.
+// serviceutil.MustAWSService validates it at package initialisation, so a
+// key the models do not carry fails immediately rather than silently
+// answering every unimplemented operation with a 400.
+var awsapiService = serviceutil.MustAWSService(serviceName)
+
 // ─── Types ────────────────────────────────────────────────────
 
 // MetricAlarm represents a CloudWatch alarm.
@@ -669,11 +675,12 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 			// Anything else — rpcv2Cbor today — is answered by the typed
 			// operations. An operation with no typed binding does not reach
 			// here over RPC v2: smithyRPCDispatch consults Operations() first
-			// and answers 501 itself, so this arm's error covers only a caller
-			// that put an unknown operation in the context directly.
+			// and answers 501 itself, so this arm covers only a caller that
+			// put an unhandled operation in the context directly — and answers
+			// it the way the router would, in the request's own wire format.
 			typed, ok := s.typedOp[action]
 			if !ok {
-				c.WriteError(w, r, &protocol.AWSError{
+				serviceutil.WriteUnhandledOperation(w, r, c, awsapiService, action, &protocol.AWSError{
 					Code:       "UnknownOperationException",
 					Message:    "Unknown CloudWatch operation: " + action,
 					HTTPStatus: http.StatusBadRequest,
@@ -760,15 +767,20 @@ func (s *Service) dispatchJSON(w http.ResponseWriter, r *http.Request, action st
 		s.setAlarmActionsEnabledJSON(w, r, true)
 	case "DisableAlarmActions":
 		s.setAlarmActionsEnabledJSON(w, r, false)
-	case "PutCompositeAlarm", "PutAnomalyDetector", "DeleteAnomalyDetector", "DescribeAnomalyDetectors":
-		// Real CloudWatch operations Overcast does not emulate. They get an
-		// honest 501 rather than UnknownOperationException, which would
-		// wrongly claim AWS has no such operation — and rather than a 200,
-		// which would leave an alarm that is never evaluated (see
-		// docs/plans/full-emulation-priority.md §2.1).
-		protocol.NotImplementedJSON(w, r)
 	default:
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
+		// A real CloudWatch operation Overcast does not emulate —
+		// PutCompositeAlarm, PutDashboard, the anomaly detectors — gets an
+		// honest 501 rather than UnknownOperationException, which would
+		// wrongly claim AWS has no such operation, and rather than a 200,
+		// which would leave an alarm that is never evaluated (see
+		// docs/plans/full-emulation-priority.md §2.1). The list of real
+		// operations is the model corpus rather than a hand-kept case arm,
+		// which is how PutDashboard had slipped through to the 400 (#1645). A
+		// name AWS does not model keeps the unknown-target error. This path has
+		// no codec in context, so it names CloudWatch's own modeled JSON
+		// version; every JSON codec's WriteError is protocol.WriteJSONError,
+		// which is what wrote these bytes before.
+		serviceutil.WriteUnhandledOperation(w, r, codec.JSON10, awsapiService, action, &protocol.AWSError{
 			Code:       "UnknownOperationException",
 			Message:    "Unknown target: GraniteServiceVersion20100801." + action,
 			HTTPStatus: http.StatusBadRequest,

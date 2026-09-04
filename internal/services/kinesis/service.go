@@ -23,6 +23,12 @@ import (
 
 const serviceName = "kinesis"
 
+// awsapiService is Kinesis's key in the generated AWS model corpus.
+// serviceutil.MustAWSService validates it at package initialisation, so a
+// key the models do not carry fails immediately rather than silently
+// answering every unimplemented operation with a 400.
+var awsapiService = serviceutil.MustAWSService(serviceName)
+
 // targetPrefix is the X-Amz-Target prefix for Kinesis Data Streams.
 const targetPrefix = "Kinesis_20131202."
 
@@ -133,11 +139,10 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 			typed.Invoke(w, r, c)
 			return
 		}
-		c.WriteError(w, r, &protocol.AWSError{
-			Code:       "UnknownOperationException",
-			Message:    "Unknown Kinesis operation: " + opName,
-			HTTPStatus: http.StatusBadRequest,
-		})
+		// A real Kinesis operation Overcast has not implemented gets an honest
+		// 501, in the request's own wire format; UnknownOperationException
+		// stays for a name AWS does not model (#1645).
+		serviceutil.WriteUnhandledOperation(w, r, c, awsapiService, opName, errUnknownOperation(opName))
 		return
 	}
 
@@ -150,5 +155,15 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 		fn(w, r)
 		return
 	}
-	protocol.NotImplementedJSON(w, r)
+	serviceutil.WriteUnhandledOperation(w, r, codec.JSON11, awsapiService, suffix, errUnknownOperation(suffix))
+}
+
+// errUnknownOperation is AWS's answer for a target naming no Kinesis
+// operation at all.
+func errUnknownOperation(opName string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "UnknownOperationException",
+		Message:    "Unknown Kinesis operation: " + opName,
+		HTTPStatus: http.StatusBadRequest,
+	}
 }

@@ -28,6 +28,12 @@ import (
 
 const serviceName = "dynamodb"
 
+// awsapiService is DynamoDB's key in the generated AWS model corpus.
+// serviceutil.MustAWSService validates it at package initialisation, so a
+// key the models do not carry fails immediately rather than silently
+// answering every unimplemented operation with a 400.
+var awsapiService = serviceutil.MustAWSService(serviceName)
+
 // Service implements router.Service for DynamoDB.
 type Service struct {
 	cfg       *config.Config
@@ -327,6 +333,14 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 			raw.Invoke(cw, r, c)
 			return
 		}
+		// rawOp is a superset of ops, so the header path below could not find
+		// this name either — and an RPC v2 CBOR request carries no X-Amz-Target
+		// for it to read, so it would land on the JSON 400 at the bottom
+		// whatever the operation. Refuse here instead, in the request's own
+		// wire format: 501 for a real DynamoDB operation Overcast has not
+		// implemented, UnknownOperationException for a name AWS does not model.
+		serviceutil.WriteUnhandledOperation(cw, r, c, awsapiService, opName, errUnknownOperation(opName))
+		return
 	}
 
 	target := r.Header.Get("X-Amz-Target")
@@ -347,11 +361,17 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A target naming no modeled operation keeps AWS's unknown-operation error.
-	protocol.WriteJSONError(cw, r, &protocol.AWSError{
+	protocol.WriteJSONError(cw, r, errUnknownOperation(target))
+}
+
+// errUnknownOperation is AWS's answer for a target naming no DynamoDB
+// operation at all.
+func errUnknownOperation(opName string) *protocol.AWSError {
+	return &protocol.AWSError{
 		Code:       "UnknownOperationException",
-		Message:    "Unknown operation: " + target,
+		Message:    "Unknown operation: " + opName,
 		HTTPStatus: http.StatusBadRequest,
-	})
+	}
 }
 
 // crc32ResponseWriter intercepts Write calls to compute a running CRC32

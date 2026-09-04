@@ -60,12 +60,19 @@ a datapoint to evaluate.
 | Alarm history                                                          | 14 days                               | The most recent 100 items per alarm                                      |
 | Metric math, anomaly detection, percentiles                            | Evaluated                             | The alarm is **created and says so**, but never evaluated                |
 | `PutCompositeAlarm`, `PutAnomalyDetector`, PromQL `EvaluationCriteria` | Full API                              | `501 NotImplemented`                                                     |
-| Dashboards, metric streams, Contributor Insights                       | Full API                              | Not emulated; a tagging call naming one gets `ResourceNotFoundException` |
+| Dashboards, metric streams, Contributor Insights                       | Full API                              | `501 NotImplemented`; a tagging call naming one gets `ResourceNotFoundException` |
 | `SetAlarmState`                                                        | Reverts at the next evaluation        | Held for one full evaluation range                                       |
 | Unqualified datapoints                                                 | Ignored by an alarm that names a unit | A datapoint published without a unit feeds an alarm that names one       |
 
 The full list, with the defaults `PutMetricAlarm` applies and the ones it
 refuses to invent, is in [CloudWatch limitations](./cloudwatch/limitations.md).
+
+Every modelled CloudWatch operation Overcast does not implement answers `501
+NotImplemented` with `x-emulator-unsupported: true`, in CloudWatch's own error
+envelope. Over the JSON API, a name AWS does not model at all gets `400
+UnknownOperationException` instead. The Query API answers `501` to that as
+well: it claims a request on `Version=2010-08-01` alone, so it never asks
+whether the `Action` is one AWS models.
 
 ## Gotchas
 

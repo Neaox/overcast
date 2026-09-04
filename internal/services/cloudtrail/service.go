@@ -32,6 +32,12 @@ const (
 	nsTrails     = "cloudtrail:trails"
 )
 
+// awsapiService is CloudTrail's key in the generated AWS model corpus.
+// serviceutil.MustAWSService validates it at package initialisation, so a
+// key the models do not carry fails immediately rather than silently
+// answering every unimplemented operation with a 400.
+var awsapiService = serviceutil.MustAWSService(serviceName)
+
 type Service struct {
 	cfg     *config.Config
 	store   state.Store
@@ -74,7 +80,9 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 			typed.Invoke(w, r, c)
 			return
 		}
-		c.WriteError(w, r, protocol.ErrNotImplemented)
+		// Same split as dispatchLegacy, in CBOR: a name AWS does not model is
+		// InvalidAction here too, not a 501 claiming it is merely unemulated.
+		serviceutil.WriteUnhandledOperation(w, r, c, awsapiService, opName, errInvalidAction(opName))
 		return
 	}
 
@@ -87,9 +95,19 @@ func (s *Service) dispatchLegacy(w http.ResponseWriter, r *http.Request, suffix 
 		fn(w, r)
 		return
 	}
-	protocol.WriteJSONError(w, r, &protocol.AWSError{
+	// A real CloudTrail operation Overcast has not implemented gets an honest
+	// 501; InvalidAction stays for a name AWS does not model (#1645). This
+	// path serves the JSON families only — Dispatch sends RPC v2 CBOR to the
+	// typed operations — so JSON11 writes the bytes WriteJSONError always did.
+	serviceutil.WriteUnhandledOperation(w, r, codec.JSON11, awsapiService, suffix, errInvalidAction(suffix))
+}
+
+// errInvalidAction is CloudTrail's answer for a target naming no modeled
+// operation.
+func errInvalidAction(action string) *protocol.AWSError {
+	return &protocol.AWSError{
 		Code:       "InvalidAction",
-		Message:    "The action " + suffix + " is not valid for this web service.",
+		Message:    "The action " + action + " is not valid for this web service.",
 		HTTPStatus: http.StatusBadRequest,
-	})
+	}
 }

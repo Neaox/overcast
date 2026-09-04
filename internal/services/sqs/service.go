@@ -39,6 +39,12 @@ import (
 
 const serviceName = "sqs"
 
+// awsapiService is SQS's key in the generated AWS model corpus.
+// serviceutil.MustAWSService validates it at package initialisation, so a
+// key the models do not carry fails immediately rather than silently
+// answering every unimplemented operation with a 400.
+var awsapiService = serviceutil.MustAWSService(serviceName)
+
 // Service implements router.Service for SQS.
 type Service struct {
 	cfg               *config.Config
@@ -265,6 +271,22 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 			top.Invoke(w, r, c)
 			return
 		}
+		// The X-Amz-Target handlers speak JSON only, so a JSON request may
+		// still reach one that has no typed binding — by the operation the
+		// context already resolved, not by re-reading the header. Anything
+		// else, RPC v2 CBOR today, has no such fallback: it also carries no
+		// X-Amz-Target, which is how it used to fall to the JSON 400 at the
+		// bottom whatever the operation. Refuse here, in the request's own
+		// wire format: 501 for a real SQS operation Overcast has not
+		// implemented, InvalidAction for a name AWS does not model (#1645).
+		if c.Name() == codec.NameAWSJSON10 || c.Name() == codec.NameAWSJSON11 {
+			if fn, ok := s.handler.ops[opName]; ok {
+				fn(w, r)
+				return
+			}
+		}
+		serviceutil.WriteUnhandledOperation(w, r, c, awsapiService, opName, errInvalidAction(opName))
+		return
 	}
 
 	target := r.Header.Get("X-Amz-Target")
@@ -277,11 +299,19 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 		fn(w, r)
 		return
 	}
-	protocol.WriteJSONError(w, r, &protocol.AWSError{
+	// A real SQS operation Overcast has not implemented gets an honest 501;
+	// InvalidAction stays for a name AWS does not model (#1645).
+	serviceutil.WriteUnhandledOperation(w, r, codec.JSON10, awsapiService, target, errInvalidAction(target))
+}
+
+// errInvalidAction is SQS's answer for an action naming no modeled operation,
+// in every protocol it speaks.
+func errInvalidAction(action string) *protocol.AWSError {
+	return &protocol.AWSError{
 		Code:       "InvalidAction",
-		Message:    "The action " + target + " is not valid for this web service.",
+		Message:    "The action " + action + " is not valid for this web service.",
 		HTTPStatus: http.StatusBadRequest,
-	})
+	}
 }
 
 // RegisterRoutes mounts SQS handlers.

@@ -24,6 +24,8 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol/codec"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 // ── Router interface implementations ───────────────────────────────────────
@@ -42,11 +44,12 @@ func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 	action := r.FormValue("Action")
 	fn, ok := s.handler.ops[action]
 	if !ok {
-		protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
-			Code:       "InvalidAction",
-			Message:    "The action " + action + " is not valid for this web service.",
-			HTTPStatus: http.StatusBadRequest,
-		})
+		// The router forwards only an Action OwnsAction claims, but the
+		// queue-URL route reaches here through Dispatch with no such check,
+		// so an unowned Action is live traffic: a real SQS operation Overcast
+		// has not implemented gets an honest 501 in Query XML; InvalidAction
+		// stays for a name AWS does not model (#1645).
+		serviceutil.WriteUnhandledOperation(w, r, codec.QueryXML, awsapiService, action, errInvalidAction(action))
 		return
 	}
 
