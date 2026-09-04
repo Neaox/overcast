@@ -104,9 +104,19 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 		r.Post("/hostedzone/{zoneId}", s.updateHostedZoneComment)
 		r.Delete("/hostedzone/{zoneId}", s.deleteHostedZone)
 
-		// Resource record set operations
+		// Resource record set operations. Both spellings of the path are
+		// registered because AWS's two published models disagree about the
+		// trailing slash and chi treats them as distinct patterns: botocore
+		// (boto3, the AWS CLI) builds POST /hostedzone/{Id}/rrset/, the
+		// Smithy model the pinned manifest comes from binds
+		// /hostedzone/{HostedZoneId}/rrset, and real Route 53 answers both.
+		// Registering only the manifest's spelling 404s every boto3 and CLI
+		// caller (#1413). Same shape as EFS DescribeTags in
+		// internal/services/efs/service.go.
 		r.Post("/hostedzone/{zoneId}/rrset", s.changeResourceRecordSets)
+		r.Post("/hostedzone/{zoneId}/rrset/", s.changeResourceRecordSets)
 		r.Get("/hostedzone/{zoneId}/rrset", s.listResourceRecordSets)
+		r.Get("/hostedzone/{zoneId}/rrset/", s.listResourceRecordSets)
 
 		// Change status
 		r.Get("/change/{changeId}", s.getChange)
