@@ -471,6 +471,9 @@ func (h *Handler) putItemTypedCore(ctx context.Context, req *putItemRequest) (*p
 	if aerr != nil {
 		return nil, aerr
 	}
+	if aerr := validateKeySchema(table, req.Item, operandItem); aerr != nil {
+		return nil, aerr
+	}
 
 	// Evaluate ConditionExpression against the existing item, if any.
 	if req.ConditionExpression != "" {
@@ -561,6 +564,9 @@ func (h *Handler) getItemTypedCore(ctx context.Context, req *getItemRequest) (*g
 	if aerr != nil {
 		return nil, aerr
 	}
+	if aerr := validateKeySchema(table, req.Key, operandKey); aerr != nil {
+		return nil, aerr
+	}
 	item, aerr := h.store.getItem(ctx, table, req.Key)
 	if aerr != nil {
 		return nil, aerr
@@ -609,6 +615,9 @@ func (h *Handler) deleteItemTypedCore(ctx context.Context, req *deleteItemReques
 
 	table, aerr := h.store.getTable(ctx, req.TableName)
 	if aerr != nil {
+		return nil, aerr
+	}
+	if aerr := validateKeySchema(table, req.Key, operandKey); aerr != nil {
 		return nil, aerr
 	}
 
@@ -1050,6 +1059,14 @@ func (h *Handler) queryTypedCore(ctx context.Context, req *queryRequest) (any, *
 	if req.IndexName != "" {
 		hashAttrName = idxHashKeyName
 		sortAttrName = idxSortKeyName
+	}
+
+	// A key condition comparing a key against the wrong type is rejected, not
+	// answered with an empty page: the stored key encoding is type-dependent
+	// (key_schema.go), so a mistyped condition never matches anything and the
+	// empty result reads as "no such items" rather than as the fault it is.
+	if aerr := validateKeyConditionTypes(table, hashAttrName, sortAttrName, kc); aerr != nil {
+		return nil, aerr
 	}
 
 	// Collect matching items.
@@ -1615,6 +1632,11 @@ func streamRecordRegion(table *Table) string {
 }
 
 // extractKeys builds a key-only Item from a full item using the table's key schema.
+//
+// Every item reaching here has already passed validateKeySchema
+// (key_schema.go) or was read back out of storage, so each key attribute is
+// present. The presence test below only guards a malformed stored record; it
+// is no longer how a request with a missing key attribute is handled.
 func extractKeys(table *Table, item Item) Item {
 	keys := make(Item, 2)
 	for _, k := range table.KeySchema {
@@ -1807,6 +1829,9 @@ func (h *Handler) batchGetItemTypedCore(ctx context.Context, req *batchGetItemRe
 
 		items := make([]Item, 0, len(tableReq.Keys))
 		for _, key := range tableReq.Keys {
+			if aerr := validateKeySchema(table, key, operandKey); aerr != nil {
+				return nil, aerr
+			}
 			item, aerr := h.store.getItem(ctx, table, key)
 			if aerr != nil {
 				return nil, aerr
@@ -1877,11 +1902,35 @@ func (h *Handler) batchWriteItemTypedCore(ctx context.Context, req *batchWriteIt
 		}
 	}
 
+	// Resolve every table and check every key against its schema before
+	// applying anything: a batch is not atomic on AWS, but a key-schema fault
+	// is a request-validation fault, answered with a ValidationException for
+	// the whole call rather than reported per item — so none of the batch's
+	// writes may have landed by the time it is raised. The resolved tables are
+	// carried into the apply pass so this costs no extra store reads.
+	tables := make(map[string]*Table, len(req.RequestItems))
 	for tableName, ops := range req.RequestItems {
 		table, aerr := h.store.getTable(ctx, tableName)
 		if aerr != nil {
 			return nil, aerr
 		}
+		tables[tableName] = table
+		for _, op := range ops {
+			switch {
+			case op.PutRequest != nil:
+				if aerr := validateKeySchema(table, op.PutRequest.Item, operandItem); aerr != nil {
+					return nil, aerr
+				}
+			case op.DeleteRequest != nil:
+				if aerr := validateKeySchema(table, op.DeleteRequest.Key, operandKey); aerr != nil {
+					return nil, aerr
+				}
+			}
+		}
+	}
+
+	for tableName, ops := range req.RequestItems {
+		table := tables[tableName]
 
 		// Same gate PutItem/DeleteItem use: a table with GSIs must read the
 		// old item to compute index-row diffs (dynamodb-gsi-design.md

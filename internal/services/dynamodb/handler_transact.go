@@ -100,6 +100,7 @@ func (h *Handler) transactWriteItemsTypedCore(ctx context.Context, req *transact
 	for i, txItem := range req.TransactItems {
 		var tableName string
 		var key Item
+		var operand keyOperand
 		var condExpr string
 		var condNames map[string]string
 		var condValues Item
@@ -109,6 +110,7 @@ func (h *Handler) transactWriteItemsTypedCore(ctx context.Context, req *transact
 			cc := txItem.ConditionCheck
 			tableName = cc.TableName
 			key = cc.Key
+			operand = operandKey
 			condExpr = cc.ConditionExpression
 			condNames = cc.ExpressionAttributeNames
 			condValues = cc.ExpressionAttributeValues
@@ -116,6 +118,7 @@ func (h *Handler) transactWriteItemsTypedCore(ctx context.Context, req *transact
 			p := txItem.Put
 			tableName = p.TableName
 			key = p.Item // extractKeys will pull out proper keys
+			operand = operandItem
 			condExpr = p.ConditionExpression
 			condNames = p.ExpressionAttributeNames
 			condValues = p.ExpressionAttributeValues
@@ -123,6 +126,7 @@ func (h *Handler) transactWriteItemsTypedCore(ctx context.Context, req *transact
 			d := txItem.Delete
 			tableName = d.TableName
 			key = d.Key
+			operand = operandKey
 			condExpr = d.ConditionExpression
 			condNames = d.ExpressionAttributeNames
 			condValues = d.ExpressionAttributeValues
@@ -130,6 +134,7 @@ func (h *Handler) transactWriteItemsTypedCore(ctx context.Context, req *transact
 			u := txItem.Update
 			tableName = u.TableName
 			key = u.Key
+			operand = operandKey
 			condExpr = u.ConditionExpression
 			condNames = u.ExpressionAttributeNames
 			// Convert ExpressionAttributeValues from map[string]attrValue to Item
@@ -152,6 +157,19 @@ func (h *Handler) transactWriteItemsTypedCore(ctx context.Context, req *transact
 			return nil, aerr
 		}
 		resolved[i].table = table
+
+		// A key-schema fault is a parameter-validation fault, which AWS
+		// answers before it attempts the transaction at all — so it surfaces
+		// as a plain ValidationException rather than as a
+		// TransactionCanceledException carrying a ValidationError cancellation
+		// reason. The reasons AWS documents under ValidationError are the ones
+		// only knowable while applying the transaction (item size, LSI size,
+		// update-expression faults), not a static check of the supplied key.
+		// Raising it here, in phase 1, is also what keeps the transaction
+		// all-or-nothing: phase 2 has not written anything yet.
+		if aerr := validateKeySchema(table, key, operand); aerr != nil {
+			return nil, aerr
+		}
 
 		// Load existing item for condition checks and stream records.
 		existing, aerr := h.store.getItem(ctx, table, key)
@@ -355,6 +373,9 @@ func (h *Handler) transactGetItemsTypedCore(ctx context.Context, req *transactGe
 
 		table, aerr := h.store.getTable(ctx, txItem.Get.TableName)
 		if aerr != nil {
+			return nil, aerr
+		}
+		if aerr := validateKeySchema(table, txItem.Get.Key, operandKey); aerr != nil {
 			return nil, aerr
 		}
 

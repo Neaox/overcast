@@ -15,15 +15,28 @@ import "strings"
 // or bad declaration degrades to today's string-order behavior instead of
 // panicking or 500ing an otherwise-valid read.
 func keyAttrType(table *Table, name string) string {
+	if typ, ok := declaredKeyAttrType(table, name); ok {
+		return typ
+	}
+	return "S"
+}
+
+// declaredKeyAttrType is keyAttrType without the defensive default: it reports
+// whether the attribute is declared at all, which is what write-path
+// validation needs (key_schema.go). A key attribute with no declaration cannot
+// be type-checked against anything, and AWS makes that state unreachable at
+// CreateTable, so only a malformed or legacy table record reaches it — the
+// caller skips the check rather than inventing a type for it.
+func declaredKeyAttrType(table *Table, name string) (string, bool) {
 	if table == nil || name == "" {
-		return "S"
+		return "", false
 	}
 	for _, d := range table.AttributeDefinitions {
 		if d.AttributeName == name {
-			return d.AttributeType
+			return d.AttributeType, true
 		}
 	}
-	return "S"
+	return "", false
 }
 
 // compareKeyAttr compares two raw key-attribute scalar values (as returned
