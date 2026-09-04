@@ -2,6 +2,7 @@ package rds
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -26,17 +27,13 @@ func TestMasterUser_realAuroraMySQLCanBootstrapDatabaseAndUser(t *testing.T) {
 	svc, dc, ctx, suffix := newRealRDSTestService(t, "mysql:8.0")
 
 	instanceID := "master-fidelity-" + suffix
-	if _, aerr := svc.handler.createDBInstanceTyped(ctx, &createDBInstanceReq{
+	inst := startEngine(t, svc, dc, ctx, &createDBInstanceReq{
 		DBInstanceIdentifier: instanceID,
 		Engine:               "aurora-mysql",
 		EngineVersion:        "3.04",
 		MasterUsername:       "admin",
 		MasterUserPassword:   "password123",
-	}); aerr != nil {
-		t.Fatalf("CreateDBInstance: %s: %s", aerr.Code, aerr.Message)
-	}
-
-	inst := waitForDBInstanceStatus(t, svc.handler, ctx, instanceID, "available")
+	})
 
 	bootstrapSQL := "CREATE DATABASE application; " +
 		"CREATE USER 'application_user'@'%' IDENTIFIED BY 'application-password'; " +
@@ -74,11 +71,11 @@ func TestMasterUser_realAuroraMySQLCanBootstrapDatabaseAndUser(t *testing.T) {
 	if _, aerr := svc.handler.stopDBInstanceTyped(ctx, &stopDBInstanceReq{DBInstanceIdentifier: instanceID}); aerr != nil {
 		t.Fatalf("StopDBInstance: %s: %s", aerr.Code, aerr.Message)
 	}
-	waitForDBInstanceStatus(t, svc.handler, ctx, instanceID, "stopped")
+	waitForDBInstanceStatus(t, svc.handler, dc, ctx, instanceID, "stopped")
 	if _, aerr := svc.handler.startDBInstanceTyped(ctx, &startDBInstanceReq{DBInstanceIdentifier: instanceID}); aerr != nil {
 		t.Fatalf("StartDBInstance: %s: %s", aerr.Code, aerr.Message)
 	}
-	inst = waitForDBInstanceStatus(t, svc.handler, ctx, instanceID, "available")
+	inst = waitForDBInstanceStatus(t, svc.handler, dc, ctx, instanceID, "available")
 	probe, err := dc.Exec(ctx, inst.DockerContainerID, []string{
 		"mysql", "--protocol=tcp", "--host=127.0.0.1", "-u", "admin", "-e", "SELECT 1;",
 	}, []string{"MYSQL_PWD=changed-password"})
@@ -90,16 +87,13 @@ func TestMasterUser_realAuroraMySQLCanBootstrapDatabaseAndUser(t *testing.T) {
 func TestMasterUser_realPostgresHasRDSSuperuserSemantics(t *testing.T) {
 	svc, dc, ctx, suffix := newRealRDSTestService(t, "postgres:16")
 	instanceID := "postgres-master-fidelity-" + suffix
-	if _, aerr := svc.handler.createDBInstanceTyped(ctx, &createDBInstanceReq{
+	inst := startEngine(t, svc, dc, ctx, &createDBInstanceReq{
 		DBInstanceIdentifier: instanceID,
 		Engine:               "postgres",
 		EngineVersion:        "16",
 		MasterUsername:       "admin",
 		MasterUserPassword:   "password123",
-	}); aerr != nil {
-		t.Fatalf("CreateDBInstance: %s: %s", aerr.Code, aerr.Message)
-	}
-	inst := waitForDBInstanceStatus(t, svc.handler, ctx, instanceID, "available")
+	})
 
 	bootstrap, err := dc.Exec(ctx, inst.DockerContainerID, []string{
 		"psql", "--host=127.0.0.1", "--username=admin", "--dbname=postgres",
@@ -183,8 +177,160 @@ func newRealRDSTestService(t *testing.T, image string) (*Service, *docker.Client
 	return svc, dc, ctx, suffix
 }
 
-func waitForDBInstanceStatus(t *testing.T, h *Handler, ctx context.Context, instanceID, want string) *DBInstance {
+// engineStartAttempts bounds the retry in startEngine. Three is enough for a
+// daemon that refused once and is otherwise working, and small enough that a
+// daemon which cannot run this image at all is reported in seconds rather than
+// after minutes of hopeful retrying.
+const engineStartAttempts = 3
+
+// startEngine creates the DB instance and returns it once the engine is
+// available, retrying a container start the Docker daemon refused and skipping
+// when it refuses every time.
+//
+// #1625: this failed once on a CI runner with "the database container could not
+// be created: start container …", on a pull request that touched only docs. A
+// daemon that will not start a container is a fact about the runner, not about
+// the master-account guarantee these tests exist to keep, and reporting it as a
+// failure spends somebody's morning on a red build that means nothing.
+//
+// **It is still a real test on a working daemon**, and that is the line drawn
+// here: only the daemon's own refusal to create or start the container is
+// retried, and only that is skipped (daemonRefusedTheContainer). An engine that
+// starts and then behaves wrongly — the failure this file is actually for —
+// fails exactly as loudly as it did before, now with the container's state and
+// its last output attached.
+func startEngine(t *testing.T, svc *Service, dc *docker.Client, ctx context.Context,
+	req *createDBInstanceReq) *DBInstance {
 	t.Helper()
+
+	var refusals []string
+	for attempt := 1; attempt <= engineStartAttempts; attempt++ {
+		if _, aerr := svc.handler.createDBInstanceTyped(ctx, req); aerr != nil {
+			t.Fatalf("CreateDBInstance: %s: %s", aerr.Code, aerr.Message)
+		}
+		inst, reason := awaitDBInstanceStatus(svc.handler, ctx, req.DBInstanceIdentifier, "available")
+		if reason == "" {
+			return inst
+		}
+		if !daemonRefusedTheContainer(reason) {
+			t.Fatalf("DB instance never became available: %s\n%s", reason, engineDiagnostics(dc, inst))
+		}
+		refusals = append(refusals, fmt.Sprintf("attempt %d/%d: %s", attempt, engineStartAttempts, reason))
+		t.Logf("the Docker daemon refused this test's engine container (%s); retrying", reason)
+		discardInstance(t, svc.handler, ctx, req.DBInstanceIdentifier)
+	}
+
+	// Skip, not fail. Every attempt was refused before the engine ran a single
+	// query, so nothing this test asserts was ever exercised, and calling that
+	// a data-plane regression points the next reader at the wrong code.
+	t.Skipf("the Docker daemon would not start this test's %s container in %d attempts, so none of the "+
+		"master-account behaviour under test ever ran. This is a fault in the daemon or the runner, not "+
+		"in RDS:\n%s", req.Engine, engineStartAttempts, strings.Join(refusals, "\n"))
+	return nil
+}
+
+// daemonRefusedTheContainer reports whether a failure reason is the Docker
+// daemon declining to create or start the container, rather than anything
+// Overcast or the engine did.
+//
+// Deliberately narrow. These are the two calls the handler makes straight
+// through to the Engine API (see startDBContainer), and a refusal from either
+// means the engine never ran — so there is nothing about RDS to conclude from
+// it. Everything else, including a credential initializer that could not be
+// built and an engine that started and then failed its health check, is a
+// result and is reported as one.
+func daemonRefusedTheContainer(reason string) bool {
+	for _, refusal := range []string{"create container", "start container"} {
+		if strings.Contains(reason, refusal) {
+			return true
+		}
+	}
+	return false
+}
+
+// discardInstance deletes an instance that failed to start and waits for its
+// record to go, so the retry can reuse the identifier. Best effort: a delete
+// that does not land leaves a CreateDBInstance conflict the caller will report,
+// which is a clearer failure than anything invented here.
+func discardInstance(t *testing.T, h *Handler, ctx context.Context, instanceID string) {
+	t.Helper()
+	if _, aerr := h.deleteDBInstanceTyped(ctx, &deleteDBInstanceReq{DBInstanceIdentifier: instanceID}); aerr != nil {
+		t.Logf("discard failed instance %s: %s: %s", instanceID, aerr.Code, aerr.Message)
+		return
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, aerr := h.store.getDBInstance(ctx, instanceID); aerr != nil {
+			return // gone, which is what the retry needs
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Logf("instance %s was still on record 30s after its delete; the retry may collide", instanceID)
+}
+
+// engineDiagnostics is what the daemon can still be asked about a container
+// that did not do what this test needed: its state, and the tail of its output.
+//
+// It exists because the reason on the record is one line — "the database
+// container could not be created: start container …" — and a line is not enough
+// to tell a runner fault from an engine that started and died on its own
+// configuration. The logs are where the engine says which.
+//
+// Its own context: the caller's is the test's five-minute budget, and by the
+// time this runs that budget is often what expired.
+func engineDiagnostics(dc *docker.Client, inst *DBInstance) string {
+	if inst == nil || inst.DockerContainerID == "" {
+		return "no container is on record for this instance: the daemon refused it before it ran, " +
+			"so there is no state and no output to show"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var b strings.Builder
+	id := inst.DockerContainerID
+	if info, err := dc.InspectContainer(ctx, id); err == nil {
+		fmt.Fprintf(&b, "container %s: status=%q running=%t exit=%d oom=%t error=%q started=%s finished=%s",
+			id[:min(12, len(id))], info.State.Status, info.State.Running, info.State.ExitCode,
+			info.State.OOMKilled, info.State.Error, info.State.StartedAt, info.State.FinishedAt)
+	} else {
+		fmt.Fprintf(&b, "container %s could not be inspected: %v (it may already have been removed, "+
+			"which is what the handler does to a container whose start failed)", id[:min(12, len(id))], err)
+	}
+	logs, err := dc.ContainerLogs(ctx, id, "40")
+	// De-framed: the Engine's log endpoint returns a multiplexed stream, and its
+	// 8-byte frame headers read as control characters in a test's output.
+	plain := strings.TrimSpace(string(docker.DemuxStream(logs)))
+	switch {
+	case err != nil:
+		fmt.Fprintf(&b, "\ncontainer logs unavailable: %v", err)
+	case plain == "":
+		b.WriteString("\ncontainer logs: (empty — the engine produced no output at all)")
+	default:
+		b.WriteString("\ncontainer logs (last 40 lines):\n" + plain)
+	}
+	return b.String()
+}
+
+// waitForDBInstanceStatus blocks until the instance reaches want, and fails the
+// test with the container's state and output when it does not.
+func waitForDBInstanceStatus(t *testing.T, h *Handler, dc *docker.Client, ctx context.Context,
+	instanceID, want string) *DBInstance {
+	t.Helper()
+	inst, reason := awaitDBInstanceStatus(h, ctx, instanceID, want)
+	if reason != "" {
+		t.Fatalf("%s\n%s", reason, engineDiagnostics(dc, inst))
+	}
+	return inst
+}
+
+// awaitDBInstanceStatus polls until the instance reaches want, and returns the
+// last record it read plus the reason it gave up — empty when it did not.
+//
+// Returning the reason rather than failing on it is what lets startEngine tell
+// a daemon that refused the container from an engine that ran and misbehaved.
+// The record comes back either way: it carries the container id the diagnostics
+// need, when there is one.
+func awaitDBInstanceStatus(h *Handler, ctx context.Context, instanceID, want string) (*DBInstance, string) {
 	deadline := time.Now().Add(2 * time.Minute)
 	var last *DBInstance
 	for time.Now().Before(deadline) {
@@ -192,14 +338,50 @@ func waitForDBInstanceStatus(t *testing.T, h *Handler, ctx context.Context, inst
 		if aerr == nil {
 			last = got
 			if got.DBInstanceStatus == want {
-				return got
+				return got, ""
 			}
 			if got.DBInstanceStatus == "failed" {
-				t.Fatalf("DB instance failed: %s", got.StatusReason)
+				return last, "DB instance failed: " + got.StatusReason
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("DB instance never reached %q; last record: %#v", want, last)
-	return nil
+	status := "(never read)"
+	if last != nil {
+		status = last.DBInstanceStatus
+	}
+	return last, fmt.Sprintf("DB instance never reached %q within 2m; last status %q", want, status)
+}
+
+// The classifier decides whether a failure is retried and skipped or reported,
+// so getting it wrong in either direction is worse than not having it: a real
+// regression skipped looks like a green run, and a runner fault reported looks
+// like a broken data plane. Needs no daemon.
+func TestDaemonRefusedTheContainer_separatesARunnerFaultFromAResult(t *testing.T) {
+	refusals := []string{
+		// The CI failure this came from (#1625).
+		"the database container could not be created: start container: start container 6cd6f1b0: status 500: ",
+		"the database container could not be created: create container: create container: status 500: " +
+			"could not find an available, non-overlapping IPv4 address pool",
+	}
+	for _, reason := range refusals {
+		if !daemonRefusedTheContainer(reason) {
+			t.Errorf("daemonRefusedTheContainer(%q) = false, want true: the engine never ran", reason)
+		}
+	}
+
+	results := []string{
+		// Overcast's own doing, both of them: the engine would have started.
+		"the database container could not be created: build database credential initializer: bad template",
+		"the database container could not be created: install database credential initializer: no such file",
+		// The engine started and then failed on its own configuration.
+		"the database engine did not become reachable",
+		"DB instance never reached \"available\" within 2m; last status \"creating\"",
+	}
+	for _, reason := range results {
+		if daemonRefusedTheContainer(reason) {
+			t.Errorf("daemonRefusedTheContainer(%q) = true, want false: this is a result, not a runner fault",
+				reason)
+		}
+	}
 }
