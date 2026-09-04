@@ -157,6 +157,19 @@ type Options struct {
 	// that no longer exists" is a true statement about the whole tree and a
 	// meaningless one about the single page a unit test lints.
 	WholeCorpus bool
+	// Overview names paths that get the house-style tells and nothing else.
+	//
+	// README.md is the one. It is the page most people read before any of the
+	// docs, it is written in the same voice, and it sits outside docs/ — so the
+	// tells rule reaches it only by being named here. None of the other rules
+	// should: it has no frontmatter, its link footer is a Contributing section
+	// rather than "## Related", and a budget calibrated for a page about one
+	// thing does not describe a project overview.
+	//
+	// Naming it here rather than giving it a pass of its own keeps one
+	// allowlist: an exception argued for on README.md is retired by the same
+	// staleness check that retires one on a docs page.
+	Overview map[string]bool
 }
 
 // Check runs every rule with no allowlist. See CheckWith.
@@ -195,6 +208,13 @@ func CheckWith(docs []Doc, opts Options) []Problem {
 	}
 
 	for _, doc := range sorted {
+		if opts.Overview[doc.Path] {
+			problems = append(problems, checkTells(doc, opts.Allowlist)...)
+			for key := range tellHits(doc) {
+				allowlistUsed[key] = true
+			}
+			continue
+		}
 		seen[doc.Path] = true
 		switch stem, sub, kind := classify(doc.Path); kind {
 		case docLanding:
