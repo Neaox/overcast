@@ -365,3 +365,62 @@ func TestGeneratedNameWithin_neverMintsConsecutiveHyphens(t *testing.T) {
 		}
 	}
 }
+
+// ELBv2 is the tightest name rule the provisioner has to satisfy: 32
+// characters, alphanumerics and hyphens only, no leading or trailing hyphen,
+// and not beginning with "internal-", which ELBv2 reserves for the DNS name of
+// an internal load balancer. 32 characters is short enough that a realistic
+// CDK stack name plus a CDK logical ID always overruns it, so every one of
+// these rules is exercised by the truncation rather than by an exotic
+// template.
+func TestGeneratedNameELBv2_satisfiesTheELBv2NameRule(t *testing.T) {
+	valid := regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$`)
+
+	for _, c := range []struct {
+		name string
+		ctx  *resolveContext
+	}{
+		{"short", &resolveContext{StackName: "app", LogicalID: "Lb"}},
+		{"cdk-shaped", &resolveContext{StackName: "MyServiceStack", LogicalID: "ServiceLBPublicListenerECSTargetGroup"}},
+		{"cut lands on a hyphen", &resolveContext{StackName: "a-b-c-d-e-f-g-h-i", LogicalID: "Target"}},
+		{"stack name alone overruns the cap", &resolveContext{StackName: strings.Repeat("s", 60), LogicalID: strings.Repeat("L", 60)}},
+		{"trailing hyphen in the stack name", &resolveContext{StackName: "stack-", LogicalID: "Group"}},
+		// A stack really can be called this, and then every load balancer in
+		// it was refused with "Load balancer name cannot begin with
+		// 'internal-'".
+		{"internal- prefix", &resolveContext{StackName: "internal-api", LogicalID: "Alb"}},
+		{"characters ELBv2 does not accept", &resolveContext{StackName: "my.stack_name", LogicalID: "Alb"}},
+		{"no logical ID", &resolveContext{StackName: "bare"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := c.ctx.generatedNameELBv2()
+
+			if len(got) > maxNameLenELBv2 {
+				t.Errorf("generatedNameELBv2() = %q, %d characters over the %d-character cap",
+					got, len(got), maxNameLenELBv2)
+			}
+			if !valid.MatchString(got) {
+				t.Errorf("generatedNameELBv2() = %q, which ELBv2 does not accept as a name", got)
+			}
+			if strings.HasPrefix(got, "internal-") {
+				t.Errorf("generatedNameELBv2() = %q, which begins with the reserved \"internal-\" prefix", got)
+			}
+		})
+	}
+}
+
+// Two unnamed load balancers in one stack are two load balancers, and the same
+// one redeployed keeps neither name — that is what makes a replacement able to
+// exist alongside the resource it replaces.
+func TestGeneratedNameELBv2_isUniquePerResourceAndInstance(t *testing.T) {
+	first := (&resolveContext{StackName: "MyStack", LogicalID: "PublicLb"}).generatedNameELBv2()
+	second := (&resolveContext{StackName: "MyStack", LogicalID: "PrivateLb"}).generatedNameELBv2()
+	if first == second {
+		t.Errorf("two logical IDs produced one name %q", first)
+	}
+
+	again := (&resolveContext{StackName: "MyStack", LogicalID: "PublicLb"}).generatedNameELBv2()
+	if again == first {
+		t.Errorf("the same logical ID produced the same name %q twice; a replacement could not be created alongside the original", first)
+	}
+}

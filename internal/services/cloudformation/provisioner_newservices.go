@@ -414,7 +414,10 @@ type rdsDBClusterHandler struct{}
 func (h *rdsDBClusterHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	id, _ := props["DBClusterIdentifier"].(string)
 	if id == "" {
-		id = fmt.Sprintf("%s-cluster", rCtx.StackName)
+		// Same rule as the DB instance identifier above: 63 characters,
+		// stored lowercase, and no trailing or doubled hyphen — which is why
+		// generatedNameWithin trims a truncation that lands on one.
+		id = rCtx.generatedNameLowerWithin(maxNameLenRDS)
 	}
 
 	params := map[string]string{
@@ -621,7 +624,9 @@ type rdsDBSubnetGroupHandler struct{}
 func (h *rdsDBSubnetGroupHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["DBSubnetGroupName"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-subnetgrp", rCtx.StackName)
+		// 255 characters rather than the identifier's 63, but stored
+		// lowercase the same way.
+		name = rCtx.generatedNameLowerWithin(maxNameLenDefault)
 	}
 	desc, _ := props["DBSubnetGroupDescription"].(string)
 	if desc == "" {
@@ -678,7 +683,8 @@ type rdsDBParameterGroupHandler struct{}
 func (h *rdsDBParameterGroupHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["DBParameterGroupName"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-pg", rCtx.StackName)
+		// 1-255, stored lowercase, no trailing or doubled hyphen.
+		name = rCtx.generatedNameLowerWithin(maxNameLenDefault)
 	}
 
 	params := map[string]string{
@@ -1037,7 +1043,7 @@ type cognitoUserPoolHandler struct{}
 func (h *cognitoUserPoolHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	poolName, _ := props["UserPoolName"].(string)
 	if poolName == "" {
-		poolName = fmt.Sprintf("%s-pool", rCtx.StackName)
+		poolName = rCtx.generatedNameWithin(maxNameLenCognito)
 	}
 
 	body := map[string]any{
@@ -1175,7 +1181,7 @@ func (h *cognitoUserPoolClientHandler) Create(ctx context.Context, router http.H
 	userPoolID, _ := props["UserPoolId"].(string)
 	clientName, _ := props["ClientName"].(string)
 	if clientName == "" {
-		clientName = fmt.Sprintf("%s-client", rCtx.StackName)
+		clientName = rCtx.generatedNameWithin(maxNameLenCognito)
 	}
 
 	body := map[string]any{
@@ -2509,7 +2515,7 @@ func (h *sesTemplateHandler) Create(ctx context.Context, router http.Handler, cf
 
 	name, _ := tmpl["TemplateName"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-template", rCtx.StackName)
+		name = rCtx.generatedNameWithin(maxNameLenSES)
 	}
 
 	params := map[string]string{
@@ -2809,7 +2815,7 @@ type elastiCacheServerlessCacheHandler struct{}
 func (h *elastiCacheServerlessCacheHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["ServerlessCacheName"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-serverless-cache", rCtx.StackName)
+		name = rCtx.generatedNameLowerWithin(maxNameLenCacheGroup)
 	}
 	params := map[string]string{
 		"Action":              "CreateServerlessCache",
@@ -2976,7 +2982,9 @@ type elastiCacheReplicationGroupHandler struct{}
 func (h *elastiCacheReplicationGroupHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	id, _ := props["ReplicationGroupId"].(string)
 	if id == "" {
-		id = fmt.Sprintf("%s-rg", rCtx.StackName)
+		// 40 characters — the tightest cap of any identifier here — stored
+		// lowercase, and no trailing or doubled hyphen.
+		id = rCtx.generatedNameLowerWithin(maxNameLenCacheGroup)
 	}
 	params := map[string]string{
 		"Action":                      "CreateReplicationGroup",
@@ -3133,7 +3141,8 @@ type elastiCacheSubnetGroupHandler struct{}
 func (h *elastiCacheSubnetGroupHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["CacheSubnetGroupName"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-sngrp", rCtx.StackName)
+		// 255 rather than the replication group's 40, still stored lowercase.
+		name = rCtx.generatedNameLowerWithin(maxNameLenDefault)
 	}
 	desc, _ := props["CacheSubnetGroupDescription"].(string)
 	params := map[string]string{

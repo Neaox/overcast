@@ -92,7 +92,11 @@ func (h *appregistryApplicationHandler) Create(ctx context.Context, router http.
 	if v, _ := props["Name"].(string); v != "" {
 		body["name"] = v
 	} else {
-		body["name"] = fmt.Sprintf("%s-app", rCtx.StackName)
+		// The CloudFormation page's pattern for Name is \w+, which forbids the
+		// hyphens CloudFormation's own generated names are made of;
+		// CreateApplication's is [-.\w]+, which admits them. The API's is the
+		// one the service enforces.
+		body["name"] = rCtx.generatedNameWithin(maxNameLenAppRegistry)
 	}
 	if v, _ := props["Description"].(string); v != "" {
 		body["description"] = v

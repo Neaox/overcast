@@ -24,7 +24,7 @@ type elbv2LoadBalancerHandler struct{}
 func (h *elbv2LoadBalancerHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["Name"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-lb", rCtx.StackName)
+		name = rCtx.generatedNameELBv2()
 	}
 
 	params := map[string]string{
@@ -253,7 +253,7 @@ func modifyELBv2TargetGroupAttributes(ctx context.Context, router http.Handler, 
 func (h *elbv2TargetGroupHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["Name"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-tg", rCtx.StackName)
+		name = rCtx.generatedNameELBv2()
 	}
 
 	params := map[string]string{
@@ -422,7 +422,13 @@ func (h *elbv2ListenerHandler) Create(ctx context.Context, router http.Handler, 
 	body := rec.Body.String()
 	arn := extractXMLValue(body, "ListenerArn")
 	if arn == "" {
-		arn = fmt.Sprintf("%s-listener", rCtx.StackName)
+		// A listener has no name property on AWS — this is a last-resort
+		// physical ID for a CreateListener that answered without an ARN. It
+		// still has to be unique per resource: two listeners on one load
+		// balancer (an HTTP one and an HTTPS one) are the common shape, and
+		// sharing a physical ID makes the stack delete one of them twice and
+		// the other never.
+		arn = rCtx.generatedName()
 	}
 
 	return arn, map[string]string{"ListenerArn": arn}, nil
@@ -475,7 +481,9 @@ type autoscalingASGHandler struct{}
 func (h *autoscalingASGHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["AutoScalingGroupName"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-asg", rCtx.StackName)
+		// AutoScalingGroupName carries no documented character rules beyond
+		// "ASCII 33-126, no colon", and CreateAutoScalingGroup caps it at 255.
+		name = rCtx.generatedName()
 	}
 
 	params := map[string]string{
@@ -627,7 +635,9 @@ type autoscalingLaunchConfigHandler struct{}
 func (h *autoscalingLaunchConfigHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["LaunchConfigurationName"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-lc", rCtx.StackName)
+		// CreateLaunchConfiguration documents a 1-255 length and no character
+		// constraints at all.
+		name = rCtx.generatedName()
 	}
 
 	params := map[string]string{
@@ -1102,7 +1112,7 @@ type eksClusterHandler struct{}
 func (h *eksClusterHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["Name"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-eks", rCtx.StackName)
+		name = rCtx.generatedNameWithin(maxNameLenEKS)
 	}
 
 	body := map[string]any{
@@ -1263,7 +1273,9 @@ func (h *eksNodegroupHandler) Create(ctx context.Context, router http.Handler, c
 	clusterName, _ := props["ClusterName"].(string)
 	nodegroupName, _ := props["NodegroupName"].(string)
 	if nodegroupName == "" {
-		nodegroupName = fmt.Sprintf("%s-ng", rCtx.StackName)
+		// EKS documents neither a length nor a character constraint for
+		// NodegroupName, on the CloudFormation page or on CreateNodegroup.
+		nodegroupName = rCtx.generatedName()
 	}
 
 	body := map[string]any{
@@ -1353,7 +1365,8 @@ func (h *eksFargateProfileHandler) Create(ctx context.Context, router http.Handl
 	clusterName, _ := props["ClusterName"].(string)
 	fargateProfileName, _ := props["FargateProfileName"].(string)
 	if fargateProfileName == "" {
-		fargateProfileName = fmt.Sprintf("%s-fp", rCtx.StackName)
+		// As with NodegroupName, EKS documents no constraint on this name.
+		fargateProfileName = rCtx.generatedName()
 	}
 
 	body := map[string]any{
@@ -1400,7 +1413,14 @@ func (h *eksAddonHandler) Create(ctx context.Context, router http.Handler, cfg *
 	clusterName, _ := props["ClusterName"].(string)
 	addonName, _ := props["AddonName"].(string)
 	if addonName == "" {
-		addonName = fmt.Sprintf("%s-addon", rCtx.StackName)
+		// AddonName is Required: Yes on AWS::EKS::Addon, and CreateAddon only
+		// accepts a name DescribeAddonVersions publishes ("vpc-cni",
+		// "coredns", ...) — so any value minted here is a placeholder real AWS
+		// would reject, exactly as the stack-name-only one was. It exists so a
+		// template that omits the property does not send an empty path
+		// segment, and it is generated so that two of them are still two
+		// resources rather than one.
+		addonName = rCtx.generatedName()
 	}
 
 	body := map[string]any{
@@ -1587,7 +1607,7 @@ type mskClusterHandler struct{}
 func (h *mskClusterHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	clusterName, _ := props["ClusterName"].(string)
 	if clusterName == "" {
-		clusterName = fmt.Sprintf("%s-msk", rCtx.StackName)
+		clusterName = rCtx.generatedNameWithin(maxNameLenMSK)
 	}
 
 	body := map[string]any{
@@ -1731,7 +1751,10 @@ type mskConfigurationHandler struct{}
 func (h *mskConfigurationHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["Name"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-mskcfg", rCtx.StackName)
+		// MSK documents no maximum for a configuration name, only the pattern
+		// ^[0-9A-Za-z][0-9A-Za-z-]{0,}$ — alphanumerics and hyphens, starting
+		// alphanumeric, which a stack name and a logical ID already satisfy.
+		name = rCtx.generatedName()
 	}
 
 	body := map[string]any{
@@ -1784,7 +1807,7 @@ type pipesPipeHandler struct{}
 func (h *pipesPipeHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["Name"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-pipe", rCtx.StackName)
+		name = rCtx.generatedNameWithin(maxNameLenPipes)
 	}
 
 	body := map[string]any{}
@@ -2120,7 +2143,7 @@ type wafv2WebACLHandler struct{}
 func (h *wafv2WebACLHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["Name"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-waf", rCtx.StackName)
+		name = rCtx.generatedNameWithin(maxNameLenWAFv2)
 	}
 
 	scope, _ := props["Scope"].(string)
