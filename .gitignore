@@ -83,6 +83,13 @@ desktop.ini
 /.codex-go-cache/
 .npm
 .claude/launch.json
+# Per-user Claude Code settings: permission grants, env overrides and enabled
+# MCP servers are specific to one machine and one person. Shared project
+# settings (the PreToolUse hooks) live in .claude/settings.json, which is
+# tracked. This one was committed in the initial commit, before Claude Code
+# began adding it here on creation, and accumulated local state over four
+# commits before it was untracked.
+.claude/settings.local.json
 
 # Python bytecode from the helper scripts in scripts/ and the python-sdk suite.
 __pycache__/
