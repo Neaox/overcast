@@ -9,15 +9,37 @@ import (
 // ContentType is the MIME type for AWS binary event stream responses.
 const ContentType = "application/vnd.amazon.eventstream"
 
+// JSONContentType is the payload content type of an event carrying a JSON
+// document — the AWS JSON protocols' event streams and Lambda's terminal
+// InvokeComplete event alike.
+const JSONContentType = "application/json"
+
+// InitialResponseEventType names the event that must open an event-stream
+// response whose operation output has members outside the stream itself.
+//
+// It carries the operation's initial response document, and for the AWS JSON
+// protocols it is the only place that document can travel — there is no other
+// body. Client runtimes therefore block on it: smithy-go parks the operation's
+// deserializer on the first frame and hands the caller its stream only once
+// that frame has arrived and deserialized, so a response that opens with a
+// domain event instead deadlocks the client rather than failing it (#1064).
+// Write it first, before any domain event.
+const InitialResponseEventType = "initial-response"
+
 // Header is a string-valued AWS event-stream header.
 type Header struct {
 	Name  string
 	Value string
 }
 
-// WriteMessage encodes and writes a single AWS event-stream message.
-func WriteMessage(w io.Writer, headers []Header, payload []byte) error {
-	_, err := w.Write(EncodeMessage(headers, payload))
+// WriteEvent encodes and writes one AWS event-stream `event` message of the
+// given event type, carrying a payload of the given content type.
+func WriteEvent(w io.Writer, eventType, contentType string, payload []byte) error {
+	_, err := w.Write(EncodeMessage([]Header{
+		{Name: ":message-type", Value: "event"},
+		{Name: ":event-type", Value: eventType},
+		{Name: ":content-type", Value: contentType},
+	}, payload))
 	return err
 }
 

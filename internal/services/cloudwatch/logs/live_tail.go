@@ -264,11 +264,7 @@ func (s *liveTailSession) streamAllowed(name string) bool {
 
 func (h *Handler) writeLiveTailEvent(w http.ResponseWriter, flusher http.Flusher, eventType string, payload any) {
 	data, _ := json.Marshal(payload)
-	_ = eventstream.WriteMessage(w, []eventstream.Header{
-		{Name: ":message-type", Value: "event"},
-		{Name: ":event-type", Value: eventType},
-		{Name: ":content-type", Value: "application/json"},
-	}, data)
+	_ = eventstream.WriteEvent(w, eventType, eventstream.JSONContentType, data)
 	if flusher != nil {
 		flusher.Flush()
 	}
