@@ -48,15 +48,15 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 
 ## Differences from AWS
 
-| Area                      | Overcast                                                                                                                                                                         |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Retention is not enforced | `IncreaseStreamRetentionPeriod` and `DecreaseStreamRetentionPeriod` store and echo the value; no record is ever expired, so a shard keeps everything until the stream is deleted |
-| Writes never fail         | `PutRecords` always reports `FailedRecordCount: 0` — throughput throttling and `ProvisionedThroughputExceededException` are not simulated                                        |
-| Encryption is metadata    | `StartStreamEncryption` stores `EncryptionType` and `KeyId` and `Describe*` echoes them; records are stored unencrypted                                                          |
-| Capacity modes are inert  | `UpdateStreamMode` is recorded; on-demand capacity is not enforced                                                                                                               |
-| No pagination             | `ListStreams` returns every stream name and `ListShards` every open shard in one page                                                                                            |
-| No enhanced fan-out       | Consumers are not emulated — `SubscribeToShard` and the consumer registration APIs are absent, and a consumer ARN is refused by `TagResource`                                    |
-| Closed shards are hidden  | `ListShards` returns open shards only, so a split parent disappears from the list                                                                                                |
+| Area             | On AWS                                                             | Overcast                                                                                                                                                                         |
+| ---------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Retention        | Records expire at the retention period                             | `IncreaseStreamRetentionPeriod` and `DecreaseStreamRetentionPeriod` store and echo the value; no record is ever expired, so a shard keeps everything until the stream is deleted |
+| Throttling       | `ProvisionedThroughputExceededException` past the provisioned rate | `PutRecords` always reports `FailedRecordCount: 0`; throughput throttling is not simulated                                                                                       |
+| Encryption       | Records are encrypted with the named key                           | `StartStreamEncryption` stores `EncryptionType` and `KeyId` and `Describe*` echoes them; records are stored unencrypted                                                          |
+| Capacity modes   | On-demand capacity is enforced                                     | `UpdateStreamMode` is recorded; nothing is enforced                                                                                                                              |
+| Pagination       | `ListStreams` and `ListShards` paginate                            | Each returns everything in one page — every stream name, every open shard                                                                                                        |
+| Enhanced fan-out | `SubscribeToShard` and the consumer registration APIs              | Not emulated, and a consumer ARN is refused by `TagResource`                                                                                                                     |
+| Closed shards    | `ListShards` includes them                                         | Open shards only, so a split parent disappears from the list                                                                                                                     |
 
 ## Gotchas
 

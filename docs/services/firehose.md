@@ -43,13 +43,13 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 
 ## Differences from AWS
 
-| Area                        | Overcast                                                                                                                            |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Records are discarded       | Nothing reaches S3, Redshift, OpenSearch or an HTTP endpoint — a bucket wired as a destination stays empty                          |
-| Destinations are not stored | `S3DestinationConfiguration` and its siblings are ignored, and `DescribeDeliveryStream` always reports an empty `Destinations` list |
-| No transformation           | Lambda processors, dynamic partitioning, format conversion and compression are not applied                                          |
-| No buffering                | There is no buffer interval or size, so nothing is ever flushed                                                                     |
-| No updates                  | `UpdateDestination` is not implemented                                                                                              |
+| Area                      | On AWS                                                                     | Overcast                                                                                                                            |
+| ------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Delivery                  | Records reach S3, Redshift, OpenSearch or an HTTP endpoint                 | Records are discarded — a bucket wired as a destination stays empty                                                                 |
+| Destination configuration | Stored and returned                                                        | `S3DestinationConfiguration` and its siblings are ignored, and `DescribeDeliveryStream` always reports an empty `Destinations` list |
+| Transformation            | Lambda processors, dynamic partitioning, format conversion and compression | None of it is applied                                                                                                               |
+| Buffering                 | A buffer interval and size govern the flush                                | There is no buffer interval or size, so nothing is ever flushed                                                                     |
+| `UpdateDestination`       | Changes a live stream's destination                                        | Not implemented                                                                                                                     |
 
 ## Gotchas
 

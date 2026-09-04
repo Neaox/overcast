@@ -46,13 +46,13 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 
 ## Differences from AWS
 
-| Area                      | Overcast                                                                                                         |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| No query engine           | The SQL string is stored, never parsed or run — a query over a Glue table returns nothing, not that table's rows |
-| No result objects         | Nothing is written to `OutputLocation`; the bucket stays empty                                                   |
-| Never queues, never fails | There is no `QUEUED`, `RUNNING`, `FAILED` or `CANCELLED` state to observe                                        |
-| No statistics             | `Statistics`, `EngineVersion` and data-scanned figures are absent                                                |
-| Workgroup config is inert | Result-location overrides and bytes-scanned cutoffs are echoed, not enforced                                     |
+| Area                    | On AWS                                                           | Overcast                                                                                                     |
+| ----------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Query execution         | The SQL is parsed and run                                        | The string is stored, never parsed or run — a query over a Glue table returns nothing, not that table's rows |
+| Results                 | Written to `OutputLocation`                                      | Nothing is written; the bucket stays empty                                                                   |
+| Execution states        | `QUEUED`, `RUNNING`, `FAILED` and `CANCELLED`                    | None of them is ever observed                                                                                |
+| Statistics              | `Statistics`, `EngineVersion` and data-scanned figures           | Absent                                                                                                       |
+| Workgroup configuration | Result-location overrides and bytes-scanned cutoffs are enforced | Echoed, not enforced                                                                                         |
 
 ## Gotchas
 
