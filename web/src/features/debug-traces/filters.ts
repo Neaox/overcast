@@ -12,7 +12,7 @@
  * and the same link — as ticking B then A.
  */
 import type { CheckboxFilterItem } from "@/components/ui/checkbox-filter-dropdown"
-import type { TraceListParams } from "@/types"
+import type { TraceListParams, TraceSummary } from "@/types"
 
 /** Status classes the server understands, in the order they are offered. */
 export const STATUS_OPTIONS = ["2xx", "3xx", "4xx", "5xx"] as const
@@ -130,4 +130,40 @@ export function traceListParams(search: TracesSearch, limit: number): TraceListP
   if (search.status?.length) params.status = search.status
   if (search.search) params.search = search.search
   return params
+}
+
+// ─── Client-side row filter ───────────────────────────────────────────────
+/**
+ * Coalesce an empty service name, so the dropdown's option, its count and the
+ * deny-list all name the same thing.
+ */
+export function serviceKey(service: string): string {
+  return service || "(unknown)"
+}
+
+/** The two filters applied to rows already in hand rather than by the server. */
+export interface TraceRowFilter {
+  /** True when "Hide internal" is ticked — i.e. `showInternal` is not set. */
+  hideInternal: boolean
+  /** Service keys the services dropdown is hiding. */
+  hiddenServices: ReadonlySet<string>
+}
+
+/**
+ * Whether a trace belongs in the table.
+ *
+ * A predicate rather than a `filter` call inside the component because the page
+ * renders rows from two sources — the paginated list and the deep scan — and
+ * the deep scan's rows used to skip this test entirely, so a hidden service
+ * reappeared the moment a search matched a body. #1613 is the other half: a
+ * trace is internal because the *server* said so (`summary.internal`), so a
+ * console-polled endpoint the server had not classified was listed with "Hide
+ * internal" ticked however this ran.
+ */
+export function showsTrace(
+  summary: Pick<TraceSummary, "service" | "internal">,
+  filter: TraceRowFilter,
+): boolean {
+  if (filter.hideInternal && summary.internal) return false
+  return !filter.hiddenServices.has(serviceKey(summary.service))
 }
