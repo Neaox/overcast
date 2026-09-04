@@ -352,51 +352,74 @@ type asgGroupsResult struct {
 	AutoScalingGroups []asgXMLGroup `xml:"AutoScalingGroups>member"`
 }
 
+// asgXMLLaunchTemplate is AWS's LaunchTemplateSpecification, reported on a
+// group and on each instance launched from one.
+type asgXMLLaunchTemplate struct {
+	LaunchTemplateId   string `xml:"LaunchTemplateId,omitempty"`
+	LaunchTemplateName string `xml:"LaunchTemplateName,omitempty"`
+	Version            string `xml:"Version,omitempty"`
+}
+
+// xmlLaunchTemplate renders a stored specification for a response.
+func xmlLaunchTemplate(lt *ASGLaunchTemplate) *asgXMLLaunchTemplate {
+	if lt == nil {
+		return nil
+	}
+	return &asgXMLLaunchTemplate{
+		LaunchTemplateId:   lt.LaunchTemplateId,
+		LaunchTemplateName: lt.LaunchTemplateName,
+		Version:            lt.Version,
+	}
+}
+
 type asgXMLInstance struct {
-	InstanceId              string `xml:"InstanceId"`
-	InstanceType            string `xml:"InstanceType,omitempty"`
-	AvailabilityZone        string `xml:"AvailabilityZone,omitempty"`
-	LifecycleState          string `xml:"LifecycleState"`
-	HealthStatus            string `xml:"HealthStatus"`
-	LaunchConfigurationName string `xml:"LaunchConfigurationName,omitempty"`
-	ProtectedFromScaleIn    bool   `xml:"ProtectedFromScaleIn"`
+	InstanceId              string                `xml:"InstanceId"`
+	InstanceType            string                `xml:"InstanceType,omitempty"`
+	AvailabilityZone        string                `xml:"AvailabilityZone,omitempty"`
+	LifecycleState          string                `xml:"LifecycleState"`
+	HealthStatus            string                `xml:"HealthStatus"`
+	LaunchConfigurationName string                `xml:"LaunchConfigurationName,omitempty"`
+	LaunchTemplate          *asgXMLLaunchTemplate `xml:"LaunchTemplate,omitempty"`
+	ProtectedFromScaleIn    bool                  `xml:"ProtectedFromScaleIn"`
 }
 
 // asgXMLGroupInstance is the DescribeAutoScalingInstances shape: the same
 // fields plus the owning group, which the nested form does not repeat.
 type asgXMLGroupInstance struct {
-	InstanceId              string `xml:"InstanceId"`
-	InstanceType            string `xml:"InstanceType,omitempty"`
-	AutoScalingGroupName    string `xml:"AutoScalingGroupName"`
-	AvailabilityZone        string `xml:"AvailabilityZone,omitempty"`
-	LifecycleState          string `xml:"LifecycleState"`
-	HealthStatus            string `xml:"HealthStatus"`
-	LaunchConfigurationName string `xml:"LaunchConfigurationName,omitempty"`
-	ProtectedFromScaleIn    bool   `xml:"ProtectedFromScaleIn"`
+	InstanceId              string                `xml:"InstanceId"`
+	InstanceType            string                `xml:"InstanceType,omitempty"`
+	AutoScalingGroupName    string                `xml:"AutoScalingGroupName"`
+	AvailabilityZone        string                `xml:"AvailabilityZone,omitempty"`
+	LifecycleState          string                `xml:"LifecycleState"`
+	HealthStatus            string                `xml:"HealthStatus"`
+	LaunchConfigurationName string                `xml:"LaunchConfigurationName,omitempty"`
+	LaunchTemplate          *asgXMLLaunchTemplate `xml:"LaunchTemplate,omitempty"`
+	ProtectedFromScaleIn    bool                  `xml:"ProtectedFromScaleIn"`
 }
 
 type asgXMLGroup struct {
-	AutoScalingGroupName             string           `xml:"AutoScalingGroupName"`
-	AutoScalingGroupARN              string           `xml:"AutoScalingGroupARN"`
-	LaunchConfigurationName          string           `xml:"LaunchConfigurationName,omitempty"`
-	MinSize                          int              `xml:"MinSize"`
-	MaxSize                          int              `xml:"MaxSize"`
-	DesiredCapacity                  int              `xml:"DesiredCapacity"`
-	DefaultCooldown                  int              `xml:"DefaultCooldown"`
-	AvailabilityZones                []string         `xml:"AvailabilityZones>member"`
-	LoadBalancerNames                struct{}         `xml:"LoadBalancerNames"`
-	TargetGroupARNs                  struct{}         `xml:"TargetGroupARNs"`
-	HealthCheckType                  string           `xml:"HealthCheckType"`
-	HealthCheckGracePeriod           int              `xml:"HealthCheckGracePeriod"`
-	Instances                        []asgXMLInstance `xml:"Instances>member"`
-	CreatedTime                      string           `xml:"CreatedTime"`
-	SuspendedProcesses               struct{}         `xml:"SuspendedProcesses"`
-	VPCZoneIdentifier                string           `xml:"VPCZoneIdentifier,omitempty"`
-	EnabledMetrics                   struct{}         `xml:"EnabledMetrics"`
-	Status                           string           `xml:"Status,omitempty"`
-	Tags                             []asgXMLTag      `xml:"Tags>member"`
-	TerminationPolicies              []string         `xml:"TerminationPolicies>member"`
-	NewInstancesProtectedFromScaleIn bool             `xml:"NewInstancesProtectedFromScaleIn"`
+	AutoScalingGroupName             string                `xml:"AutoScalingGroupName"`
+	AutoScalingGroupARN              string                `xml:"AutoScalingGroupARN"`
+	LaunchConfigurationName          string                `xml:"LaunchConfigurationName,omitempty"`
+	LaunchTemplate                   *asgXMLLaunchTemplate `xml:"LaunchTemplate,omitempty"`
+	MinSize                          int                   `xml:"MinSize"`
+	MaxSize                          int                   `xml:"MaxSize"`
+	DesiredCapacity                  int                   `xml:"DesiredCapacity"`
+	DefaultCooldown                  int                   `xml:"DefaultCooldown"`
+	AvailabilityZones                []string              `xml:"AvailabilityZones>member"`
+	LoadBalancerNames                struct{}              `xml:"LoadBalancerNames"`
+	TargetGroupARNs                  struct{}              `xml:"TargetGroupARNs"`
+	HealthCheckType                  string                `xml:"HealthCheckType"`
+	HealthCheckGracePeriod           int                   `xml:"HealthCheckGracePeriod"`
+	Instances                        []asgXMLInstance      `xml:"Instances>member"`
+	CreatedTime                      string                `xml:"CreatedTime"`
+	SuspendedProcesses               struct{}              `xml:"SuspendedProcesses"`
+	VPCZoneIdentifier                string                `xml:"VPCZoneIdentifier,omitempty"`
+	EnabledMetrics                   struct{}              `xml:"EnabledMetrics"`
+	Status                           string                `xml:"Status,omitempty"`
+	Tags                             []asgXMLTag           `xml:"Tags>member"`
+	TerminationPolicies              []string              `xml:"TerminationPolicies>member"`
+	NewInstancesProtectedFromScaleIn bool                  `xml:"NewInstancesProtectedFromScaleIn"`
 }
 
 type terminateInstanceResp struct {
@@ -589,12 +612,10 @@ func validateGroupInput(name string, lt launchTemplateSpec, mip mixedInstancesPo
 	switch {
 	case mip.present():
 		return asgUnsupported("Overcast does not implement MixedInstancesPolicy: the emulator has no instance-type fleet or spot allocation to distribute over, so the group would report a desired capacity it could not satisfy.")
-	case lt.present():
-		return asgUnsupported("Overcast does not implement launch templates for Auto Scaling: its EC2 emulation has no CreateLaunchTemplate, so there is nothing to resolve ImageId and InstanceType from. Use CreateLaunchConfiguration and LaunchConfigurationName instead.")
 	case instanceID != "":
 		return asgUnsupported("Overcast does not implement creating an Auto Scaling group from an existing instance (InstanceId): the launch parameters cannot be derived from a running instance. Use CreateLaunchConfiguration and LaunchConfigurationName instead.")
 	}
-	if requireSource && launchConfig == "" {
+	if requireSource && launchConfig == "" && !lt.present() {
 		return asgValidationError("Valid requests must contain either LaunchTemplate, LaunchConfigurationName, InstanceId or MixedInstancesPolicy parameter.")
 	}
 	return nil
@@ -638,10 +659,23 @@ func (h *Handler) createASGTyped(ctx context.Context, req *createASGReq) (*creat
 		healthCheck = "EC2"
 	}
 
+	// The template is resolved through EC2 before the group is stored, so a
+	// group naming one that does not exist is refused rather than left
+	// reporting a desired capacity the reconciler could never satisfy.
+	var launchTemplate *ASGLaunchTemplate
+	if req.LaunchTemplate.present() {
+		resolved, aerr := s.resolveLaunchTemplate(ctx, req.LaunchTemplate)
+		if aerr != nil {
+			return nil, aerr
+		}
+		launchTemplate = resolved
+	}
+
 	asg := AutoScalingGroup{
 		AutoScalingGroupName:             req.AutoScalingGroupName,
 		AutoScalingGroupARN:              s.asgARN(req.AutoScalingGroupName),
 		LaunchConfigurationName:          req.LaunchConfigurationName,
+		LaunchTemplate:                   launchTemplate,
 		MinSize:                          req.MinSize,
 		MaxSize:                          req.MaxSize,
 		DesiredCapacity:                  desired,
@@ -691,6 +725,17 @@ func (h *Handler) updateASGTyped(ctx context.Context, req *updateASGReq) (*updat
 		return nil, aerr
 	}
 
+	// Resolved before the group is locked, for the same reason as on create: a
+	// template that does not exist must not become a group's launch source.
+	var launchTemplate *ASGLaunchTemplate
+	if req.LaunchTemplate.present() {
+		resolved, aerr := s.resolveLaunchTemplate(ctx, req.LaunchTemplate)
+		if aerr != nil {
+			return nil, aerr
+		}
+		launchTemplate = resolved
+	}
+
 	s.mu.Lock()
 	g, found := s.st.getGroup(ctx, req.AutoScalingGroupName)
 	if !found {
@@ -712,8 +757,15 @@ func (h *Handler) updateASGTyped(ctx context.Context, req *updateASGReq) (*updat
 		// leaving a group outside its own min/max.
 		g.DesiredCapacity = clampCapacity(g.DesiredCapacity, g.MinSize, g.MaxSize)
 	}
+	// A group has one launch source, so setting either clears the other, as
+	// AWS does when an update moves a group between the two.
 	if req.LaunchConfigurationName != "" {
 		g.LaunchConfigurationName = req.LaunchConfigurationName
+		g.LaunchTemplate = nil
+	}
+	if launchTemplate != nil {
+		g.LaunchTemplate = launchTemplate
+		g.LaunchConfigurationName = ""
 	}
 	if req.DefaultCooldown != nil {
 		g.DefaultCooldown = *req.DefaultCooldown
@@ -786,6 +838,7 @@ func (h *Handler) describeASGsTyped(ctx context.Context, req *describeASGsReq) (
 				LifecycleState:          inst.LifecycleState,
 				HealthStatus:            inst.HealthStatus,
 				LaunchConfigurationName: inst.LaunchConfigurationName,
+				LaunchTemplate:          xmlLaunchTemplate(inst.LaunchTemplate),
 				ProtectedFromScaleIn:    inst.ProtectedFromScaleIn,
 			})
 		}
@@ -798,6 +851,7 @@ func (h *Handler) describeASGsTyped(ctx context.Context, req *describeASGsReq) (
 			AutoScalingGroupName:             g.AutoScalingGroupName,
 			AutoScalingGroupARN:              g.AutoScalingGroupARN,
 			LaunchConfigurationName:          g.LaunchConfigurationName,
+			LaunchTemplate:                   xmlLaunchTemplate(g.LaunchTemplate),
 			MinSize:                          g.MinSize,
 			MaxSize:                          g.MaxSize,
 			DesiredCapacity:                  g.DesiredCapacity,
@@ -1408,6 +1462,7 @@ func (h *Handler) describeInstancesTyped(ctx context.Context, req *describeInsta
 			LifecycleState:          inst.LifecycleState,
 			HealthStatus:            inst.HealthStatus,
 			LaunchConfigurationName: inst.LaunchConfigurationName,
+			LaunchTemplate:          xmlLaunchTemplate(inst.LaunchTemplate),
 			ProtectedFromScaleIn:    inst.ProtectedFromScaleIn,
 		})
 	}

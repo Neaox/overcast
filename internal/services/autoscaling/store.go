@@ -94,6 +94,21 @@ type AutoScalingGroup struct {
 	// CooldownUntil is when the group's scaling cooldown expires. Zero means
 	// no cooldown is in effect.
 	CooldownUntil time.Time `json:"CooldownUntil,omitempty"`
+
+	// LaunchTemplate is the EC2 launch template the group launches from, when
+	// it was configured with one instead of a launch configuration. Both
+	// identifiers are recorded because AWS echoes both back whichever the
+	// caller supplied, and Version is kept verbatim: a group pinned to
+	// $Latest follows the template, one pinned to a number does not.
+	LaunchTemplate *ASGLaunchTemplate `json:"LaunchTemplate,omitempty"`
+}
+
+// ASGLaunchTemplate is the launch template specification a group or an
+// instance was launched from.
+type ASGLaunchTemplate struct {
+	LaunchTemplateId   string `json:"LaunchTemplateId,omitempty"`
+	LaunchTemplateName string `json:"LaunchTemplateName,omitempty"`
+	Version            string `json:"Version,omitempty"`
 }
 
 // LaunchConfiguration represents an EC2 Auto Scaling launch configuration.
@@ -162,6 +177,11 @@ type ASGInstance struct {
 	HealthStatus            string `json:"HealthStatus"`
 	LaunchConfigurationName string `json:"LaunchConfigurationName,omitempty"`
 	ProtectedFromScaleIn    bool   `json:"ProtectedFromScaleIn"`
+
+	// LaunchTemplate is set instead of LaunchConfigurationName when the
+	// instance was launched from a template, which is what AWS reports on the
+	// instance too.
+	LaunchTemplate *ASGLaunchTemplate `json:"LaunchTemplate,omitempty"`
 
 	// LaunchedAt orders scale-in candidates (oldest first, AWS's
 	// OldestInstance policy).

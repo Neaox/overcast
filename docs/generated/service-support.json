@@ -6996,17 +6996,17 @@
         {
           "operation": "CreateAutoScalingGroup",
           "status": "✅ Supported",
-          "notes": "Reconciles: launches EC2 instances to DesiredCapacity. LaunchTemplate, MixedInstancesPolicy and InstanceId are refused with 501 — Overcast's EC2 has no launch templates"
+          "notes": "Reconciles: launches EC2 instances to DesiredCapacity from a LaunchConfiguration or a LaunchTemplate, resolved through EC2 at create time. MixedInstancesPolicy and InstanceId are refused with 501"
         },
         {
           "operation": "UpdateAutoScalingGroup",
           "status": "✅ Supported",
-          "notes": "Min/max/desired changes re-converge the group; desired outside min/max is AWS's ValidationError"
+          "notes": "Min/max/desired changes re-converge the group; desired outside min/max is AWS's ValidationError. Setting either launch source clears the other"
         },
         {
           "operation": "DescribeAutoScalingGroups",
           "status": "✅ Supported",
-          "notes": "Reports the real converged instance set with LifecycleState, HealthStatus, AvailabilityZone and ProtectedFromScaleIn"
+          "notes": "Reports the real converged instance set with LifecycleState, HealthStatus, AvailabilityZone and ProtectedFromScaleIn, and the group's LaunchTemplate when it has one"
         },
         {
           "operation": "DeleteAutoScalingGroup",

@@ -358,15 +358,6 @@ func TestCreateAutoScalingGroup_refusesConfigurationsItCannotReconcile(t *testin
 		params map[string]string
 	}{
 		{
-			name: "launch template",
-			params: map[string]string{
-				"AutoScalingGroupName":              "lt-asg",
-				"LaunchTemplate.LaunchTemplateName": "my-template",
-				"MinSize":                           "1",
-				"MaxSize":                           "2",
-			},
-		},
-		{
 			name: "mixed instances policy",
 			params: map[string]string{
 				"AutoScalingGroupName": "mip-asg",
