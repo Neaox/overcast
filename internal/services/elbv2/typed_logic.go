@@ -94,6 +94,15 @@ type describeTargetGroupAttributesReq struct {
 	TargetGroupArn string `json:"TargetGroupArn"`
 }
 
+type modifyLoadBalancerAttributesReq struct {
+	LoadBalancerArn string     `json:"LoadBalancerArn"`
+	Attributes      []elbv2Tag `json:"Attributes"`
+}
+
+type describeLoadBalancerAttributesReq struct {
+	LoadBalancerArn string `json:"LoadBalancerArn"`
+}
+
 type createListenerReq struct {
 	LoadBalancerArn string   `json:"LoadBalancerArn"`
 	Protocol        string   `json:"Protocol"`
@@ -506,15 +515,7 @@ func (h *Handler) modifyTargetGroupAttributesTyped(ctx context.Context, req *mod
 		return nil, errTGNotFound(arn)
 	}
 
-	if tg.Attributes == nil {
-		tg.Attributes = map[string]string{}
-	}
-	for _, a := range req.Attributes {
-		if a.Key == "" {
-			continue
-		}
-		tg.Attributes[a.Key] = a.Value
-	}
+	tg.Attributes = mergeAttributes(tg.Attributes, req.Attributes)
 	if err := h.putTG(ctx, region, tg); err != nil {
 		return nil, protocol.ErrInternalError
 	}
@@ -548,12 +549,84 @@ func (h *Handler) describeTargetGroupAttributesTyped(ctx context.Context, req *d
 	return resp, nil
 }
 
-// attributesXML renders a target group's Attributes map in AWS's documented
-// order-independent Key/Value member shape. DescribeTargetGroupAttributes
-// always answers the full list AWS ships defaults for; Overcast only stores
-// what ModifyTargetGroupAttributes (or a CFN TargetGroupAttributes property)
-// actually set, so an attribute this emulator has no opinion on is simply
-// absent rather than echoed back with a fabricated default.
+func (h *Handler) modifyLoadBalancerAttributesTyped(ctx context.Context, req *modifyLoadBalancerAttributesReq) (*xmlModifyLoadBalancerAttributesResponse, *protocol.AWSError) {
+	arn := req.LoadBalancerArn
+	if arn == "" {
+		return nil, errMissingParam("LoadBalancerArn")
+	}
+	region := h.region(ctx)
+	lb, found, err := h.getLB(ctx, region, arn)
+	if err != nil {
+		return nil, protocol.ErrInternalError
+	} else if !found {
+		return nil, errNotFound("LoadBalancer", arn)
+	}
+
+	lb.Attributes = mergeAttributes(lb.Attributes, req.Attributes)
+	if err := h.putLB(ctx, region, lb); err != nil {
+		return nil, protocol.ErrInternalError
+	}
+
+	resp := &xmlModifyLoadBalancerAttributesResponse{
+		Xmlns:            elbv2XMLNS,
+		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
+	}
+	resp.Result.Attributes.Member = attributesXML(lb.Attributes)
+	return resp, nil
+}
+
+func (h *Handler) describeLoadBalancerAttributesTyped(ctx context.Context, req *describeLoadBalancerAttributesReq) (*xmlDescribeLoadBalancerAttributesResponse, *protocol.AWSError) {
+	arn := req.LoadBalancerArn
+	if arn == "" {
+		return nil, errMissingParam("LoadBalancerArn")
+	}
+	region := h.region(ctx)
+	lb, found, err := h.getLB(ctx, region, arn)
+	if err != nil {
+		return nil, protocol.ErrInternalError
+	} else if !found {
+		return nil, errNotFound("LoadBalancer", arn)
+	}
+
+	resp := &xmlDescribeLoadBalancerAttributesResponse{
+		Xmlns:            elbv2XMLNS,
+		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
+	}
+	resp.Result.Attributes.Member = attributesXML(lb.Attributes)
+	return resp, nil
+}
+
+// mergeAttributes folds a Modify*Attributes request's members into the
+// attributes a resource already carries, which is what AWS does with them: a
+// call naming one attribute leaves every other one as it was, rather than
+// replacing the set. CloudFormation depends on that when it updates one
+// property of a resource that has several.
+//
+// The map is returned rather than mutated in place so that a resource with no
+// attributes yet is handled here instead of at each call site. A member with an
+// empty key is skipped: AWS rejects it, and storing it would put a nameless
+// entry in every Describe response thereafter.
+func mergeAttributes(attrs map[string]string, incoming []elbv2Tag) map[string]string {
+	if attrs == nil {
+		attrs = make(map[string]string, len(incoming))
+	}
+	for _, a := range incoming {
+		if a.Key == "" {
+			continue
+		}
+		attrs[a.Key] = a.Value
+	}
+	return attrs
+}
+
+// attributesXML renders a target group's or load balancer's Attributes map in
+// AWS's documented order-independent Key/Value member shape.
+//
+// Both Describe*Attributes calls answer, on AWS, the full list it ships
+// defaults for; Overcast only stores what the matching Modify*Attributes call
+// (or a CFN TargetGroupAttributes / LoadBalancerAttributes property) actually
+// set, so an attribute this emulator has no opinion on is simply absent rather
+// than echoed back with a fabricated default.
 func attributesXML(attrs map[string]string) []xmlAttribute {
 	keys := make([]string, 0, len(attrs))
 	for k := range attrs {

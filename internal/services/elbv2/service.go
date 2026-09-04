@@ -30,17 +30,34 @@ const (
 )
 
 type LoadBalancer struct {
-	LoadBalancerArn  string            `json:"LoadBalancerArn"`
-	LoadBalancerName string            `json:"LoadBalancerName"`
-	DNSName          string            `json:"DNSName"`
-	Type             string            `json:"Type"`
-	Scheme           string            `json:"Scheme"`
-	IpAddressType    string            `json:"IpAddressType,omitempty"`
-	State            string            `json:"State"`
-	VpcId            string            `json:"VpcId,omitempty"`
-	CreatedTime      time.Time         `json:"CreatedTime"`
-	Region           string            `json:"Region"`
-	Tags             map[string]string `json:"Tags,omitempty"`
+	LoadBalancerArn  string    `json:"LoadBalancerArn"`
+	LoadBalancerName string    `json:"LoadBalancerName"`
+	DNSName          string    `json:"DNSName"`
+	Type             string    `json:"Type"`
+	Scheme           string    `json:"Scheme"`
+	IpAddressType    string    `json:"IpAddressType,omitempty"`
+	State            string    `json:"State"`
+	VpcId            string    `json:"VpcId,omitempty"`
+	CreatedTime      time.Time `json:"CreatedTime"`
+
+	// Attributes holds ModifyLoadBalancerAttributes settings (e.g.
+	// idle_timeout.timeout_seconds, deletion_protection.enabled,
+	// load_balancing.cross_zone.enabled) keyed by their AWS attribute name.
+	// Stored and echoed by DescribeLoadBalancerAttributes; not enforced by the
+	// data plane, exactly as the target group's own Attributes are not.
+	//
+	// Storing them is what makes a CDK stack updatable at all. CloudFormation
+	// updates an AWS::ElasticLoadBalancingV2::LoadBalancer's
+	// LoadBalancerAttributes in place through this call, and while it answered
+	// 501 the provisioner fell back to *replacing* the load balancer — which
+	// tears down the listener and target group the ECS service is registered
+	// with, mid-deploy, on every update of a stack that sets any attribute at
+	// all. CDK sets deletion_protection.enabled by default, so that was every
+	// CDK load balancer.
+	Attributes map[string]string `json:"Attributes,omitempty"`
+
+	Region string            `json:"Region"`
+	Tags   map[string]string `json:"Tags,omitempty"`
 }
 
 type TargetGroup struct {
@@ -320,5 +337,29 @@ type xmlDescribeTargetGroupAttributesResponse struct {
 			Member []xmlAttribute `xml:"member"`
 		} `xml:"Attributes"`
 	} `xml:"DescribeTargetGroupAttributesResult"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
+}
+
+// ── LoadBalancerAttributes wire types ──────────────────────────────────────
+
+type xmlModifyLoadBalancerAttributesResponse struct {
+	XMLName xml.Name `xml:"ModifyLoadBalancerAttributesResponse"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	Result  struct {
+		Attributes struct {
+			Member []xmlAttribute `xml:"member"`
+		} `xml:"Attributes"`
+	} `xml:"ModifyLoadBalancerAttributesResult"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
+}
+
+type xmlDescribeLoadBalancerAttributesResponse struct {
+	XMLName xml.Name `xml:"DescribeLoadBalancerAttributesResponse"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	Result  struct {
+		Attributes struct {
+			Member []xmlAttribute `xml:"member"`
+		} `xml:"Attributes"`
+	} `xml:"DescribeLoadBalancerAttributesResult"`
 	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
 }

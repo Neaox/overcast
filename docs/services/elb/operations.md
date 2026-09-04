@@ -1,6 +1,6 @@
 ---
 title: "ELBv2 operations"
-description: "Every ELBv2 operation Overcast declares — 18 of 21 implemented — with status, behaviour notes and a link to the AWS API reference for each."
+description: "Every ELBv2 operation Overcast declares — 20 of 22 implemented — with status, behaviour notes and a link to the AWS API reference for each."
 section: "Service Reference"
 tags:
   - docs
@@ -13,13 +13,13 @@ tags:
 
 # ELBv2 operations
 
-18 of 21 listed operations are implemented. Back to [ELBv2](../elb.md).
+20 of 22 listed operations are implemented. Back to [ELBv2](../elb.md).
 
 ## Summary
 
 | Category       | ✅ Supported | ❌ Unsupported |
 | -------------- | ------------ | -------------- |
-| Load Balancers | 3            | 1              |
+| Load Balancers | 5            |                |
 | Target Groups  | 6            |                |
 | Listeners      | 3            |                |
 | Targets        | 3            |                |
@@ -32,12 +32,13 @@ tags:
 
 ### Load Balancers
 
-| Operation                      | Status         | Notes                                                                 | AWS Docs                                                                                                           |
-| ------------------------------ | -------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `CreateLoadBalancer`           | ✅ Supported   | Threads Type, Scheme, IpAddressType, Subnets, SecurityGroups and Tags | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_CreateLoadBalancer.html)           |
-| `DescribeLoadBalancers`        | ✅ Supported   |                                                                       | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_DescribeLoadBalancers.html)        |
-| `DeleteLoadBalancer`           | ✅ Supported   |                                                                       | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_DeleteLoadBalancer.html)           |
-| `ModifyLoadBalancerAttributes` | ❌ Unsupported |                                                                       | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_ModifyLoadBalancerAttributes.html) |
+| Operation                        | Status       | Notes                                                                                                                             | AWS Docs                                                                                                             |
+| -------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `CreateLoadBalancer`             | ✅ Supported | Threads Type, Scheme, IpAddressType, Subnets, SecurityGroups and Tags                                                             | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_CreateLoadBalancer.html)             |
+| `DescribeLoadBalancers`          | ✅ Supported |                                                                                                                                   | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_DescribeLoadBalancers.html)          |
+| `DeleteLoadBalancer`             | ✅ Supported |                                                                                                                                   | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_DeleteLoadBalancer.html)             |
+| `ModifyLoadBalancerAttributes`   | ✅ Supported | Stores and echoes attributes such as idle_timeout.timeout_seconds and deletion_protection.enabled; not enforced by the data plane | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_ModifyLoadBalancerAttributes.html)   |
+| `DescribeLoadBalancerAttributes` | ✅ Supported |                                                                                                                                   | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_DescribeLoadBalancerAttributes.html) |
 
 ### Target Groups
 

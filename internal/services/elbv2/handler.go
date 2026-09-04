@@ -45,24 +45,26 @@ func newHandler(cfg *config.Config, store state.Store, log *serviceutil.ServiceL
 
 func (h *Handler) initOps() {
 	h.ops = map[string]http.HandlerFunc{
-		"CreateLoadBalancer":            h.CreateLoadBalancer,
-		"DescribeLoadBalancers":         h.DescribeLoadBalancers,
-		"DeleteLoadBalancer":            h.DeleteLoadBalancer,
-		"CreateTargetGroup":             h.CreateTargetGroup,
-		"DescribeTargetGroups":          h.DescribeTargetGroups,
-		"DeleteTargetGroup":             h.DeleteTargetGroup,
-		"ModifyTargetGroup":             h.ModifyTargetGroup,
-		"ModifyTargetGroupAttributes":   h.ModifyTargetGroupAttributes,
-		"DescribeTargetGroupAttributes": h.DescribeTargetGroupAttributes,
-		"CreateListener":                h.CreateListener,
-		"DescribeListeners":             h.DescribeListeners,
-		"DeleteListener":                h.DeleteListener,
-		"RegisterTargets":               h.RegisterTargets,
-		"DeregisterTargets":             h.DeregisterTargets,
-		"DescribeTargetHealth":          h.DescribeTargetHealth,
-		"AddTags":                       h.AddTags,
-		"RemoveTags":                    h.RemoveTags,
-		"DescribeTags":                  h.DescribeTags,
+		"CreateLoadBalancer":             h.CreateLoadBalancer,
+		"DescribeLoadBalancers":          h.DescribeLoadBalancers,
+		"DeleteLoadBalancer":             h.DeleteLoadBalancer,
+		"CreateTargetGroup":              h.CreateTargetGroup,
+		"DescribeTargetGroups":           h.DescribeTargetGroups,
+		"DeleteTargetGroup":              h.DeleteTargetGroup,
+		"ModifyTargetGroup":              h.ModifyTargetGroup,
+		"ModifyTargetGroupAttributes":    h.ModifyTargetGroupAttributes,
+		"DescribeTargetGroupAttributes":  h.DescribeTargetGroupAttributes,
+		"ModifyLoadBalancerAttributes":   h.ModifyLoadBalancerAttributes,
+		"DescribeLoadBalancerAttributes": h.DescribeLoadBalancerAttributes,
+		"CreateListener":                 h.CreateListener,
+		"DescribeListeners":              h.DescribeListeners,
+		"DeleteListener":                 h.DeleteListener,
+		"RegisterTargets":                h.RegisterTargets,
+		"DeregisterTargets":              h.DeregisterTargets,
+		"DescribeTargetHealth":           h.DescribeTargetHealth,
+		"AddTags":                        h.AddTags,
+		"RemoveTags":                     h.RemoveTags,
+		"DescribeTags":                   h.DescribeTags,
 	}
 	h.typedOp = h.typedOps()
 }
@@ -530,6 +532,16 @@ func (h *Handler) ModifyTargetGroupAttributes(w http.ResponseWriter, r *http.Req
 // DescribeTargetGroupAttributes describes a target group's Attributes map.
 func (h *Handler) DescribeTargetGroupAttributes(w http.ResponseWriter, r *http.Request) {
 	h.invokeTypedAsQuery("DescribeTargetGroupAttributes", w, r)
+}
+
+// ModifyLoadBalancerAttributes updates a load balancer's Attributes map.
+func (h *Handler) ModifyLoadBalancerAttributes(w http.ResponseWriter, r *http.Request) {
+	h.invokeTypedAsQuery("ModifyLoadBalancerAttributes", w, r)
+}
+
+// DescribeLoadBalancerAttributes describes a load balancer's Attributes map.
+func (h *Handler) DescribeLoadBalancerAttributes(w http.ResponseWriter, r *http.Request) {
+	h.invokeTypedAsQuery("DescribeLoadBalancerAttributes", w, r)
 }
 
 // CreateListener creates a listener.

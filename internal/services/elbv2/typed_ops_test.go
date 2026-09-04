@@ -13,6 +13,8 @@ import (
 var elbv2Ops = []string{
 	"CreateLoadBalancer", "DescribeLoadBalancers", "DeleteLoadBalancer",
 	"CreateTargetGroup", "DescribeTargetGroups", "DeleteTargetGroup",
+	"ModifyTargetGroupAttributes", "DescribeTargetGroupAttributes",
+	"ModifyLoadBalancerAttributes", "DescribeLoadBalancerAttributes",
 	"CreateListener", "DescribeListeners", "DeleteListener",
 	"RegisterTargets", "DeregisterTargets", "DescribeTargetHealth",
 	"AddTags", "RemoveTags", "DescribeTags",
