@@ -352,7 +352,10 @@ type ec2SecurityGroupHandler struct{}
 func (h *ec2SecurityGroupHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	groupName, _ := props["GroupName"].(string)
 	if groupName == "" {
-		groupName = fmt.Sprintf("%s-sg", rCtx.StackName)
+		// GroupName is 255 characters of a wide punctuation set; the only
+		// positional rule is that it cannot start with "sg-", which a stack
+		// name cannot do either.
+		groupName = rCtx.generatedName()
 	}
 	groupDesc, _ := props["GroupDescription"].(string)
 	if groupDesc == "" {
