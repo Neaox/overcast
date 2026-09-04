@@ -275,6 +275,44 @@ func seedInstance(t *testing.T, h *Handler, id string, code int, name string) *I
 	return inst
 }
 
+// seedLaunchTemplate writes a one-version launch template straight to the
+// store, so a parity case can reference it by a fixed ID rather than by one
+// CreateLaunchTemplate would have minted.
+func seedLaunchTemplate(t *testing.T, h *Handler, id string) *LaunchTemplate {
+	t.Helper()
+	ctx := context.Background()
+	lt := &LaunchTemplate{
+		LaunchTemplateID:     id,
+		LaunchTemplateName:   "mut-" + id,
+		CreateTime:           "2026-01-01T00:00:00Z",
+		CreatedBy:            "arn:aws:iam::123456789012:root",
+		DefaultVersionNumber: 1,
+		LatestVersionNumber:  1,
+	}
+	version := &LaunchTemplateVersion{
+		LaunchTemplateID:   lt.LaunchTemplateID,
+		LaunchTemplateName: lt.LaunchTemplateName,
+		VersionNumber:      1,
+		CreateTime:         lt.CreateTime,
+		CreatedBy:          lt.CreatedBy,
+		Data: LaunchTemplateData{
+			ImageID:      "ami-12345678",
+			InstanceType: "t3.micro",
+			TagSpecifications: []LaunchTemplateTagSpecification{{
+				ResourceType: "instance",
+				Tags:         []Tag{{Key: "Source", Value: "template"}},
+			}},
+		},
+	}
+	if aerr := h.store.putLaunchTemplateVersion(ctx, version); aerr != nil {
+		t.Fatalf("putLaunchTemplateVersion: %s", aerr.Message)
+	}
+	if aerr := h.store.putLaunchTemplate(ctx, lt); aerr != nil {
+		t.Fatalf("putLaunchTemplate: %s", aerr.Message)
+	}
+	return lt
+}
+
 func seedRouteTable(t *testing.T, h *Handler, id, vpcID string) *RouteTable {
 	t.Helper()
 	rt := &RouteTable{
@@ -609,6 +647,25 @@ func mutationCases() map[string][]mutationCase {
 			{
 				name:   "bad-tag-rejected",
 				params: url.Values{"ImageId": {"ami-12345678"}, "MinCount": {"1"}, "MaxCount": {"1"}, "TagSpecification.1.ResourceType": {"instance"}, "TagSpecification.1.Tag.1.Key": {"aws:owner"}, "TagSpecification.1.Tag.1.Value": {"x"}},
+			},
+			{
+				// The launch-template merge (#518) is written once and called
+				// from both bodies, and this is what says so: the template
+				// supplies the AMI and the instance tags, the request wins on
+				// instance type, and both paths have to agree on all three.
+				name: "launch-template-merged-under-explicit-params",
+				seed: func(t *testing.T, h *Handler) { seedLaunchTemplate(t, h, "lt-mut-run") },
+				params: url.Values{
+					"LaunchTemplate.LaunchTemplateId": {"lt-mut-run"},
+					"InstanceType":                    {"c5.large"},
+					"MinCount":                        {"1"},
+					"MaxCount":                        {"1"},
+				},
+				after: tagsAfter("instanceId"),
+			},
+			{
+				name:   "launch-template-not-found",
+				params: url.Values{"LaunchTemplate.LaunchTemplateName": {"mut-no-such-template"}, "MinCount": {"1"}, "MaxCount": {"1"}},
 			},
 		},
 		"TerminateInstances": {

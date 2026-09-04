@@ -45,6 +45,7 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 | Lambda in a VPC | A function with a `VpcConfig` is attached to that VPC's network, alongside the control plane — so it can reach an RDS instance or an ECS task in the same VPC |
 | CDK lookups | `Vpc.fromLookup`, subnet `tagSet`, NAT gateway routes in `DescribeRouteTables`, and `MapPublicIpOnLaunch` are all present, so subnet-group classification works |
 | Instances | `RunInstances` records state with async `pending` → `running`, emitting `EC2 Instance State-change Notification` to the default EventBridge bus |
+| Launch templates | Created, versioned and described in full, with `$Latest`/`$Default` resolution and the default-version move `ModifyLaunchTemplate` makes. `RunInstances` and Auto Scaling both launch from one; a parameter passed explicitly wins over the template that would have supplied it |
 | Reconciliation | Stored VPCs are reconciled against actual Docker networks at startup: missing networks recreated, drifted IDs updated, networks left behind by VPCs that no longer exist removed |
 | Dependencies | `DeleteVpc`, `DeleteSubnet` and `DeleteSecurityGroup` fail with `DependencyViolation` while something still references them, as on AWS |
 
@@ -68,6 +69,7 @@ see [How a VPC is backed by a Docker network](../networking/vpc-backing.md).
 | Area                                                 | On AWS                                              | Overcast                                                                                                       |
 | ---------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | Instances                                            | A VM boots from the AMI                             | Metadata only; no VM or container is launched, and no compute sits behind an instance ID                       |
+| Launch template `KeyName`, `UserData`, `IamInstanceProfile`, `SecurityGroups` | Applied to the instance           | Stored on the template and returned on describe; an instance record has nowhere to carry them                  |
 | Security group rules                                 | Enforced on every packet                            | Stored and returned, never enforced — everything on a VPC's network can talk to everything else                |
 | Subnets                                              | Each subnet is its own routed network               | Metadata only; a VPC is one flat bridge, with no per-subnet isolation or routing                               |
 | Route tables, NAT gateways, VPN and transit gateways | Shape the network path                              | Metadata only; only an internet gateway changes the topology                                                   |
@@ -99,7 +101,7 @@ that operation does support — see
 
 ## Operations
 
-All 72 listed operations are implemented.
+All 79 listed operations are implemented.
 Per-operation status, notes and AWS API links: [EC2 / VPC operations](ec2/operations.md).
 
 <!-- END overcast:capabilities -->
