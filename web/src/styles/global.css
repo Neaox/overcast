@@ -75,6 +75,13 @@
      themes (see dialog.tsx) because it covers the whole viewport. */
   --color-scrim-dim: var(--scrim-dim);
 
+  /* Edge shadow a horizontal scroller draws on the side it can still scroll
+     towards — the "there is more this way" mark on a table whose columns
+     outrun the pane. Ink rather than a fade to the surface colour, because a
+     table has three surfaces (header strip, card, hovered row) and one fade
+     colour would be wrong on two of them. */
+  --color-scrim-edge: var(--scrim-edge);
+
   /* Design radii → rounded-card / rounded-control utilities */
   --radius-card: 10px;
   --radius-control: 6px;
@@ -248,6 +255,7 @@
 
   /* Dimming on a light surface means washing out, not blacking over. */
   --scrim-dim: rgb(255 255 255 / 0.62);
+  --scrim-edge: rgb(22 34 46 / 0.16);
 }
 
 /* Syntax token colours (--token-*) live in syntax-tokens.css — a
@@ -315,6 +323,7 @@
 
   /* Dimming on a dark surface means darkening. */
   --_dark-scrim-dim: rgb(0 0 0 / 0.5);
+  --_dark-scrim-edge: rgb(0 0 0 / 0.55);
 }
 
 /* Applied when OS prefers dark and the user hasn't explicitly chosen light. */
@@ -372,6 +381,7 @@
     --cat-10: var(--_dark-cat-10);
 
     --scrim-dim: var(--_dark-scrim-dim);
+    --scrim-edge: var(--_dark-scrim-edge);
   }
 }
 
@@ -429,6 +439,7 @@
   --cat-10: var(--_dark-cat-10);
 
   --scrim-dim: var(--_dark-scrim-dim);
+  --scrim-edge: var(--_dark-scrim-edge);
 }
 
 @layer base {
@@ -571,6 +582,88 @@
     color: var(--fg-subtle);
     pointer-events: none;
     user-select: none;
+  }
+}
+
+/* ─── Focused table row ──────────────────────────────────────────────────
+   A clickable row is a control — `TableRow` takes tabIndex and answers
+   Enter/Space — so it has to look focused like one. The shared ring cannot do
+   it: an `outline` on a `<tr>` inside a `border-collapse` table paints along
+   the row's top and bottom edges and nothing down its sides, which reads as a
+   pair of hairlines next to the four-sided ring a sidebar link gets (#1610).
+
+   So the ring is drawn on the row's own cells: a 2px line along the top and
+   bottom of every cell (they tile into one continuous rule across the row),
+   with the two ends closed by the first and last cell. Same 2px, same
+   `--accent`, so a focused row matches the nav — 5.4:1 against the light card
+   and 8.9:1 against the dark one, well past the 3:1 WCAG 1.4.11 asks of a
+   focus indicator, and clearing it on the `--accent-muted` wash too. That wash
+   is the hover colour, which makes the whole row read as the target rather
+   than its border alone.
+
+   The lines are **backgrounds, not shadows or borders**, and that is the part
+   worth not undoing. `box-shadow: inset` was the obvious spelling and Chrome
+   paints it wrong on a collapsed-border table: every cell picks up a vertical
+   seam at its own edges, so the ring came out with a faint column grid drawn
+   inside it. Borders would collapse cleanly but change the row's height on
+   focus, which makes the list jump. A background gradient is neither — it
+   paints exactly the strip it is given, inside a box whose geometry nothing
+   about focus has changed.
+
+   In @layer components, above the base `:focus-visible` whose outline it
+   replaces, and below @layer utilities so a call site's own class still wins.
+   ──────────────────────────────────────────────────────────────────────── */
+@layer components {
+  tr.oc-row-focus:focus-visible {
+    outline: none;
+    background-color: var(--accent-muted);
+  }
+  tr.oc-row-focus:focus-visible > td,
+  tr.oc-row-focus:focus-visible > th {
+    background-image:
+      linear-gradient(var(--accent), var(--accent)), linear-gradient(var(--accent), var(--accent));
+    background-size:
+      100% 2px,
+      100% 2px;
+    background-position:
+      top left,
+      bottom left;
+    background-repeat: no-repeat;
+  }
+  tr.oc-row-focus:focus-visible > :first-child {
+    background-image:
+      linear-gradient(var(--accent), var(--accent)), linear-gradient(var(--accent), var(--accent)),
+      linear-gradient(var(--accent), var(--accent));
+    background-size:
+      100% 2px,
+      100% 2px,
+      2px 100%;
+    background-position:
+      top left,
+      bottom left,
+      left top;
+  }
+  tr.oc-row-focus:focus-visible > :last-child {
+    background-image:
+      linear-gradient(var(--accent), var(--accent)), linear-gradient(var(--accent), var(--accent)),
+      linear-gradient(var(--accent), var(--accent));
+    background-size:
+      100% 2px,
+      100% 2px,
+      2px 100%;
+    background-position:
+      top left,
+      bottom left,
+      right top;
+  }
+  /* Forced colours drop background images entirely, so the row would have no
+     indicator at all. Hand it back the outline — two edges is what a <tr> can
+     paint there, and two edges beats none. */
+  @media (forced-colors: active) {
+    tr.oc-row-focus:focus-visible {
+      outline: 2px solid;
+      outline-offset: -2px;
+    }
   }
 }
 

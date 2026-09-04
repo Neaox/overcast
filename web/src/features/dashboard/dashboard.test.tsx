@@ -67,6 +67,20 @@ describe("Dashboard", () => {
     expect(screen.getByRole("table", { name: "Services" })).toBeInTheDocument()
   })
 
+  // #1611: the Scope and Tier columns ran off the right of a card with
+  // `overflow-hidden` and nothing scrolled to reach them, so at ~400px the data
+  // was simply unreachable. The table now sits on the same focusable scroller
+  // every ResourceTable list page uses.
+  it("puts the services table on a focusable horizontal scroller", async () => {
+    const { user } = renderDashboard()
+
+    await user.click(await screen.findByRole("button", { name: "List view" }))
+
+    const scroller = screen.getByRole("table", { name: "Services" }).parentElement
+    expect(scroller).toHaveAttribute("tabindex", "0")
+    expect(scroller).toHaveClass("overflow-auto")
+  })
+
   it("groups a partially emulated service by its tier", async () => {
     renderDashboard()
 

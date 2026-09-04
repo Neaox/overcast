@@ -1,15 +1,18 @@
 import * as React from "react"
+import { ScrollX } from "@/components/ui/scroll-x"
 import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
+/**
+ * A table on its scroller. `ScrollX` owns the narrow-width contract — the
+ * sideways scroll and the edge shadow that says there is more of it — so every
+ * `ResourceTable` consumer inherits the same behaviour from one place.
+ */
 function Table({ className, ...props }: React.HTMLAttributes<HTMLTableElement>) {
   return (
-    // `tabIndex={0}` on the scroller: a container that scrolls but cannot be focused is
-    // reachable by trackpad and by nothing else, and these tables scroll sideways
-    // whenever the columns outrun the pane (WCAG 2.1.1).
-    <div tabIndex={0} className="relative w-full overflow-auto focus-visible:outline-2">
+    <ScrollX>
       <table className={cn("w-full caption-bottom text-sm", className)} {...props} />
-    </div>
+    </ScrollX>
   )
 }
 
@@ -37,7 +40,12 @@ function TableRow({
     <tr
       className={cn(
         "border-b border-border-muted transition-colors",
-        onClick && "cursor-pointer hover:bg-accent-muted focus-visible:-outline-offset-2",
+        // `oc-row-focus` and not an outline utility: an outline on a <tr> in a
+        // collapsed-border table paints as a line along the row's top and
+        // bottom and nothing down the sides, which is a far weaker mark than
+        // the ring every other control gets (#1610). The class draws the ring
+        // across the row's own cells instead — see global.css.
+        onClick && "oc-row-focus cursor-pointer hover:bg-accent-muted",
         "data-[selected=true]:bg-accent-muted",
         className,
       )}
@@ -64,7 +72,12 @@ function TableRow({
  * header that names nothing is not a header, and announcing "blank, column one"
  * ahead of every row is worse than announcing nothing.
  */
-function TableHead({ className, children, scope, ...props }: React.ThHTMLAttributes<HTMLTableCellElement>) {
+function TableHead({
+  className,
+  children,
+  scope,
+  ...props
+}: React.ThHTMLAttributes<HTMLTableCellElement>) {
   const styles = cn(
     fieldLabel,
     "px-4 py-2 text-left align-middle whitespace-nowrap text-fg-subtle",

@@ -147,3 +147,33 @@ describe("SelectCheckbox", () => {
     expect(screen.getByRole("checkbox", { name: "Select all" })).toBePartiallyChecked()
   })
 })
+
+/*
+ * #1611: at ~400px the header row kept its desktop layout and the Docs /
+ * Refresh / Create run overflowed the viewport uncut, taking the page's primary
+ * action off-screen with nothing to scroll it back. jsdom does no layout, so
+ * what a test can hold is the rule that decides the outcome: the row is allowed
+ * to break, and the actions no longer refuse to be moved.
+ */
+describe("ResourceListPage > narrow-width header", () => {
+  function headerRow() {
+    // The row is the heading's grandparent: <h1> sits in the title block, which
+    // is the first child of the header row.
+    return screen.getByRole("heading", { name: "S3 Buckets" }).parentElement?.parentElement
+      ?.parentElement
+  }
+
+  it("lets the header row wrap, so the actions drop to their own line", () => {
+    render(<BucketsPage />)
+
+    expect(headerRow()).toHaveClass("flex-wrap")
+  })
+
+  it("no longer pins the actions at full width, which is what pushed them off-screen", () => {
+    render(<BucketsPage />)
+
+    const actions = screen.getByRole("button", { name: "Create bucket" }).parentElement
+    expect(actions).not.toHaveClass("shrink-0")
+    expect(actions).toHaveClass("flex-wrap")
+  })
+})
