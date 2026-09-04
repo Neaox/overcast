@@ -2760,7 +2760,7 @@ func (h *Handler) deniesField(api *GraphqlAPI, identity map[string]any, typeName
 // Known divergence: for a repeated header we keep only the first value. The AWS
 // docs instead describe an array ("You could then access these as an array,
 // such as ctx.request.headers.custom[1]"), which would need this map to become
-// map[string]any. See docs/dev/header-casing-audit.md.
+// map[string]any. See docs/plans/header-casing-audit.md.
 func flattenHeaders(h http.Header) map[string]string {
 	if h == nil {
 		return nil

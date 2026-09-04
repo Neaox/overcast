@@ -25,6 +25,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path"
@@ -78,6 +79,9 @@ func main() {
 		}
 	}
 	if err := checkGeneratedDocsAreTracked(); err != nil {
+		fatal(err)
+	}
+	if err := checkContributorDocs(); err != nil {
 		fatal(err)
 	}
 }
@@ -209,6 +213,54 @@ func checkDocStructure(docs []docsindex.Doc) error {
 		lines = append(lines, p.String())
 	}
 	return fmt.Errorf("published docs do not follow the docs rules:\n\t%s", strings.Join(lines, "\n\t"))
+}
+
+// contributorRoot is where the contributor tree lives, relative to docsRoot.
+const contributorRoot = "dev"
+
+// checkContributorDocs applies the length budget — and only that — to
+// docs/dev/.
+//
+// A separate pass because docs/dev/ is a separate corpus, in two ways that
+// matter. It is not published, so docsindex skips it entirely and nothing here
+// may put it back: these pages stay out of the navigation, the search index and
+// the site. And it is written for a different reader, so the ceilings are
+// docslint.DevMaxProseChars and DevMaxPageChars rather than the published ones.
+//
+// What it shares with a published page is the failure mode. docs/dev/ held the
+// four largest files in the repository, and a page nobody can find anything in
+// costs a contributor the same afternoon it costs a user (#1619).
+func checkContributorDocs() error {
+	root := filepath.Join(docsRoot, contributorRoot)
+	var entries []docslint.Doc
+	err := filepath.WalkDir(root, func(fsPath string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || filepath.Ext(fsPath) != ".md" {
+			return err
+		}
+		raw, err := os.ReadFile(fsPath)
+		if err != nil {
+			return err
+		}
+		body := string(raw)
+		if _, stripped, ok := docsindex.SplitFrontmatter(body); ok {
+			body = stripped
+		}
+		entries = append(entries, docslint.Doc{Path: filepath.ToSlash(fsPath), Body: body})
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	problems := docslint.CheckContributorWith(entries, docslint.Options{WholeCorpus: true})
+	if len(problems) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(problems))
+	for _, p := range problems {
+		lines = append(lines, p.String())
+	}
+	return fmt.Errorf("contributor docs do not follow the length budget:\n\t%s", strings.Join(lines, "\n\t"))
 }
 
 // readTellsAllowlist loads the house-style exceptions. An absent file means no
