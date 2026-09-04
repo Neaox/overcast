@@ -29,3 +29,6 @@ dist-ssr
 *.sln
 *.sw?
 .tanstack
+
+# The console server bundle (`pnpm run build:server`) — build output, never committed.
+dist-server/
