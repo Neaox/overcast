@@ -29,20 +29,20 @@ public final class KinesisGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("CreateStream",      this::createStream),
-                Map.entry("DescribeStream",    this::describeStream),
-                Map.entry("DescribeStreamSummary", this::describeStreamSummary),
-                Map.entry("ListStreams",        this::listStreams),
-                Map.entry("ListShards",        this::listShards),
-                Map.entry("AddTagsToStream",   this::addTagsToStream),
-                Map.entry("ListTagsForStream", this::listTagsForStream),
-                Map.entry("DeleteStream",      this::deleteStream),
-                Map.entry("PutRecord",         this::putRecord),
-                Map.entry("PutRecords",        this::putRecords),
-                Map.entry("GetRecords",        this::getRecords),
-                Map.entry("GetShardIterator",  this::getShardIterator),
-                Map.entry("MergeShards",       this::mergeShards),
-                Map.entry("SplitShard",        this::splitShard)
+                Map.entry("kinesis-streams:CreateStream",          this::createStream),
+                Map.entry("kinesis-streams:DescribeStream",        this::describeStream),
+                Map.entry("kinesis-streams:DescribeStreamSummary", this::describeStreamSummary),
+                Map.entry("kinesis-streams:ListStreams",           this::listStreams),
+                Map.entry("kinesis-shards:ListShards",             this::listShards),
+                Map.entry("kinesis-streams:AddTagsToStream",       this::addTagsToStream),
+                Map.entry("kinesis-streams:ListTagsForStream",     this::listTagsForStream),
+                Map.entry("kinesis-streams:DeleteStream",          this::deleteStream),
+                Map.entry("kinesis-records:PutRecord",             this::putRecord),
+                Map.entry("kinesis-records:PutRecords",            this::putRecords),
+                Map.entry("kinesis-records:GetRecords",            this::getRecords),
+                Map.entry("kinesis-records:GetShardIterator",      this::getShardIterator),
+                Map.entry("kinesis-shards:MergeShards",            this::mergeShards),
+                Map.entry("kinesis-shards:SplitShard",             this::splitShard)
         );
     }
 

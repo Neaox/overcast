@@ -30,20 +30,20 @@ public final class SnsGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("CreateTopic",               this::createTopic),
-                Map.entry("ListTopics",                this::listTopics),
-                Map.entry("GetTopicAttributes",        this::getTopicAttributes),
-                Map.entry("SetTopicAttributes",        this::setTopicAttributes),
-                Map.entry("DeleteTopic",               this::deleteTopic),
-                Map.entry("Publish",                   this::publish),
-                Map.entry("PublishWithAttributes",     this::publishWithAttributes),
-                Map.entry("PublishBatch",              this::publishBatch),
-                Map.entry("SubscribeSQS",              this::subscribeSqs),
-                Map.entry("ListSubscriptionsByTopic",  this::listSubscriptionsByTopic),
-                Map.entry("GetSubscriptionAttributes", this::getSubscriptionAttributes),
-                Map.entry("PublishDeliveredToSQS",     this::publishDeliveredToSqs),
-                Map.entry("SetSubscriptionAttributes", this::setSubscriptionAttributes),
-                Map.entry("Unsubscribe",               this::unsubscribe)
+                Map.entry("sns-topics:CreateTopic",                      this::createTopic),
+                Map.entry("sns-topics:ListTopics",                       this::listTopics),
+                Map.entry("sns-topics:GetTopicAttributes",               this::getTopicAttributes),
+                Map.entry("sns-topics:SetTopicAttributes",               this::setTopicAttributes),
+                Map.entry("sns-topics:DeleteTopic",                      this::deleteTopic),
+                Map.entry("sns-publish:Publish",                         this::publish),
+                Map.entry("sns-publish:PublishWithAttributes",           this::publishWithAttributes),
+                Map.entry("sns-publish:PublishBatch",                    this::publishBatch),
+                Map.entry("sns-subscriptions:SubscribeSQS",              this::subscribeSqs),
+                Map.entry("sns-subscriptions:ListSubscriptionsByTopic",  this::listSubscriptionsByTopic),
+                Map.entry("sns-subscriptions:GetSubscriptionAttributes", this::getSubscriptionAttributes),
+                Map.entry("sns-subscriptions:PublishDeliveredToSQS",     this::publishDeliveredToSqs),
+                Map.entry("sns-subscriptions:SetSubscriptionAttributes", this::setSubscriptionAttributes),
+                Map.entry("sns-subscriptions:Unsubscribe",               this::unsubscribe)
         );
     }
 

@@ -55,13 +55,13 @@ public final class PipesGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("CreatePipe",   this::createPipe),
-                Map.entry("DescribePipe", this::describePipe),
-                Map.entry("ListPipes",    this::listPipes),
-                Map.entry("CreatePipeRejectsUnsupportedTarget", this::createPipeRejectsUnsupportedTarget),
-                Map.entry("PipeDeliversToTarget", this::pipeDeliversToTarget),
-                Map.entry("UpdatePipe",   this::updatePipe),
-                Map.entry("DeletePipe",   this::deletePipe)
+                Map.entry("pipes-wiring:CreatePipe",                         this::createPipe),
+                Map.entry("pipes-wiring:DescribePipe",                       this::describePipe),
+                Map.entry("pipes-wiring:ListPipes",                          this::listPipes),
+                Map.entry("pipes-wiring:CreatePipeRejectsUnsupportedTarget", this::createPipeRejectsUnsupportedTarget),
+                Map.entry("pipes-wiring:PipeDeliversToTarget",               this::pipeDeliversToTarget),
+                Map.entry("pipes-wiring:UpdatePipe",                         this::updatePipe),
+                Map.entry("pipes-wiring:DeletePipe",                         this::deletePipe)
         );
     }
 

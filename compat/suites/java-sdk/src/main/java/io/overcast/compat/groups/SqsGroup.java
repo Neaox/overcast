@@ -28,27 +28,27 @@ public final class SqsGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("CreateQueue",              this::createQueue),
-                Map.entry("GetQueueUrl",              this::getQueueUrl),
-                Map.entry("ListQueues",               this::listQueues),
-                Map.entry("SetQueueAttributes",       this::setQueueAttributes),
-                Map.entry("GetQueueAttributes",       this::getQueueAttributes),
-                Map.entry("TagQueue",                 this::tagQueue),
-                Map.entry("UntagQueue",               this::untagQueue),
-                Map.entry("DeleteQueue",              this::deleteQueue),
-                Map.entry("SendMessage",              this::sendMessage),
-                Map.entry("SendMessageBatch",         this::sendMessageBatch),
-                Map.entry("ReceiveMessage",           this::receiveMessage),
-                Map.entry("DeleteMessage",            this::deleteMessage),
-                Map.entry("ChangeMessageVisibility",  this::changeMessageVisibility),
-                Map.entry("DeleteMessageBatch",       this::deleteMessageBatch),
-                Map.entry("PurgeQueue",               this::purgeQueue),
-                Map.entry("CreateDLQ",                this::createDlq),
-                Map.entry("SetRedrivePolicy",         this::setRedrivePolicy),
-                Map.entry("GetRedrivePolicy",         this::getRedrivePolicy),
-                Map.entry("CreateFifoQueue",          this::createFifoQueue),
-                Map.entry("SendFifoMessage",          this::sendFifoMessage),
-                Map.entry("ReceiveFifoMessage",       this::receiveFifoMessage)
+                Map.entry("sqs-queues:CreateQueue",               this::createQueue),
+                Map.entry("sqs-queues:GetQueueUrl",               this::getQueueUrl),
+                Map.entry("sqs-queues:ListQueues",                this::listQueues),
+                Map.entry("sqs-queues:SetQueueAttributes",        this::setQueueAttributes),
+                Map.entry("sqs-queues:GetQueueAttributes",        this::getQueueAttributes),
+                Map.entry("sqs-queues:TagQueue",                  this::tagQueue),
+                Map.entry("sqs-queues:UntagQueue",                this::untagQueue),
+                Map.entry("sqs-queues:DeleteQueue",               this::deleteQueue),
+                Map.entry("sqs-messages:SendMessage",             this::sendMessage),
+                Map.entry("sqs-messages:SendMessageBatch",        this::sendMessageBatch),
+                Map.entry("sqs-messages:ReceiveMessage",          this::receiveMessage),
+                Map.entry("sqs-messages:DeleteMessage",           this::deleteMessage),
+                Map.entry("sqs-messages:ChangeMessageVisibility", this::changeMessageVisibility),
+                Map.entry("sqs-messages:DeleteMessageBatch",      this::deleteMessageBatch),
+                Map.entry("sqs-messages:PurgeQueue",              this::purgeQueue),
+                Map.entry("sqs-dlq:CreateDLQ",                    this::createDlq),
+                Map.entry("sqs-dlq:SetRedrivePolicy",             this::setRedrivePolicy),
+                Map.entry("sqs-dlq:GetRedrivePolicy",             this::getRedrivePolicy),
+                Map.entry("sqs-fifo:CreateFifoQueue",             this::createFifoQueue),
+                Map.entry("sqs-fifo:SendFifoMessage",             this::sendFifoMessage),
+                Map.entry("sqs-fifo:ReceiveFifoMessage",          this::receiveFifoMessage)
         );
     }
 

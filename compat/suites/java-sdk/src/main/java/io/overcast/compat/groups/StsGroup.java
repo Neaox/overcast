@@ -26,11 +26,11 @@ public final class StsGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("GetCallerIdentity",        this::getCallerIdentity),
-                Map.entry("GetSessionToken",          this::getSessionToken),
-                Map.entry("GetFederationToken",       this::getFederationToken),
-                Map.entry("AssumeRole",               this::assumeRole),
-                Map.entry("AssumeRoleWithWebIdentity",this::assumeRoleWithWebIdentity)
+                Map.entry("sts-identity:GetCallerIdentity",       this::getCallerIdentity),
+                Map.entry("sts-identity:GetSessionToken",         this::getSessionToken),
+                Map.entry("sts-identity:GetFederationToken",      this::getFederationToken),
+                Map.entry("sts-assume:AssumeRole",                this::assumeRole),
+                Map.entry("sts-assume:AssumeRoleWithWebIdentity", this::assumeRoleWithWebIdentity)
         );
     }
 

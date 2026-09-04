@@ -40,11 +40,11 @@ public final class StepFunctionsGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("CreateStateMachine",  this::createStateMachine),
-                Map.entry("DescribeStateMachine",this::describeStateMachine),
-                Map.entry("ListStateMachines",   this::listStateMachines),
-                Map.entry("sfn-statemachines:StartExecution", this::startExecution),
-                Map.entry("DeleteStateMachine",  this::deleteStateMachine),
+                Map.entry("sfn-statemachines:CreateStateMachine",   this::createStateMachine),
+                Map.entry("sfn-statemachines:DescribeStateMachine", this::describeStateMachine),
+                Map.entry("sfn-statemachines:ListStateMachines",    this::listStateMachines),
+                Map.entry("sfn-statemachines:StartExecution",       this::startExecution),
+                Map.entry("sfn-statemachines:DeleteStateMachine",   this::deleteStateMachine),
                 // sfn-executions — group-qualified ("group:test", as in every
                 // suite) so StartExecution does not collide with the
                 // sfn-statemachines test of the same name.

@@ -32,22 +32,22 @@ public final class EcsGroup implements ServiceGroup {
                 // names. A bare key is ambiguous once two registry groups
                 // declare a test name, and every loader refuses it rather than
                 // binding the wrong implementation.
-                Map.entry("ecs-clusters:CreateCluster", this::createCluster),
-                Map.entry("DescribeClusters",   this::describeClusters),
-                Map.entry("ecs-clusters:ListClusters",  this::listClusters),
-                Map.entry("RegisterTaskDefinition",  this::registerTaskDef),
-                Map.entry("ListTaskDefinitions",      this::listTaskDefinitions),
-                Map.entry("DeregisterTaskDefinition", this::deregisterTaskDef),
-                Map.entry("ecs-clusters:DeleteCluster", this::deleteCluster),
-                Map.entry("RunTask",            this::runTask),
-                Map.entry("DescribeTasks",      this::describeTasks),
-                Map.entry("ListTasks",          this::listTasks),
-                Map.entry("StopTask",           this::stopTask),
-                Map.entry("CreateService",      this::createService),
-                Map.entry("DescribeServices",   this::describeServices),
-                Map.entry("ListServices",       this::listServices),
-                Map.entry("UpdateService",      this::updateService),
-                Map.entry("DeleteService",      this::deleteService)
+                Map.entry("ecs-clusters:CreateCluster",            this::createCluster),
+                Map.entry("ecs-clusters:DescribeClusters",         this::describeClusters),
+                Map.entry("ecs-clusters:ListClusters",             this::listClusters),
+                Map.entry("ecs-clusters:RegisterTaskDefinition",   this::registerTaskDef),
+                Map.entry("ecs-clusters:ListTaskDefinitions",      this::listTaskDefinitions),
+                Map.entry("ecs-clusters:DeregisterTaskDefinition", this::deregisterTaskDef),
+                Map.entry("ecs-clusters:DeleteCluster",            this::deleteCluster),
+                Map.entry("ecs-tasks:RunTask",                     this::runTask),
+                Map.entry("ecs-tasks:DescribeTasks",               this::describeTasks),
+                Map.entry("ecs-tasks:ListTasks",                   this::listTasks),
+                Map.entry("ecs-tasks:StopTask",                    this::stopTask),
+                Map.entry("ecs-services:CreateService",            this::createService),
+                Map.entry("ecs-services:DescribeServices",         this::describeServices),
+                Map.entry("ecs-services:ListServices",             this::listServices),
+                Map.entry("ecs-services:UpdateService",            this::updateService),
+                Map.entry("ecs-services:DeleteService",            this::deleteService)
         );
     }
 

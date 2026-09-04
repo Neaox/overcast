@@ -28,25 +28,25 @@ public final class KmsGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("CreateKey",                      this::createKey),
-                Map.entry("DescribeKey",                    this::describeKey),
-                Map.entry("PutKeyPolicy",                   this::putKeyPolicy),
-                Map.entry("CreateKmsAlias",                 this::createKmsAlias),
-                Map.entry("ListKmsAliases",                 this::listKmsAliases),
-                Map.entry("ListKeys",                       this::listKeys),
-                Map.entry("DisableKey",                     this::disableKey),
-                Map.entry("EnableKey",                      this::enableKey),
-                Map.entry("ScheduleKeyDeletion",            this::scheduleKeyDeletion),
-                Map.entry("CancelKeyDeletion",              this::cancelKeyDeletion),
-                Map.entry("TagKMSResource",                 this::tagKmsResource),
-                Map.entry("UntagKMSResource",               this::untagKmsResource),
-                Map.entry("ListKMSResourceTags",            this::listKmsResourceTags),
-                Map.entry("Encrypt",                        this::encrypt),
-                Map.entry("Decrypt",                        this::decrypt),
-                Map.entry("GenerateDataKey",                this::generateDataKey),
-                Map.entry("GenerateDataKeyWithoutPlaintext",this::generateDataKeyWithoutPlaintext),
-                Map.entry("Sign",                           this::sign),
-                Map.entry("Verify",                         this::verify)
+                Map.entry("kms-keys:CreateKey",                         this::createKey),
+                Map.entry("kms-keys:DescribeKey",                       this::describeKey),
+                Map.entry("kms-keys:PutKeyPolicy",                      this::putKeyPolicy),
+                Map.entry("kms-keys:CreateKmsAlias",                    this::createKmsAlias),
+                Map.entry("kms-keys:ListKmsAliases",                    this::listKmsAliases),
+                Map.entry("kms-keys:ListKeys",                          this::listKeys),
+                Map.entry("kms-keys:DisableKey",                        this::disableKey),
+                Map.entry("kms-keys:EnableKey",                         this::enableKey),
+                Map.entry("kms-keys:ScheduleKeyDeletion",               this::scheduleKeyDeletion),
+                Map.entry("kms-keys:CancelKeyDeletion",                 this::cancelKeyDeletion),
+                Map.entry("kms-keys:TagKMSResource",                    this::tagKmsResource),
+                Map.entry("kms-keys:UntagKMSResource",                  this::untagKmsResource),
+                Map.entry("kms-keys:ListKMSResourceTags",               this::listKmsResourceTags),
+                Map.entry("kms-crypto:Encrypt",                         this::encrypt),
+                Map.entry("kms-crypto:Decrypt",                         this::decrypt),
+                Map.entry("kms-crypto:GenerateDataKey",                 this::generateDataKey),
+                Map.entry("kms-crypto:GenerateDataKeyWithoutPlaintext", this::generateDataKeyWithoutPlaintext),
+                Map.entry("kms-asymmetric:Sign",                        this::sign),
+                Map.entry("kms-asymmetric:Verify",                      this::verify)
         );
     }
 

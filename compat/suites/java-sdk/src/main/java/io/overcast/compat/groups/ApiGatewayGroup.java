@@ -35,13 +35,13 @@ public final class ApiGatewayGroup implements ServiceGroup {
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
                 // REST API (v1)
-                Map.entry("CreateRestApi",    this::createRestApi),
-                Map.entry("GetRestApis",      this::getRestApis),
-                Map.entry("DeleteRestApi",    this::deleteRestApi),
+                Map.entry("apigateway-rest:CreateRestApi", this::createRestApi),
+                Map.entry("apigateway-rest:GetRestApis",   this::getRestApis),
+                Map.entry("apigateway-rest:DeleteRestApi", this::deleteRestApi),
                 // HTTP API (v2)
-                Map.entry("CreateApi",        this::createApi),
-                Map.entry("GetApis",          this::getApis),
-                Map.entry("DeleteApi",        this::deleteApi),
+                Map.entry("apigateway-http:CreateApi", this::createApi),
+                Map.entry("apigateway-http:GetApis",   this::getApis),
+                Map.entry("apigateway-http:DeleteApi", this::deleteApi),
                 // apigateway-usage-plans — group-qualified because CreateApiKey
                 // and GetUsagePlan are generic enough to collide with another
                 // service's group.

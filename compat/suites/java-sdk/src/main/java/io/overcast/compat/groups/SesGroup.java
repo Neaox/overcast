@@ -27,23 +27,23 @@ public final class SesGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("SendEmail",               this::sendEmail),
-                Map.entry("SendRawEmail",            this::sendRawEmail),
-                Map.entry("SendEmailWithReplyTo",    this::sendEmailWithReplyTo),
-                Map.entry("SendTemplatedEmail",      this::sendTemplatedEmail),
-                Map.entry("VerifyEmailIdentity",     this::verifyEmailIdentity),
-                Map.entry("ListIdentities",          this::listIdentities),
-                Map.entry("GetIdentityVerificationAttributes", this::getIdentityVerificationAttributes),
-                Map.entry("VerifyEmailAddress",      this::verifyEmailAddress),
-                Map.entry("ListVerifiedEmailAddresses", this::listVerifiedEmailAddresses),
-                Map.entry("SetIdentityFeedbackForwardingEnabled", this::setIdentityFeedbackForwardingEnabled),
-                Map.entry("DeleteIdentity",          this::deleteIdentity),
-                Map.entry("GetSendQuota",            this::getSendQuota),
-                Map.entry("CreateTemplate",          this::createTemplate),
-                Map.entry("GetTemplate",             this::getTemplate),
-                Map.entry("ListTemplates",           this::listTemplates),
-                Map.entry("UpdateTemplate",          this::updateTemplate),
-                Map.entry("DeleteTemplate",          this::deleteTemplate)
+                Map.entry("ses-send:SendEmail",                                  this::sendEmail),
+                Map.entry("ses-send:SendRawEmail",                               this::sendRawEmail),
+                Map.entry("ses-send:SendEmailWithReplyTo",                       this::sendEmailWithReplyTo),
+                Map.entry("ses-templates:SendTemplatedEmail",                    this::sendTemplatedEmail),
+                Map.entry("ses-identities:VerifyEmailIdentity",                  this::verifyEmailIdentity),
+                Map.entry("ses-identities:ListIdentities",                       this::listIdentities),
+                Map.entry("ses-identities:GetIdentityVerificationAttributes",    this::getIdentityVerificationAttributes),
+                Map.entry("ses-identities:VerifyEmailAddress",                   this::verifyEmailAddress),
+                Map.entry("ses-identities:ListVerifiedEmailAddresses",           this::listVerifiedEmailAddresses),
+                Map.entry("ses-identities:SetIdentityFeedbackForwardingEnabled", this::setIdentityFeedbackForwardingEnabled),
+                Map.entry("ses-identities:DeleteIdentity",                       this::deleteIdentity),
+                Map.entry("ses-send:GetSendQuota",                               this::getSendQuota),
+                Map.entry("ses-templates:CreateTemplate",                        this::createTemplate),
+                Map.entry("ses-templates:GetTemplate",                           this::getTemplate),
+                Map.entry("ses-templates:ListTemplates",                         this::listTemplates),
+                Map.entry("ses-templates:UpdateTemplate",                        this::updateTemplate),
+                Map.entry("ses-templates:DeleteTemplate",                        this::deleteTemplate)
         );
     }
 

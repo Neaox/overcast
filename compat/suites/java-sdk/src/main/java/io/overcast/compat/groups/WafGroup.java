@@ -27,10 +27,10 @@ public final class WafGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("CreateWebACL",  this::createWebAcl),
-                Map.entry("GetWebACL",     this::getWebAcl),
-                Map.entry("ListWebACLs",   this::listWebAcls),
-                Map.entry("DeleteWebACL",  this::deleteWebAcl)
+                Map.entry("waf-webacls:CreateWebACL", this::createWebAcl),
+                Map.entry("waf-webacls:GetWebACL",    this::getWebAcl),
+                Map.entry("waf-webacls:ListWebACLs",  this::listWebAcls),
+                Map.entry("waf-webacls:DeleteWebACL", this::deleteWebAcl)
         );
     }
 

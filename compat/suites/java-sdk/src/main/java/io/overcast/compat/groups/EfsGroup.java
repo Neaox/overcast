@@ -28,11 +28,11 @@ public final class EfsGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("CreateMountTarget",                 this::createMountTarget),
-                Map.entry("DescribeMountTargets",              this::describeMountTargets),
-                Map.entry("DescribeMountTargetSecurityGroups", this::describeMountTargetSecurityGroups),
-                Map.entry("ModifyMountTargetSecurityGroups",   this::modifyMountTargetSecurityGroups),
-                Map.entry("DeleteMountTarget",                 this::deleteMountTarget)
+                Map.entry("efs-mount-targets:CreateMountTarget",                 this::createMountTarget),
+                Map.entry("efs-mount-targets:DescribeMountTargets",              this::describeMountTargets),
+                Map.entry("efs-mount-targets:DescribeMountTargetSecurityGroups", this::describeMountTargetSecurityGroups),
+                Map.entry("efs-mount-targets:ModifyMountTargetSecurityGroups",   this::modifyMountTargetSecurityGroups),
+                Map.entry("efs-mount-targets:DeleteMountTarget",                 this::deleteMountTarget)
         );
     }
 

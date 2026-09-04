@@ -34,18 +34,18 @@ public final class ElastiCacheGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("CreateCacheCluster",        this::createCacheCluster),
-                Map.entry("DescribeCacheClusters",     this::describeCacheClusters),
-                Map.entry("DeleteCacheCluster",        this::deleteCacheCluster),
-                Map.entry("ModifyCacheCluster",        this::modifyCacheCluster),
-                Map.entry("ModifyReplicationGroup",    this::modifyReplicationGroup),
-                Map.entry("CreateReplicationGroup",    this::createReplicationGroup),
-                Map.entry("DescribeReplicationGroups", this::describeReplicationGroups),
-                Map.entry("CreateCacheSubnetGroup",    this::createCacheSubnetGroup),
-                Map.entry("DescribeCacheSubnetGroups", this::describeCacheSubnetGroups),
-                Map.entry("CreateCacheParameterGroup",    this::createCacheParameterGroup),
-                Map.entry("DescribeCacheParameterGroups", this::describeCacheParameterGroups),
-                Map.entry("DeleteCacheParameterGroup",    this::deleteCacheParameterGroup)
+                Map.entry("elasticache-clusters:CreateCacheCluster",                   this::createCacheCluster),
+                Map.entry("elasticache-clusters:DescribeCacheClusters",                this::describeCacheClusters),
+                Map.entry("elasticache-clusters:DeleteCacheCluster",                   this::deleteCacheCluster),
+                Map.entry("elasticache-modify:ModifyCacheCluster",                     this::modifyCacheCluster),
+                Map.entry("elasticache-modify:ModifyReplicationGroup",                 this::modifyReplicationGroup),
+                Map.entry("elasticache-replication-groups:CreateReplicationGroup",     this::createReplicationGroup),
+                Map.entry("elasticache-replication-groups:DescribeReplicationGroups",  this::describeReplicationGroups),
+                Map.entry("elasticache-subnet-groups:CreateCacheSubnetGroup",          this::createCacheSubnetGroup),
+                Map.entry("elasticache-subnet-groups:DescribeCacheSubnetGroups",       this::describeCacheSubnetGroups),
+                Map.entry("elasticache-parameter-groups:CreateCacheParameterGroup",    this::createCacheParameterGroup),
+                Map.entry("elasticache-parameter-groups:DescribeCacheParameterGroups", this::describeCacheParameterGroups),
+                Map.entry("elasticache-parameter-groups:DeleteCacheParameterGroup",    this::deleteCacheParameterGroup)
         );
     }
 
