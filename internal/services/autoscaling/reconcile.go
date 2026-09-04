@@ -609,7 +609,11 @@ func (s *Service) resolveLaunchTemplate(ctx context.Context, spec launchTemplate
 
 	body, status, err := s.ec2CallRaw(ctx, params)
 	if err != nil {
-		return nil, asgInternalError("launch template lookup")
+		return nil, &protocol.AWSError{
+			Code:       "InternalFailure",
+			Message:    "failed to resolve the launch template",
+			HTTPStatus: http.StatusInternalServerError,
+		}
 	}
 	if status >= 400 {
 		return nil, asgValidationError("You must use a valid fully-formed launch template. %s", ec2ErrorMessage(body))

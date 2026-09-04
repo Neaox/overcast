@@ -116,14 +116,14 @@ type xmlDescribeLaunchTemplatesResponse struct {
 	XMLName   xml.Name            `xml:"DescribeLaunchTemplatesResponse"`
 	Xmlns     string              `xml:"xmlns,attr"`
 	RequestID string              `xml:"requestId"`
-	Templates []xmlLaunchTemplate `xml:"launchTemplates>item,omitempty"`
+	Templates []xmlLaunchTemplate `xml:"launchTemplates>item"`
 }
 
 type xmlDescribeLaunchTemplateVersionsResponse struct {
 	XMLName   xml.Name                   `xml:"DescribeLaunchTemplateVersionsResponse"`
 	Xmlns     string                     `xml:"xmlns,attr"`
 	RequestID string                     `xml:"requestId"`
-	Versions  []xmlLaunchTemplateVersion `xml:"launchTemplateVersionSet>item,omitempty"`
+	Versions  []xmlLaunchTemplateVersion `xml:"launchTemplateVersionSet>item"`
 }
 
 type xmlModifyLaunchTemplateResponse struct {
@@ -162,8 +162,8 @@ type xmlDeleteLaunchTemplateVersionsResponse struct {
 	XMLName   xml.Name                  `xml:"DeleteLaunchTemplateVersionsResponse"`
 	Xmlns     string                    `xml:"xmlns,attr"`
 	RequestID string                    `xml:"requestId"`
-	Deleted   []xmlDeletedVersionItem   `xml:"successfullyDeletedLaunchTemplateVersionSet>item,omitempty"`
-	Failed    []xmlUndeletedVersionItem `xml:"unsuccessfullyDeletedLaunchTemplateVersionSet>item,omitempty"`
+	Deleted   []xmlDeletedVersionItem   `xml:"successfullyDeletedLaunchTemplateVersionSet>item"`
+	Failed    []xmlUndeletedVersionItem `xml:"unsuccessfullyDeletedLaunchTemplateVersionSet>item"`
 }
 
 // ── Errors ───────────────────────────────────────────────────────────────────
@@ -195,6 +195,17 @@ func errLaunchTemplateVersionNotFound(version string) *protocol.AWSError {
 	}
 }
 
+// errLaunchTemplateDataRequired is AWS's answer to a create with no launch
+// parameters at all: LaunchTemplateData is a required member, and a template
+// with nothing in it could launch nothing.
+func errLaunchTemplateDataRequired() *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "MissingParameter",
+		Message:    "The request must contain at least one launch template parameter.",
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
 // errLaunchTemplateNotSelected is AWS's answer when neither identifier is
 // given to an operation that acts on exactly one template.
 func errLaunchTemplateNotSelected() *protocol.AWSError {
@@ -216,6 +227,14 @@ type launchTemplateRef struct {
 }
 
 func (ref launchTemplateRef) named() bool { return ref.ID != "" || ref.Name != "" }
+
+// empty reports whether a parsed LaunchTemplateData carries no parameters at
+// all, which AWS refuses on a create.
+func (d LaunchTemplateData) empty() bool {
+	return d.ImageID == "" && d.InstanceType == "" && d.KeyName == "" && d.UserData == "" &&
+		len(d.SecurityGroupIDs) == 0 && len(d.SecurityGroups) == 0 &&
+		d.IamInstanceProfile == nil && len(d.NetworkInterfaces) == 0 && len(d.TagSpecifications) == 0
+}
 
 // resolveLaunchTemplate returns the template a reference names, with AWS's
 // per-identifier not-found code when it does not exist.
@@ -472,6 +491,12 @@ func (h *Handler) CreateLaunchTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	data := parseLaunchTemplateData(r, "LaunchTemplateData.")
+	if data.empty() {
+		protocol.WriteEC2QueryXMLError(w, r, errLaunchTemplateDataRequired())
+		return
+	}
+
 	now := h.clk.Now().UTC().Format(time.RFC3339)
 	lt := &LaunchTemplate{
 		LaunchTemplateID:     "lt-" + longID(),
@@ -488,7 +513,7 @@ func (h *Handler) CreateLaunchTemplate(w http.ResponseWriter, r *http.Request) {
 		VersionDescription: r.FormValue("VersionDescription"),
 		CreateTime:         now,
 		CreatedBy:          lt.CreatedBy,
-		Data:               parseLaunchTemplateData(r, "LaunchTemplateData."),
+		Data:               data,
 	}
 	if aerr := h.store.putLaunchTemplateVersion(ctx, version); aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
@@ -632,6 +657,15 @@ func (h *Handler) DescribeLaunchTemplates(w http.ResponseWriter, r *http.Request
 	}
 	requestedIDs := selectedIDs(parseIndexedParam(r, "LaunchTemplateId"))
 	requestedNames := selectedIDs(parseIndexedParam(r, "LaunchTemplateName"))
+	// AWS takes one selector or the other, never both.
+	if len(requestedIDs) > 0 && len(requestedNames) > 0 {
+		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
+			Code:       "InvalidParameterCombination",
+			Message:    "You may specify launch template IDs or launch template names, but not both.",
+			HTTPStatus: http.StatusBadRequest,
+		})
+		return
+	}
 
 	all, aerr := h.store.listLaunchTemplates(ctx)
 	if aerr != nil {

@@ -217,6 +217,41 @@ func TestCreateLaunchTemplate_malformedName(t *testing.T) {
 	assertEC2QueryError(t, resp, http.StatusBadRequest, "InvalidLaunchTemplateName.MalformedException")
 }
 
+// TestCreateLaunchTemplate_noLaunchTemplateData pins that a template with no
+// launch parameters at all is refused, as AWS refuses it: LaunchTemplateData
+// is a required member.
+func TestCreateLaunchTemplate_noLaunchTemplateData(t *testing.T) {
+	// Given: an empty store
+	srv := helpers.NewTestServer(t)
+
+	// When: a template is created with a name and nothing else
+	resp := ec2Query(t, srv, "CreateLaunchTemplate", url.Values{
+		"LaunchTemplateName": {"empty-template"},
+	})
+	defer resp.Body.Close()
+
+	// Then: the call is refused
+	assertEC2QueryError(t, resp, http.StatusBadRequest, "MissingParameter")
+}
+
+// TestDescribeLaunchTemplates_bothSelectors pins AWS's rule that a describe
+// selects on IDs or on names, never on both.
+func TestDescribeLaunchTemplates_bothSelectors(t *testing.T) {
+	// Given: a template exists
+	srv := helpers.NewTestServer(t)
+	tmpl := createTemplate(t, srv, "both-selectors", nil)
+
+	// When: the call names it by ID and by name at once
+	resp := ec2Query(t, srv, "DescribeLaunchTemplates", url.Values{
+		"LaunchTemplateId.1":   {tmpl.LaunchTemplateID},
+		"LaunchTemplateName.1": {"both-selectors"},
+	})
+	defer resp.Body.Close()
+
+	// Then: the combination is refused rather than intersected
+	assertEC2QueryError(t, resp, http.StatusBadRequest, "InvalidParameterCombination")
+}
+
 // ─── Versions ─────────────────────────────────────────────────────────────────
 
 // TestCreateLaunchTemplateVersion_numbersFromOne pins that versions increment
