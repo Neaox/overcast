@@ -348,6 +348,14 @@ jobs:
           pattern: overcast*
           path: dist
           merge-multiple: true
+      # The one-line installers ship with every release, pinned to it: a copy
+      # with this tag baked in makes no API call to find "latest", and stays
+      # installable from releases/download/<tag>/ after the website has moved
+      # on. install/README.md describes the marker bake.py rewrites.
+      - name: Bake the install scripts
+        env:
+          TAG: ${{ needs.check-version.outputs.tag }}
+        run: python3 install/bake.py --version "$TAG" --out dist install/install.sh install/install.ps1
       - name: Generate checksums
         run: |
           cd dist
@@ -661,3 +669,44 @@ jobs:
             -f event_type=overcast-release \
             -f "client_payload[tag]=$TAG" \
             || echo "::warning::Website dispatch failed; the site's daily schedule will pick up $TAG."
+
+  # Install from the assets just published, on every platform the installers
+  # ship for, and run the binary. This is the one check that exercises the
+  # real release layout — asset names, SHA256SUMS, the baked version — rather
+  # than the fake server the unit tests use. It runs after the assets exist
+  # and cannot un-publish anything, so a failure here is a loud signal to fix
+  # forward, not a gate.
+  install-smoke:
+    name: Install smoke (${{ matrix.os }})
+    needs: [check-version, release-assets]
+    if: needs.check-version.outputs.should_release == 'true' && needs.release-assets.result == 'success'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      TAG: ${{ needs.check-version.outputs.tag }}
+      VERSION: ${{ needs.check-version.outputs.version }}
+      ASSETS: https://github.com/${{ github.repository }}/releases/download/${{ needs.check-version.outputs.tag }}
+    steps:
+      - name: Install with install.sh
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL "$ASSETS/install.sh" | sh -s -- --both --dir "$RUNNER_TEMP/overcast-bin"
+          "$RUNNER_TEMP/overcast-bin/overcast" --version | tee out.txt
+          grep -q "version $VERSION" out.txt
+          "$RUNNER_TEMP/overcast-bin/overcastd" --version | grep -q "version $VERSION"
+      - name: Install with install.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:OVERCAST_INSTALL_DIR = Join-Path $env:RUNNER_TEMP "overcast-bin"
+          $env:OVERCAST_INSTALL_FLAVOR = "both"
+          $env:OVERCAST_INSTALL_MODIFY_PATH = "0"
+          Invoke-RestMethod "$env:ASSETS/install.ps1" | Invoke-Expression
+          $out = & (Join-Path $env:OVERCAST_INSTALL_DIR "overcast.exe") --version
+          Write-Host $out
+          if ($out -notmatch "version $([regex]::Escape($env:VERSION))") { throw "unexpected version output: $out" }
+          $outd = & (Join-Path $env:OVERCAST_INSTALL_DIR "overcastd.exe") --version
+          if ($outd -notmatch "version $([regex]::Escape($env:VERSION))") { throw "unexpected version output: $outd" }

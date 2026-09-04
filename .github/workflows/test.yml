@@ -493,6 +493,49 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
 
+  # The public one-line installers (install/README.md): lint both scripts and
+  # run the real files against a local fake release server on each OS they
+  # ship for, under every shell the host has. The post-release smoke test in
+  # release.yml covers the real asset layout; this covers the logic.
+  installers:
+    name: Installers (${{ matrix.os }})
+    needs: changes
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.code == 'true'
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: needs.changes.outputs.code == 'true'
+        with:
+          python-version: "3.14"
+      # Shells the tests pick up when present: dash and bash come with the
+      # image, busybox and zsh do not.
+      - name: Install extra shells
+        if: needs.changes.outputs.code == 'true' && runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q busybox zsh
+      - name: shellcheck
+        if: needs.changes.outputs.code == 'true' && runner.os == 'Linux'
+        run: shellcheck -s sh -S style install/install.sh
+      - name: PSScriptAnalyzer
+        if: needs.changes.outputs.code == 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+            Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+          }
+          $findings = Invoke-ScriptAnalyzer -Path install/install.ps1 -Severity Warning,Error
+          if ($findings) {
+            $findings | Format-Table -AutoSize RuleName,Severity,Line,Message | Out-String -Width 200 | Write-Host
+            exit 1
+          }
+      - name: Installer tests
+        if: needs.changes.outputs.code == 'true'
+        run: python install/install_test.py
+
   # The repo's helper scripts carry unittest files next to them; they are cheap
   # and guard logic CI depends on (the compat report's JUnit mapping decides
   # whether a check run goes red).

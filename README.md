@@ -239,23 +239,19 @@ Both binaries share the same `overcast serve` entrypoint and respond identically
 
 ### Installation
 
-**macOS / Linux — manual:**
+**macOS / Linux:**
 
 ```bash
-# Resolve the newest release tag. (Every release is currently a pre-release,
-# so GitHub's releases/latest shortcut URL does not work yet.)
-TAG=$(curl -fsSL "https://api.github.com/repos/overcast-sh/overcast/releases?per_page=1" \
-  | grep -m1 '"tag_name"' | cut -d '"' -f 4)
-
-# Replace PLATFORM with linux-amd64, linux-arm64, darwin-amd64, or darwin-arm64
-curl -fsSL "https://github.com/overcast-sh/overcast/releases/download/${TAG}/overcast-linux-amd64" \
-  -o /usr/local/bin/overcast
-chmod +x /usr/local/bin/overcast
+curl -fsSL https://overcast.sh/install.sh | sh
 ```
 
-**Windows — manual:**
+**Windows (PowerShell):**
 
-Download `overcast-windows-amd64.exe` from the releases page and place it anywhere on your `PATH`.
+```powershell
+irm https://overcast.sh/install.ps1 | iex
+```
+
+The installer detects your OS and CPU, verifies the download against the release's `SHA256SUMS`, installs to a per-user directory (`~/.local/bin`, `%LOCALAPPDATA%\Programs\overcast\bin`) and never uses `sudo`. Add `--slim` (or set `OVERCAST_INSTALL_FLAVOR=slim`) for `overcastd`, `--version <tag>` to pin a release. Every flag, the environment variables for `irm | iex`, and installing by hand are in [docs/install.md](./docs/install.md); the scripts themselves are in [install/](./install/).
 
 **Build from source:**
 
