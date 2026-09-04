@@ -1,6 +1,6 @@
 ---
 title: "S3 limitations"
-description: "How S3 versioning, lifecycle rules, website configuration and event notifications diverge from AWS in Overcast, in full."
+description: "How S3 versioning, lifecycle rules, website configuration and encryption diverge from AWS in Overcast, in full."
 section: "Service Reference"
 tags:
   - docs
@@ -114,56 +114,6 @@ Two boundaries:
 - **No website endpoint is served.** A stack that deploys one deploys it, but no
   request is redirected or answered with an index document.
 
-## Notifications: EventBridge
-
-`NotificationConfiguration` carries `EventBridgeConfiguration` alongside the
-queue, topic and Lambda destinations. AWS models it as an element with no
-content, so presence is the whole signal: while it is set, the bucket sends
-**every** object event to the default event bus, with no event-type selection
-and no key filter. Overcast omits it from
-`GetBucketNotificationConfiguration` when it is not set, and clears it when a
-later Put omits it.
-
-Object events go through EventBridge's own delivery path, so rule patterns,
-input transformers, retries and dead-letter queues behave as they do for
-`PutEvents`. The envelope follows AWS's documented S3 event:
-
-```json
-{
-  "source": "aws.s3",
-  "detail-type": "Object Created",
-  "resources": ["arn:aws:s3:::my-bucket"],
-  "detail": {
-    "version": "0",
-    "bucket": { "name": "my-bucket" },
-    "object": { "key": "docs/hello.txt", "size": 11, "etag": "…" },
-    "reason": "PutObject"
-  }
-}
-```
-
-`detail-type` is `Object Created` or `Object Deleted`; `reason` is the API
-operation (`PutObject`, `CopyObject`, `CompleteMultipartUpload`,
-`DeleteObject`); a delete carries `deletion-type`, which is `Permanently
-Deleted` for a real removal and `Delete Marker Created` when a versioned bucket
-wrote a tombstone instead. `object.version-id` is present for a bucket with
-version history, and `object.sequencer` on every object event — the hex string
-AWS documents consumers to compare when ordering two events for the same key.
-Both appear as `versionId` and `sequencer` in the `Records[].s3.object` payload
-delivered to SQS and Lambda.
-
-The detail is **partial**: `request-id`, `requester` and `source-ip-address`
-are omitted rather than invented. AWS's other
-`detail-type` values — restore, storage-class, tagging and ACL events — have no
-corresponding operation here and are never published.
-
-CloudFormation's
-`AWS::S3::Bucket.NotificationConfiguration.EventBridgeConfiguration` dispatches
-through `PutBucketNotificationConfiguration`. CloudFormation spells it as an
-`EventBridgeEnabled` flag whose only legal value is `true`; an explicit `false`
-is refused: the S3 API has no spelling for it other than the element's
-absence.
-
 ## Encryption
 
 `PutBucketEncryption` stores AES256 and KMS rules and `GetBucketEncryption`
@@ -175,5 +125,6 @@ neither stored nor echoed on a later `GetObject` or `HeadObject`.
 ## Related
 
 - [S3](../s3.md) — quick start and what works
+- [S3 event notifications](./notifications.md) — what a bucket publishes to EventBridge
 - [S3 operations](./operations.md) — per-operation status
 - [Host-routed addressing](../../networking/host-routing.md) — how a bucket subdomain resolves

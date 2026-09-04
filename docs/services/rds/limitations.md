@@ -1,6 +1,6 @@
 ---
 title: "RDS limitations"
-description: "Which RDS engines Overcast runs and which it cannot, what an Aurora member inherits from its cluster, which cluster settings are enforced, and where the master account's privileges stop."
+description: "Which RDS engines Overcast runs and which it cannot, what an Aurora member inherits from its cluster, which cluster settings are enforced, and how a cluster endpoint is named."
 section: "Service Reference"
 tags:
   - database
@@ -99,58 +99,6 @@ was placed in. Omit it and it defaults the way AWS defaults it:
 Send `PubliclyAccessible=true` to override it. An instance created before
 Overcast had the field reports the value its create would have been given.
 
-## Master account boundaries
-
-The requested master account is the administrator your application connects as.
-On MySQL, MariaDB and Aurora MySQL it can create databases and users and grant
-privileges across the instance; the grants follow the selected engine version
-(the `rds_superuser_role` model on RDS MySQL 8.0.36+ and Aurora MySQL 3, the
-revised dynamic privileges and `caching_sha2_password` on 8.4). On PostgreSQL
-and Aurora PostgreSQL it is a non-superuser with `CREATEDB`, `CREATEROLE` and
-membership in the emulated `rds_superuser` role, matching the boundary AWS
-exposes rather than the stock image's unrestricted superuser.
-
-What this does **not** emulate: AWS's full catalogue of protected internal
-accounts and `rds_*` procedures. PostgreSQL extension availability follows the
-backing image rather than the RDS extension allowlist, and reserved-word
-validation covers the engine system schemas and common SQL keywords rather than
-every version-specific reserved word. Code that depends on those administrative
-edges still needs testing against AWS.
-
-The container's maintenance account is separate: Overcast uses it during
-initialisation and password recovery, its generated credential is never returned
-by the API, and it is not an alternative application credential.
-
-`DBName` follows the engine's AWS behaviour. MySQL and MariaDB create no
-application database when it is omitted; PostgreSQL always has `postgres`, and
-an explicit `DBName` creates an additional database owned by the master account.
-
-## Password rules
-
-| Engine | Length |
-| --- | --- |
-| MySQL, MariaDB, Aurora MySQL | 8–41 |
-| RDS PostgreSQL | 8–128 |
-| Aurora PostgreSQL | 8–99 |
-
-All accept printable ASCII except `/`, `"`, `@` and space. A single quote is
-valid and is escaped before it reaches the engine.
-
-> [!IMPORTANT]
-> `GetRandomPassword`'s default punctuation set contains characters RDS forbids,
-> as AWS's does — which is why CDK's `Credentials.fromGeneratedSecret` excludes
-> them by default. If a `{{resolve:secretsmanager:…}}` password is refused, set
-> `ExcludeCharacters` on the generated secret, as you would for AWS.
-
-## Password changes
-
-`MasterUserPassword` is applied to the running database rather than only
-recorded, so rotating one in a CloudFormation template takes effect and never
-replaces the instance. The instance must be `available` for it, and with Docker
-unavailable the password is stored and seeded into the container built for that
-instance later. `ModifyDBCluster` rotates each member in turn — see
-[`ModifyDBInstance` refuses the new password](./troubleshooting.md#modifydbinstance-refuses-the-new-password).
-
 ## Cluster endpoint names
 
 ```
@@ -178,5 +126,6 @@ and the endpoints keep their names and the cluster's own port.
 ## Related
 
 - [RDS](../rds.md) — quick start and what works
+- [RDS master account and passwords](./master-account.md) — privileges, password rules, rotation
 - [RDS troubleshooting](./troubleshooting.md) — symptom, cause, fix
 - [Data-plane endpoints](../../networking/data-plane-endpoints.md) — what an endpoint address resolves to
