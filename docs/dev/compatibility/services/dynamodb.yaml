@@ -2,7 +2,7 @@ service: dynamodb
 status: not_started
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-21
+last_updated: 2026-09-04
 protocols: [aws_json_1_0, rpcv2_cbor]
 implementation: [internal/services/dynamodb]
 integration_tests: [tests/integration/dynamodb]
@@ -100,6 +100,23 @@ findings:
           - tests/integration/cloudformation/dynamodb_table_tags_test.go
           - tests/integration/cloudformation/dynamodb_gsi_update_test.go
           - tests/integration/cloudformation/dynamodb_global_table_test.go
+    - scenario: >-
+        A DynamoDB reserved word used as a bare attribute name in an expression is rejected with
+        ValidationException, as AWS rejects it (#1638). The check covers UpdateExpression,
+        ConditionExpression, FilterExpression, KeyConditionExpression and ProjectionExpression, every
+        attribute name in a document path including nested segments, and is case-insensitive because
+        the published list is. The message names the parameter and the keyword, as AWS's does. An
+        attribute reached through an ExpressionAttributeNames alias is unaffected — that is the
+        documented escape hatch — and a function name (size, attribute_exists, begins_with, ...) is
+        not an attribute name, so those keep parsing. Enforced once, in parsePathName, which every
+        expression compiler reaches through parsePath.
+      evidence:
+        aws_docs:
+          - https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ReservedWords.html
+          - https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.ExpressionAttributeNames.html
+        tests:
+          - tests/integration/dynamodb/reserved_words_test.go
+          - internal/services/dynamodb/expr_reserved_test.go
   remaining_gaps:
     - Review expression edge cases, pagination semantics, and GSI/LSI behavior.
     - Review CBOR coverage against SDK expectations.

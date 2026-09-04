@@ -19,9 +19,9 @@ func makeItem(attrs map[string]attrValue) Item {
 
 func TestFilter_equalityMatch(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"status": {"S": "active"},
+		"phase": {"S": "active"},
 	})
-	f, err := compileFilter("status = :s", nil, map[string]attrValue{
+	f, err := compileFilter("phase = :s", nil, map[string]attrValue{
 		":s": {"S": "active"},
 	})
 	if err != nil {
@@ -38,9 +38,9 @@ func TestFilter_equalityMatch(t *testing.T) {
 
 func TestFilter_equalityNoMatch(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"status": {"S": "inactive"},
+		"phase": {"S": "inactive"},
 	})
-	f, err := compileFilter("status = :s", nil, map[string]attrValue{
+	f, err := compileFilter("phase = :s", nil, map[string]attrValue{
 		":s": {"S": "active"},
 	})
 	if err != nil {
@@ -54,9 +54,9 @@ func TestFilter_equalityNoMatch(t *testing.T) {
 
 func TestFilter_notEqual(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"status": {"S": "active"},
+		"phase": {"S": "active"},
 	})
-	f, err := compileFilter("status <> :s", nil, map[string]attrValue{
+	f, err := compileFilter("phase <> :s", nil, map[string]attrValue{
 		":s": {"S": "inactive"},
 	})
 	if err != nil {
@@ -134,7 +134,7 @@ func TestFilter_greaterThan(t *testing.T) {
 
 func TestFilter_missingAttribute_equality(t *testing.T) {
 	item := makeItem(map[string]attrValue{})
-	f, err := compileFilter("status = :s", nil, map[string]attrValue{
+	f, err := compileFilter("phase = :s", nil, map[string]attrValue{
 		":s": {"S": "active"},
 	})
 	if err != nil {
@@ -148,7 +148,7 @@ func TestFilter_missingAttribute_equality(t *testing.T) {
 
 func TestFilter_missingAttribute_notEqual(t *testing.T) {
 	item := makeItem(map[string]attrValue{})
-	f, err := compileFilter("status <> :s", nil, map[string]attrValue{
+	f, err := compileFilter("phase <> :s", nil, map[string]attrValue{
 		":s": {"S": "active"},
 	})
 	if err != nil {
@@ -202,9 +202,9 @@ func TestFilter_andFalse(t *testing.T) {
 
 func TestFilter_or(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"status": {"S": "active"},
+		"phase": {"S": "active"},
 	})
-	f, err := compileFilter("status = :a OR status = :b", nil, map[string]attrValue{
+	f, err := compileFilter("phase = :a OR phase = :b", nil, map[string]attrValue{
 		":a": {"S": "active"},
 		":b": {"S": "pending"},
 	})
@@ -219,9 +219,9 @@ func TestFilter_or(t *testing.T) {
 
 func TestFilter_orBothFalse(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"status": {"S": "deleted"},
+		"phase": {"S": "deleted"},
 	})
-	f, err := compileFilter("status = :a OR status = :b", nil, map[string]attrValue{
+	f, err := compileFilter("phase = :a OR phase = :b", nil, map[string]attrValue{
 		":a": {"S": "active"},
 		":b": {"S": "pending"},
 	})
@@ -236,9 +236,9 @@ func TestFilter_orBothFalse(t *testing.T) {
 
 func TestFilter_not(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"status": {"S": "active"},
+		"phase": {"S": "active"},
 	})
-	f, err := compileFilter("NOT status = :s", nil, map[string]attrValue{
+	f, err := compileFilter("NOT phase = :s", nil, map[string]attrValue{
 		":s": {"S": "inactive"},
 	})
 	if err != nil {
@@ -252,9 +252,9 @@ func TestFilter_not(t *testing.T) {
 
 func TestFilter_notTrue(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"status": {"S": "active"},
+		"phase": {"S": "active"},
 	})
-	f, err := compileFilter("NOT status = :s", nil, map[string]attrValue{
+	f, err := compileFilter("NOT phase = :s", nil, map[string]attrValue{
 		":s": {"S": "active"},
 	})
 	if err != nil {
@@ -364,9 +364,9 @@ func TestFilter_betweenInclusive(t *testing.T) {
 
 func TestFilter_betweenStrings(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"name": {"S": "banana"},
+		"nickname": {"S": "banana"},
 	})
-	f, err := compileFilter("name BETWEEN :lo AND :hi", nil, map[string]attrValue{
+	f, err := compileFilter("nickname BETWEEN :lo AND :hi", nil, map[string]attrValue{
 		":lo": {"S": "apple"},
 		":hi": {"S": "cherry"},
 	})
@@ -385,9 +385,9 @@ func TestFilter_betweenStrings(t *testing.T) {
 
 func TestFilter_in(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"status": {"S": "active"},
+		"phase": {"S": "active"},
 	})
-	f, err := compileFilter("status IN (:a, :b, :c)", nil, map[string]attrValue{
+	f, err := compileFilter("phase IN (:a, :b, :c)", nil, map[string]attrValue{
 		":a": {"S": "active"},
 		":b": {"S": "pending"},
 		":c": {"S": "deleted"},
@@ -403,9 +403,9 @@ func TestFilter_in(t *testing.T) {
 
 func TestFilter_inNoMatch(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"status": {"S": "unknown"},
+		"phase": {"S": "unknown"},
 	})
-	f, err := compileFilter("status IN (:a, :b)", nil, map[string]attrValue{
+	f, err := compileFilter("phase IN (:a, :b)", nil, map[string]attrValue{
 		":a": {"S": "active"},
 		":b": {"S": "pending"},
 	})
@@ -440,9 +440,9 @@ func TestFilter_inSingleValue(t *testing.T) {
 
 func TestFilter_attributeExists(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"name": {"S": "Alice"},
+		"nickname": {"S": "Alice"},
 	})
-	f, err := compileFilter("attribute_exists(name)", nil, nil)
+	f, err := compileFilter("attribute_exists(nickname)", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,33 +454,33 @@ func TestFilter_attributeExists(t *testing.T) {
 
 func TestFilter_attributeExistsFalse(t *testing.T) {
 	item := makeItem(map[string]attrValue{})
-	f, err := compileFilter("attribute_exists(name)", nil, nil)
+	f, err := compileFilter("attribute_exists(nickname)", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	result, _ := evalFilter(f, item)
 	if result {
-		t.Error("expected attribute_exists to be false for missing attribute")
+		t.Error("expected attribute_exists to be false for a missing attribute")
 	}
 }
 
 func TestFilter_attributeNotExists(t *testing.T) {
 	item := makeItem(map[string]attrValue{})
-	f, err := compileFilter("attribute_not_exists(name)", nil, nil)
+	f, err := compileFilter("attribute_not_exists(nickname)", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	result, _ := evalFilter(f, item)
 	if !result {
-		t.Error("expected attribute_not_exists to be true for missing attribute")
+		t.Error("expected attribute_not_exists to be true for a missing attribute")
 	}
 }
 
 func TestFilter_attributeType(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"name": {"S": "Alice"},
+		"nickname": {"S": "Alice"},
 	})
-	f, err := compileFilter("attribute_type(name, :t)", nil, map[string]attrValue{
+	f, err := compileFilter("attribute_type(nickname, :t)", nil, map[string]attrValue{
 		":t": {"S": "S"},
 	})
 	if err != nil {
@@ -494,9 +494,9 @@ func TestFilter_attributeType(t *testing.T) {
 
 func TestFilter_attributeTypeMismatch(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"name": {"S": "Alice"},
+		"nickname": {"S": "Alice"},
 	})
-	f, err := compileFilter("attribute_type(name, :t)", nil, map[string]attrValue{
+	f, err := compileFilter("attribute_type(nickname, :t)", nil, map[string]attrValue{
 		":t": {"S": "N"},
 	})
 	if err != nil {
@@ -510,9 +510,9 @@ func TestFilter_attributeTypeMismatch(t *testing.T) {
 
 func TestFilter_beginsWith(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"name": {"S": "Alice"},
+		"nickname": {"S": "Alice"},
 	})
-	f, err := compileFilter("begins_with(name, :p)", nil, map[string]attrValue{
+	f, err := compileFilter("begins_with(nickname, :p)", nil, map[string]attrValue{
 		":p": {"S": "Ali"},
 	})
 	if err != nil {
@@ -526,9 +526,9 @@ func TestFilter_beginsWith(t *testing.T) {
 
 func TestFilter_beginsWithNoMatch(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"name": {"S": "Bob"},
+		"nickname": {"S": "Bob"},
 	})
-	f, err := compileFilter("begins_with(name, :p)", nil, map[string]attrValue{
+	f, err := compileFilter("begins_with(nickname, :p)", nil, map[string]attrValue{
 		":p": {"S": "Ali"},
 	})
 	if err != nil {
@@ -542,9 +542,9 @@ func TestFilter_beginsWithNoMatch(t *testing.T) {
 
 func TestFilter_containsString(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"desc": {"S": "hello world"},
+		"blurb": {"S": "hello world"},
 	})
-	f, err := compileFilter("contains(desc, :s)", nil, map[string]attrValue{
+	f, err := compileFilter("contains(blurb, :s)", nil, map[string]attrValue{
 		":s": {"S": "world"},
 	})
 	if err != nil {
@@ -574,11 +574,11 @@ func TestFilter_containsSet(t *testing.T) {
 
 func TestFilter_containsList(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"items": {"L": []any{
+		"entries": {"L": []any{
 			map[string]any{"N": "42"},
 		}},
 	})
-	f, err := compileFilter("contains(items, :v)", nil, map[string]attrValue{
+	f, err := compileFilter("contains(entries, :v)", nil, map[string]attrValue{
 		":v": {"N": "42"},
 	})
 	if err != nil {
@@ -592,9 +592,9 @@ func TestFilter_containsList(t *testing.T) {
 
 func TestFilter_sizeEquals(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"name": {"S": "hello"},
+		"nickname": {"S": "hello"},
 	})
-	f, err := compileFilter("size(name) = :s", nil, map[string]attrValue{
+	f, err := compileFilter("size(nickname) = :s", nil, map[string]attrValue{
 		":s": {"N": "5"},
 	})
 	if err != nil {
@@ -654,9 +654,9 @@ func TestFilter_nestedPath(t *testing.T) {
 
 func TestFilter_withAttributeNames(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"status": {"S": "active"},
+		"phase": {"S": "active"},
 	})
-	names := map[string]string{"#s": "status"}
+	names := map[string]string{"#s": "phase"}
 	f, err := compileFilter("#s = :v", names, map[string]attrValue{
 		":v": {"S": "active"},
 	})
@@ -675,12 +675,12 @@ func TestFilter_withAttributeNames(t *testing.T) {
 
 func TestFilter_sizeAsOperand(t *testing.T) {
 	item := makeItem(map[string]attrValue{
-		"data": {"L": []any{
+		"payload": {"L": []any{
 			map[string]any{"S": "a"},
 			map[string]any{"S": "b"},
 		}},
 	})
-	f, err := compileFilter("size(data) = :two", nil, map[string]attrValue{
+	f, err := compileFilter("size(payload) = :two", nil, map[string]attrValue{
 		":two": {"N": "2"},
 	})
 	if err != nil {
@@ -688,7 +688,7 @@ func TestFilter_sizeAsOperand(t *testing.T) {
 	}
 	result, _ := evalFilter(f, item)
 	if !result {
-		t.Error("expected size(data) = 2 for 2-element list")
+		t.Error("expected size(payload) = 2 for 2-element list")
 	}
 }
 
@@ -697,7 +697,7 @@ func TestFilter_sizeAsOperand(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFilter_missingPlaceholder(t *testing.T) {
-	_, err := compileFilter("status = :missing", nil, map[string]attrValue{})
+	_, err := compileFilter("phase = :missing", nil, map[string]attrValue{})
 	if err == nil {
 		t.Error("expected error for missing placeholder")
 	}
@@ -722,23 +722,43 @@ func TestFilter_trailingTokens(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Regression: "size" and "contains" as attribute names
+// Regression: "size" and "contains" in attribute-name position
 // ---------------------------------------------------------------------------
 
-func TestFilter_sizeAsAttributeName(t *testing.T) {
-	// "size" should be treated as an attribute name when not followed by '('
+func TestFilter_sizeAsBareAttributeName(t *testing.T) {
+	// Given: an expression using "size" in an attribute-name position rather
+	// than as a function. SIZE is reserved, so DynamoDB refuses the bare form.
+
+	// When: it is compiled
+	_, err := compileFilter("size = :s", nil, map[string]attrValue{
+		":s": {"S": "large"},
+	})
+
+	// Then: it is rejected, naming the keyword
+	const want = "Invalid ConditionExpression: Attribute name is a reserved keyword; reserved keyword: size"
+	if err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %s", err, want)
+	}
+}
+
+func TestFilter_sizeAsAliasedAttributeName(t *testing.T) {
+	// Given: an item with a "size" attribute
 	item := makeItem(map[string]attrValue{
 		"size": {"S": "large"},
 	})
-	f, err := compileFilter("size = :s", nil, map[string]attrValue{
+
+	// When: the expression reaches it through an ExpressionAttributeNames alias
+	f, err := compileFilter("#s = :s", map[string]string{"#s": "size"}, map[string]attrValue{
 		":s": {"S": "large"},
 	})
+
+	// Then: it compiles and matches
 	if err != nil {
 		t.Fatal(err)
 	}
 	result, _ := evalFilter(f, item)
 	if !result {
-		t.Error("expected size='large' to match when 'size' is an attribute name")
+		t.Error("expected size='large' to match when reached through an alias")
 	}
 }
 
@@ -761,9 +781,9 @@ func TestFilter_containsAsAttributeName(t *testing.T) {
 func TestFilter_sizeAsFunction(t *testing.T) {
 	// "size" should still work as a function when followed by '('
 	item := makeItem(map[string]attrValue{
-		"name": {"S": "hello"},
+		"nickname": {"S": "hello"},
 	})
-	f, err := compileFilter("size(name) = :s", nil, map[string]attrValue{
+	f, err := compileFilter("size(nickname) = :s", nil, map[string]attrValue{
 		":s": {"N": "5"},
 	})
 	if err != nil {

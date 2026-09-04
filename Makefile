@@ -256,6 +256,11 @@ generate-ts:
 check-ts:
 	$(GO) run ./cmd/tsgen --check
 
+## generate-ddb-reserved-words: refresh internal/services/dynamodb/reserved_words.txt from the AWS DynamoDB Developer Guide
+## Needs network access, so no CI job runs it. Refresh by hand and review the diff.
+generate-ddb-reserved-words:
+	$(GO) run ./scripts/dynamodb-reserved-words.go
+
 ## generate-aws-operations: regenerate the AWS operation manifest and pruned shape snapshot from a pinned local api-models-aws checkout
 ## Set AWS_MODELS_DIR to its models directory. The checked-out commit must match models/aws/VERSION.
 generate-aws-operations:

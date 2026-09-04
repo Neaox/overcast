@@ -895,7 +895,7 @@ func (h *Handler) scanTypedCore(ctx context.Context, req *scanRequest) (any, *pr
 
 	// Apply FilterExpression if provided.
 	if req.FilterExpression != "" {
-		filter, err := compileFilter(req.FilterExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues)
+		filter, err := compileFilterExpression(req.FilterExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues)
 		if err != nil {
 			return nil, &protocol.AWSError{
 				Code:       "ValidationException",
@@ -1241,7 +1241,7 @@ func (h *Handler) queryTypedCore(ctx context.Context, req *queryRequest) (any, *
 
 	// Apply FilterExpression (post-key-condition, per DynamoDB semantics).
 	if req.FilterExpression != "" {
-		filter, err := compileFilter(req.FilterExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues)
+		filter, err := compileFilterExpression(req.FilterExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues)
 		if err != nil {
 			return nil, &protocol.AWSError{
 				Code:       "ValidationException",

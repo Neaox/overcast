@@ -107,22 +107,37 @@ func parsePath(s *tokStream, names map[string]string) (docPath, error) {
 }
 
 // parsePathName reads an identifier or alias and resolves it.
+//
+// This is the single choke point for attribute names in every expression
+// parameter — UpdateExpression, ConditionExpression, FilterExpression,
+// KeyConditionExpression and ProjectionExpression all reach it through
+// parsePath — so it is where DynamoDB's reserved-word rule is enforced. The
+// check is on the identifier as written: an alias resolved from
+// ExpressionAttributeNames is the documented way to name a reserved word and
+// is deliberately exempt. See expr_reserved.go.
 func parsePathName(s *tokStream, names map[string]string) (string, error) {
 	t := s.peek()
 	//exhaustive:ignore
 	switch t.kind {
 	case tokIdent:
 		s.next()
+		if err := checkReservedWord(t.val); err != nil {
+			return "", err
+		}
 		return t.val, nil
 	case tokAlias:
 		s.next()
 		return resolveAlias(t.val, names)
 	default:
-		// Allow keywords to be used as attribute names (DynamoDB allows this
-		// in practice when using ExpressionAttributeNames, but also in
-		// projections etc. when unambiguous).
+		// A clause or operator keyword reached here is being used as a bare
+		// attribute name, so it faces the same rule — which catches "SET IN
+		// = :v" and "REMOVE between", since IN and BETWEEN are both reserved.
+		// REMOVE is not on the published list, so it still parses as a name.
 		if isKeywordToken(t.kind) {
 			s.next()
+			if err := checkReservedWord(t.val); err != nil {
+				return "", err
+			}
 			return t.val, nil
 		}
 		return "", fmt.Errorf("expected attribute name, got %q at position %d", t.val, t.pos)

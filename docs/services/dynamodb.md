@@ -38,7 +38,7 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 | Area | Behaviour |
 | --- | --- |
 | Items | `PutItem`, `GetItem`, `UpdateItem`, `DeleteItem`, `BatchGetItem` (100), `BatchWriteItem` (25) |
-| Expressions | Condition, filter, key-condition, projection and update expressions, with `SET`/`REMOVE`/`ADD`/`DELETE` and every `ReturnValues` variant |
+| Expressions | Condition, filter, key-condition, projection and update expressions, with `SET`/`REMOVE`/`ADD`/`DELETE` and every `ReturnValues` variant; a [reserved word](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ReservedWords.html) used as a bare attribute name is rejected as AWS rejects it, so reach it through `ExpressionAttributeNames` |
 | Query and scan | `Limit` applied before `FilterExpression` as AWS does, `ExclusiveStartKey` pagination, `ScanIndexForward`, `Select=COUNT`, parallel scan by `Segment`/`TotalSegments` |
 | Indexes | GSIs and LSIs, including `ALL`/`KEYS_ONLY`/`INCLUDE` projections and GSI create/delete/throughput updates through `UpdateTable` |
 | Transactions | `TransactGetItems` and `TransactWriteItems`, all-or-nothing, with `ConditionCheck` |

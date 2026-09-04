@@ -38,6 +38,7 @@ returns duplicates.
 | `web/src/routeTree.gen.ts` | committed — written by `pnpm dev` / `pnpm build` | The TanStack Router Vite plugin regenerates it in place on every dev server and build, so it is already build output in practice. It stays committed because `pnpm typecheck` runs `tsc` without Vite and would fail without it, and no standalone generator CLI is installed. Five commits ever, none in months — not a conflict source. |
 | `internal/awsapi/manifest.gen.go` | committed — `make generate-aws-operations` | Regenerating it needs an external `api-models-aws` checkout pinned by `models/aws/VERSION`. Not reproducible from this repository alone, so it must be committed. |
 | `compat/suites/registry.generated.json`, `cmd/compat/generatedregistry.go` | committed | Compat tooling input; effectively static. |
+| `internal/services/dynamodb/reserved_words.txt` | committed — `make generate-ddb-reserved-words` | `//go:embed`ed by `internal/services/dynamodb`, so a bare clone must find it. Regenerating needs network access to the AWS Developer Guide, so no CI job re-runs it and nothing gates its freshness — refresh by hand when AWS changes the published list, and review the diff. The file's header records the source URL, the fetch date and the word count. |
 | `docs/README.md` service-index block | committed — `make docs` | Rendered on GitHub, embedded in the binary, **and** parsed by the website's content sync (`scripts/sync-overcast-content.ts` reads the `overcast:service-index` sentinels). Three consumers outside the build. |
 | `docs/services/<key>/operations.md` (50 files) | committed — `make docs` | Same three consumers. Changes only when capability data changes, which is a real change. |
 | `docs/generated/service-support.json` | committed — `make docs` | Reviewed data, read outside the build. |
@@ -90,6 +91,7 @@ navigation from the same place removes ~200 KB of JSON from the SPA bundle.
 | a published doc under `docs/` | `make docs-lint` — checks frontmatter, in-page anchors, service page structure, the 220-character description budget, the page length budget and the house-style tells. Nothing to regenerate, nothing extra to commit. |
 | `docs/plans/**` or `docs/dev/**` | nothing — neither is published, embedded or indexed |
 | a service's `capabilities_dev.go` | `make docs` (regenerates `all.gen.go`, the service tables and `service-support.json`) |
+| nothing here, but AWS published a new DynamoDB reserved word | `make generate-ddb-reserved-words`, then update the count in `internal/services/dynamodb/expr_reserved_test.go` |
 | a Go response struct the console reads | `make generate-ts` |
 | a console route file | nothing — `pnpm dev` / `pnpm build` rewrites `routeTree.gen.ts` |
 

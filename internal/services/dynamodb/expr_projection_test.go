@@ -14,26 +14,26 @@ func TestProjection_simpleAttributes(t *testing.T) {
 			{AttributeName: "id", KeyType: "HASH"},
 		},
 	}
-	proj, err := compileProjection("name, age", nil)
+	proj, err := compileProjection("nickname, age", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	item := Item{
-		"id":     attrValue{"S": "1"},
-		"name":   attrValue{"S": "Alice"},
-		"age":    attrValue{"N": "30"},
-		"secret": attrValue{"S": "hidden"},
+		"id":       attrValue{"S": "1"},
+		"nickname": attrValue{"S": "Alice"},
+		"age":      attrValue{"N": "30"},
+		"secret":   attrValue{"S": "hidden"},
 	}
 
 	result := applyProjection(item, proj, table)
 
-	// Should include id (key), name, age but not secret
+	// Should include id (key), nickname, age but not secret
 	if _, ok := result["id"]; !ok {
 		t.Error("expected key attribute 'id' to be included")
 	}
-	if _, ok := result["name"]; !ok {
-		t.Error("expected projected 'name' to be included")
+	if _, ok := result["nickname"]; !ok {
+		t.Error("expected projected 'nickname' to be included")
 	}
 	if _, ok := result["age"]; !ok {
 		t.Error("expected projected 'age' to be included")
@@ -50,8 +50,8 @@ func TestProjection_nilProjection(t *testing.T) {
 		},
 	}
 	item := Item{
-		"id":   attrValue{"S": "1"},
-		"name": attrValue{"S": "Alice"},
+		"id":       attrValue{"S": "1"},
+		"nickname": attrValue{"S": "Alice"},
 	}
 
 	// Nil projection should return all attributes
@@ -105,15 +105,15 @@ func TestProjection_alwaysIncludesKeys(t *testing.T) {
 			{AttributeName: "sk", KeyType: "RANGE"},
 		},
 	}
-	proj, err := compileProjection("data", nil)
+	proj, err := compileProjection("payload", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	item := Item{
-		"pk":   attrValue{"S": "p1"},
-		"sk":   attrValue{"S": "s1"},
-		"data": attrValue{"S": "value"},
+		"pk":      attrValue{"S": "p1"},
+		"sk":      attrValue{"S": "s1"},
+		"payload": attrValue{"S": "value"},
 	}
 
 	result := applyProjection(item, proj, table)
@@ -123,8 +123,8 @@ func TestProjection_alwaysIncludesKeys(t *testing.T) {
 	if _, ok := result["sk"]; !ok {
 		t.Error("expected sort key 'sk' to always be included")
 	}
-	if _, ok := result["data"]; !ok {
-		t.Error("expected projected 'data' to be included")
+	if _, ok := result["payload"]; !ok {
+		t.Error("expected projected 'payload' to be included")
 	}
 }
 
@@ -134,7 +134,7 @@ func TestProjection_nestedPath(t *testing.T) {
 			{AttributeName: "id", KeyType: "HASH"},
 		},
 	}
-	proj, err := compileProjection("info.name", nil)
+	proj, err := compileProjection("info.nickname", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,8 +142,8 @@ func TestProjection_nestedPath(t *testing.T) {
 	item := Item{
 		"id": attrValue{"S": "1"},
 		"info": attrValue{"M": map[string]any{
-			"name":   map[string]any{"S": "Alice"},
-			"secret": map[string]any{"S": "hidden"},
+			"nickname": map[string]any{"S": "Alice"},
+			"secret":   map[string]any{"S": "hidden"},
 		}},
 	}
 
@@ -163,19 +163,19 @@ func TestProjection_missingAttribute(t *testing.T) {
 			{AttributeName: "id", KeyType: "HASH"},
 		},
 	}
-	proj, err := compileProjection("missing", nil)
+	proj, err := compileProjection("absent", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	item := Item{
-		"id":   attrValue{"S": "1"},
-		"name": attrValue{"S": "Alice"},
+		"id":       attrValue{"S": "1"},
+		"nickname": attrValue{"S": "Alice"},
 	}
 
 	result := applyProjection(item, proj, table)
-	if _, ok := result["missing"]; ok {
-		t.Error("expected missing projection attribute to not appear in result")
+	if _, ok := result["absent"]; ok {
+		t.Error("expected a projected attribute the item lacks to not appear in result")
 	}
 	// But key should still be there
 	if _, ok := result["id"]; !ok {
