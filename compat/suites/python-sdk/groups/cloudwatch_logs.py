@@ -194,19 +194,19 @@ def DeleteLogStream(ctx: TestContext) -> None:
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
-    "CreateLogGroup": CreateLogGroup,
-    "DescribeLogGroups": DescribeLogGroups,
-    "PutRetentionPolicy": PutRetentionPolicy,
-    "VerifyRetentionPolicy": VerifyRetentionPolicy,
-    "DeleteRetentionPolicy": DeleteRetentionPolicy,
-    "CreateLogStream": CreateLogStream,
-    "TagLogGroup": TagLogGroup,
-    "DeleteLogGroup": DeleteLogGroup,
-    "PutLogEvents": PutLogEvents,
-    "GetLogEvents": GetLogEvents,
-    "FilterLogEvents": FilterLogEvents,
-    "DescribeLogStreams": DescribeLogStreams,
-    "DeleteLogStream": DeleteLogStream,
+    "logs-groups:CreateLogGroup": CreateLogGroup,
+    "logs-groups:DescribeLogGroups": DescribeLogGroups,
+    "logs-groups:PutRetentionPolicy": PutRetentionPolicy,
+    "logs-groups:VerifyRetentionPolicy": VerifyRetentionPolicy,
+    "logs-groups:DeleteRetentionPolicy": DeleteRetentionPolicy,
+    "logs-groups:CreateLogStream": CreateLogStream,
+    "logs-groups:TagLogGroup": TagLogGroup,
+    "logs-groups:DeleteLogGroup": DeleteLogGroup,
+    "logs-events:PutLogEvents": PutLogEvents,
+    "logs-events:GetLogEvents": GetLogEvents,
+    "logs-events:FilterLogEvents": FilterLogEvents,
+    "logs-events:DescribeLogStreams": DescribeLogStreams,
+    "logs-events:DeleteLogStream": DeleteLogStream,
 }
 
 SETUP = {

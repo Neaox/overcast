@@ -93,11 +93,11 @@ def AssumeRoleWithWebIdentity(ctx: TestContext) -> None:
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
-    "GetCallerIdentity": GetCallerIdentity,
-    "GetSessionToken": GetSessionToken,
-    "GetFederationToken": GetFederationToken,
-    "AssumeRole": AssumeRole,
-    "AssumeRoleWithWebIdentity": AssumeRoleWithWebIdentity,
+    "sts-identity:GetCallerIdentity": GetCallerIdentity,
+    "sts-identity:GetSessionToken": GetSessionToken,
+    "sts-identity:GetFederationToken": GetFederationToken,
+    "sts-assume:AssumeRole": AssumeRole,
+    "sts-assume:AssumeRoleWithWebIdentity": AssumeRoleWithWebIdentity,
 }
 
 SETUP = {}

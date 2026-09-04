@@ -179,13 +179,13 @@ def DeletePipe(ctx: TestContext) -> None:
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
-    "CreatePipe": CreatePipe,
-    "DescribePipe": DescribePipe,
-    "ListPipes": ListPipes,
-    "CreatePipeRejectsUnsupportedTarget": CreatePipeRejectsUnsupportedTarget,
-    "PipeDeliversToTarget": PipeDeliversToTarget,
-    "UpdatePipe": UpdatePipe,
-    "DeletePipe": DeletePipe,
+    "pipes-wiring:CreatePipe": CreatePipe,
+    "pipes-wiring:DescribePipe": DescribePipe,
+    "pipes-wiring:ListPipes": ListPipes,
+    "pipes-wiring:CreatePipeRejectsUnsupportedTarget": CreatePipeRejectsUnsupportedTarget,
+    "pipes-wiring:PipeDeliversToTarget": PipeDeliversToTarget,
+    "pipes-wiring:UpdatePipe": UpdatePipe,
+    "pipes-wiring:DeletePipe": DeletePipe,
 }
 
 SETUP = {

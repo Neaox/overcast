@@ -154,12 +154,12 @@ def _utc_today() -> str:
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
-    "CreateRestApi": CreateRestApi,
-    "GetRestApis": GetRestApis,
-    "DeleteRestApi": DeleteRestApi,
-    "CreateApi": CreateApi,
-    "GetApis": GetApis,
-    "DeleteApi": DeleteApi,
+    "apigateway-rest:CreateRestApi": CreateRestApi,
+    "apigateway-rest:GetRestApis": GetRestApis,
+    "apigateway-rest:DeleteRestApi": DeleteRestApi,
+    "apigateway-http:CreateApi": CreateApi,
+    "apigateway-http:GetApis": GetApis,
+    "apigateway-http:DeleteApi": DeleteApi,
     # Group-qualified: CreateApiKey/GetUsagePlan are generic enough to collide
     # with another service's group later.
     "apigateway-usage-plans:CreateUsagePlanWithLimits": CreateUsagePlanWithLimits,

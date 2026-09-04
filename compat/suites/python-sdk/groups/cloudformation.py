@@ -158,12 +158,12 @@ def ValidateTemplate(ctx: TestContext) -> None:
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
-    "CreateStack": CreateStack,
-    "DescribeStacks": DescribeStacks,
-    "ListStacks": ListStacks,
-    "UpdateStack": UpdateStack,
-    "DeleteStack": DeleteStack,
-    "ValidateTemplate": ValidateTemplate,
+    "cloudformation-stacks:CreateStack": CreateStack,
+    "cloudformation-stacks:DescribeStacks": DescribeStacks,
+    "cloudformation-stacks:ListStacks": ListStacks,
+    "cloudformation-stacks:UpdateStack": UpdateStack,
+    "cloudformation-stacks:DeleteStack": DeleteStack,
+    "cloudformation-stacks:ValidateTemplate": ValidateTemplate,
 }
 
 SETUP = {}

@@ -75,19 +75,19 @@ def DeleteUserPool(ctx: TestContext) -> None:
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
-    "CreateUserPool": CreateUserPool,
-    "DescribeUserPool": DescribeUserPool,
-    "ListUserPools": ListUserPools,
-    "CreateUserPoolClient": lambda ctx: CreateUserPoolClientFn(ctx),
-    "ListUserPoolClients": lambda ctx: ListUserPoolClientsFn(ctx),
-    "AdminCreateUser": AdminCreateUser,
+    "cognito-userpools:CreateUserPool": CreateUserPool,
+    "cognito-userpools:DescribeUserPool": DescribeUserPool,
+    "cognito-userpools:ListUserPools": ListUserPools,
+    "cognito-userpools:CreateUserPoolClient": lambda ctx: CreateUserPoolClientFn(ctx),
+    "cognito-userpools:ListUserPoolClients": lambda ctx: ListUserPoolClientsFn(ctx),
+    "cognito-userpools:AdminCreateUser": AdminCreateUser,
     "cognito-userpools:ListUsers": ListUsers,
-    "AdminDeleteUser": AdminDeleteUser,
-    "DeleteUserPool": DeleteUserPool,
-    "CreateUserPoolClientWithTokenValidity": lambda ctx: CreateClientTokenValidity(ctx),
-    "DescribeUserPoolClientTokenValidity": lambda ctx: DescribeClientTokenValidity(ctx),
-    "UpdateUserPoolClientTokenValidity": lambda ctx: UpdateClientTokenValidity(ctx),
-    "DeleteUserPoolClient": lambda ctx: DeleteUserPoolClientFn(ctx),
+    "cognito-userpools:AdminDeleteUser": AdminDeleteUser,
+    "cognito-userpools:DeleteUserPool": DeleteUserPool,
+    "cognito-token-validity:CreateUserPoolClientWithTokenValidity": lambda ctx: CreateClientTokenValidity(ctx),
+    "cognito-token-validity:DescribeUserPoolClientTokenValidity": lambda ctx: DescribeClientTokenValidity(ctx),
+    "cognito-token-validity:UpdateUserPoolClientTokenValidity": lambda ctx: UpdateClientTokenValidity(ctx),
+    "cognito-token-validity:DeleteUserPoolClient": lambda ctx: DeleteUserPoolClientFn(ctx),
 }
 
 SETUP = {

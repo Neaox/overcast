@@ -618,6 +618,21 @@ class RealRegistrations(unittest.TestCase):
         # discarded implementation would otherwise never run.
         self._merge_all()
 
+    def test_registered_impls_have_no_bare_keys(self):
+        # #1700: every impl key must be "<group>:<test>". A bare key resolves
+        # only for as long as no registry group happens to declare the same
+        # test name — the first generated group sharing a PascalCase operation
+        # name with a hand-written one turns that bare key ambiguous and
+        # aborts the run (compat/AGENTS.md § Implementation keys). Qualifying
+        # every key up front means a new group can never make an existing
+        # registration ambiguous again.
+        merged = self._merge_all()
+        bare = sorted(key for key in merged if ":" not in key)
+        self.assertEqual(
+            [], bare,
+            f"{len(bare)} impl key(s) are not group-qualified: {bare}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

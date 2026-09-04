@@ -118,11 +118,11 @@ def DeleteMountTarget(ctx: TestContext) -> None:
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
-    "CreateMountTarget": CreateMountTarget,
-    "DescribeMountTargets": DescribeMountTargets,
-    "DescribeMountTargetSecurityGroups": DescribeMountTargetSecurityGroups,
-    "ModifyMountTargetSecurityGroups": ModifyMountTargetSecurityGroups,
-    "DeleteMountTarget": DeleteMountTarget,
+    "efs-mount-targets:CreateMountTarget": CreateMountTarget,
+    "efs-mount-targets:DescribeMountTargets": DescribeMountTargets,
+    "efs-mount-targets:DescribeMountTargetSecurityGroups": DescribeMountTargetSecurityGroups,
+    "efs-mount-targets:ModifyMountTargetSecurityGroups": ModifyMountTargetSecurityGroups,
+    "efs-mount-targets:DeleteMountTarget": DeleteMountTarget,
 }
 
 

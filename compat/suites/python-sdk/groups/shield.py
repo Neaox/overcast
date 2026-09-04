@@ -53,11 +53,11 @@ def DeleteProtection(ctx: TestContext) -> None:
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
-    "DescribeSubscription": DescribeSubscription,
-    "CreateProtection": CreateProtection,
-    "ListProtections": ListProtections,
-    "DescribeProtection": DescribeProtection,
-    "DeleteProtection": DeleteProtection,
+    "shield-protections:DescribeSubscription": DescribeSubscription,
+    "shield-protections:CreateProtection": CreateProtection,
+    "shield-protections:ListProtections": ListProtections,
+    "shield-protections:DescribeProtection": DescribeProtection,
+    "shield-protections:DeleteProtection": DeleteProtection,
 }
 
 SETUP = {}

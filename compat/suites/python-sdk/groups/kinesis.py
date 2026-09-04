@@ -268,20 +268,20 @@ def MergeShards(ctx: TestContext) -> None:
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
-    "CreateStream": CreateStream,
-    "DescribeStream": DescribeStream,
-    "DescribeStreamSummary": DescribeStreamSummary,
-    "ListStreams": ListStreams,
-    "AddTagsToStream": AddTagsToStream,
-    "ListTagsForStream": ListTagsForStream,
-    "DeleteStream": DeleteStream,
-    "PutRecord": PutRecord,
-    "PutRecords": PutRecords,
-    "GetShardIterator": GetShardIterator,
-    "GetRecords": GetRecords,
-    "ListShards": ListShards,
-    "SplitShard": SplitShard,
-    "MergeShards": MergeShards,
+    "kinesis-streams:CreateStream": CreateStream,
+    "kinesis-streams:DescribeStream": DescribeStream,
+    "kinesis-streams:DescribeStreamSummary": DescribeStreamSummary,
+    "kinesis-streams:ListStreams": ListStreams,
+    "kinesis-streams:AddTagsToStream": AddTagsToStream,
+    "kinesis-streams:ListTagsForStream": ListTagsForStream,
+    "kinesis-streams:DeleteStream": DeleteStream,
+    "kinesis-records:PutRecord": PutRecord,
+    "kinesis-records:PutRecords": PutRecords,
+    "kinesis-records:GetShardIterator": GetShardIterator,
+    "kinesis-records:GetRecords": GetRecords,
+    "kinesis-shards:ListShards": ListShards,
+    "kinesis-shards:SplitShard": SplitShard,
+    "kinesis-shards:MergeShards": MergeShards,
 }
 
 SETUP = {

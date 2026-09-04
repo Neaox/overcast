@@ -233,22 +233,22 @@ def GetParametersByPathPaginated(ctx: TestContext) -> None:
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
-    "PutParameter": PutParameter,
-    "GetParameter": GetParameter,
-    "PutParameterOverwrite": PutParameterOverwrite,
-    "GetParameterHistory": GetParameterHistory,
-    "PutMultipleParameters": PutMultipleParameters,
-    "GetParameters": GetParameters,
-    "DescribeParameters": DescribeParameters,
-    "TagParameter": TagParameter,
-    "ListSSMTagsForResource": ListTagsForResource,
-    "DeleteParameters": DeleteParameters,
-    "PutSecureStringParameter": PutSecureStringParameter,
-    "GetSecureStringParameter": GetSecureStringParameter,
-    "GetSecureStringWithoutDecryption": GetSecureStringWithoutDecryption,
-    "GetParametersByPath": GetParametersByPath,
-    "GetParametersByPathRecursive": GetParametersByPathRecursive,
-    "GetParametersByPathPaginated": GetParametersByPathPaginated,
+    "ssm-parameters:PutParameter": PutParameter,
+    "ssm-parameters:GetParameter": GetParameter,
+    "ssm-parameters:PutParameterOverwrite": PutParameterOverwrite,
+    "ssm-parameters:GetParameterHistory": GetParameterHistory,
+    "ssm-parameters:PutMultipleParameters": PutMultipleParameters,
+    "ssm-parameters:GetParameters": GetParameters,
+    "ssm-parameters:DescribeParameters": DescribeParameters,
+    "ssm-parameters:TagParameter": TagParameter,
+    "ssm-parameters:ListSSMTagsForResource": ListTagsForResource,
+    "ssm-parameters:DeleteParameters": DeleteParameters,
+    "ssm-secure:PutSecureStringParameter": PutSecureStringParameter,
+    "ssm-secure:GetSecureStringParameter": GetSecureStringParameter,
+    "ssm-secure:GetSecureStringWithoutDecryption": GetSecureStringWithoutDecryption,
+    "ssm-path:GetParametersByPath": GetParametersByPath,
+    "ssm-path:GetParametersByPathRecursive": GetParametersByPathRecursive,
+    "ssm-path:GetParametersByPathPaginated": GetParametersByPathPaginated,
 }
 
 SETUP = {
