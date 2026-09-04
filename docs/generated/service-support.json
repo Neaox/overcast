@@ -758,7 +758,7 @@
           "operation": "InvokeWithResponseStream",
           "category": "Invocation",
           "status": "✅ Supported",
-          "notes": "Invokes synchronously, wraps result in AWS event stream binary encoding (initial-response → PayloadChunk → InvokeComplete); RequestResponse only"
+          "notes": "Invokes synchronously, wraps result in AWS event stream binary encoding (PayloadChunk → InvokeComplete); RequestResponse only"
         },
         {
           "operation": "PublishVersion",
@@ -6384,7 +6384,7 @@
           "operation": "StartLiveTail",
           "category": "Log events",
           "status": "✅ Supported",
-          "notes": "AWS event-stream response with sessionStart/sessionUpdate; supports group identifiers, stream names/prefixes, and filter patterns"
+          "notes": "AWS event-stream response opening with initial-response, then sessionStart/sessionUpdate; supports group identifiers, stream names/prefixes, and filter patterns"
         },
         {
           "operation": "StartQuery",

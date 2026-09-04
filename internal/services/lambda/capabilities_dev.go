@@ -56,7 +56,7 @@ func init() {
 		capabilities.Capability{Service: "lambda", Operation: "InvokeAsync", Category: "Invocation",
 			Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		capabilities.Capability{Service: "lambda", Operation: "InvokeWithResponseStream", Category: "Invocation",
-			Status: capabilities.StatusSupported, Notes: "Invokes synchronously, wraps result in AWS event stream binary encoding (initial-response → PayloadChunk → InvokeComplete); RequestResponse only"},
+			Status: capabilities.StatusSupported, Notes: "Invokes synchronously, wraps result in AWS event stream binary encoding (PayloadChunk → InvokeComplete); RequestResponse only"},
 
 		// Aliases & versions
 		capabilities.Capability{Service: "lambda", Operation: "PublishVersion", Category: "Aliases & versions",

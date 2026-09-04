@@ -8,6 +8,7 @@ package logs_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"io"
@@ -16,11 +17,72 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/aws/smithy-go/eventstream"
 	"github.com/fxamacker/cbor/v2"
 
 	"github.com/overcast-sh/overcast/tests/helpers"
 )
+
+func TestStartLiveTail_opensWithInitialResponseFrame(t *testing.T) {
+	// Given: a log group an AWS SDK for Go v2 client would tail
+	srv := helpers.NewTestServer(t)
+	groupName := "/aws/lambda/live-tail-initial-response"
+	groupARN := "arn:aws:logs:us-east-1:000000000000:log-group:" + groupName
+	createLogGroup(t, srv, groupName)
+
+	// When: the session is opened under a deadline. For an awsjson1.1
+	// event-stream operation the smithy-go runtime parks the deserializer on
+	// `ir := <-eventReader.initialResponse` before it yields the stream, so a
+	// session that opens with sessionStart deadlocks the client instead of
+	// failing it (#1064). The deadline is what turns that hang back into a
+	// test failure.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	resp := logsCallCtx(t, ctx, srv, "StartLiveTail", map[string]any{
+		"logGroupIdentifiers": []string{groupARN},
+	})
+	defer resp.Body.Close()
+
+	// Then: the response is an event stream whose very first frame is the
+	// initial-response message carrying the operation's (empty) output
+	// document. Decoded with the SDK's own decoder, so the CRCs are checked
+	// the way a real client checks them.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	helpers.AssertHeader(t, resp, "Content-Type", "application/vnd.amazon.eventstream")
+
+	decoder := eventstream.NewDecoder()
+	first, err := decoder.Decode(resp.Body, nil)
+	if err != nil {
+		t.Fatalf("decode first event-stream frame: %v", err)
+	}
+	for _, want := range []struct{ name, value string }{
+		{":message-type", "event"},
+		{":event-type", "initial-response"},
+		{":content-type", "application/json"},
+	} {
+		got := first.Headers.Get(want.name)
+		if got == nil {
+			t.Fatalf("first frame is missing the %s header; headers: %v", want.name, first.Headers)
+		}
+		if got.String() != want.value {
+			t.Fatalf("first frame %s = %q, want %q", want.name, got.String(), want.value)
+		}
+	}
+	if string(first.Payload) != "{}" {
+		t.Fatalf("initial-response payload = %q, want %q", first.Payload, "{}")
+	}
+
+	// And: sessionStart still follows it, unchanged.
+	second, err := decoder.Decode(resp.Body, nil)
+	if err != nil {
+		t.Fatalf("decode second event-stream frame: %v", err)
+	}
+	if got := second.Headers.Get(":event-type"); got == nil || got.String() != "sessionStart" {
+		t.Fatalf("second frame event type = %v, want sessionStart", got)
+	}
+}
 
 func TestStartLiveTail_streamsMatchingEvents(t *testing.T) {
 	// Given: a log group with two streams exists
@@ -42,10 +104,7 @@ func TestStartLiveTail_streamsMatchingEvents(t *testing.T) {
 	// Then: the response is an AWS event-stream session
 	helpers.AssertStatus(t, resp, http.StatusOK)
 	helpers.AssertHeader(t, resp, "Content-Type", "application/vnd.amazon.eventstream")
-	start := readEventStreamMessage(t, resp.Body)
-	if start.Headers[":event-type"] != "sessionStart" {
-		t.Fatalf("first event type = %q, want sessionStart", start.Headers[":event-type"])
-	}
+	readLiveTailSessionOpen(t, resp.Body)
 
 	// When: matching and non-matching log events are written
 	putLogEvents(t, srv, groupName, "app/one", []logEvent{
@@ -101,10 +160,7 @@ func TestStartLiveTail_manySmallWritesAllArrive(t *testing.T) {
 	})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
-	start := readEventStreamMessage(t, resp.Body)
-	if start.Headers[":event-type"] != "sessionStart" {
-		t.Fatalf("first event type = %q, want sessionStart", start.Headers[":event-type"])
-	}
+	readLiveTailSessionOpen(t, resp.Body)
 
 	// When: thirty separate PutLogEvents calls land between drains. Real
 	// producers write one call per line all the time — the awslogs driver, a
@@ -154,10 +210,7 @@ func TestStartLiveTail_overflowDropsOldestAndSaysSampled(t *testing.T) {
 	})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
-	start := readEventStreamMessage(t, resp.Body)
-	if start.Headers[":event-type"] != "sessionStart" {
-		t.Fatalf("first event type = %q, want sessionStart", start.Headers[":event-type"])
-	}
+	readLiveTailSessionOpen(t, resp.Body)
 
 	// When: more events than the session buffer holds land between drains
 	// (AWS buffers 5,000 events and drops the oldest beyond that).
@@ -1755,11 +1808,19 @@ type filterResult struct {
 // the typed helpers (createLogGroup, createLogStream, putLogEvents) for setup.
 func logsCall(t *testing.T, srv *helpers.TestServer, operation string, body map[string]any) *http.Response {
 	t.Helper()
+	return logsCallCtx(t, context.Background(), srv, operation, body)
+}
+
+// logsCallCtx is logsCall bound to a context — what a streaming operation
+// needs, so a session that never sends the frame a test is waiting for fails
+// on the deadline instead of hanging the package.
+func logsCallCtx(t *testing.T, ctx context.Context, srv *helpers.TestServer, operation string, body map[string]any) *http.Response {
+	t.Helper()
 	b, err := json.Marshal(body)
 	if err != nil {
 		t.Fatalf("marshal %s body: %v", operation, err)
 	}
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewReader(b))
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
 	req.Header.Set("X-Amz-Target", "Logs_20140328."+operation)
 
@@ -1877,6 +1938,23 @@ type liveTailTestUpdate struct {
 		Sampled bool `json:"sampled"`
 	} `json:"sessionMetadata"`
 	SessionResults []liveTailTestResult `json:"sessionResults"`
+}
+
+// readLiveTailSessionOpen consumes the two frames every StartLiveTail session
+// opens with — the initial-response the SDK deserializers park on, then
+// sessionStart — and fails the test if either is missing or out of order.
+// TestStartLiveTail_opensWithInitialResponseFrame is where the opening frame's
+// own headers and payload are asserted.
+func readLiveTailSessionOpen(t *testing.T, r io.Reader) {
+	t.Helper()
+	initial := readEventStreamMessage(t, r)
+	if initial.Headers[":event-type"] != "initial-response" {
+		t.Fatalf("first event type = %q, want initial-response", initial.Headers[":event-type"])
+	}
+	start := readEventStreamMessage(t, r)
+	if start.Headers[":event-type"] != "sessionStart" {
+		t.Fatalf("second event type = %q, want sessionStart", start.Headers[":event-type"])
+	}
 }
 
 func readLiveTailUpdate(t *testing.T, r io.Reader) liveTailTestUpdate {

@@ -11,6 +11,14 @@ package lambda
 // Event sequence:
 //  1. PayloadChunk       — the raw function response bytes
 //  2. InvokeComplete     — {} or {"ErrorCode": "...", "ErrorDetails": "..."}
+//
+// No initial-response event opens this stream, unlike CloudWatch Logs'
+// StartLiveTail. This is a restJson1 operation whose initial output members
+// travel in HTTP headers (X-Amz-Executed-Version, Content-Type) rather than in
+// a document, so the SDKs have nothing to wait for: the generated event-stream
+// reader in aws-sdk-go-v2/service/lambda has no initial-response handling at
+// all. See internal/protocol/eventstream.InitialResponseEventType for the case
+// that does need one.
 
 import (
 	"encoding/json"
@@ -108,11 +116,7 @@ func (h *Handler) InvokeWithResponseStream(w http.ResponseWriter, r *http.Reques
 
 	// Event 1: PayloadChunk (only when invocation succeeded).
 	if result != nil && len(result.Payload) > 0 {
-		_ = eventstream.WriteMessage(w, []eventstream.Header{
-			{Name: ":message-type", Value: "event"},
-			{Name: ":event-type", Value: "PayloadChunk"},
-			{Name: ":content-type", Value: "application/octet-stream"},
-		}, result.Payload)
+		_ = eventstream.WriteEvent(w, "PayloadChunk", "application/octet-stream", result.Payload)
 		if hasFlusher {
 			flusher.Flush()
 		}
@@ -133,11 +137,7 @@ func (h *Handler) InvokeWithResponseStream(w http.ResponseWriter, r *http.Reques
 	} else {
 		completePayload = []byte("{}")
 	}
-	_ = eventstream.WriteMessage(w, []eventstream.Header{
-		{Name: ":message-type", Value: "event"},
-		{Name: ":event-type", Value: "InvokeComplete"},
-		{Name: ":content-type", Value: "application/json"},
-	}, completePayload)
+	_ = eventstream.WriteEvent(w, "InvokeComplete", eventstream.JSONContentType, completePayload)
 	if hasFlusher {
 		flusher.Flush()
 	}
