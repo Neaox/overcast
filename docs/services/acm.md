@@ -49,7 +49,7 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 | -------------------- | ------------------------------------------------------------ | ---------------------------------------------- |
 | Validation           | DNS or email round-trip; `PENDING_VALIDATION` first          | Skipped; the certificate is `ISSUED` on return |
 | Certificate material | A real X.509 chain is issued                                 | No key or chain is generated                   |
-| Import and renewal   | `ImportCertificate`, `RenewCertificate`, `ExportCertificate` | Not implemented — `400 UnknownOperationException` |
+| Import and renewal   | `ImportCertificate`, `RenewCertificate`, `ExportCertificate` | Not implemented — `501 NotImplemented`         |
 
 ## Gotchas
 

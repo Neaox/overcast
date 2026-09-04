@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
+	"github.com/overcast-sh/overcast/internal/awsapi"
 	"github.com/overcast-sh/overcast/internal/clock"
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/protocol"
@@ -171,6 +172,18 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 		}
 		if typed, ok := s.handler.typedOp[opName]; ok {
 			typed.Invoke(w, r, c)
+			return
+		}
+		// A real, documented ACM operation Overcast has not implemented gets an
+		// honest 501 rather than UnknownOperationException, which would wrongly
+		// claim AWS has no such operation — the same rule cloudwatch/service.go's
+		// dispatchJSON states and follows. awsapi.HasOperation consults the
+		// generated model corpus, so this list cannot drift the way a
+		// hand-maintained one would. c.WriteError (not a fixed JSON helper) keeps
+		// the error in whatever wire format this request was identified as,
+		// including RPCv2 CBOR.
+		if awsapi.HasOperation(serviceName, opName) {
+			c.WriteError(w, r, protocol.ErrNotImplemented)
 			return
 		}
 		c.WriteError(w, r, &protocol.AWSError{
