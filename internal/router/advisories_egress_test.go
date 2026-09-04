@@ -195,6 +195,51 @@ func TestCheckEgressNotWithheld_survivesTheNetworkBeingForgotten(t *testing.T) {
 	}
 }
 
+// The same shortfall, through the other route that can now write to the
+// tracker mid-run: the Docker watcher re-verifying a network on its `create`
+// event (#1599).
+//
+// A drifted control plane records what it *is* — internal — on the network
+// entry, which is right and is what an operator needs to see. The decision has
+// to keep saying what this run resolved, or `controlPlaneRoutable` reads the
+// observation, decides the plane is isolated after all, and switches this rule
+// off while the shortfall it reports is entirely unchanged. That is the same
+// failure #1583's ForgetNetwork produced from one route over, which is why the
+// ControlPlane field exists at all.
+func TestCheckEgressNotWithheld_survivesADriftedControlPlaneRecordedFromAnEvent(t *testing.T) {
+	tr := docker.NewTracker()
+	tr.RecordDecisions([]docker.NetworkDecision{
+		{Network: "overcast_control", Internal: false, Reason: hostVetoReason},
+	})
+	tr.RecordNetworks([]docker.NetworkStatus{
+		{Name: "overcast", Internal: true, Reason: "OVERCAST_VPC_EGRESS=none"},
+		{Name: "overcast_control", Internal: false, Reason: hostVetoReason},
+	})
+
+	// Somebody rebuilds the control plane by hand as `--internal`; the create
+	// event re-verifies it and records the drift.
+	tr.RecordNetworks([]docker.NetworkStatus{{
+		Name: "overcast_control", Internal: true, Reason: hostVetoReason,
+		Mismatch: []docker.NetworkFieldDiff{{Field: "internal", Want: "false", Got: "true"}},
+		Drift:    "network is not in the configured state (internal: want false, got true)",
+		Fix:      "overcast network reset overcast_control",
+	}})
+
+	snap := tr.Snapshot()
+	in := advisoryInput{VPCEgress: config.VPCEgressNone, Networks: snap.Networks}
+	for _, d := range snap.Decisions {
+		if d.Network == "overcast_control" {
+			in.ControlPlane = d
+		}
+	}
+	if in.ControlPlane.Internal {
+		t.Fatal("the decision took the drifted network's isolation; this rule reads it and is now silent")
+	}
+	if a := checkEgressNotWithheld(in); a == nil {
+		t.Fatal("the advisory stopped firing because somebody edited the network; the shortfall is unchanged")
+	}
+}
+
 // The generator has to call it, or the rule is dead code with passing tests.
 func TestComputeAdvisories_includesTheEgressRule(t *testing.T) {
 	got := computeAdvisories(noneOnDockerDesktop())

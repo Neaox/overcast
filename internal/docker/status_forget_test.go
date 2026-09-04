@@ -8,6 +8,7 @@ package docker
 // on it keeps telling an operator to run a command they have already run.
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -76,17 +77,17 @@ func TestWatcher_forgetsANetworkOnDestroy(t *testing.T) {
 	})
 	w := &Watcher{tracker: tr}
 
-	w.recordTrackerEvent(event("network", "destroy", "overcast"))
+	w.recordTrackerEvent(context.Background(), event("network", "destroy", "overcast"))
 
 	if got := tr.Snapshot().Networks; len(got) != 0 {
 		t.Fatalf("networks = %+v, want the destroyed network forgotten", got)
 	}
 }
 
-// Only the destroy. A create says a network exists, not that it matches — this
-// goroutine has no spec to compare against — and acting on one would race the
-// command that is mid-rebuild. Connect and disconnect say nothing about state
-// at all.
+// Connect and disconnect say nothing about whether a network matches its spec,
+// and a watcher with no verifier — one built by NewWatcher, without a
+// Supervisor to hold the resolved specs — has nothing to check a create
+// against. None of the three may disturb what the probe recorded.
 func TestWatcher_keepsTheRecordOnEveryOtherNetworkEvent(t *testing.T) {
 	for _, action := range []string{"create", "connect", "disconnect"} {
 		t.Run(action, func(t *testing.T) {
@@ -94,7 +95,7 @@ func TestWatcher_keepsTheRecordOnEveryOtherNetworkEvent(t *testing.T) {
 			tr.RecordNetworks([]NetworkStatus{{Name: "overcast", Drift: "drifted"}})
 			w := &Watcher{tracker: tr}
 
-			w.recordTrackerEvent(event("network", action, "overcast"))
+			w.recordTrackerEvent(context.Background(), event("network", action, "overcast"))
 
 			if got := tr.Snapshot().Networks; len(got) != 1 {
 				t.Fatalf("networks = %+v, want the record kept on a %q event", got, action)
@@ -109,7 +110,7 @@ func TestWatcher_keepsTheRecordOnAContainerEvent(t *testing.T) {
 	tr.RecordNetworks([]NetworkStatus{{Name: "overcast", Drift: "drifted"}})
 	w := &Watcher{tracker: tr}
 
-	w.recordTrackerEvent(event("container", "destroy", "overcast"))
+	w.recordTrackerEvent(context.Background(), event("container", "destroy", "overcast"))
 
 	if got := tr.Snapshot().Networks; len(got) != 1 {
 		t.Fatalf("networks = %+v, want the record kept", got)
@@ -156,7 +157,7 @@ func TestForgetNetwork_aLateDestroyDoesNotUndoTheProbeDecision(t *testing.T) {
 
 	// Probe records; the watcher's destroy for the same rebuild lands after it.
 	tr.RecordNetworks([]NetworkStatus{{Name: "overcast", Internal: true, Reason: "OVERCAST_VPC_EGRESS=none"}})
-	w.recordTrackerEvent(event("network", "destroy", "overcast"))
+	w.recordTrackerEvent(context.Background(), event("network", "destroy", "overcast"))
 
 	snap := tr.Snapshot()
 	if len(snap.Networks) != 0 {

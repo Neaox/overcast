@@ -50,6 +50,16 @@ type Supervisor struct {
 	mu      sync.Mutex
 	clients map[string]*Client // socket path → client (deduplicated)
 	done    chan struct{}      // closed by Close to signal shutdown
+
+	// specs is what Probe resolved for each daemon: socket path → the specs
+	// EnsureNetwork compared against, isolation already settled.
+	//
+	// Kept because the event watcher needs them and cannot derive them. A
+	// network `create` arriving on the stream says a network exists; only a
+	// spec says whether it is the network this configuration asked for, and
+	// re-resolving one would re-run InternalMode and make a second decision
+	// rather than read the first (#1599).
+	specs map[string][]ResolvedNetworkSpec
 }
 
 // NewSupervisor creates a Supervisor that will publish Docker container events
@@ -59,6 +69,7 @@ func NewSupervisor(bus *events.Bus, logger *zap.Logger) *Supervisor {
 		bus:     bus,
 		logger:  logger.Named("docker"),
 		clients: make(map[string]*Client),
+		specs:   make(map[string][]ResolvedNetworkSpec),
 		done:    make(chan struct{}),
 	}
 }
@@ -99,8 +110,19 @@ func (s *Supervisor) Probe(ctx context.Context, configs []ServiceConfig, network
 			probeCache[cfg.Socket] = entry
 			if err == nil {
 				if s.tracker != nil {
+					// Decisions from the specs, records from the networks.
+					// A network that drifted and could not be repaired
+					// reports what it *is*, and that observation must not
+					// become this run's answer about what it asked for — see
+					// Tracker.RecordDecisions.
+					decisions := make([]NetworkDecision, 0, len(pr.Specs))
+					for _, spec := range pr.Specs {
+						decisions = append(decisions, spec.Decision())
+					}
+					s.tracker.RecordDecisions(decisions)
 					s.tracker.RecordNetworks(pr.Networks)
 				}
+				s.specs[cfg.Socket] = pr.Specs
 				keep := make([]string, 0, len(networks))
 				for _, spec := range networks {
 					keep = append(keep, spec.Name)
@@ -174,6 +196,17 @@ func (s *Supervisor) Run(ctx context.Context) {
 			var w *Watcher
 			if s.tracker != nil {
 				w = NewWatcherWithTracker(dc, s.bus, s.logger.With(zap.String("socket", socket)), s.tracker)
+				// The watcher is per-daemon; the specs are too. Binding the
+				// socket here is what lets the watcher ask about a network by
+				// name alone.
+				w.verifyNetwork = func(ctx context.Context, name string) {
+					s.VerifyNetwork(ctx, socket, name)
+				}
+				w.hasNetworkSpec = func(name string) bool {
+					s.mu.Lock()
+					defer s.mu.Unlock()
+					return s.specFor(socket, name) != nil
+				}
 			} else {
 				w = NewWatcher(dc, s.bus, s.logger.With(zap.String("socket", socket)))
 			}
@@ -181,6 +214,60 @@ func (s *Supervisor) Run(ctx context.Context) {
 		}(socket, dc)
 	}
 	wg.Wait()
+}
+
+// VerifyNetwork re-checks one network on one daemon against the spec Probe
+// resolved for it, and records what it finds.
+//
+// This is the supervisor half of #1599: the watcher sees a network `create` and
+// knows a name, this knows what that name was supposed to be. A network with no
+// spec here — a per-VPC network, whose spec comes from EC2's store rather than
+// from PlaneSpecs, or one created under a name this configuration does not
+// manage — is not verified and not recorded. EC2 reports its own through the
+// same tracker (see NetworkReporter).
+//
+// Verify only: docker.VerifyNetwork neither creates nor repairs, which is what
+// keeps this clear of the command that is usually the reason a create event is
+// arriving at all. See its doc comment.
+//
+// The lock is held only to read the two maps. Run starts the watchers after
+// Probe has returned, so in practice this never waits on a probe.
+func (s *Supervisor) VerifyNetwork(ctx context.Context, socket, name string) {
+	if s.tracker == nil || name == "" {
+		return
+	}
+
+	s.mu.Lock()
+	dc := s.clients[socket]
+	spec := s.specFor(socket, name)
+	s.mu.Unlock()
+
+	if dc == nil || spec == nil {
+		return
+	}
+	if status, ok := VerifyNetwork(ctx, dc, *spec, s.logger); ok {
+		// The decision first, and from the spec: a drifted network's status
+		// carries the isolation it *has*, and letting that become the decision
+		// would answer "what did this configuration ask for" with an
+		// observation. RecordDecisions says why that matters.
+		s.tracker.RecordDecisions([]NetworkDecision{spec.Decision()})
+		s.tracker.RecordNetworks([]NetworkStatus{status})
+	}
+}
+
+// specFor returns the resolved spec this process holds for one network on one
+// daemon, or nil when it holds none. Caller holds s.mu.
+//
+// A nil answer is what tells the watcher a network is none of Overcast's
+// business — or is a per-VPC network, whose spec lives in EC2's store and which
+// is reported through the same tracker on EC2's own schedule.
+func (s *Supervisor) specFor(socket, name string) *ResolvedNetworkSpec {
+	for i, candidate := range s.specs[socket] {
+		if candidate.Name == name {
+			return &s.specs[socket][i]
+		}
+	}
+	return nil
 }
 
 // Close signals all background goroutines (including Probe blockers and

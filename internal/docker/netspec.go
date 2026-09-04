@@ -223,6 +223,17 @@ func (s NetworkSpec) Resolve(ctx context.Context, dc *Client) ResolvedNetworkSpe
 	return r
 }
 
+// Decision is what this run resolved the spec's isolation to, and why —
+// NetworkDecision built from the answer rather than from the network it was
+// applied to.
+//
+// The distinction matters because the two can disagree: a network that drifted
+// and could not be repaired reports what it *is*, while the decision has to
+// keep saying what this configuration asked for. See Tracker.RecordDecisions.
+func (r ResolvedNetworkSpec) Decision() NetworkDecision {
+	return NetworkDecision{Network: r.Name, Internal: r.Internal, Reason: r.Reason}
+}
+
 // driver returns the driver this spec asks for, defaulted.
 func (r ResolvedNetworkSpec) driver() string {
 	if r.Driver == "" {
@@ -446,12 +457,7 @@ func EnsureNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, lo
 	// the function whose selling point is that it is cheap enough to run on
 	// every startup for every network.
 	spec.hash = spec.SpecHash()
-	status := NetworkStatus{
-		Name:     spec.Name,
-		Internal: spec.Internal,
-		Reason:   spec.Reason,
-		SpecHash: spec.hash,
-	}
+	status := baseStatus(spec)
 	if dc == nil || spec.Name == "" {
 		return status, nil
 	}
@@ -509,32 +515,219 @@ func EnsureNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, lo
 		}
 	}
 
+	v := verifyAgainstSpec(spec, status, info)
+	switch v.verdict {
+	case verdictMatches:
+		return v.status, nil
+
+	case verdictOtherInstance:
+		logger.Warn("Docker network name is shared with another Overcast instance and does not match this "+
+			"configuration — it was left alone, because removing it would break the instance that owns it. "+
+			"Give this instance its own OVERCAST_NETWORK",
+			zap.String("network", spec.Name),
+			zap.String("owner", v.status.Owner),
+			zap.String("this_instance", spec.Owner),
+			zap.Strings("differs", DiffStrings(v.diffs)))
+		return v.status, nil
+
+	case verdictForeignTool:
+		logger.Warn("a Docker network created by another tool already has a name Overcast manages, and "+
+			"does not match this configuration — it was left alone rather than removed. Rename it, or "+
+			"give Overcast a different OVERCAST_NETWORK",
+			zap.String("network", spec.Name),
+			zap.String("created_by", v.status.Owner),
+			zap.Strings("differs", DiffStrings(v.diffs)))
+		return v.status, nil
+
+	case verdictRepairable:
+		if repaired := recreateToSpec(ctx, dc, spec, info, logger); repaired {
+			// Warn, not Info: this destroyed and rebuilt a network, and on the
+			// first start after an upgrade it destroys one nobody labelled. The
+			// operator should be able to find out afterwards what went.
+			logger.Warn("removed and recreated a Docker network to match this configuration — it "+
+				"differed and had nothing attached",
+				zap.String("network", spec.Name),
+				zap.String("removed_id", info.ID),
+				zap.Strings("differed", DiffStrings(v.diffs)))
+			// `status`, not `v.status`, and the difference is the point: the
+			// rebuild is what makes the spec true, so the network this returns
+			// has no mismatch and no drift. v.status describes the network as
+			// it was found a moment ago and no longer exists.
+			return status, nil
+		}
+		// Fall through to the warning: the rebuild did not happen, and saying
+		// so beats reporting a state that was never applied.
+
+	case verdictHeld:
+		// Nothing to attempt — rebuilding would drop running containers off the
+		// network mid-run. Reported below, like any drift left standing.
+	}
+
+	logger.Warn("Docker network is not in the state this configuration asks for, and could not be "+
+		"recreated — Docker cannot change these settings in place. Run `overcast network reset "+
+		spec.Name+"` to stop what is attached and rebuild it, or `overcast network reset --dry-run` "+
+		"to see what that would do first",
+		zap.String("network", spec.Name),
+		zap.Strings("differs", DiffStrings(v.diffs)),
+		zap.Strings("attached_containers", v.status.Attached),
+		zap.Int("attached", len(v.status.Attached)))
+	return v.status, nil
+}
+
+// VerifyNetwork re-reads one network, compares it with the spec this process
+// resolved for it, and returns the status to report and whether there is one.
+//
+// It is EnsureNetwork's comparison with the acting taken out, and it exists for
+// one caller: the Docker event watcher, on a network `create`. Without it, a
+// network `overcast network reset` has just repaired vanishes from
+// /_overcast/health — the destroy drops the entry (#1583) and nothing puts one
+// back, because Supervisor.Probe runs exactly once per process: "until the next
+// probe" means "until Overcast is restarted". An operator runs the command the
+// advisory told them to run, watches it succeed, and the network they were
+// warned about reports nothing at all rather than reporting that it is now
+// fine (#1599).
+//
+// **It never creates and never repairs, and that is not an omission.** During
+// an `overcast network reset` this daemon is watching another process rebuild a
+// network: between the CLI's remove and its create, a repair from here would
+// create the network first, and the CLI's own confirmed-removal check would
+// then abort a working command with "still present after removal". A check that
+// can only report has no such failure mode.
+//
+// **It takes no network lock.** LockNetwork serialises decisions to *modify* a
+// network and this makes none; a read that lands mid-rebuild sees either the
+// successor — the newer truth, and the one worth recording — or nothing, which
+// is reported as nothing. Taking the lock would park the event stream's
+// goroutine behind a rebuild that can run for seconds, with every container
+// event queued behind it.
+//
+// Returns false — record nothing — when the network cannot be read. Absence is
+// what the destroy already recorded, and an inspect that failed for any other
+// reason is a fact about the daemon rather than about the network somebody has
+// just created; degrading health from an opportunistic re-check would make this
+// worse than the silence it replaces.
+//
+// The cost of that choice, stated plainly: this one read is the only one
+// coming. There is no retry here — inspectForVerify's exists to settle the
+// startup path before services are handed the daemon — and no later probe,
+// since Probe runs once and a Docker reconnect runs the reconcile rather than a
+// new one. So a create whose inspect fails transiently leaves the entry absent
+// until Overcast restarts, exactly as it was before this existed. What this
+// closes is the ordinary case, not every case.
+func VerifyNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec,
+	logger *zap.Logger) (NetworkStatus, bool) {
+	if dc == nil || spec.Name == "" {
+		return NetworkStatus{}, false
+	}
+	spec.hash = spec.SpecHash()
+	status := baseStatus(spec)
+
+	info, err := dc.InspectNetwork(ctx, spec.Name)
+	if err != nil || info == nil {
+		logger.Debug("could not re-read a Docker network after its create event — the report is left "+
+			"as the event stream left it",
+			zap.String("network", spec.Name), zap.Error(err))
+		return NetworkStatus{}, false
+	}
+
+	v := verifyAgainstSpec(spec, status, info)
+	if v.verdict == verdictMatches {
+		logger.Debug("re-verified a Docker network on its create event",
+			zap.String("network", spec.Name), zap.Bool("internal", v.status.Internal))
+		return v.status, true
+	}
+	// One line for a network that was created in the wrong state: this is the
+	// only moment between two probes at which anything looks at it.
+	logger.Warn("a Docker network was created in a state this configuration does not ask for — it was "+
+		"left exactly as it is, because this check only reads. Run `overcast network status` to see it "+
+		"in full, or `overcast network reset "+spec.Name+"` to rebuild it",
+		zap.String("network", spec.Name),
+		zap.Strings("differs", DiffStrings(v.diffs)))
+	return v.status, true
+}
+
+// networkVerdict is what comparing a live network against its spec found, and
+// says whether repairing it is even on the table.
+//
+// It exists because two callers share one comparison and must do different
+// things with what it finds: EnsureNetwork, which may rebuild, and
+// VerifyNetwork, which may not.
+type networkVerdict int
+
+const (
+	// verdictMatches — the network is in the state the spec asks for.
+	verdictMatches networkVerdict = iota
+
+	// verdictOtherInstance — it differs, and carries another Overcast
+	// instance's ownership label. Not this process's to touch, however wrong.
+	verdictOtherInstance
+
+	// verdictForeignTool — it differs, and another tool created it.
+	verdictForeignTool
+
+	// verdictRepairable — it differs, it is ours, and nothing is attached, so a
+	// remove-and-recreate would settle it at no cost to anything running.
+	verdictRepairable
+
+	// verdictHeld — it differs and cannot be rebuilt without dropping running
+	// containers off the network mid-run, or it is swarm-scoped.
+	verdictHeld
+)
+
+// networkVerification is one comparison's result: the status to report, what
+// the comparison found, and the differing fields behind it.
+type networkVerification struct {
+	status  NetworkStatus
+	verdict networkVerdict
+	diffs   []NetworkFieldDiff
+}
+
+// baseStatus is what a network reports before anything has been read about it:
+// the spec's own answers, which stand unless the comparison replaces them.
+// Callers memoize spec.hash first; an unmemoized spec simply computes it.
+func baseStatus(spec ResolvedNetworkSpec) NetworkStatus {
+	return NetworkStatus{
+		Name:     spec.Name,
+		Internal: spec.Internal,
+		Reason:   spec.Reason,
+		SpecHash: spec.SpecHash(),
+	}
+}
+
+// verifyAgainstSpec compares a live network with its resolved spec and builds
+// the status that describes it.
+//
+// It reads and it decides; it never writes. Every log line, every remove and
+// every create stays in the caller — which is what makes it safe for
+// VerifyNetwork to reuse, and is why it was split out of EnsureNetwork rather
+// than copied out of it.
+//
+// status is the caller's spec-derived base, returned annotated.
+func verifyAgainstSpec(spec ResolvedNetworkSpec, status NetworkStatus,
+	info *NetworkInspect) networkVerification {
 	diffs := spec.Diff(info)
 	if len(diffs) == 0 {
 		status.Internal = info.Internal
-		return status, nil
+		return networkVerification{status: status, verdict: verdictMatches}
 	}
+
+	// Internal is what the network *is* from here down, not what this run asked
+	// for: a status that reports a drift and quotes the ask beside it repeats
+	// #1564's original confusion in a new field.
+	status.Internal = info.Internal
+	status.Mismatch = diffs
 
 	// Ownership before anything destructive. A network labelled for another
 	// Overcast instance is that instance's to manage, however wrong it looks
 	// from here — the alternative is one instance deleting a network another is
 	// actively using, which is how a running VPC loses its network.
 	if owner := info.Instance(); owner != "" && spec.Owner != "" && owner != spec.Owner {
-		status.Internal = info.Internal
-		status.Mismatch = diffs
 		status.Owner = owner
 		status.Drift = fmt.Sprintf(
 			"network belongs to another Overcast instance (%s) and was left alone; %s",
 			owner, strings.Join(DiffStrings(diffs), "; "))
 		status.Fix = "run this instance with a different OVERCAST_NETWORK, or stop the other instance"
-		logger.Warn("Docker network name is shared with another Overcast instance and does not match this "+
-			"configuration — it was left alone, because removing it would break the instance that owns it. "+
-			"Give this instance its own OVERCAST_NETWORK",
-			zap.String("network", spec.Name),
-			zap.String("owner", owner),
-			zap.String("this_instance", spec.Owner),
-			zap.Strings("differs", DiffStrings(diffs)))
-		return status, nil
+		return networkVerification{status: status, verdict: verdictOtherInstance, diffs: diffs}
 	}
 
 	// A network somebody else's tooling created is never destroyed, even empty
@@ -545,40 +738,14 @@ func EnsureNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, lo
 	// VPC sweep already takes this line ("absence is not permission",
 	// ec2.removeOrphanedNetworks); this aligns with it.
 	if tool := foreignTool(info.Labels); tool != "" {
-		status.Internal = info.Internal
-		status.Mismatch = diffs
 		status.Owner = tool
 		status.Drift = fmt.Sprintf("a network created by %s already has this name and does not match "+
 			"this configuration; it was left alone (%s)", tool, strings.Join(DiffStrings(diffs), "; "))
 		status.Fix = "rename that network, or set OVERCAST_NETWORK to a name it does not use"
-		logger.Warn("a Docker network created by another tool already has a name Overcast manages, and "+
-			"does not match this configuration — it was left alone rather than removed. Rename it, or "+
-			"give Overcast a different OVERCAST_NETWORK",
-			zap.String("network", spec.Name),
-			zap.String("created_by", tool),
-			zap.Strings("differs", DiffStrings(diffs)))
-		return status, nil
+		return networkVerification{status: status, verdict: verdictForeignTool, diffs: diffs}
 	}
 
 	attached := info.AttachedNames()
-	if len(attached) == 0 && !strings.EqualFold(info.Scope, "swarm") {
-		if repaired := recreateToSpec(ctx, dc, spec, info, logger); repaired {
-			// Warn, not Info: this destroyed and rebuilt a network, and on the
-			// first start after an upgrade it destroys one nobody labelled. The
-			// operator should be able to find out afterwards what went.
-			logger.Warn("removed and recreated a Docker network to match this configuration — it "+
-				"differed and had nothing attached",
-				zap.String("network", spec.Name),
-				zap.String("removed_id", info.ID),
-				zap.Strings("differed", DiffStrings(diffs)))
-			return status, nil
-		}
-		// Fall through to the warning: the rebuild did not happen, and saying
-		// so beats reporting a state that was never applied.
-	}
-
-	status.Internal = info.Internal
-	status.Mismatch = diffs
 	status.Attached = attached
 	status.Drift = fmt.Sprintf("network is not in the configured state (%s)",
 		strings.Join(DiffStrings(diffs), "; "))
@@ -586,15 +753,12 @@ func EnsureNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, lo
 	if len(attached) > 0 {
 		status.Drift += fmt.Sprintf("; %d container(s) attached", len(attached))
 	}
-	logger.Warn("Docker network is not in the state this configuration asks for, and could not be "+
-		"recreated — Docker cannot change these settings in place. Run `overcast network reset "+
-		spec.Name+"` to stop what is attached and rebuild it, or `overcast network reset --dry-run` "+
-		"to see what that would do first",
-		zap.String("network", spec.Name),
-		zap.Strings("differs", DiffStrings(diffs)),
-		zap.Strings("attached_containers", attached),
-		zap.Int("attached", len(attached)))
-	return status, nil
+
+	verdict := verdictHeld
+	if len(attached) == 0 && !strings.EqualFold(info.Scope, "swarm") {
+		verdict = verdictRepairable
+	}
+	return networkVerification{status: status, verdict: verdict, diffs: diffs}
 }
 
 // recreateToSpec removes the network described by info and creates it again to

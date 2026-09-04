@@ -22,6 +22,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/overcast-sh/overcast/internal/events"
 	"go.uber.org/zap"
 )
 
@@ -230,6 +231,44 @@ func TestProbe_internalModeTakesPrecedenceOverTheStaticField(t *testing.T) {
 	}
 }
 
+// The resolved specs come back out, and they carry the answer InternalMode
+// gave rather than the static field it overrode.
+//
+// This is what makes a later re-verification possible at all (#1599): the
+// Docker event watcher sees a network name and needs the spec it was supposed
+// to match. Re-resolving one from the NetworkSpec would call InternalMode a
+// second time — a second decision, against a daemon that may have changed —
+// where the point is to read the decision this process already made.
+func TestProbe_carriesTheResolvedSpecsOut(t *testing.T) {
+	srv, _ := newProbeServer("")
+	defer srv.Close()
+
+	specs := []NetworkSpec{
+		{Name: "overcast", Internal: false},
+		{Name: "overcast_control", Internal: false, InternalMode: func(_ context.Context, _ *Client) InternalDecision {
+			return InternalDecision{Internal: true, Reason: "OVERCAST_CONTROL_PLANE_INTERNAL=true"}
+		}},
+	}
+
+	result, err := Probe("tcp://"+addrOf(srv), specs, zap.NewNop())
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+
+	if len(result.Specs) != 2 {
+		t.Fatalf("Specs = %+v, want one per network, in order", result.Specs)
+	}
+	if result.Specs[0].Name != "overcast" || result.Specs[0].Internal {
+		t.Errorf("Specs[0] = %+v, want the data plane resolved routable", result.Specs[0])
+	}
+	if result.Specs[1].Name != "overcast_control" || !result.Specs[1].Internal {
+		t.Errorf("Specs[1] = %+v, want InternalMode's answer, not the static field", result.Specs[1])
+	}
+	if result.Specs[1].Reason == "" {
+		t.Error("the resolved spec lost its reason; a re-verification reports it as the probe did")
+	}
+}
+
 func TestProbe_staticInternalAppliesWithoutInternalMode(t *testing.T) {
 	// Given: a spec with no InternalMode — the default data plane's shape.
 	srv, ps := newProbeServer("")
@@ -401,4 +440,76 @@ func TestProbe_leavesAMatchingNetworkUntouched(t *testing.T) {
 // building a "tcp://" endpoint NewClient accepts.
 func addrOf(srv *httptest.Server) string {
 	return srv.Listener.Addr().String()
+}
+
+// The decision Probe records comes from the spec, not from the network it was
+// applied to — and this is the test that keeps the call there.
+//
+// A plane that drifts at startup and cannot be repaired reports what it *is*:
+// internal, in this case, because that is what an operator reading
+// `docker.networks` needs to see. Status.Decisions answers the other question —
+// what did this run resolve, and why — and Tracker.recordDecisionLocked
+// deliberately refuses to answer it from a drifted observation. So the specs
+// are the only remaining source, and without Supervisor.Probe recording them
+// the control plane would have no decision at all: `controlPlaneRoutable` reads
+// an empty Network, and vpc-egress-not-withheld goes silent by absence while
+// the shortfall it reports stands unchanged.
+//
+// Absence is the failure mode this pins, which is why it asserts on the
+// decision's contents rather than on a count.
+func TestSupervisorProbe_recordsTheDecisionFromTheSpecEvenWhenTheNetworkDrifted(t *testing.T) {
+	// Given: a control plane an older run left internal, with a container on
+	// it — so the repair is declined and the drift stands, which is the only
+	// case where the decision and the observation disagree.
+	srv, ps := newProbeServer("")
+	defer srv.Close()
+	ps.seedExisting("overcast_control", true, 1)
+
+	const hostVeto = "OVERCAST_VPC_EGRESS=none, overridden: host will not take an internal control plane"
+	specs := []NetworkSpec{{
+		Name: "overcast_control", Internal: true,
+		InternalMode: func(_ context.Context, _ *Client) InternalDecision {
+			return InternalDecision{Internal: false, Reason: hostVeto}
+		},
+	}}
+
+	bus := events.NewBus()
+	defer bus.Stop()
+	tracker := NewTracker()
+	sup := NewSupervisorWithTracker(bus, zap.NewNop(), tracker)
+	defer sup.Close()
+
+	// When: the supervisor probes that daemon.
+	sup.Probe(context.Background(), []ServiceConfig{{Name: "lambda", Socket: "tcp://" + addrOf(srv)}}, specs)
+
+	// Then: the decision is what this run resolved, with the reason that says
+	// who resolved it.
+	snap := tracker.Snapshot()
+	if len(snap.Decisions) != 1 {
+		t.Fatalf("decisions = %+v, want one for the control plane", snap.Decisions)
+	}
+	got := snap.Decisions[0]
+	if got.Network != "overcast_control" {
+		t.Fatalf("decision = %+v, want the control plane", got)
+	}
+	if got.Internal {
+		t.Error("the decision took the drifted network's isolation; the egress advisory reads this and " +
+			"would now report the plane as isolated when this run deliberately left it routable")
+	}
+	if !strings.Contains(got.Reason, "overridden: host") {
+		t.Errorf("reason = %q, want the host override that decided it", got.Reason)
+	}
+
+	// And the observation is reported where observations belong: on the network
+	// entry, which says what the network is and how to fix it.
+	if len(snap.Networks) != 1 {
+		t.Fatalf("networks = %+v, want the control plane reported", snap.Networks)
+	}
+	entry := snap.Networks[0]
+	if !entry.Internal {
+		t.Error("network entry = routable, want the drifted network's own isolation")
+	}
+	if entry.OK() || entry.Fix == "" {
+		t.Errorf("network = %+v, want the unrepaired drift and the command that fixes it", entry)
+	}
 }

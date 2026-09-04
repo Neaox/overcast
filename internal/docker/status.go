@@ -178,10 +178,55 @@ func (t *Tracker) RecordNetworks(networks []NetworkStatus) {
 	}
 }
 
-// recordDecisionLocked keeps the resolved isolation beside the observed state.
-// Caller holds t.mu.
+// recordDecisionLocked keeps the resolved isolation beside the observed state,
+// for a caller that has only the observation. Caller holds t.mu.
+//
+// **A drifted status records no decision, and that is the whole point of the
+// guard.** NetworkStatus.Internal is what the network *is* once a mismatch is
+// found — deliberately, because reporting the ask beside a drift is the
+// confusion #1564 was filed about — so a drifted status carries an observation
+// where a decision needs the answer this configuration resolved. Letting one
+// through overwrites "we asked for a routable control plane, because this host
+// will not take an isolated one" with "the network is currently internal",
+// while keeping the reason that says the opposite; controlPlaneRoutable then
+// reads false and switches vpc-egress-not-withheld off, which is the exact
+// failure the ControlPlane field was added to prevent (advisories.go).
+//
+// So a drift leaves the last decision standing, and a network that has never
+// had one records nothing: absence fires no rule, which is the right answer for
+// a network whose state nobody can account for. Callers that know what was
+// asked for say so directly — see RecordDecisions, which is how the two planes
+// get theirs.
 func (t *Tracker) recordDecisionLocked(n NetworkStatus) {
-	d := NetworkDecision{Network: n.Name, Internal: n.Internal, Reason: n.Reason}
+	if !n.OK() {
+		return
+	}
+	t.putDecisionLocked(NetworkDecision{Network: n.Name, Internal: n.Internal, Reason: n.Reason})
+}
+
+// RecordDecisions records what this run resolved each network's isolation to,
+// taken from the specs rather than from the networks they were applied to.
+//
+// This is the authoritative path, and the one the planes use. A decision is a
+// fact about the configuration — it outlives the network, survives
+// ForgetNetwork, and must not move when somebody edits a bridge by hand — so
+// it comes from the resolved spec, which is the only place that answer exists
+// in full. Observations fill in for callers that have no spec to offer (EC2's
+// per-VPC networks), under the guard on recordDecisionLocked.
+func (t *Tracker) RecordDecisions(decisions []NetworkDecision) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, d := range decisions {
+		if d.Network == "" {
+			continue
+		}
+		t.putDecisionLocked(d)
+	}
+}
+
+// putDecisionLocked writes one decision, replacing any earlier one for the same
+// network. Caller holds t.mu.
+func (t *Tracker) putDecisionLocked(d NetworkDecision) {
 	for i, existing := range t.status.Decisions {
 		if existing.Network == d.Network {
 			t.status.Decisions[i] = d
@@ -189,6 +234,28 @@ func (t *Tracker) recordDecisionLocked(n NetworkStatus) {
 		}
 	}
 	t.status.Decisions = append(t.status.Decisions, d)
+}
+
+// hasNetwork reports whether the report currently holds an entry for name.
+//
+// It is half of the watcher's "is this network any of our business" gate: the
+// other half is a resolved spec, and between them they cover the two classes
+// Overcast manages — the planes, which always have a spec, and the per-VPC
+// networks, which have a record from the moment EC2 creates one. A network
+// event for anything else is somebody else's business and is dropped before it
+// reaches the bus (see Watcher.dispatch).
+func (t *Tracker) hasNetwork(name string) bool {
+	if name == "" {
+		return false
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	for _, existing := range t.status.Networks {
+		if existing.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // ForgetNetwork drops one network from the report.
@@ -205,7 +272,8 @@ func (t *Tracker) recordDecisionLocked(n NetworkStatus) {
 // absent network reports nothing, and nothing is what the rest of this file
 // already means by absence — see the Networks field, and advisoryInput.Networks:
 // "no networks reported" is indistinguishable from "no Docker", so it fires
-// nothing. The next probe re-establishes the truth.
+// nothing. The `create` that follows a rebuild re-establishes the truth (see
+// Watcher.verifyOnCreate); Probe itself runs once per process and will not.
 //
 // The decision is deliberately kept. What went away is the network, not the
 // configuration that asked for it — and the advisory rules that read a

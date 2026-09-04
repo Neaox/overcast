@@ -350,3 +350,119 @@ func TestWatcher_ContextCancellation(t *testing.T) {
 		t.Fatal("Watcher.Run did not exit after context cancellation")
 	}
 }
+
+// The event request carries no `label` filter, and it must not: the Engine
+// matches `label=` against an event's actor attributes, and a *network* event's
+// attributes are `name` and `type` alone — no labels, on any Engine this has
+// been checked against. A stream filtered on overcast.managed=true therefore
+// delivers no network event at all, which left both halves of the network
+// reporting inert on a real daemon: the destroy behind #1583 and the create
+// behind #1599.
+//
+// The container filter that used to live in this string is asserted below,
+// where it now runs.
+func TestWatcher_asksForNetworkEventsWithoutALabelFilter(t *testing.T) {
+	var mu sync.Mutex
+	var query string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/v1.45/events") {
+			http.NotFound(w, r)
+			return
+		}
+		mu.Lock()
+		query = r.URL.Query().Get("filters")
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK) // then end the stream, so Run backs off
+	}))
+	t.Cleanup(srv.Close)
+
+	bus := events.NewBus()
+	defer bus.Stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	w := NewWatcher(clientFromHTTPTest(t, srv), bus, zaptest.NewLogger(t))
+	done := make(chan struct{})
+	go func() {
+		w.Run(ctx)
+		close(done)
+	}()
+
+	deadline := time.After(5 * time.Second)
+	for {
+		mu.Lock()
+		got := query
+		mu.Unlock()
+		if got != "" {
+			if strings.Contains(got, "label") {
+				t.Errorf("filters = %s, want no label filter: it suppresses every network event", got)
+			}
+			for _, want := range []string{`"network"`, `"create"`, `"destroy"`} {
+				if !strings.Contains(got, want) {
+					t.Errorf("filters = %s, want it to still ask for %s", got, want)
+				}
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			cancel()
+			<-done
+			t.Fatal("the watcher never opened the events stream")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	cancel()
+	<-done
+}
+
+// The container filter, now that it is this code's job rather than the
+// daemon's. A container Overcast did not create is not its business:
+// publishing one would have every service reconciling against somebody else's
+// containers, which is exactly what the label filter used to prevent.
+func TestWatcher_dropsAContainerEventItDoesNotManage(t *testing.T) {
+	bus := events.NewBus()
+	defer bus.Stop()
+
+	var mu sync.Mutex
+	var got []events.Event
+	bus.Subscribe(events.DockerContainerStarted, func(_ context.Context, e events.Event) {
+		mu.Lock()
+		got = append(got, e)
+		mu.Unlock()
+	})
+
+	tr := NewTracker()
+	w := &Watcher{bus: bus, logger: zaptest.NewLogger(t), tracker: tr}
+
+	foreign := event("container", "start", "somebody-elses-container")
+	foreign.Actor.Attributes["image"] = "postgres:16"
+	w.dispatch(context.Background(), foreign)
+
+	if snap := tr.Snapshot(); snap.LastEvent != "" {
+		t.Errorf("lastEvent = %q, want nothing recorded for a container Overcast does not manage",
+			snap.LastEvent)
+	}
+
+	mine := event("container", "start", "ours")
+	mine.Actor.Attributes[LabelManaged] = "true"
+	mine.Actor.Attributes[LabelService] = "lambda"
+	w.dispatch(context.Background(), mine)
+
+	if snap := tr.Snapshot(); snap.LastEvent != "container:start" {
+		t.Errorf("lastEvent = %q, want the managed container's event recorded", snap.LastEvent)
+	}
+
+	deadline := time.After(5 * time.Second)
+	for {
+		mu.Lock()
+		n := len(got)
+		mu.Unlock()
+		if n == 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("published %d container events, want exactly the managed one", n)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
