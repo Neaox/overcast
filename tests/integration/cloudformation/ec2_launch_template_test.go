@@ -241,21 +241,20 @@ func TestDeleteStack_EC2LaunchTemplateIsRemoved(t *testing.T) {
 	}
 }
 
-// asgInstancesForGroup polls DescribeAutoScalingGroups until the named group
-// reports want instances InService.
-func asgInstancesForGroup(t *testing.T, srv *helpers.TestServer, group string, want int) []struct {
+// asgXMLInstance is one member of a group's Instances set.
+type asgXMLInstance struct {
 	InstanceID   string `xml:"InstanceId"`
 	InstanceType string `xml:"InstanceType"`
 	State        string `xml:"LifecycleState"`
-} {
+}
+
+// asgInstancesForGroup polls DescribeAutoScalingGroups until the named group
+// reports want instances InService. The reconciler is a background loop, so a
+// wire-level test observes its effect rather than driving it.
+func asgInstancesForGroup(t *testing.T, srv *helpers.TestServer, group string, want int) []asgXMLInstance {
 	t.Helper()
-	type instance = struct {
-		InstanceID   string `xml:"InstanceId"`
-		InstanceType string `xml:"InstanceType"`
-		State        string `xml:"LifecycleState"`
-	}
 	deadline := time.Now().Add(10 * time.Second)
-	var last []instance
+	var last []asgXMLInstance
 	for time.Now().Before(deadline) {
 		resp := asQuery(t, srv, "DescribeAutoScalingGroups", url.Values{
 			"AutoScalingGroupNames.member.1": {group},
@@ -263,7 +262,7 @@ func asgInstancesForGroup(t *testing.T, srv *helpers.TestServer, group string, w
 		body := readBody(t, resp)
 		resp.Body.Close()
 		var out struct {
-			Instances []instance `xml:"DescribeAutoScalingGroupsResult>AutoScalingGroups>member>Instances>member"`
+			Instances []asgXMLInstance `xml:"DescribeAutoScalingGroupsResult>AutoScalingGroups>member>Instances>member"`
 		}
 		if err := xml.Unmarshal(body, &out); err != nil {
 			t.Fatalf("decode DescribeAutoScalingGroupsResponse: %v\n%s", err, body)
