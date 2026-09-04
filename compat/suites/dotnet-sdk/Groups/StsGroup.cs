@@ -8,11 +8,11 @@ public sealed class StsGroup(AwsClients clients) : IServiceGroup
 {
     public IReadOnlyDictionary<string, TestFn> Impls() => new Dictionary<string, TestFn>(StringComparer.Ordinal)
     {
-        ["GetCallerIdentity"] = GetCallerIdentityAsync,
-        ["GetSessionToken"] = GetSessionTokenAsync,
-        ["GetFederationToken"] = GetFederationTokenAsync,
-        ["AssumeRole"] = AssumeRoleAsync,
-        ["AssumeRoleWithWebIdentity"] = AssumeRoleWithWebIdentityAsync,
+        ["sts-identity:GetCallerIdentity"] = GetCallerIdentityAsync,
+        ["sts-identity:GetSessionToken"] = GetSessionTokenAsync,
+        ["sts-identity:GetFederationToken"] = GetFederationTokenAsync,
+        ["sts-assume:AssumeRole"] = AssumeRoleAsync,
+        ["sts-assume:AssumeRoleWithWebIdentity"] = AssumeRoleWithWebIdentityAsync,
     };
 
     public IReadOnlyDictionary<string, SetupFn> Setups() => new Dictionary<string, SetupFn>(StringComparer.Ordinal);

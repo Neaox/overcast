@@ -9,22 +9,22 @@ public sealed class SsmGroup(AwsClients clients) : IServiceGroup
 {
     public IReadOnlyDictionary<string, TestFn> Impls() => new Dictionary<string, TestFn>(StringComparer.Ordinal)
     {
-        ["PutParameter"] = PutParameterAsync,
-        ["GetParameter"] = GetParameterAsync,
-        ["PutParameterOverwrite"] = PutParameterOverwriteAsync,
-        ["GetParameterHistory"] = GetParameterHistoryAsync,
-        ["PutMultipleParameters"] = PutMultipleParametersAsync,
-        ["GetParameters"] = GetParametersAsync,
-        ["DescribeParameters"] = DescribeParametersAsync,
-        ["TagParameter"] = TagParameterAsync,
-        ["ListSSMTagsForResource"] = ListSSMTagsForResourceAsync,
-        ["DeleteParameters"] = DeleteParametersAsync,
-        ["PutSecureStringParameter"] = PutSecureStringParameterAsync,
-        ["GetSecureStringParameter"] = GetSecureStringParameterAsync,
-        ["GetSecureStringWithoutDecryption"] = GetSecureStringWithoutDecryptionAsync,
-        ["GetParametersByPath"] = GetParametersByPathAsync,
-        ["GetParametersByPathRecursive"] = GetParametersByPathRecursiveAsync,
-        ["GetParametersByPathPaginated"] = GetParametersByPathPaginatedAsync,
+        ["ssm-parameters:PutParameter"] = PutParameterAsync,
+        ["ssm-parameters:GetParameter"] = GetParameterAsync,
+        ["ssm-parameters:PutParameterOverwrite"] = PutParameterOverwriteAsync,
+        ["ssm-parameters:GetParameterHistory"] = GetParameterHistoryAsync,
+        ["ssm-parameters:PutMultipleParameters"] = PutMultipleParametersAsync,
+        ["ssm-parameters:GetParameters"] = GetParametersAsync,
+        ["ssm-parameters:DescribeParameters"] = DescribeParametersAsync,
+        ["ssm-parameters:TagParameter"] = TagParameterAsync,
+        ["ssm-parameters:ListSSMTagsForResource"] = ListSSMTagsForResourceAsync,
+        ["ssm-parameters:DeleteParameters"] = DeleteParametersAsync,
+        ["ssm-secure:PutSecureStringParameter"] = PutSecureStringParameterAsync,
+        ["ssm-secure:GetSecureStringParameter"] = GetSecureStringParameterAsync,
+        ["ssm-secure:GetSecureStringWithoutDecryption"] = GetSecureStringWithoutDecryptionAsync,
+        ["ssm-path:GetParametersByPath"] = GetParametersByPathAsync,
+        ["ssm-path:GetParametersByPathRecursive"] = GetParametersByPathRecursiveAsync,
+        ["ssm-path:GetParametersByPathPaginated"] = GetParametersByPathPaginatedAsync,
     };
 
     public IReadOnlyDictionary<string, SetupFn> Setups() => new Dictionary<string, SetupFn>(StringComparer.Ordinal)
