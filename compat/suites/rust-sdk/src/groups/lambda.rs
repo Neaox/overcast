@@ -123,7 +123,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "UpdateFunctionCode".to_string(),
+            "lambda-crud:UpdateFunctionCode".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -146,7 +146,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "UpdateFunctionConfiguration".to_string(),
+            "lambda-crud:UpdateFunctionConfiguration".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -388,7 +388,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "InvokeDryRun".to_string(),
+            "lambda-invoke:InvokeDryRun".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -414,7 +414,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "InvokeSync".to_string(),
+            "lambda-invoke:InvokeSync".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -451,7 +451,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "InvokeAsync".to_string(),
+            "lambda-invoke:InvokeAsync".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -480,7 +480,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "InvokeWithResponseStream".to_string(),
+            "lambda-invoke-stream:InvokeWithResponseStream".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -541,7 +541,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "InvokeWithError".to_string(),
+            "lambda-invoke-error:InvokeWithError".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -591,7 +591,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PublishVersion".to_string(),
+            "lambda-aliases:PublishVersion".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -617,7 +617,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ListVersionsByFunction".to_string(),
+            "lambda-aliases:ListVersionsByFunction".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -639,7 +639,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "CreateAlias".to_string(),
+            "lambda-aliases:CreateAlias".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -664,7 +664,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetAlias".to_string(),
+            "lambda-aliases:GetAlias".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -690,7 +690,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ListAliases".to_string(),
+            "lambda-aliases:ListAliases".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -715,7 +715,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "UpdateAlias".to_string(),
+            "lambda-aliases:UpdateAlias".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -742,7 +742,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DeleteAlias".to_string(),
+            "lambda-aliases:DeleteAlias".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -777,7 +777,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PublishLayerVersion".to_string(),
+            "lambda-layers:PublishLayerVersion".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -806,7 +806,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ListLayers".to_string(),
+            "lambda-layers:ListLayers".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -831,7 +831,7 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DeleteLayerVersion".to_string(),
+            "lambda-layers:DeleteLayerVersion".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {

@@ -31,7 +31,7 @@ impl ServiceGroup for EventBridgeGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "TestEventPattern".to_string(),
+            "eventbridge-patterns:TestEventPattern".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -57,7 +57,7 @@ impl ServiceGroup for EventBridgeGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "TestEventPatternNoMatch".to_string(),
+            "eventbridge-patterns:TestEventPatternNoMatch".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {

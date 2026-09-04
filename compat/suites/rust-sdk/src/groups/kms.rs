@@ -30,7 +30,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "CreateKey".to_string(),
+            "kms-keys:CreateKey".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -60,7 +60,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DescribeKey".to_string(),
+            "kms-keys:DescribeKey".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -87,7 +87,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutKeyPolicy".to_string(),
+            "kms-keys:PutKeyPolicy".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -131,7 +131,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "CreateKmsAlias".to_string(),
+            "kms-keys:CreateKmsAlias".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -155,7 +155,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ListKmsAliases".to_string(),
+            "kms-keys:ListKmsAliases".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -185,7 +185,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ListKeys".to_string(),
+            "kms-keys:ListKeys".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -211,7 +211,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DisableKey".to_string(),
+            "kms-keys:DisableKey".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -232,7 +232,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "EnableKey".to_string(),
+            "kms-keys:EnableKey".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -253,7 +253,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ScheduleKeyDeletion".to_string(),
+            "kms-keys:ScheduleKeyDeletion".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -275,7 +275,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "CancelKeyDeletion".to_string(),
+            "kms-keys:CancelKeyDeletion".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -296,7 +296,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "TagKMSResource".to_string(),
+            "kms-keys:TagKMSResource".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -329,7 +329,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ListKMSResourceTags".to_string(),
+            "kms-keys:ListKMSResourceTags".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -358,7 +358,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "UntagKMSResource".to_string(),
+            "kms-keys:UntagKMSResource".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -392,7 +392,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "Encrypt".to_string(),
+            "kms-crypto:Encrypt".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -420,7 +420,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "Decrypt".to_string(),
+            "kms-crypto:Decrypt".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -461,7 +461,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GenerateDataKey".to_string(),
+            "kms-crypto:GenerateDataKey".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -495,7 +495,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GenerateDataKeyWithoutPlaintext".to_string(),
+            "kms-crypto:GenerateDataKeyWithoutPlaintext".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -527,7 +527,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "Sign".to_string(),
+            "kms-asymmetric:Sign".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -556,7 +556,7 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "Verify".to_string(),
+            "kms-asymmetric:Verify".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {

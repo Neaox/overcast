@@ -22,18 +22,7 @@ async fn main() {
     let skip_docker = std::env::var("OVERCAST_COMPAT_SKIP_DOCKER").ok().as_deref() == Some("1");
 
     let clients = Arc::new(AwsClients::new(endpoint.clone(), region.clone()).await);
-    let service_groups: Vec<Box<dyn ServiceGroup>> = vec![
-        Box::new(S3Group::new(clients.clone())),
-        Box::new(SqsGroup::new(clients.clone())),
-        Box::new(DynamoDbGroup::new(clients.clone())),
-        Box::new(SnsGroup::new(clients.clone())),
-        Box::new(LambdaGroup::new(clients.clone())),
-        Box::new(StsGroup::new(clients.clone())),
-        Box::new(KmsGroup::new(clients.clone())),
-        Box::new(SecretsManagerGroup::new(clients.clone())),
-        Box::new(SsmGroup::new(clients.clone())),
-        Box::new(EventBridgeGroup::new(clients.clone())),
-    ];
+    let service_groups = all_service_groups(clients);
 
     let mut setups = HashMap::new();
     let mut teardowns = HashMap::new();
@@ -128,6 +117,25 @@ async fn main() {
     }
 }
 
+/// Every service's `ServiceGroup`, in the same order `main` registers them.
+/// Factored out so the registration test below builds the exact same set of
+/// real impl/setup/teardown maps `main` does, rather than a hand-maintained
+/// copy that could drift.
+fn all_service_groups(clients: Arc<AwsClients>) -> Vec<Box<dyn ServiceGroup>> {
+    vec![
+        Box::new(S3Group::new(clients.clone())),
+        Box::new(SqsGroup::new(clients.clone())),
+        Box::new(DynamoDbGroup::new(clients.clone())),
+        Box::new(SnsGroup::new(clients.clone())),
+        Box::new(LambdaGroup::new(clients.clone())),
+        Box::new(StsGroup::new(clients.clone())),
+        Box::new(KmsGroup::new(clients.clone())),
+        Box::new(SecretsManagerGroup::new(clients.clone())),
+        Box::new(SsmGroup::new(clients.clone())),
+        Box::new(EventBridgeGroup::new(clients.clone())),
+    ]
+}
+
 fn env_or(name: &str, default: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| default.to_string())
 }
@@ -141,4 +149,56 @@ fn split_filter(value: Option<String>) -> HashSet<String> {
             (!trimmed.is_empty()).then(|| trimmed.to_string())
         })
         .collect()
+}
+
+/// Registers the same shape of test go-sdk's `internal/groups/groups_test.go`
+/// has: merge every service's *real* impl map through the same `merge_impls`
+/// the binary uses, then resolve the result against the *real* registry
+/// (`compat/suites/registry.json`, loaded the same way `build_groups` always
+/// does). Until now this suite only had fixture-based loader tests in
+/// `registry.rs` — synthetic registries that can't see a collision or a bare
+/// key introduced in an actual service file. This test can, because merging
+/// the real maps *is* the duplicate check, and validating them against the
+/// real registry *is* the bare-key check (compat/AGENTS.md § Implementation
+/// keys).
+#[cfg(test)]
+mod registration_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn real_impls_resolve_against_the_real_registry_and_are_all_qualified() {
+        // No network I/O: credentials and region are supplied explicitly, so
+        // `AwsClients::new` only builds local SDK config — the same call
+        // `main` makes before ever touching the endpoint.
+        let clients = Arc::new(AwsClients::new("http://localhost:4566".to_string(), "us-east-1".to_string()).await);
+        let service_groups = all_service_groups(clients);
+
+        let mut setups = HashMap::new();
+        let mut teardowns = HashMap::new();
+        for group in &service_groups {
+            setups.extend(group.setups());
+            teardowns.extend(group.teardowns());
+        }
+
+        let impls = registry::merge_impls(
+            service_groups.iter().map(|group| (group.name(), group.impls())),
+            "rust-sdk",
+        )
+        .expect("real impl maps must merge without duplicate keys");
+
+        // #1700: every impl key must be "<group>:<test>" — a bare key cannot
+        // say which group it implements once two groups share a test name,
+        // and the generated registry groups (#1113) will do exactly that.
+        let bare: Vec<&String> = impls.keys().filter(|key| !key.contains(':')).collect();
+        assert!(
+            bare.is_empty(),
+            "bare (unqualified) impl keys found, must be \"group:test\": {bare:?}"
+        );
+
+        let mut capabilities = HashSet::new();
+        capabilities.insert("docker".to_string());
+
+        build_groups("rust-sdk", &impls, &setups, &teardowns, &capabilities)
+            .expect("real impl registrations must resolve against the real registry");
+    }
 }
