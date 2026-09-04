@@ -4,6 +4,7 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,11 +14,25 @@ import (
 	"github.com/overcast-sh/overcast-compat-go-sdk/internal/harness"
 )
 
-// RegistryGroup is one group entry from registry.json.
+// RegistryGroup is one group entry from registry.json or registry.generated.json.
 type RegistryGroup struct {
 	Service string         `json:"service"`
 	Name    string         `json:"name"`
 	Tests   []RegistryTest `json:"tests"`
+
+	// Suites restricts this group to specific suites — nil/empty means every
+	// suite. Reserved for cdk-lifecycle on a hand-written group; required on
+	// every generated group, where cmd/compatgen derives it from backend
+	// availability. See compat/AGENTS.md § registry.json — canonical test matrix.
+	Suites []string `json:"suites,omitempty"`
+	// Generated, State and Scenario are only legal in registry.generated.json.
+	// BuildGroups parses them so a later interpreter can read Scenario and so
+	// a generated group can be told apart from a hand-written one (the interim
+	// fail rule below), but nothing here branches on State or Scenario beyond
+	// that.
+	Generated bool   `json:"generated,omitempty"`
+	State     string `json:"state,omitempty"`
+	Scenario  string `json:"scenario,omitempty"`
 }
 
 // RegistryTest is one test entry within a group.
@@ -41,6 +56,27 @@ type ImplMap map[string]harness.TestFn
 
 var _noop harness.TestFn = func(_ context.Context, _ *harness.TestContext) error { return nil }
 
+// generatedNoBackendFail builds the interim-rule result for a generated test
+// with neither a static impl nor a scenario backend (#1393).
+//
+// `suites` on a generated group is derived from backend availability by
+// cmd/compatgen, so a suite named in it that cannot execute the group is a
+// generator/loader bug, not an environmental gap — it has to be loud. It must
+// never be reported as "not yet implemented" (that sentinel means a suite
+// simply hasn't gotten to a hand-written group yet) or as "na" (that means the
+// tool has no API for the operation) — either would let a coverage hole report
+// as success. Because candidate groups are excluded from --compare-baseline
+// and --max-failures by cmd/compat (#1367), this cannot red a build until the
+// group is promoted to "gated", at which point it is a real regression and
+// should. What it can never do is pass or skip.
+func generatedNoBackendFail(rg RegistryGroup, rt RegistryTest, op, suite string) harness.TestCase {
+	msg := fmt.Sprintf("generated group %q is scoped to %s but %s has no scenario backend", rg.Name, suite, suite)
+	return harness.TestCase{
+		Name: rt.Name, Op: op, Depends: rt.Depends,
+		Fn: func(_ context.Context, _ *harness.TestContext) error { return errors.New(msg) },
+	}
+}
+
 // registryPath returns the absolute path to registry.json.
 //
 // The suite is run with `go run ./cmd/runner` from compat/suites/go-sdk/,
@@ -55,9 +91,66 @@ func registryPath() string {
 	return filepath.Join("..", "registry.json")
 }
 
-// Load reads and parses registry.json.
+// generatedRegistryPath returns the path to registry.json's machine-written
+// sibling, resolved from the same directory as registryPath() — whatever env
+// override or relative path that already uses, applied identically. See
+// docs/plans/compat-coverage-modelgen.md § 3.6.
+func generatedRegistryPath() string {
+	return filepath.Join(filepath.Dir(registryPath()), "registry.generated.json")
+}
+
+// generatedRegistryVersion is the only "version" registry.generated.json may
+// declare. cmd/compat's own generated-registry reader enforces the same
+// constant; kept in step so a schema bump has to be a deliberate multi-file
+// change, not a loader that silently accepts anything.
+const generatedRegistryVersion = 1
+
+// generatedFile is the root shape of registry.generated.json.
+type generatedFile struct {
+	Version int             `json:"version"`
+	Groups  []RegistryGroup `json:"groups"`
+}
+
+// Load reads registry.json and concatenates its generated sibling,
+// registry.generated.json, hand-written groups first (see #1393).
+//
+// A missing generated file is not an error — it is treated exactly like a
+// present-but-empty one, so suite images, CI artifacts and branches cut before
+// the file existed keep working. A present-but-broken file is a load error,
+// the same posture as a malformed registry.json: unparsable JSON, a version
+// other than 1, or a group missing "generated", "state" or "suites" — the
+// three fields cmd/compatgen always writes — is refused rather than silently
+// accepted. A generated group name colliding with a hand-written one is also
+// refused, since every downstream consumer (baseline, flaky list, parity
+// debt) keys on suite/group/test with no notion of which file a group came
+// from — a collision would merge two different tests into one entry instead
+// of conflicting.
 func Load() (*Registry, error) {
-	p := registryPath()
+	hand, err := loadHandWritten(registryPath())
+	if err != nil {
+		return nil, err
+	}
+	gen, err := loadGenerated(generatedRegistryPath())
+	if err != nil {
+		return nil, err
+	}
+	handNames := make(map[string]bool, len(hand.Groups))
+	for _, g := range hand.Groups {
+		handNames[g.Name] = true
+	}
+	for _, g := range gen.Groups {
+		if handNames[g.Name] {
+			return nil, fmt.Errorf("registry: generated group %q collides with a hand-written group of the same name", g.Name)
+		}
+	}
+	hand.Groups = append(hand.Groups, gen.Groups...)
+	return hand, nil
+}
+
+// loadHandWritten reads and parses registry.json. Split out from Load so the
+// error messages it has always produced are unchanged by the concatenation
+// this PR adds.
+func loadHandWritten(p string) (*Registry, error) {
 	b, err := os.ReadFile(p)
 	if err != nil {
 		return nil, fmt.Errorf("registry: read %s: %w", p, err)
@@ -69,13 +162,64 @@ func Load() (*Registry, error) {
 	return &reg, nil
 }
 
+// loadGenerated reads registry.generated.json, treating a missing file as an
+// empty registry and validating a present one against the shape
+// registry.generated.schema.json requires.
+func loadGenerated(p string) (*Registry, error) {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &Registry{}, nil
+		}
+		return nil, fmt.Errorf("registry: read %s: %w", p, err)
+	}
+	var gen generatedFile
+	if err := json.Unmarshal(b, &gen); err != nil {
+		return nil, fmt.Errorf("registry: parse %s: %w", p, err)
+	}
+	if gen.Version != generatedRegistryVersion {
+		return nil, fmt.Errorf("registry: %s: version %d, want %d", p, gen.Version, generatedRegistryVersion)
+	}
+	for _, g := range gen.Groups {
+		if !g.Generated {
+			return nil, fmt.Errorf("registry: %s: group %q is missing \"generated\": true", p, g.Name)
+		}
+		if g.State == "" {
+			return nil, fmt.Errorf("registry: %s: group %q is missing \"state\"", p, g.Name)
+		}
+		if len(g.Suites) == 0 {
+			return nil, fmt.Errorf("registry: %s: group %q is missing \"suites\"", p, g.Name)
+		}
+	}
+	return &Registry{Groups: gen.Groups}, nil
+}
+
 // BuildGroupsOptions controls how groups are assembled from the registry.
 type BuildGroupsOptions struct {
 	Suite        string
 	Capabilities map[string]bool // set of capability strings this runner supports
 	Setup        map[string]func(context.Context, *harness.TestContext) error
 	Teardown     map[string]func(context.Context, *harness.TestContext) error
+	// Scenario resolves a test to an implementation when no static impl
+	// claims it, given the test's group (carrying its `scenario` path) and
+	// the test itself. Consulted for any test with no static impl — a
+	// generated group's, or a hand-written group ported to an authored
+	// scenario under the same registry name (G6, see ScenarioBackend below) —
+	// not only a generated group's. Nil until a G2 interpreter is wired up;
+	// every such test currently falls through to the interim fail rule
+	// (generated groups) or the not-yet-implemented sentinel (hand-written
+	// groups) in BuildGroups. See docs/plans/compat-coverage-modelgen.md § 3.6.
+	Scenario ScenarioBackend
 }
+
+// ScenarioBackend is the extension point a scenario-driven interpreter (G2)
+// registers to execute a test that has no static impl. BuildGroups calls it
+// after the static impl lookup ("<group>:<test>" then bare "<test>") comes up
+// empty, for any such test — not only a generated group's. A hand-written
+// group ported to an authored scenario keeps its registry group and test
+// names (G6, docs/plans/compat-coverage-modelgen.md § 3.11), so it resolves
+// through this same hook once a backend claims it, with no loader change.
+type ScenarioBackend func(group RegistryGroup, test RegistryTest) (fn harness.TestFn, ok bool)
 
 // topoSort topologically sorts tests within a group using their declared
 // dependencies.  Tests with no dependencies come first; tests whose deps are all
@@ -130,8 +274,14 @@ func BuildGroups(reg *Registry, impls ImplMap, opts BuildGroupsOptions) []harnes
 	var groups []harness.TestGroup
 
 	for _, rg := range reg.Groups {
-		// CDK lifecycle tests belong to the cdk suite, not SDK suites.
-		if rg.Service == "cdk" {
+		// A group scoped to specific suites (`suites` in the registry) is out
+		// of scope for every other suite: no tests, no skips, no results. This
+		// generalises the old `rg.Service == "cdk"` special case — cdk-lifecycle
+		// is the only hand-written group that declares `suites` (["cdk"]), and
+		// it is the only group with service "cdk", so filtering on `suites`
+		// here is behaviour-identical to the service check it replaces. Every
+		// generated group must declare `suites` too (enforced in loadGenerated).
+		if len(rg.Suites) > 0 && !slices.Contains(rg.Suites, opts.Suite) {
 			continue
 		}
 		var tests []harness.TestCase
@@ -175,6 +325,24 @@ func BuildGroups(reg *Registry, impls ImplMap, opts BuildGroupsOptions) []harnes
 				fn, ok = impls[rt.Name]
 			}
 			if !ok {
+				// Extension point (#1393, G6): any test with no static impl —
+				// a generated group's, or a hand-written group ported to an
+				// authored scenario under the same registry group/test names
+				// — is tried against the scenario backend before falling back
+				// to the generated-fail rule or the hand-written sentinel
+				// below. This is not limited to generated groups: a G6-ported
+				// hand-written group resolves to its scenario here with no
+				// loader change.
+				if opts.Scenario != nil {
+					if bfn, resolved := opts.Scenario(rg, rt); resolved {
+						tests = append(tests, harness.TestCase{Name: rt.Name, Fn: bfn, Op: op, Depends: rt.Depends})
+						continue
+					}
+				}
+				if rg.Generated {
+					tests = append(tests, generatedNoBackendFail(rg, rt, op, opts.Suite))
+					continue
+				}
 				tests = append(tests, harness.TestCase{
 					Name: rt.Name, Fn: _noop, Op: op,
 					Skip:    fmt.Sprintf("not yet implemented in %s test suite", opts.Suite),

@@ -6,19 +6,35 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"slices"
 
 	intmcp "github.com/overcast-sh/overcast/internal/mcp"
 	mcpproviders "github.com/overcast-sh/overcast/internal/mcp/providers"
 )
 
 type registryData struct {
-	Groups []registryGroup `json:"groups"`
+	Version int             `json:"version"`
+	Groups  []registryGroup `json:"groups"`
 }
 
 type registryGroup struct {
 	Name    string         `json:"name"`
 	Service string         `json:"service"`
 	Tests   []registryTest `json:"tests"`
+
+	// Suites restricts this group to specific suites — nil/empty means every
+	// suite. Reserved for cdk-lifecycle on a hand-written group; required on
+	// every generated group, where cmd/compatgen derives it from backend
+	// availability. See compat/AGENTS.md § registry.json — canonical test matrix.
+	Suites []string `json:"suites,omitempty"`
+	// Generated, State and Scenario are only legal in registry.generated.json.
+	// loadRegistry parses them so a caller can facet on them; nothing here
+	// runs a test, so the interim "fail" rule the suite loaders apply to a
+	// generated test with no backend does not apply to this listing.
+	Generated bool   `json:"generated,omitempty"`
+	State     string `json:"state,omitempty"`
+	Scenario  string `json:"scenario,omitempty"`
 }
 
 type registryTest struct {
@@ -26,6 +42,12 @@ type registryTest struct {
 	Op      string   `json:"op,omitempty"`
 	Depends []string `json:"depends,omitempty"`
 }
+
+// generatedRegistryVersion is the only "version" registry.generated.json may
+// declare. Kept in step with the same constant in cmd/compat and every suite
+// loader's registry package, so a schema bump has to be a deliberate
+// multi-file change, not a loader that silently accepts anything.
+const generatedRegistryVersion = 1
 
 // NewMCPServer creates an MCP server that combines generic repo tools with
 // compat-specific orchestration tools.
@@ -146,6 +168,13 @@ func (p *compatMCPProvider) toolListTests(_ context.Context, params json.RawMess
 		if filter.Group != "" && g.Name != filter.Group {
 			continue
 		}
+		// Suites scoping (#1393): a group naming specific suites is out of
+		// scope for every other suite — no tests, no skips, no results — so a
+		// listing scoped to one suite must not show a group that suite would
+		// never load, e.g. cdk-lifecycle when listing for "go-sdk".
+		if filter.Suite != "" && len(g.Suites) > 0 && !slices.Contains(g.Suites, filter.Suite) {
+			continue
+		}
 		for _, t := range g.Tests {
 			e := testEntry{Group: g.Name, Service: g.Service, Test: t.Name, Op: t.Op}
 			results := p.orchestrator.Results(filter.Suite, "", g.Name, t.Name, "")
@@ -260,14 +289,91 @@ func (p *compatMCPProvider) toolReloadSuite(_ context.Context, params json.RawMe
 	return map[string]any{"state": "building"}, nil
 }
 
+// loadRegistry reads registry.json and concatenates its generated sibling,
+// registry.generated.json, hand-written groups first (see #1393). This is the
+// agent-facing test listing every compat_* MCP tool reads, so it must show
+// generated groups exactly like the suite loaders that run them do — same
+// concatenation, same "suites" scoping metadata on each group — even though
+// nothing here executes a test: there is no impl map, so the interim "fail"
+// rule a suite loader applies to an unbacked generated test does not apply to
+// a listing.
+//
+// A missing generated file is not an error — it is treated exactly like a
+// present-but-empty one, so suite images, CI artifacts and branches cut before
+// the file existed keep working. A present-but-broken file is a load error,
+// the same posture as a malformed registry.json: unparsable JSON, a version
+// other than 1, or a group missing "generated", "state" or "suites" — the
+// three fields cmd/compatgen always writes — is refused rather than silently
+// accepted. A generated group name colliding with a hand-written one is also
+// refused: every consumer of this listing resolves a group by name alone, so
+// a collision would merge two different tests into one entry instead of
+// conflicting.
 func (p *compatMCPProvider) loadRegistry() (*registryData, error) {
-	data, err := os.ReadFile(p.registryPath)
+	hand, err := readRegistryFile(p.registryPath)
+	if err != nil {
+		return nil, err
+	}
+	genPath := filepath.Join(filepath.Dir(p.registryPath), "registry.generated.json")
+	gen, err := readGeneratedRegistryFile(genPath)
+	if err != nil {
+		return nil, err
+	}
+	handNames := make(map[string]bool, len(hand.Groups))
+	for _, g := range hand.Groups {
+		handNames[g.Name] = true
+	}
+	for _, g := range gen.Groups {
+		if handNames[g.Name] {
+			return nil, fmt.Errorf("registry: generated group %q collides with a hand-written group of the same name", g.Name)
+		}
+	}
+	hand.Groups = append(hand.Groups, gen.Groups...)
+	return hand, nil
+}
+
+// readRegistryFile reads and parses registry.json. Split out from loadRegistry
+// so the error behaviour it has always had is unchanged by the concatenation
+// this PR adds.
+func readRegistryFile(path string) (*registryData, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	var reg registryData
 	if err := json.Unmarshal(data, &reg); err != nil {
 		return nil, err
+	}
+	return &reg, nil
+}
+
+// readGeneratedRegistryFile reads registry.generated.json, treating a missing
+// file as an empty registry and validating a present one against the shape
+// registry.generated.schema.json requires.
+func readGeneratedRegistryFile(path string) (*registryData, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &registryData{}, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	var reg registryData
+	if err := json.Unmarshal(data, &reg); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if reg.Version != generatedRegistryVersion {
+		return nil, fmt.Errorf("%s: version %d, want %d", path, reg.Version, generatedRegistryVersion)
+	}
+	for _, g := range reg.Groups {
+		if !g.Generated {
+			return nil, fmt.Errorf("%s: group %q is missing \"generated\": true", path, g.Name)
+		}
+		if g.State == "" {
+			return nil, fmt.Errorf("%s: group %q is missing \"state\"", path, g.Name)
+		}
+		if len(g.Suites) == 0 {
+			return nil, fmt.Errorf("%s: group %q is missing \"suites\"", path, g.Name)
+		}
 	}
 	return &reg, nil
 }
