@@ -306,11 +306,16 @@ const (
 	maxNameLenScheduler = 64  // EventBridge Scheduler schedule and schedule-group names
 	maxNameLenSFN       = 80  // Step Functions state-machine names
 
-	maxNameLenELBv2 = 32  // ELBv2 load balancer and target group names
-	maxNameLenMSK   = 64  // MSK cluster names
-	maxNameLenPipes = 64  // EventBridge Pipes pipe names
-	maxNameLenEKS   = 100 // EKS cluster names
-	maxNameLenWAFv2 = 128 // WAFv2 web ACL names
+	maxNameLenELBv2      = 32  // ELBv2 load balancer and target group names
+	maxNameLenBackup     = 50  // Backup vault and backup plan names
+	maxNameLenFirehose   = 64  // Firehose delivery stream names
+	maxNameLenMSK        = 64  // MSK cluster names
+	maxNameLenPipes      = 64  // EventBridge Pipes pipe names
+	maxNameLenEKS        = 100 // EKS cluster names
+	maxNameLenAthena     = 128 // Athena work group names
+	maxNameLenCloudTrail = 128 // CloudTrail trail names
+	maxNameLenShield     = 128 // Shield protection names
+	maxNameLenWAFv2      = 128 // WAFv2 web ACL names
 
 	maxNameLenDefault = 255
 )

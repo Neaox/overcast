@@ -395,11 +395,16 @@ func (h *cloudtrailTrailHandler) Create(ctx context.Context, router http.Handler
 	// a template setting any other unrecognised property would not.
 	name, _ := props["TrailName"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-trail", rCtx.StackName)
+		// TrailName must start and end with a letter or a digit; the random
+		// suffix guarantees the tail and a stack name guarantees the head.
+		name = rCtx.generatedNameWithin(maxNameLenCloudTrail)
 	}
 	s3Bucket, _ := props["S3BucketName"].(string)
 	if s3Bucket == "" {
-		s3Bucket = fmt.Sprintf("%s-bucket", rCtx.StackName)
+		// This one is an S3 bucket name, not a trail name: lowercase only and
+		// capped at 63 rather than 128, so it gets S3's rule rather than
+		// CloudTrail's.
+		s3Bucket = rCtx.generatedNameLowerWithin(maxNameLenS3)
 	}
 
 	includeGlobal := true
@@ -680,7 +685,7 @@ type backupBackupVaultHandler struct{}
 func (h *backupBackupVaultHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["BackupVaultName"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-vault", rCtx.StackName)
+		name = rCtx.generatedNameWithin(maxNameLenBackup)
 	}
 
 	// BackupVaultName is an httpLabel, so it goes in the path rather than the
@@ -804,7 +809,12 @@ func (h *backupBackupPlanHandler) Create(ctx context.Context, router http.Handle
 
 	arn := resp.BackupPlanArn
 	if arn == "" {
-		name := fmt.Sprintf("%s-plan", rCtx.StackName)
+		// BackupPlanName is Required: Yes on the BackupPlan structure, so
+		// unlike the rest of these fallbacks this is not CloudFormation
+		// naming an unnamed resource — it is a placeholder for a
+		// CreateBackupPlan that answered without an ARN. It is generated all
+		// the same so two such plans in one stack are two ARNs.
+		name := rCtx.generatedNameWithin(maxNameLenBackup)
 		if bp, ok := props["BackupPlan"].(map[string]any); ok {
 			if n, _ := bp["BackupPlanName"].(string); n != "" {
 				name = n
@@ -1122,7 +1132,7 @@ type shieldProtectionHandler struct{}
 func (h *shieldProtectionHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["Name"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-shield", rCtx.StackName)
+		name = rCtx.generatedNameWithin(maxNameLenShield)
 	}
 	resourceArn, _ := props["ResourceArn"].(string)
 
@@ -1166,7 +1176,7 @@ type firehoseDeliveryStreamHandler struct{}
 func (h *firehoseDeliveryStreamHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["DeliveryStreamName"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-stream", rCtx.StackName)
+		name = rCtx.generatedNameWithin(maxNameLenFirehose)
 	}
 	streamType, _ := props["DeliveryStreamType"].(string)
 	if streamType == "" {
@@ -1218,7 +1228,7 @@ type athenaWorkGroupHandler struct{}
 func (h *athenaWorkGroupHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["Name"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-wg", rCtx.StackName)
+		name = rCtx.generatedNameWithin(maxNameLenAthena)
 	}
 
 	body := map[string]any{
@@ -1262,6 +1272,31 @@ type glueDatabaseHandler struct{}
 func (h *glueDatabaseHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	databaseInput, _ := props["DatabaseInput"].(map[string]any)
 
+	// DatabaseInput.Name is Required: No, so CloudFormation names a database
+	// the template leaves unnamed — and the name has to reach CreateDatabase,
+	// which requires it. Before, the generated name was only ever used as the
+	// physical ID *after* the call, so an unnamed database failed the stack
+	// outright and a named one was fine; the fallback described a database
+	// that was never created.
+	//
+	// Glue folds a database name to lowercase for Hive compatibility, so the
+	// name is generated lowercase rather than lowercased on read-back: an
+	// uppercase name would not round-trip through Ref.
+	dbName := ""
+	if databaseInput != nil {
+		dbName, _ = databaseInput["Name"].(string)
+	}
+	if dbName == "" {
+		dbName = rCtx.generatedNameLowerWithin(maxNameLenDefault)
+		// props belongs to the resolved template; copy rather than mutate.
+		named := make(map[string]any, len(databaseInput)+1)
+		for k, v := range databaseInput {
+			named[k] = v
+		}
+		named["Name"] = dbName
+		databaseInput = named
+	}
+
 	body := map[string]any{
 		"DatabaseInput": databaseInput,
 	}
@@ -1271,14 +1306,6 @@ func (h *glueDatabaseHandler) Create(ctx context.Context, router http.Handler, c
 	_, err := internalJSON(ctx, router, rCtx.Region, "AWSGlue.CreateDatabase", body)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateDatabase: %w", err)
-	}
-
-	dbName := ""
-	if databaseInput != nil {
-		dbName, _ = databaseInput["Name"].(string)
-	}
-	if dbName == "" {
-		dbName = fmt.Sprintf("%s-db", rCtx.StackName)
 	}
 
 	attrs := map[string]string{
