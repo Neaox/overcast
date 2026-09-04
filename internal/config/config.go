@@ -1686,7 +1686,7 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_CA_DIR                    {DataDir}/ca  (may be a read-only mount)
 //	OVERCAST_DEFAULT_REGION             us-east-1 (LocalStack's DEFAULT_REGION is accepted as a direct
 //	                                           compatibility alias — see defaultRegionAlias (#1190))
-//	OVERCAST_ACCOUNT_ID                000000000000
+//	OVERCAST_ACCOUNT_ID                000000000000 (must be exactly 12 ASCII digits)
 //	OVERCAST_EKS_MODE                  mock    (mock | live)
 //	OVERCAST_EFS_MODE                  live    (mock | live; live is inert without Docker)
 //	OVERCAST_RDS_MODE                  live    (mock | live; mock starts no engine container)
@@ -2121,7 +2121,18 @@ func Load() (*Config, error) {
 	if regionAliasSource != "" {
 		cfg.LocalStackAliasesUsed["OVERCAST_DEFAULT_REGION"] = regionAliasSource
 	}
+	// AWS account IDs are always exactly 12 ASCII digits. A non-conforming
+	// override silently poisons every ARN and, since #1474, account-regional
+	// S3 bucket names (<prefix>-<accountId>-<region>-an) minted from it —
+	// those validate fine locally and are invalid on real AWS. Fail startup
+	// rather than accept it, the same way the mode flags below do for their
+	// own invalid values (#1478).
 	cfg.AccountID = envOr("OVERCAST_ACCOUNT_ID", "000000000000")
+	if !isTwelveDigitAccountID(cfg.AccountID) {
+		return nil, fmt.Errorf(
+			"config: OVERCAST_ACCOUNT_ID %q is invalid (expected exactly 12 ASCII digits)",
+			cfg.AccountID)
+	}
 
 	// EKS mode
 	rawEKSMode := strings.ToLower(strings.TrimSpace(envOr("OVERCAST_EKS_MODE", string(EKSModeMock))))
@@ -2521,6 +2532,22 @@ func Load() (*Config, error) {
 	cfg.IgnoredLocalStackVars = detectIgnoredLocalStackVars()
 
 	return cfg, nil
+}
+
+// isTwelveDigitAccountID reports whether s is exactly 12 ASCII digits, the
+// only shape a real AWS account ID ever takes. A byte-range check rather than
+// a regexp or unicode.IsDigit: this is a wire-format constraint, not a
+// locale-aware one, so a fullwidth or non-Latin digit must not pass.
+func isTwelveDigitAccountID(s string) bool {
+	if len(s) != 12 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // envOr returns the value of the named environment variable, or fallback if

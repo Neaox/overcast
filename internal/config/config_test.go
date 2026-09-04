@@ -1659,6 +1659,71 @@ func TestLoad_defaultRegionAlias(t *testing.T) {
 	}
 }
 
+// TestLoad_accountIDAcceptsValidTwelveDigitOverride verifies a real-shaped
+// AWS account ID overrides the default cleanly.
+func TestLoad_accountIDAcceptsValidTwelveDigitOverride(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_ACCOUNT_ID", "123456789012")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AccountID != "123456789012" {
+		t.Errorf("AccountID: expected 123456789012, got %q", cfg.AccountID)
+	}
+}
+
+// TestLoad_accountIDRejectsNonTwelveDigitValues covers #1478: AWS account
+// IDs are always exactly 12 ASCII digits, and a non-conforming
+// OVERCAST_ACCOUNT_ID silently poisons every ARN and account-regional S3
+// bucket name minted from it. Load must refuse to start rather than accept
+// the value, the same way OVERCAST_EKS_MODE and friends already do for their
+// own invalid values.
+func TestLoad_accountIDRejectsNonTwelveDigitValues(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{"too short", "12345"},
+		{"too long (13 digits)", "1234567890123"},
+		{"alphanumeric", "12345678901a"},
+		{"contains hyphens", "1234-5678-901"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("OVERCAST_ACCOUNT_ID", tc.value)
+
+			_, err := config.Load()
+			if err == nil {
+				t.Fatalf("expected error for OVERCAST_ACCOUNT_ID=%q, got nil", tc.value)
+			}
+			if got := err.Error(); !containsAll(got, "OVERCAST_ACCOUNT_ID", "12", "digits") {
+				t.Fatalf("unexpected error message: %q", got)
+			}
+		})
+	}
+}
+
+// TestLoad_accountIDEmptyAfterSetIsTreatedAsUnset verifies an explicitly set
+// but empty OVERCAST_ACCOUNT_ID is indistinguishable from unset — the same
+// envOr("...", fallback) behaviour every other variable in this file gets
+// (see the state-backend loop's own "An empty value means unset" comment) —
+// and so falls back to the default rather than failing validation.
+func TestLoad_accountIDEmptyAfterSetIsTreatedAsUnset(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_ACCOUNT_ID", "")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AccountID != "000000000000" {
+		t.Errorf("AccountID: expected default 000000000000, got %q", cfg.AccountID)
+	}
+}
+
 // TestLoad_dataDirAlias verifies LocalStack's DATA_DIR is accepted as a
 // direct alias for OVERCAST_DATA_DIR, and that it counts as "explicitly
 // configured" for OVERCAST_STATE=auto's detection the same way
