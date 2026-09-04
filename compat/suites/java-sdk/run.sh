@@ -9,10 +9,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Build context is compat/suites/ so that registry.json is accessible.
 CONTEXT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Compute a content hash of the Java sources, pom.xml and registry.json so
-# that the image is automatically rebuilt whenever any of those change.
+# Compute a content hash of the Java sources, pom.xml and both registry files
+# so that the image is automatically rebuilt whenever any of those change.
 # (Docker layer caching is unreliable on Windows host volumes via 9p.)
-SRC_HASH=$(find "$SCRIPT_DIR/src" "$SCRIPT_DIR/pom.xml" "$CONTEXT_DIR/registry.json" -type f \
+SRC_HASH=$(find "$SCRIPT_DIR/src" "$SCRIPT_DIR/pom.xml" \
+  "$CONTEXT_DIR/registry.json" "$CONTEXT_DIR/registry.generated.json" -type f \
   | sort | xargs md5sum 2>/dev/null | md5sum | cut -c1-12)
 VERSIONED_IMAGE="${IMAGE}:${SRC_HASH}"
 

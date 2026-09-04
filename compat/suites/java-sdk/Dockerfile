@@ -21,7 +21,12 @@ COPY java-sdk/src/ src/
 # real registry.json, which WORKDIR /build finds at ../registry.json. Running
 # them here means an unusable registration fails the image build rather than
 # surfacing as a wrong result in a compat run.
+#
+# The generated sibling comes along because the loader reads it from the same
+# directory. Its absence is not an error — it reads as an empty registry — so
+# an image that dropped it would silently run none of the generated groups.
 COPY registry.json /registry.json
+COPY registry.generated.json /registry.generated.json
 # Loud on failure, quiet on progress; not retried — after go-offline, a
 # package failure is a compile or test failure, and retrying those only
 # delays the report.
@@ -32,8 +37,10 @@ FROM eclipse-temurin:17-jre-alpine
 
 WORKDIR /app
 COPY --from=build /build/target/java-sdk-compat-*.jar app.jar
-# Embed the shared service registry so the image is self-contained.
+# Embed the shared service registry, and its generated sibling, so the image is
+# self-contained. The loader resolves the sibling from the same directory.
 COPY registry.json /registry.json
+COPY registry.generated.json /registry.generated.json
 ENV OVERCAST_REGISTRY_PATH=/registry.json
 
 ENV OVERCAST_ENDPOINT=http://localhost:4566
