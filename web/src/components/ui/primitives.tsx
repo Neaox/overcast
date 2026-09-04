@@ -231,10 +231,30 @@ interface PageHeaderProps {
   className?: string
 }
 
+/**
+ * The title block and the page's actions, side by side — until they do not
+ * fit.
+ *
+ * The row wraps rather than overflowing, which is the whole narrow-width
+ * contract for a page header (#1611). It used to be `justify-between` with
+ * `shrink-0` on the actions: at 400px a Docs / Refresh / Create / Columns row
+ * simply ran off the right of the viewport, taking the page's primary action
+ * with it, and nothing scrolled to reach it. Wrapping puts the actions on
+ * their own line and lets them wrap among themselves; the wide layout, where
+ * everything fits on one line, is unchanged.
+ *
+ * A collapse into an overflow menu was the alternative. Wrapping wins on the
+ * ground that a menu hides the create button behind a click at exactly the
+ * width where the screen is smallest and the pointer least precise — and the
+ * actions are two to four short buttons, which is one wrapped line, not a
+ * problem worth a menu.
+ */
 function PageHeader({ title, count, meta, description, actions, className }: PageHeaderProps) {
   return (
-    <div className={cn("flex items-start justify-between gap-4", className)}>
-      <div className="flex flex-col gap-0.5">
+    <div className={cn("flex flex-wrap items-start justify-between gap-x-4 gap-y-2", className)}>
+      {/* `min-w-0` so a long mono title truncates its own line instead of
+          setting the row's minimum width and pushing the actions off. */}
+      <div className="flex min-w-0 flex-col gap-0.5">
         <div className="flex items-baseline gap-2">
           <h1 className="font-mono text-[20px] font-bold tracking-[-0.02em] text-fg">{title}</h1>
           {count !== undefined && (
@@ -245,7 +265,12 @@ function PageHeader({ title, count, meta, description, actions, className }: Pag
         {meta && <p className="font-mono text-2xs text-fg-subtle">{meta}</p>}
         {description && <p className="text-[13px] text-fg-muted">{description}</p>}
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+      {/* No `shrink-0`, and no `flex-1` either: the actions keep their
+          max-content width when measured, so the row breaks and drops them
+          onto a line of their own rather than squeezing them beside the
+          title. `flex-wrap` on the group itself covers the width where even
+          a whole line is not enough. */}
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
   )
 }
