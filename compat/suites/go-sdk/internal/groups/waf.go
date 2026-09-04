@@ -15,10 +15,10 @@ func WAF(c *clients.Clients) ServiceGroup {
 	g := &wafGroup{c: c}
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
-			"CreateWebACL": g.CreateWebACL,
-			"GetWebACL":    g.GetWebACL,
-			"ListWebACLs":  g.ListWebACLs,
-			"DeleteWebACL": g.DeleteWebACL,
+			"waf-webacls:CreateWebACL": g.CreateWebACL,
+			"waf-webacls:GetWebACL":    g.GetWebACL,
+			"waf-webacls:ListWebACLs":  g.ListWebACLs,
+			"waf-webacls:DeleteWebACL": g.DeleteWebACL,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"waf-webacls": g.setupACLs,

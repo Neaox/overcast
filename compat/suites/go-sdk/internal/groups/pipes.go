@@ -39,13 +39,13 @@ func Pipes(c *clients.Clients) ServiceGroup {
 	g := &pipesGroup{c: c}
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
-			"CreatePipe":                         g.CreatePipe,
-			"DescribePipe":                       g.DescribePipe,
-			"ListPipes":                          g.ListPipes,
-			"CreatePipeRejectsUnsupportedTarget": g.CreatePipeRejectsUnsupportedTarget,
-			"PipeDeliversToTarget":               g.PipeDeliversToTarget,
-			"UpdatePipe":                         g.UpdatePipe,
-			"DeletePipe":                         g.DeletePipe,
+			"pipes-wiring:CreatePipe":                         g.CreatePipe,
+			"pipes-wiring:DescribePipe":                       g.DescribePipe,
+			"pipes-wiring:ListPipes":                          g.ListPipes,
+			"pipes-wiring:CreatePipeRejectsUnsupportedTarget": g.CreatePipeRejectsUnsupportedTarget,
+			"pipes-wiring:PipeDeliversToTarget":               g.PipeDeliversToTarget,
+			"pipes-wiring:UpdatePipe":                         g.UpdatePipe,
+			"pipes-wiring:DeletePipe":                         g.DeletePipe,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"pipes-wiring": g.setupWiring,

@@ -18,12 +18,12 @@ func CloudFormation(c *clients.Clients) ServiceGroup {
 	g := &cfnGroup{c: c}
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
-			"CreateStack":      g.CreateStack,
-			"DescribeStacks":   g.DescribeStacks,
-			"ListStacks":       g.ListStacks,
-			"UpdateStack":      g.UpdateStack,
-			"DeleteStack":      g.DeleteStack,
-			"ValidateTemplate": g.ValidateTemplate,
+			"cloudformation-stacks:CreateStack":      g.CreateStack,
+			"cloudformation-stacks:DescribeStacks":   g.DescribeStacks,
+			"cloudformation-stacks:ListStacks":       g.ListStacks,
+			"cloudformation-stacks:UpdateStack":      g.UpdateStack,
+			"cloudformation-stacks:DeleteStack":      g.DeleteStack,
+			"cloudformation-stacks:ValidateTemplate": g.ValidateTemplate,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"cloudformation-stacks": g.setupStacks,
