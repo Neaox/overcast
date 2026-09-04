@@ -720,6 +720,19 @@ func (h *Handler) DescribeLaunchTemplates(w http.ResponseWriter, r *http.Request
 
 // ── DescribeLaunchTemplateVersions ───────────────────────────────────────────
 
+// launchTemplateVersionFilters is the subset of AWS's version filters a stored
+// version can answer. The rest — is-default-version, the metadata-option and
+// kernel filters — name launch parameters Overcast does not keep, so a caller
+// sending one is refused rather than answered with the unfiltered set.
+var launchTemplateVersionFilters = declareFilters(filterSpec[*LaunchTemplateVersion]{
+	op: "DescribeLaunchTemplateVersions",
+	attrs: map[string]filterAttr[*LaunchTemplateVersion]{
+		"create-time":   attr(func(v *LaunchTemplateVersion) string { return v.CreateTime }),
+		"image-id":      attr(func(v *LaunchTemplateVersion) string { return v.Data.ImageID }),
+		"instance-type": attr(func(v *LaunchTemplateVersion) string { return v.Data.InstanceType }),
+	},
+})
+
 // DescribeLaunchTemplateVersions handles Action=DescribeLaunchTemplateVersions.
 //
 // With no LaunchTemplateVersion.N it returns every version, bounded by
@@ -727,6 +740,11 @@ func (h *Handler) DescribeLaunchTemplates(w http.ResponseWriter, r *http.Request
 // resolving $Latest and $Default.
 func (h *Handler) DescribeLaunchTemplateVersions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	filters, aerr := launchTemplateVersionFilters.parse(eachFilter(r))
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 	lt, aerr := h.resolveLaunchTemplate(ctx, launchTemplateRefFromForm(r, ""))
 	if aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
@@ -773,6 +791,9 @@ func (h *Handler) DescribeLaunchTemplateVersions(w http.ResponseWriter, r *http.
 
 	items := make([]xmlLaunchTemplateVersion, 0, len(versions))
 	for _, v := range versions {
+		if !filters.matches(v) {
+			continue
+		}
 		items = append(items, renderLaunchTemplateVersion(lt, v))
 	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeLaunchTemplateVersionsResponse{

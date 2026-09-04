@@ -3302,7 +3302,7 @@
           "operation": "DescribeLaunchTemplateVersions",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Resolves $Latest and $Default; honours LaunchTemplateVersion.N, MinVersion and MaxVersion"
+          "notes": "Resolves $Latest and $Default; honours LaunchTemplateVersion.N, MinVersion and MaxVersion; Filters: create-time, image-id, instance-type"
         },
         {
           "operation": "DescribeLaunchTemplates",

@@ -357,6 +357,44 @@ func TestDescribeLaunchTemplateVersions_resolvesLatestAndDefault(t *testing.T) {
 	}
 }
 
+// TestDescribeLaunchTemplateVersions_filters pins that a filter selects and
+// that a filter name Overcast does not implement is refused rather than
+// ignored — EC2's house rule for every describe.
+func TestDescribeLaunchTemplateVersions_filters(t *testing.T) {
+	// Given: a template with two versions of different instance types
+	srv := helpers.NewTestServer(t)
+	tmpl := createTemplate(t, srv, "filtered-template", nil)
+	var created createLaunchTemplateVersionResponse
+	ltDecode(t, srv, "CreateLaunchTemplateVersion", url.Values{
+		"LaunchTemplateId":                {tmpl.LaunchTemplateID},
+		"LaunchTemplateData.InstanceType": {"m5.large"},
+	}, &created)
+
+	// When: the versions are filtered by instance type
+	var out describeLaunchTemplateVersionsResponse
+	ltDecode(t, srv, "DescribeLaunchTemplateVersions", url.Values{
+		"LaunchTemplateId": {tmpl.LaunchTemplateID},
+		"Filter.1.Name":    {"instance-type"},
+		"Filter.1.Value.1": {"m5.large"},
+	}, &out)
+
+	// Then: only the matching version comes back
+	if len(out.Versions) != 1 || out.Versions[0].VersionNumber != 2 {
+		t.Errorf("filtered versions = %+v, want only version 2", out.Versions)
+	}
+
+	// When: a filter Overcast does not implement is sent
+	resp := ec2Query(t, srv, "DescribeLaunchTemplateVersions", url.Values{
+		"LaunchTemplateId": {tmpl.LaunchTemplateID},
+		"Filter.1.Name":    {"is-default-version"},
+		"Filter.1.Value.1": {"true"},
+	})
+	defer resp.Body.Close()
+
+	// Then: it is refused, not ignored
+	assertEC2QueryError(t, resp, http.StatusBadRequest, "InvalidParameterValue")
+}
+
 // TestModifyLaunchTemplate_setsDefaultVersion pins the default-version move,
 // including via the $Latest alias.
 func TestModifyLaunchTemplate_setsDefaultVersion(t *testing.T) {
