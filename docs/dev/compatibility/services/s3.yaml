@@ -226,6 +226,63 @@ operations:
       - name: unknown versionId
         status: intentionally_partial
         gap: Treated as idempotent (204) rather than pinned to a modelled error, matching DeleteObject's documented idempotency.
+  PutObject:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html
+      - https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html
+    implementation:
+      - internal/services/s3/conditional_write.go
+      - internal/services/s3/handler_object.go
+      - internal/services/s3/handler_multipart.go
+    tests:
+      - tests/integration/s3/s3_conditional_write_test.go
+    scenarios:
+      - name: If-None-Match "*" against an absent key
+        status: fixed
+        notes: Succeeds with 200, on both PutObject and CompleteMultipartUpload.
+      - name: If-None-Match "*" against an existing current object
+        status: fixed
+        notes: 412 PreconditionFailed, and the stored object is untouched (#1636).
+      - name: If-None-Match carrying an entity tag
+        status: fixed
+        notes: >-
+          501 NotImplemented. AWS documents the header as expecting '*' and has no
+          entity-tag form of it on the write path; ignoring it is what let a
+          conditional write silently overwrite.
+      - name: If-Match against the current ETag
+        status: fixed
+        notes: Succeeds with 200; a stale ETag is 412 PreconditionFailed.
+      - name: If-Match against a key with no current version
+        status: fixed
+        notes: 404 NoSuchKey, per the user guide's "Conditional write behavior" section.
+      - name: versioned bucket with a delete marker as current version
+        status: fixed
+        notes: >-
+          Counts as "no current object" — If-None-Match "*" succeeds and If-Match
+          answers 404.
+      - name: both headers on one request
+        status: fixed
+        notes: >-
+          Both must hold, evaluated If-Match first per RFC 7232 section 6. AWS
+          documents no combined form.
+      - name: concurrent conditional writers
+        status: fixed
+        notes: >-
+          Exactly one of N racing If-None-Match "*" writes wins; the rest get 412.
+          Evaluation and commit are serialised under one per-bucket+key lock.
+      - name: 409 ConditionalRequestConflict
+        status: intentionally_partial
+        gap: >-
+          Never returned. AWS uses it for a concurrent delete racing an in-flight
+          conditional write inside a distributed store; Overcast evaluates and
+          commits under one lock, so that window does not exist.
+      - name: CopyObject conditional writes
+        status: unsupported
+        gap: >-
+          AWS accepts If-None-Match and If-Match on CopyObject too; only PutObject
+          and CompleteMultipartUpload are covered here (#1678).
   PutBucketLifecycleConfiguration:
     status: fixed
     aws_docs:
@@ -367,12 +424,14 @@ findings:
     - PutBucketVersioning now rejects invalid status enum values with MalformedXML instead of persisting arbitrary strings.
     - Object version history, delete markers, version-targeted reads/deletes, ListObjectVersions ordering/pagination, and sweeper execution of NoncurrentVersionExpiration, NoncurrentVersionTransition and ExpiredObjectDeleteMarker (#645).
     - DeleteBucketCors and DeleteBucketWebsite now clear stored configurations and return 204.
+    - PutObject and CompleteMultipartUpload honour If-None-Match and If-Match, so a conditional write no longer silently overwrites (#1636).
     - CloudFormation AWS::S3::Bucket uses the S3 handlers for lifecycle, versioning, notifications, encryption, tags, CORS, and website configuration.
     - GetObject, GetObjectTagging and CopyObject's source lookup now answer NoSuchBucket for a bucket that does not exist, instead of NoSuchKey (#1635); HeadObject is wire-identical either way per AWS's own documented HEAD limitation.
   remaining_gaps:
     - Finish ListObjectsV2 optional-parameter review before marking the operation reviewed.
     - Verify CDK bootstrap bucket flows and policy/versioning/tagging edge cases.
     - CORS rule Id and encryption BlockedEncryptionTypes are not represented by the current stored/wire models.
+    - CopyObject does not yet honour If-None-Match or If-Match, which AWS accepts on it alongside PutObject and CompleteMultipartUpload (#1678).
   intentionally_partial:
     - EventBridge object-event detail omits request-id, requester and source-ip-address, which Overcast has no truthful value for; version-id and sequencer are now populated from the object version history (#645), and only Object Created and Object Deleted are emitted.
     - Website configuration is stored and returned in full, but Overcast serves no S3 website endpoint, so no request is redirected; Redirect HttpRedirectCode values are stored without validation because the model does not pin AWS's error.

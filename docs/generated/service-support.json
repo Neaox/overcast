@@ -90,7 +90,7 @@
           "operation": "PutObject",
           "category": "Objects",
           "status": "✅ Supported",
-          "notes": "Stores body + x-amz-meta-* headers"
+          "notes": "Stores body + x-amz-meta-* headers; If-None-Match: * and If-Match make the write conditional, failing 412 — or 404 when If-Match finds no current version"
         },
         {
           "operation": "GetObject",
@@ -185,7 +185,8 @@
         {
           "operation": "CompleteMultipartUpload",
           "category": "Multipart uploads",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Honours the same If-None-Match: * and If-Match conditional writes as PutObject, evaluated at completion time"
         },
         {
           "operation": "AbortMultipartUpload",

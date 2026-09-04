@@ -218,6 +218,12 @@ func (h *Handler) CompleteMultipartUpload(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	cond, aerr := parseConditionalWrite(r)
+	if aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
+	}
+
 	// Parse the list of parts from the request body.
 	var req xmlCompleteMultipartUpload
 	if decodeErr := xml.NewDecoder(r.Body).Decode(&req); decodeErr != nil {
@@ -262,6 +268,18 @@ func (h *Handler) CompleteMultipartUpload(w http.ResponseWriter, r *http.Request
 	if aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
 		return
+	}
+	if cond.active() {
+		// As in PutObject: held until the handler returns so the check and the
+		// assembled object's commit are one step. AWS evaluates the condition
+		// at completion, not at initiation — an in-progress upload is not yet
+		// an object, so a PutObject that claims the key meanwhile is what a
+		// conditional completion is meant to lose to.
+		defer h.objectLocks.Lock(objectStoreKey(bucket, key))()
+		if aerr := h.checkConditionalWrite(r.Context(), cond, bucket, key); aerr != nil {
+			protocol.WriteXMLError(w, r, aerr)
+			return
+		}
 	}
 	now := h.clk.Now().UTC()
 	obj := &Object{
