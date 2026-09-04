@@ -14,8 +14,9 @@ import (
 )
 
 // Watcher listens to the Docker Engine events stream and publishes typed
-// events on an events.Bus. Only Overcast-managed resources (those with the
-// overcast.managed label) are tracked — both containers and networks.
+// events on an events.Bus. Only Overcast-managed resources are tracked — both
+// containers and networks — but the two are filtered in different places, and
+// that is not a style choice (see stream).
 //
 // Usage:
 //
@@ -27,7 +28,20 @@ type Watcher struct {
 	logger    *zap.Logger
 	tracker   *Tracker
 	attempted bool
+
+	// verifyNetwork re-reads one network against the spec this process
+	// resolved for it and records the result. Supplied by the Supervisor,
+	// which is the only thing that holds the specs; nil for a watcher built
+	// without one, which then reports nothing on a create.
+	verifyNetwork func(ctx context.Context, name string)
 }
+
+// networkVerifyTimeout bounds the one inspect a network `create` costs. It runs
+// on the event-stream goroutine, so it has to be short: an unbounded read
+// against a wedged daemon would stall every container event behind it, and a
+// re-verification that has not answered in this long has been overtaken by the
+// next probe anyway.
+const networkVerifyTimeout = 5 * time.Second
 
 // DaemonConnectedPayload identifies the Docker client whose event stream has
 // connected. A process can watch multiple daemon sockets, so services compare
@@ -101,9 +115,27 @@ func (w *Watcher) Run(ctx context.Context) {
 // newline-delimited JSON until the stream ends or ctx is cancelled.
 func (w *Watcher) stream(ctx context.Context, reconnected bool) error {
 	filters := url.Values{}
-	// Docker filters JSON: only Overcast-managed resources, both container and
-	// network event types, limited to the actions we care about.
-	filtersJSON := `{"label":["` + LabelManaged + `=true"],"type":["container","network"],` +
+	// Docker filters JSON: the two resource types Overcast watches, limited to
+	// the actions it acts on.
+	//
+	// **No label filter, and that is the fix rather than an oversight.** The
+	// Engine reports an event's actor attributes, and a `label=` filter is
+	// matched against them — but a *network* event's attributes are only `name`
+	// and `type`. No labels are sent for a network on any Engine this has been
+	// checked against (29.x reproduces it exactly), so a stream filtered on
+	// `overcast.managed=true` delivers container events and **not one network
+	// event of any kind**. Everything built on the network half was therefore
+	// inert on a real daemon: the destroy that stops health reporting a network
+	// that is gone (#1583) never arrived, and neither would the create this
+	// re-verifies on (#1599).
+	//
+	// Container events do carry their labels, so the container filter moves
+	// into dispatch and matches exactly what the daemon used to apply. Networks
+	// are gated on what this process knows about the name instead — a record to
+	// forget, a spec to verify against — which is a stronger gate than the
+	// label anyway: it is scoped to the networks this configuration manages
+	// rather than to every network Overcast has ever labelled.
+	filtersJSON := `{"type":["container","network"],` +
 		`"event":["start","stop","die","kill","oom","health_status","create","destroy","connect","disconnect"]}`
 	filters.Set("filters", filtersJSON)
 
@@ -151,17 +183,26 @@ func (w *Watcher) stream(ctx context.Context, reconnected bool) error {
 func (w *Watcher) dispatch(ctx context.Context, de *dockerEvent) {
 	switch de.Type {
 	case "container":
+		// The filter the daemon used to apply, applied here instead — see
+		// stream. A container Overcast did not create is not its business:
+		// publishing one would have services reconciling against somebody
+		// else's containers.
+		if de.Actor.Attributes[LabelManaged] != "true" {
+			return
+		}
 		w.dispatchContainer(ctx, de)
 	case "network":
 		w.dispatchNetwork(ctx, de)
+	default:
+		return
 	}
-	w.recordTrackerEvent(de)
+	w.recordTrackerEvent(ctx, de)
 }
 
 // recordTrackerEvent records the event type and time in the Docker status
 // tracker so the health endpoint can report the last observed Docker daemon
 // event — a useful signal that the daemon is alive and communicating.
-func (w *Watcher) recordTrackerEvent(de *dockerEvent) {
+func (w *Watcher) recordTrackerEvent(ctx context.Context, de *dockerEvent) {
 	if w.tracker == nil {
 		return
 	}
@@ -175,12 +216,52 @@ func (w *Watcher) recordTrackerEvent(de *dockerEvent) {
 	// the operator does the thing they were told to do, watches it succeed, and
 	// nothing they can see changes (#1583).
 	//
-	// Only the destroy. The create that follows it is not verified from here:
-	// this goroutine has no spec to compare against, and creating or repairing
-	// on an event would race the very command that is mid-rebuild.
-	if de.Type == "network" && de.Action == "destroy" {
-		w.tracker.ForgetNetwork(de.Actor.Attributes["name"])
+	// The create is verified too, since the Supervisor now holds the resolved
+	// specs (#1599). Verified, never repaired: `overcast network reset` is
+	// usually the reason both of these events are arriving, and a repair from
+	// here would land between its remove and its create — see VerifyNetwork.
+	//
+	// The pair arrives in order on one stream and is handled in order on this
+	// goroutine, which is what makes the forget safe. A destroy delivered after
+	// the probe recorded the rebuilt network erases the entry (#1601); the
+	// create behind it puts back one that was read a moment ago, so the window
+	// closes itself in the time it takes to deliver one event rather than
+	// lasting until the next probe.
+	//
+	// Connect and disconnect are untouched: a container joining a network says
+	// nothing about whether the network matches its spec.
+	//
+	// Both calls are gated on the name rather than on a label the daemon does
+	// not send (see stream): ForgetNetwork drops only a name the report holds,
+	// and VerifyNetwork acts only on a name this process resolved a spec for.
+	// A network nothing here manages reaches neither.
+	if de.Type != "network" {
+		return
 	}
+	name := de.Actor.Attributes["name"]
+	switch de.Action {
+	case "destroy":
+		w.tracker.ForgetNetwork(name)
+	case "create":
+		w.verifyOnCreate(ctx, name)
+	}
+}
+
+// verifyOnCreate re-reads a newly created network and records what it is, so a
+// network that was just repaired reports `ok` rather than dropping out of
+// /_overcast/health until the next probe (#1599).
+//
+// Inline on the event goroutine, under a short timeout. One inspect is the
+// budget the whole verification is built around — cheap enough to run for every
+// network on every startup — and running it here rather than in a goroutine is
+// what keeps it ordered behind the destroy it usually follows.
+func (w *Watcher) verifyOnCreate(ctx context.Context, name string) {
+	if w.verifyNetwork == nil || name == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, networkVerifyTimeout)
+	defer cancel()
+	w.verifyNetwork(ctx, name)
 }
 
 // dispatchContainer handles container lifecycle events.

@@ -50,6 +50,16 @@ type Supervisor struct {
 	mu      sync.Mutex
 	clients map[string]*Client // socket path → client (deduplicated)
 	done    chan struct{}      // closed by Close to signal shutdown
+
+	// specs is what Probe resolved for each daemon: socket path → the specs
+	// EnsureNetwork compared against, isolation already settled.
+	//
+	// Kept because the event watcher needs them and cannot derive them. A
+	// network `create` arriving on the stream says a network exists; only a
+	// spec says whether it is the network this configuration asked for, and
+	// re-resolving one would re-run InternalMode and make a second decision
+	// rather than read the first (#1599).
+	specs map[string][]ResolvedNetworkSpec
 }
 
 // NewSupervisor creates a Supervisor that will publish Docker container events
@@ -59,6 +69,7 @@ func NewSupervisor(bus *events.Bus, logger *zap.Logger) *Supervisor {
 		bus:     bus,
 		logger:  logger.Named("docker"),
 		clients: make(map[string]*Client),
+		specs:   make(map[string][]ResolvedNetworkSpec),
 		done:    make(chan struct{}),
 	}
 }
@@ -101,6 +112,7 @@ func (s *Supervisor) Probe(ctx context.Context, configs []ServiceConfig, network
 				if s.tracker != nil {
 					s.tracker.RecordNetworks(pr.Networks)
 				}
+				s.specs[cfg.Socket] = pr.Specs
 				keep := make([]string, 0, len(networks))
 				for _, spec := range networks {
 					keep = append(keep, spec.Name)
@@ -174,6 +186,12 @@ func (s *Supervisor) Run(ctx context.Context) {
 			var w *Watcher
 			if s.tracker != nil {
 				w = NewWatcherWithTracker(dc, s.bus, s.logger.With(zap.String("socket", socket)), s.tracker)
+				// The watcher is per-daemon; the specs are too. Binding the
+				// socket here is what lets the watcher ask about a network by
+				// name alone.
+				w.verifyNetwork = func(ctx context.Context, name string) {
+					s.VerifyNetwork(ctx, socket, name)
+				}
 			} else {
 				w = NewWatcher(dc, s.bus, s.logger.With(zap.String("socket", socket)))
 			}
@@ -181,6 +199,47 @@ func (s *Supervisor) Run(ctx context.Context) {
 		}(socket, dc)
 	}
 	wg.Wait()
+}
+
+// VerifyNetwork re-checks one network on one daemon against the spec Probe
+// resolved for it, and records what it finds.
+//
+// This is the supervisor half of #1599: the watcher sees a network `create` and
+// knows a name, this knows what that name was supposed to be. A network with no
+// spec here — a per-VPC network, whose spec comes from EC2's store rather than
+// from PlaneSpecs, or one created under a name this configuration does not
+// manage — is not verified and not recorded. EC2 reports its own through the
+// same tracker (see NetworkReporter).
+//
+// Verify only: docker.VerifyNetwork neither creates nor repairs, which is what
+// keeps this clear of the command that is usually the reason a create event is
+// arriving at all. See its doc comment.
+//
+// The lock is held only to read the two maps. Run starts the watchers after
+// Probe has returned, so in practice this never waits on a probe.
+func (s *Supervisor) VerifyNetwork(ctx context.Context, socket, name string) {
+	if s.tracker == nil || name == "" {
+		return
+	}
+
+	s.mu.Lock()
+	dc := s.clients[socket]
+	var spec ResolvedNetworkSpec
+	found := false
+	for _, candidate := range s.specs[socket] {
+		if candidate.Name == name {
+			spec, found = candidate, true
+			break
+		}
+	}
+	s.mu.Unlock()
+
+	if dc == nil || !found {
+		return
+	}
+	if status, ok := VerifyNetwork(ctx, dc, spec, s.logger); ok {
+		s.tracker.RecordNetworks([]NetworkStatus{status})
+	}
 }
 
 // Close signals all background goroutines (including Probe blockers and

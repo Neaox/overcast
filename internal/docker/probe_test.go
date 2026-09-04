@@ -230,6 +230,44 @@ func TestProbe_internalModeTakesPrecedenceOverTheStaticField(t *testing.T) {
 	}
 }
 
+// The resolved specs come back out, and they carry the answer InternalMode
+// gave rather than the static field it overrode.
+//
+// This is what makes a later re-verification possible at all (#1599): the
+// Docker event watcher sees a network name and needs the spec it was supposed
+// to match. Re-resolving one from the NetworkSpec would call InternalMode a
+// second time — a second decision, against a daemon that may have changed —
+// where the point is to read the decision this process already made.
+func TestProbe_carriesTheResolvedSpecsOut(t *testing.T) {
+	srv, _ := newProbeServer("")
+	defer srv.Close()
+
+	specs := []NetworkSpec{
+		{Name: "overcast", Internal: false},
+		{Name: "overcast_control", Internal: false, InternalMode: func(_ context.Context, _ *Client) InternalDecision {
+			return InternalDecision{Internal: true, Reason: "OVERCAST_CONTROL_PLANE_INTERNAL=true"}
+		}},
+	}
+
+	result, err := Probe("tcp://"+addrOf(srv), specs, zap.NewNop())
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+
+	if len(result.Specs) != 2 {
+		t.Fatalf("Specs = %+v, want one per network, in order", result.Specs)
+	}
+	if result.Specs[0].Name != "overcast" || result.Specs[0].Internal {
+		t.Errorf("Specs[0] = %+v, want the data plane resolved routable", result.Specs[0])
+	}
+	if result.Specs[1].Name != "overcast_control" || !result.Specs[1].Internal {
+		t.Errorf("Specs[1] = %+v, want InternalMode's answer, not the static field", result.Specs[1])
+	}
+	if result.Specs[1].Reason == "" {
+		t.Error("the resolved spec lost its reason; a re-verification reports it as the probe did")
+	}
+}
+
 func TestProbe_staticInternalAppliesWithoutInternalMode(t *testing.T) {
 	// Given: a spec with no InternalMode — the default data plane's shape.
 	srv, ps := newProbeServer("")

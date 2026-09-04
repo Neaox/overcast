@@ -35,6 +35,17 @@ type ProbeResult struct {
 	// and the whole point of #1564 is that it should not take a `docker network
 	// inspect` and a guess to find out.
 	Networks []NetworkStatus
+
+	// Specs is each NetworkSpec with its isolation settled — the exact input
+	// EnsureNetwork compared against, in the order it was given.
+	//
+	// Carried out because a spec is the one thing a later re-verification
+	// cannot reconstruct. InternalMode is resolved once, against this daemon,
+	// and running it again would be a second decision rather than a reading of
+	// the first; without the resolved spec the Docker event watcher has nothing
+	// to compare a freshly created network against, and can only forget it
+	// (#1599).
+	Specs []ResolvedNetworkSpec
 }
 
 // Probe creates a Docker client, verifies connectivity with retries, and
@@ -76,6 +87,7 @@ func Probe(socketPath string, networks []NetworkSpec, logger *zap.Logger) (*Prob
 	// handed to a service, is what lets services create containers straight
 	// onto a network without each re-ensuring it first.
 	statuses := make([]NetworkStatus, 0, len(networks))
+	resolvedSpecs := make([]ResolvedNetworkSpec, 0, len(networks))
 	for _, spec := range networks {
 		if spec.Name == "" {
 			continue
@@ -104,9 +116,10 @@ func Probe(socketPath string, networks []NetworkSpec, logger *zap.Logger) (*Prob
 			return nil, err
 		}
 		statuses = append(statuses, status)
+		resolvedSpecs = append(resolvedSpecs, resolved)
 	}
 
-	return &ProbeResult{Client: dc, Networks: statuses}, nil
+	return &ProbeResult{Client: dc, Networks: statuses, Specs: resolvedSpecs}, nil
 }
 
 // RemoveLegacyNetworks drops the pre-two-plane per-service networks. Networks
