@@ -17,7 +17,7 @@
 | S3          | 53  | Bucket CRUD, object CRUD, list, copy, multipart, notifications                                                   |
 | SQS         | 21  | Queue + message CRUD, batches, purge, attributes, visibility, DLQ, FIFO, long polling                            |
 | DynamoDB    | 28  | Table/item CRUD, Scan, Query, Streams, TTL, batch ops, transactions                                              |
-| Lambda      | 59  | Function CRUD, Invoke (Docker), versions, aliases, layers, event source mappings, function URLs (Host-routed invoke) |
+| Lambda      | 62  | Function CRUD, Invoke (Docker), versions, aliases, layers, event source mappings, function URLs (Host-routed invoke) |
 | API Gateway | 106 | REST v1 + HTTP v2: full CRUD, stages, deployments, Lambda/MOCK/HTTP proxy execution, authorizers, API keys       |
 | AppSync     | 82  | Full CRUD, GraphQL execution (NONE/HTTP/Lambda/DynamoDB), CloudFormation/CDK provisioning, merged APIs, Events API, channel namespaces |
 | CloudFront  | 89  | Distribution CRUD, invalidations, OAC/OAI, cache policies, CloudFront Functions, key groups, field-level encrypt |
@@ -69,7 +69,7 @@
 | S3              | 53  |
 | SQS             | 21  |
 | DynamoDB        | 28  |
-| Lambda          | 59  |
+| Lambda          | 62  |
 | API Gateway     | 106 |
 | AppSync         | 82  |
 | CloudFront      | 89  |

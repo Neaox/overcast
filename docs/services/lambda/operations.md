@@ -1,6 +1,6 @@
 ---
 title: "Lambda operations"
-description: "Every Lambda operation Overcast declares — 57 of 59 implemented — with status, behaviour notes and a link to the AWS API reference for each."
+description: "Every Lambda operation Overcast declares — 60 of 62 implemented — with status, behaviour notes and a link to the AWS API reference for each."
 section: "Service Reference"
 tags:
   - docs
@@ -13,23 +13,23 @@ tags:
 
 # Lambda operations
 
-57 of 59 listed operations are implemented. Back to [Lambda](../lambda.md).
+60 of 62 listed operations are implemented. Back to [Lambda](../lambda.md).
 
 ## Summary
 
-| Category                    | ✅ Supported | ❌ Unsupported |
-| --------------------------- | ------------ | -------------- |
-| Function management         | 10           |                |
-| Resource-based policies     | 2            | 1              |
-| Code signing                | 6            |                |
-| Invocation                  | 2            | 1              |
-| Aliases & versions          | 7            |                |
-| Function URLs               | 5            |                |
-| Event source mappings       | 5            |                |
-| Layers                      | 5            |                |
-| Asynchronous invocation     | 5            |                |
-| Concurrency & configuration | 7            |                |
-| Tags                        | 3            |                |
+| Category                    | ✅ Supported | ⚠️ Partial | ❌ Unsupported |
+| --------------------------- | ------------ | ---------- | -------------- |
+| Function management         | 10           |            |                |
+| Resource-based policies     | 4            | 1          | 1              |
+| Code signing                | 6            |            |                |
+| Invocation                  | 2            |            | 1              |
+| Aliases & versions          | 7            |            |                |
+| Function URLs               | 5            |            |                |
+| Event source mappings       | 5            |            |                |
+| Layers                      | 5            |            |                |
+| Asynchronous invocation     | 5            |            |                |
+| Concurrency & configuration | 7            |            |                |
+| Tags                        | 3            |            |                |
 
 ---
 
@@ -52,11 +52,14 @@ tags:
 
 ### Resource-based policies
 
-| Operation          | Status         | Notes                                                                                                         | AWS Docs                                                                       |
-| ------------------ | -------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `AddPermission`    | ❌ Unsupported | Policy lifecycle and validation are implemented, but statements are not yet enforced during invocation (#629) | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_AddPermission.html)    |
-| `GetPolicy`        | ✅ Supported   | Returns the stored AWS policy document and revision ID                                                        | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetPolicy.html)        |
-| `RemovePermission` | ✅ Supported   | Removes a statement by ID; supports revision preconditions                                                    | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_RemovePermission.html) |
+| Operation              | Status         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | AWS Docs                                                                           |
+| ---------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `AddPermission`        | ❌ Unsupported | Policy lifecycle and validation are implemented, but statements are not yet enforced during invocation (#629)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_AddPermission.html)        |
+| `GetPolicy`            | ✅ Supported   | Returns the stored AWS policy document and revision ID                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetPolicy.html)            |
+| `RemovePermission`     | ✅ Supported   | Removes a statement by ID; supports revision preconditions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_RemovePermission.html)     |
+| `GetResourcePolicy`    | ✅ Supported   | Returns the same policy document and revision ID GetPolicy does, addressed by function, version or alias ARN; ResourceNotFoundException when the resource carries no policy                                                                                                                                                                                                                                                                                                                                                                                                                                       | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetResourcePolicy.html)    |
+| `PutResourcePolicy`    | ⚠️ Partial     | Replaces the whole policy, statements AddPermission wrote included, and preserves the full IAM statement grammar — explicit Deny, list-valued Action/Resource/Principal, arbitrary condition keys — so a document survives a Put/Get round trip unchanged; a stale RevisionId answers PreconditionFailedException and a policy over 20 KB PolicyLengthExceededException; a statement allowing every principal with no condition is refused with PublicPolicyException, unconditionally, because there is no PutPublicAccessBlockConfig here to relax it with; statements are never enforced at invoke time (#629) | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_PutResourcePolicy.html)    |
+| `DeleteResourcePolicy` | ✅ Supported   | Deletes the whole policy, statements added by AddPermission included; the RevisionId query parameter is a precondition; ResourceNotFoundException when there is no policy to delete                                                                                                                                                                                                                                                                                                                                                                                                                               | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteResourcePolicy.html) |
 
 ### Code signing
 

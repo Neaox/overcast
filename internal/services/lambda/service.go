@@ -1399,6 +1399,7 @@ func (s *Service) PathPrefixes() []string {
 		"/2020-06-30",
 		"/2021-10-31",
 		"/2021-11-15",
+		"/2026-07-09",
 	}
 }
 
@@ -1450,6 +1451,12 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Post(apiBase+"/functions/{name}/policy", s.handler.AddPermission)
 	r.Get(apiBase+"/functions/{name}/policy", s.handler.GetPolicy)
 	r.Delete(apiBase+"/functions/{name}/policy/{statementId}", s.handler.RemovePermission)
+	// The full-JSON view of the same policy, addressed by ARN rather than by
+	// function name, is its own API vintage.
+	const resourcePolicyBase = "/2026-07-09"
+	r.Get(resourcePolicyBase+"/resource-policy/{ResourceArn}", s.handler.GetResourcePolicy)
+	r.Put(resourcePolicyBase+"/resource-policy/{ResourceArn}", s.handler.PutResourcePolicy)
+	r.Delete(resourcePolicyBase+"/resource-policy/{ResourceArn}", s.handler.DeleteResourcePolicy)
 	r.Get(codeSigningBase+"/functions/{name}/code-signing-config", s.handler.GetFunctionCodeSigningConfig)
 	r.Put(codeSigningBase+"/functions/{name}/code-signing-config", s.handler.PutFunctionCodeSigningConfig)
 	r.Delete(codeSigningBase+"/functions/{name}/code-signing-config", s.handler.DeleteFunctionCodeSigningConfig)

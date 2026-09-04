@@ -431,12 +431,20 @@ func isARNLabel(label string) bool {
 // unchanged: AppConfig, EKS, Pipes and Scheduler's manifest Service fields are
 // already their own ARN segment, and so is AppSync's and MSK's ("kafka") on
 // /v1/tags.
+//
+// The resource part carries no "/" on purpose. A resourceArn label is not
+// always greedy — Lambda binds its resource-policy operations at a plain
+// /2026-07-09/resource-policy/{ResourceArn} — and an SDK percent-encodes a
+// slash inside a plain label rather than sending a second path segment. A raw
+// slash here would therefore miss a correctly registered single-segment route
+// and report it unreachable, which is a fault of the probe, not the route.
+// The dispatch this value exists for reads only the ARN's service segment.
 func probeARN(op awsapi.Operation) string {
 	segment := op.Service
 	if segment == "service-catalog-appregistry" {
 		segment = "servicecatalog"
 	}
-	return "arn:aws:" + segment + ":us-east-1:000000000000:probe/route-reachability"
+	return "arn:aws:" + segment + ":us-east-1:000000000000:probe-route-reachability"
 }
 
 // IsS3SigningName reports whether a credential scope belongs to a service

@@ -35,6 +35,12 @@ func init() {
 			Status: capabilities.StatusSupported, Notes: "Returns the stored AWS policy document and revision ID"},
 		capabilities.Capability{Service: "lambda", Operation: "RemovePermission", Category: "Resource-based policies",
 			Status: capabilities.StatusSupported, Notes: "Removes a statement by ID; supports revision preconditions"},
+		capabilities.Capability{Service: "lambda", Operation: "GetResourcePolicy", Category: "Resource-based policies",
+			Status: capabilities.StatusSupported, Notes: "Returns the same policy document and revision ID GetPolicy does, addressed by function, version or alias ARN; ResourceNotFoundException when the resource carries no policy"},
+		capabilities.Capability{Service: "lambda", Operation: "PutResourcePolicy", Category: "Resource-based policies",
+			Status: capabilities.StatusPartial, Notes: "Replaces the whole policy, statements AddPermission wrote included, and preserves the full IAM statement grammar — explicit Deny, list-valued Action/Resource/Principal, arbitrary condition keys — so a document survives a Put/Get round trip unchanged; a stale RevisionId answers PreconditionFailedException and a policy over 20 KB PolicyLengthExceededException; a statement allowing every principal with no condition is refused with PublicPolicyException, unconditionally, because there is no PutPublicAccessBlockConfig here to relax it with; statements are never enforced at invoke time (#629)"},
+		capabilities.Capability{Service: "lambda", Operation: "DeleteResourcePolicy", Category: "Resource-based policies",
+			Status: capabilities.StatusSupported, Notes: "Deletes the whole policy, statements added by AddPermission included; the RevisionId query parameter is a precondition; ResourceNotFoundException when there is no policy to delete"},
 
 		// Code signing configurations
 		capabilities.Capability{Service: "lambda", Operation: "CreateCodeSigningConfig", Category: "Code signing",

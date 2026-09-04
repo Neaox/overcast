@@ -3,9 +3,11 @@ package lambda
 // handler_policy.go implements Lambda resource-policy operations.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -32,18 +34,74 @@ type addPermissionRequest struct {
 	StatementID           *string `json:"StatementId"`
 }
 
+// permissionStatement is one statement of a function's resource policy.
+//
+// AddPermission builds the narrow shape it can express, so the named members
+// are the ones Overcast itself reads — Sid to address a statement, the rest to
+// render it. PutResourcePolicy accepts the whole IAM statement grammar, where
+// Action, Resource and Principal may each be a string or a list and elements
+// Lambda's own API never produces (NotPrincipal, NotAction, an explicit Deny)
+// are legal, so raw carries a caller-supplied statement exactly as it arrived
+// and is what marshals back out. Without it a document put as JSON would be
+// returned flattened into the subset AddPermission happens to model.
 type permissionStatement struct {
-	Sid       string                       `json:"Sid"`
-	Effect    string                       `json:"Effect"`
-	Principal any                          `json:"Principal"`
-	Action    string                       `json:"Action"`
-	Resource  string                       `json:"Resource"`
-	Condition map[string]map[string]string `json:"Condition,omitempty"`
+	Sid       string `json:"Sid"`
+	Effect    string `json:"Effect"`
+	Principal any    `json:"Principal"`
+	Action    any    `json:"Action"`
+	Resource  any    `json:"Resource"`
+	Condition any    `json:"Condition,omitempty"`
+
+	raw json.RawMessage
 }
 
+// statementAlias drops permissionStatement's own JSON methods so the struct
+// tags can be used without recursing back into them.
+type statementAlias permissionStatement
+
+func (s permissionStatement) MarshalJSON() ([]byte, error) {
+	if len(s.raw) > 0 {
+		return s.raw, nil
+	}
+	return json.Marshal(statementAlias(s))
+}
+
+func (s *permissionStatement) UnmarshalJSON(data []byte) error {
+	var decoded statementAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*s = permissionStatement(decoded)
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, data); err != nil {
+		return err
+	}
+	s.raw = json.RawMessage(compact.Bytes())
+	return nil
+}
+
+// functionPolicy is the stored form of one resource policy. Version and ID
+// carry what PutResourcePolicy was given; both are absent on a policy built by
+// AddPermission and default on render, so rows written before either member
+// existed decode unchanged.
 type functionPolicy struct {
 	RevisionID string                `json:"revision_id"`
+	Version    string                `json:"version,omitempty"`
+	ID         string                `json:"id,omitempty"`
 	Statements []permissionStatement `json:"statements"`
+}
+
+// document renders the policy the way GetPolicy and GetResourcePolicy both
+// return it.
+func (p functionPolicy) document() policyDocument {
+	document := policyDocument{Version: p.Version, ID: p.ID, Statement: p.Statements}
+	if document.Version == "" {
+		document.Version = defaultPolicyVersion
+	}
+	if document.ID == "" {
+		document.ID = defaultPolicyID
+	}
+	return document
 }
 
 type policyDocument struct {
@@ -52,10 +110,17 @@ type policyDocument struct {
 	Statement []permissionStatement `json:"Statement"`
 }
 
-type getPolicyResponse struct {
+// policyEnvelope is the {Policy, RevisionId} body GetPolicy, GetResourcePolicy
+// and PutResourcePolicy all answer with.
+type policyEnvelope struct {
 	Policy     string `json:"Policy"`
 	RevisionID string `json:"RevisionId"`
 }
+
+const (
+	defaultPolicyVersion = "2012-10-17"
+	defaultPolicyID      = "default"
+)
 
 var (
 	statementIDPattern        = lazyRegexp(`^[a-zA-Z0-9-_]+$`)
@@ -183,15 +248,16 @@ func (h *Handler) AddPermission(w http.ResponseWriter, r *http.Request) {
 				return false, &protocol.AWSError{Code: "ResourceConflictException", Message: "The statement id (" + statementID + ") provided already exists.", HTTPStatus: http.StatusConflict}
 			}
 		}
-		candidate := append(append([]permissionStatement(nil), policy.Statements...), statement)
-		document, err := json.Marshal(policyDocument{Version: "2012-10-17", ID: "default", Statement: candidate})
+		candidate := policy.document()
+		candidate.Statement = append(append([]permissionStatement(nil), policy.Statements...), statement)
+		document, err := json.Marshal(candidate)
 		if err != nil {
 			return false, protocol.Wrap(protocol.ErrInternalError, err)
 		}
 		if len(document) > maxFunctionPolicyBytes {
-			return false, &protocol.AWSError{Code: "PolicyLengthExceededException", Message: "The final policy size is bigger than the limit.", HTTPStatus: http.StatusBadRequest}
+			return false, policyLengthExceeded()
 		}
-		policy.Statements = candidate
+		policy.Statements = candidate.Statement
 		policy.RevisionID = uuid.NewString()
 		return false, nil
 	})
@@ -223,12 +289,12 @@ func (h *Handler) GetPolicy(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, policyNotFoundError(name, qualifier))
 		return
 	}
-	documentJSON, err := json.Marshal(policyDocument{Version: "2012-10-17", ID: "default", Statement: policy.Statements})
+	documentJSON, err := json.Marshal(policy.document())
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	protocol.WriteRESTJSON(w, r, http.StatusOK, getPolicyResponse{Policy: string(documentJSON), RevisionID: policy.RevisionID})
+	protocol.WriteRESTJSON(w, r, http.StatusOK, policyEnvelope{Policy: string(documentJSON), RevisionID: policy.RevisionID})
 }
 
 func (h *Handler) RemovePermission(w http.ResponseWriter, r *http.Request) {
@@ -275,6 +341,236 @@ func (h *Handler) RemovePermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ─── Resource policy (2026-07-09) ───────────────────────────────────────────
+//
+// GetResourcePolicy, PutResourcePolicy and DeleteResourcePolicy address the
+// same single policy AddPermission, GetPolicy and RemovePermission maintain —
+// AWS models one resource-based policy per function, version or alias, reached
+// either by name (the 2015-03-31 operations) or by ARN (these). PutResourcePolicy
+// replaces that policy wholesale, including statements AddPermission wrote;
+// AddPermission afterwards appends to whatever Put left.
+// https://docs.aws.amazon.com/lambda/latest/dg/access-control-resource-based.html
+
+// resourceARNConstraint is the ResourceArn pattern from the pinned Lambda
+// model, reported verbatim in validation errors. It admits only a complete
+// function ARN, qualified or unqualified — every other Lambda resource type
+// (layers, event source mappings, code signing configurations) fails it here
+// exactly as it does on AWS, which is why none of them needs its own answer.
+const resourceARNConstraint = `arn:(aws[a-zA-Z-]*)?:lambda:(eusc-)?[a-z]{2}((-gov)|(-iso([a-z]?)))?-[a-z]+-\d{1}:\d{12}:function:[a-zA-Z0-9-_]+(:(\$LATEST(\.PUBLISHED)?|[a-zA-Z0-9-_])+)?`
+
+// revisionIDConstraint is the RevisionId pattern these three operations share.
+// AddPermission and RemovePermission model theirs unconstrained, which is why
+// only the resource-policy operations check the shape.
+const revisionIDConstraint = `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`
+
+var (
+	resourceARNPattern = lazyRegexp(`^` + resourceARNConstraint + `$`)
+	revisionIDPattern  = lazyRegexp(`^` + revisionIDConstraint + `$`)
+)
+
+// maxResourceARNLength is ResourceArn's modeled length ceiling.
+const maxResourceARNLength = 256
+
+type putResourcePolicyRequest struct {
+	Policy     *string `json:"Policy"`
+	RevisionID string  `json:"RevisionId,omitempty"`
+}
+
+// GetResourcePolicy handles GET /2026-07-09/resource-policy/{ResourceArn}.
+func (h *Handler) GetResourcePolicy(w http.ResponseWriter, r *http.Request) {
+	name, qualifier, aerr := h.resolveResourcePolicyTarget(r)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	policy, found, aerr := h.ls.getFunctionPolicy(r.Context(), name, qualifier)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if !found || len(policy.Statements) == 0 {
+		protocol.WriteJSONError(w, r, policyNotFoundError(name, qualifier))
+		return
+	}
+	document, err := json.Marshal(policy.document())
+	if err != nil {
+		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+		return
+	}
+	protocol.WriteRESTJSON(w, r, http.StatusOK, policyEnvelope{Policy: string(document), RevisionID: policy.RevisionID})
+}
+
+// PutResourcePolicy handles PUT /2026-07-09/resource-policy/{ResourceArn}.
+func (h *Handler) PutResourcePolicy(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
+	name, qualifier, aerr := h.resolveResourcePolicyTarget(r)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	var req putResourcePolicyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument("invalid request body"))
+		return
+	}
+	if req.Policy == nil {
+		protocol.WriteJSONError(w, r, smithyRequiredMember("policy"))
+		return
+	}
+	if *req.Policy == "" {
+		protocol.WriteJSONError(w, r, smithyStringMinimumLengthConstraint("policy", *req.Policy, 1))
+		return
+	}
+	if req.RevisionID != "" && !revisionIDPattern().MatchString(req.RevisionID) {
+		protocol.WriteJSONError(w, r, smithyPatternConstraint("revisionId", req.RevisionID, revisionIDConstraint))
+		return
+	}
+	if len(*req.Policy) > maxFunctionPolicyBytes {
+		protocol.WriteJSONError(w, r, policyLengthExceeded())
+		return
+	}
+	document, aerr := parseResourcePolicy(*req.Policy)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	log.Debug("put resource policy", zap.String("function", name), zap.String("qualifier", qualifier))
+
+	var revisionID string
+	aerr = h.ls.mutateFunctionPolicy(r.Context(), name, qualifier, func(policy *functionPolicy, _ bool) (bool, *protocol.AWSError) {
+		if req.RevisionID != "" && req.RevisionID != policy.RevisionID {
+			return false, policyRevisionMismatch()
+		}
+		policy.Version, policy.ID, policy.Statements = document.Version, document.ID, document.Statement
+		policy.RevisionID = uuid.NewString()
+		revisionID = policy.RevisionID
+		return false, nil
+	})
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	stored, err := json.Marshal(document)
+	if err != nil {
+		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+		return
+	}
+	protocol.WriteRESTJSON(w, r, http.StatusOK, policyEnvelope{Policy: string(stored), RevisionID: revisionID})
+}
+
+// DeleteResourcePolicy handles DELETE /2026-07-09/resource-policy/{ResourceArn}.
+func (h *Handler) DeleteResourcePolicy(w http.ResponseWriter, r *http.Request) {
+	name, qualifier, aerr := h.resolveResourcePolicyTarget(r)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	revisionID := r.URL.Query().Get("RevisionId")
+	if revisionID != "" && !revisionIDPattern().MatchString(revisionID) {
+		protocol.WriteJSONError(w, r, smithyPatternConstraint("revisionId", revisionID, revisionIDConstraint))
+		return
+	}
+	aerr = h.ls.mutateFunctionPolicy(r.Context(), name, qualifier, func(policy *functionPolicy, found bool) (bool, *protocol.AWSError) {
+		if !found || len(policy.Statements) == 0 {
+			return false, policyNotFoundError(name, qualifier)
+		}
+		if revisionID != "" && revisionID != policy.RevisionID {
+			return false, policyRevisionMismatch()
+		}
+		return true, nil
+	})
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// resolveResourcePolicyTarget validates the {ResourceArn} label and returns the
+// function name and qualifier the shared policy store is keyed by.
+func (h *Handler) resolveResourcePolicyTarget(r *http.Request) (string, string, *protocol.AWSError) {
+	raw := chi.URLParam(r, "ResourceArn")
+	arn, err := url.PathUnescape(raw)
+	if err != nil {
+		return "", "", smithyPatternConstraint("resourceArn", raw, resourceARNConstraint)
+	}
+	if len(arn) > maxResourceARNLength {
+		return "", "", smithyStringLengthConstraint("resourceArn", arn, maxResourceARNLength)
+	}
+	if !resourceARNPattern().MatchString(arn) {
+		return "", "", smithyPatternConstraint("resourceArn", arn, resourceARNConstraint)
+	}
+	name, qualifier := splitFunctionIdentifier(arn, "")
+	if _, aerr := h.validatePolicyTarget(r.Context(), arn, name, qualifier); aerr != nil {
+		return "", "", aerr
+	}
+	return name, qualifier, nil
+}
+
+// parseResourcePolicy decodes a caller-supplied policy document. Lambda takes an
+// IAM policy document here, so the checks stop at what makes a document one at
+// all — valid JSON, at least one statement, and no statement that would open the
+// function to everyone. Version and Id are defaulted rather than required,
+// because that is what a policy AddPermission built already carries.
+func parseResourcePolicy(raw string) (policyDocument, *protocol.AWSError) {
+	var document policyDocument
+	if err := json.Unmarshal([]byte(raw), &document); err != nil {
+		return policyDocument{}, lambdaInvalidParameter("The policy document is not valid JSON: " + err.Error())
+	}
+	if len(document.Statement) == 0 {
+		return policyDocument{}, lambdaInvalidParameter("The policy document must include at least one Statement.")
+	}
+	if document.Version == "" {
+		document.Version = defaultPolicyVersion
+	}
+	if document.ID == "" {
+		document.ID = defaultPolicyID
+	}
+	for _, statement := range document.Statement {
+		if statement.grantsPublicAccess() {
+			return policyDocument{}, publicPolicyRefused()
+		}
+	}
+	return document, nil
+}
+
+// grantsPublicAccess reports whether a statement allows every principal without
+// narrowing it by a condition — AWS's own definition of a public policy, which
+// a function's block-public-access configuration refuses by default.
+func (s permissionStatement) grantsPublicAccess() bool {
+	if s.Effect != "Allow" || !principalIsWildcard(s.Principal) {
+		return false
+	}
+	// AWS's wording is "contains no condition keys", so an omitted Condition
+	// and an empty one narrow the statement equally little.
+	if conditions, ok := s.Condition.(map[string]any); ok {
+		return len(conditions) == 0
+	}
+	return s.Condition == nil
+}
+
+// principalIsWildcard recognises the spellings of "everyone" a policy document
+// may use: the bare "*", {"AWS": "*"}, and a list containing either.
+func principalIsWildcard(principal any) bool {
+	switch p := principal.(type) {
+	case string:
+		return p == "*"
+	case []any:
+		for _, item := range p {
+			if principalIsWildcard(item) {
+				return true
+			}
+		}
+	case map[string]any:
+		for _, value := range p {
+			if principalIsWildcard(value) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (h *Handler) validatePolicyTarget(ctx context.Context, identifier, name, qualifier string) (*Function, *protocol.AWSError) {
@@ -390,7 +686,10 @@ func permissionPrincipal(principal, functionARN string) any {
 	return map[string]string{"AWS": principal}
 }
 
-func permissionConditions(req addPermissionRequest) map[string]map[string]string {
+// permissionConditions renders AddPermission's condition members. It returns an
+// untyped nil rather than a nil map so an unconditional statement omits
+// Condition entirely instead of emitting a null.
+func permissionConditions(req addPermissionRequest) any {
 	conditions := make(map[string]map[string]string)
 	add := func(operator, key, value string) {
 		if value == "" {
@@ -420,6 +719,21 @@ func policyResourceARN(functionARN, qualifier string) string {
 		return functionARN
 	}
 	return functionARN + ":" + qualifier
+}
+
+func policyLengthExceeded() *protocol.AWSError {
+	return &protocol.AWSError{Code: "PolicyLengthExceededException", Message: "The final policy size is bigger than the limit.", HTTPStatus: http.StatusBadRequest}
+}
+
+// publicPolicyRefused is what a function's default block-public-access
+// configuration answers. Overcast has no PutPublicAccessBlockConfig to turn it
+// off with, so the refusal is unconditional here.
+func publicPolicyRefused() *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "PublicPolicyException",
+		Message:    "Lambda prevented your policy from being created because it would grant public access to your function.",
+		HTTPStatus: http.StatusBadRequest,
+	}
 }
 
 func policyRevisionMismatch() *protocol.AWSError {
