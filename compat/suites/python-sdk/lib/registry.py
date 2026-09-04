@@ -16,19 +16,110 @@ from .harness import TestCase, TestGroup, TestFn
 # Path: this file is at suites/python-sdk/lib/registry.py
 # registry.json is at suites/registry.json (two levels up from lib/)
 _REGISTRY_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "registry.json")
+# registry.generated.json is registry.json's sibling — same directory.
+_GENERATED_REGISTRY_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(_REGISTRY_PATH)), "registry.generated.json"
+)
 
 ImplMap = dict[str, TestFn]
+
+# A scenario backend resolves an implementation for a generated group's test
+# that has no registered impl. Given (group name, test name, the group's
+# `scenario` path or None if absent) it may return a TestFn to run, or None to
+# say it cannot handle this test either. Nothing in this suite provides one
+# yet — the G2 python-sdk interpreter will (#1393, #1113 phase G2).
+ScenarioBackend = Callable[[str, str, Optional[str]], Optional[TestFn]]
 
 # ─── Loader ───────────────────────────────────────────────────────────────────
 
 def load_registry() -> dict:
+    """Load registry.json, concatenated with registry.generated.json.
+
+    See merge_registries() for the concatenation, scoping and collision rules.
+    """
     with open(os.path.abspath(_REGISTRY_PATH), encoding="utf-8") as f:
-        return json.load(f)
+        hand_written = json.load(f)
+    return merge_registries(hand_written, load_generated_registry())
+
+
+def load_generated_registry(path: Optional[str] = None) -> dict:
+    """
+    Load registry.generated.json if present, or an empty registry.
+
+    A missing file is **not** an error: suite images, CI artifacts and
+    branches cut before the file existed must keep working, so this returns
+    ``{"version": 1, "groups": []}``. A present-but-unparsable file, a
+    ``version`` other than 1, or a group missing ``generated``, ``state`` or
+    ``suites`` is a load error — raised, exactly as a malformed registry.json
+    is today (load_registry() performs no validation of its own and simply
+    lets a parse or shape error propagate as an exception).
+
+    Args:
+        path: Override the file location. Defaults to registry.json's sibling.
+              Exists so tests can point at a fixture without writing over — or
+              depending on the current contents of — the real file.
+    """
+    p = os.path.abspath(path if path is not None else _GENERATED_REGISTRY_PATH)
+    try:
+        with open(p, encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return {"version": 1, "groups": []}
+
+    if data.get("version") != 1:
+        raise ValueError(
+            f"{p}: unsupported registry.generated.json version "
+            f"{data.get('version')!r} (want 1)"
+        )
+    for rg in data.get("groups", []):
+        missing = [k for k in ("generated", "state", "suites") if k not in rg]
+        if missing:
+            raise ValueError(
+                f"{p}: generated group {rg.get('name')!r} is missing required "
+                f"field(s): {', '.join(missing)}"
+            )
+    return data
+
+
+def merge_registries(hand_written: dict, generated: dict) -> dict:
+    """
+    Concatenate hand-written and generated groups: hand-written groups first,
+    in file order; generated groups appended after, in file order. Do not
+    re-sort beyond what the loader already does.
+
+    A group name present in both files is a load error naming the group.
+    ``cmd/compat`` already lints this; this is the second line of defence,
+    same posture as the existing ambiguous-name defence in validate_impls().
+    """
+    hw_groups = hand_written.get("groups", [])
+    gen_groups = generated.get("groups", [])
+    hw_names = {rg["name"] for rg in hw_groups}
+    for rg in gen_groups:
+        if rg["name"] in hw_names:
+            raise ValueError(
+                f'registry.generated.json: group "{rg["name"]}" is also '
+                "declared in registry.json — a generated group may never "
+                "reuse a hand-written name"
+            )
+    merged = dict(hand_written)
+    merged["groups"] = [*hw_groups, *gen_groups]
+    return merged
 
 
 # ─── Builder ─────────────────────────────────────────────────────────────────
 
 _noop: TestFn = lambda ctx: None
+
+
+def _scenario_backend_missing(message: str) -> TestFn:
+    """A TestFn that fails with `message` — the interim result for a
+    generated group in scope with no impl and no scenario backend (#1393).
+    Raising a plain exception (rather than skip/na) is deliberate: the
+    harness's unimplemented-detection only fires on a wrapped 501 response,
+    so this always surfaces as "fail", never "unimplemented" or a pass."""
+    def _fail(ctx) -> None:
+        raise RuntimeError(message)
+    return _fail
 
 
 def _topo_sort(tests: list[dict]) -> list[dict]:
@@ -77,26 +168,41 @@ def build_groups_from_registry(
     capabilities: Optional[set[str]] = None,
     setup: Optional[dict[str, TestFn]] = None,
     teardown: Optional[dict[str, TestFn]] = None,
+    scenario_backend: Optional[ScenarioBackend] = None,
 ) -> list[TestGroup]:
     """
     Build a TestGroup list from the registry, filling missing impls with auto-skip.
 
     Args:
-        registry:     Loaded from load_registry().
-        impls:        Map of test name → callable(ctx).
-        suite:        Suite name for NDJSON output.
-        capabilities: Set of capability strings this runner supports
-                      (e.g. {"docker"}). Defaults to empty set.
-        setup:        Dict of group_name → setup callable.
-        teardown:     Dict of group_name → teardown callable.
+        registry:         Loaded from load_registry().
+        impls:            Map of test name → callable(ctx).
+        suite:            Suite name for NDJSON output.
+        capabilities:     Set of capability strings this runner supports
+                          (e.g. {"docker"}). Defaults to empty set.
+        setup:            Dict of group_name → setup callable.
+        teardown:         Dict of group_name → teardown callable.
+        scenario_backend: Optional resolver consulted for a test with no
+                          registered impl, before falling back to the
+                          not-implemented sentinel. Nothing provides one yet
+                          (#1393) — the G2 python-sdk interpreter will.
     """
     caps = set(capabilities or [])
     ambiguous = ambiguous_test_names(registry)
     groups: list[TestGroup] = []
 
     for rg in registry["groups"]:
-        # CDK lifecycle tests belong to the cdk suite, not SDK suites.
-        if rg.get("service") == "cdk":
+        # General suites-scoping: a group scoped to specific suites is not
+        # loaded at all for a suite outside that scope — no tests, no skips,
+        # no results. This subsumes the old `service == "cdk"` special case:
+        # cdk-lifecycle is currently the only hand-written group declaring
+        # `suites` (["cdk"]), and it also happens to have service == "cdk",
+        # so for today's registry.json the two checks are behaviour-identical
+        # for every non-cdk suite (python-sdk included). Generated groups
+        # (#1393) always declare `suites`, mechanically derived from backend
+        # availability by cmd/compatgen, so this is now a general rule rather
+        # than a single-group carve-out.
+        group_suites = rg.get("suites")
+        if group_suites is not None and suite not in group_suites:
             continue
         tests: list[TestCase] = []
 
@@ -144,6 +250,33 @@ def build_groups_from_registry(
             bare_usable = name not in ambiguous
             has_impl = qualified_key in impls or (bare_usable and name in impls)
             if not has_impl:
+                if scenario_backend is not None:
+                    scenario_fn = scenario_backend(rg["name"], name, rg.get("scenario"))
+                    if scenario_fn is not None:
+                        tests.append(TestCase(name=name, fn=scenario_fn, op=op, depends=depends))
+                        continue
+
+                if rg.get("generated"):
+                    # Interim rule (#1393): `suites` on a generated group is
+                    # derived from backend availability by cmd/compatgen, so a
+                    # suite named in it that cannot execute the group is a
+                    # generator/loader bug, and it has to be loud — never a
+                    # skip (which reads as "not implemented yet", i.e. debt)
+                    # and never `na`. Because `candidate` groups are excluded
+                    # from the compare-baseline/max-failures gates by
+                    # cmd/compat (#1367) this cannot red a build until a group
+                    # is `gated`, at which point it is a real regression and
+                    # should. What it can never do is report as a pass or a
+                    # skip.
+                    message = (
+                        f'generated group "{rg["name"]}" is scoped to {suite} '
+                        f"but {suite} has no scenario backend"
+                    )
+                    tests.append(TestCase(
+                        name=name, fn=_scenario_backend_missing(message), op=op, depends=depends,
+                    ))
+                    continue
+
                 tests.append(TestCase(
                     name=name, fn=_noop, op=op, depends=depends,
                     skip=f"not yet implemented in {suite} test suite",
