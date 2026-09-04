@@ -483,43 +483,43 @@
           "operation": "PutItem",
           "category": "Item operations",
           "status": "✅ Supported",
-          "notes": "Includes `ConditionExpression`, `ReturnValues` (`ALL_OLD`); records AWS/DynamoDB CloudWatch metrics SuccessfulRequestLatency, ConsumedWriteCapacityUnits, UserErrors/SystemErrors"
+          "notes": "Includes `ConditionExpression`, `ReturnValues` (`ALL_OLD`); key attributes must be present and carry their declared `AttributeDefinitions` type, while non-key attributes stay schemaless; records AWS/DynamoDB CloudWatch metrics SuccessfulRequestLatency, ConsumedWriteCapacityUnits, UserErrors/SystemErrors"
         },
         {
           "operation": "GetItem",
           "category": "Item operations",
           "status": "✅ Supported",
-          "notes": "Includes `ProjectionExpression`; records SuccessfulRequestLatency, ConsumedReadCapacityUnits, UserErrors/SystemErrors"
+          "notes": "Includes `ProjectionExpression`; a `Key` must name exactly the key schema's attributes with their declared types; records SuccessfulRequestLatency, ConsumedReadCapacityUnits, UserErrors/SystemErrors"
         },
         {
           "operation": "UpdateItem",
           "category": "Item operations",
           "status": "✅ Supported",
-          "notes": "SET/REMOVE/ADD/DELETE clauses; all `ReturnValues` variants; upsert; records SuccessfulRequestLatency, ConsumedWriteCapacityUnits, UserErrors/SystemErrors"
+          "notes": "SET/REMOVE/ADD/DELETE clauses; all `ReturnValues` variants; upsert; a `Key` must name exactly the key schema's attributes with their declared types; records SuccessfulRequestLatency, ConsumedWriteCapacityUnits, UserErrors/SystemErrors"
         },
         {
           "operation": "DeleteItem",
           "category": "Item operations",
           "status": "✅ Supported",
-          "notes": "`ConditionExpression`, `ReturnValues` (`ALL_OLD`); records SuccessfulRequestLatency, ConsumedWriteCapacityUnits, UserErrors/SystemErrors"
+          "notes": "`ConditionExpression`, `ReturnValues` (`ALL_OLD`); a `Key` must name exactly the key schema's attributes with their declared types; records SuccessfulRequestLatency, ConsumedWriteCapacityUnits, UserErrors/SystemErrors"
         },
         {
           "operation": "BatchGetItem",
           "category": "Item operations",
           "status": "✅ Supported",
-          "notes": "Up to 100 items across tables; records SuccessfulRequestLatency/ConsumedReadCapacityUnits per table touched"
+          "notes": "Up to 100 items across tables; every key is checked against its table's key schema before any read; records SuccessfulRequestLatency/ConsumedReadCapacityUnits per table touched"
         },
         {
           "operation": "BatchWriteItem",
           "category": "Item operations",
           "status": "✅ Supported",
-          "notes": "Up to 25 put/delete operations; records SuccessfulRequestLatency/ConsumedWriteCapacityUnits per table touched"
+          "notes": "Up to 25 put/delete operations; every item and key is checked against its table's key schema before any write is applied; records SuccessfulRequestLatency/ConsumedWriteCapacityUnits per table touched"
         },
         {
           "operation": "Query",
           "category": "Query \u0026 scan",
           "status": "✅ Supported",
-          "notes": "`KeyConditionExpression`, `FilterExpression`, `Limit` (applied before `FilterExpression` per AWS semantics), `ExclusiveStartKey`/`LastEvaluatedKey` pagination, `ScanIndexForward`, `Select=COUNT`; `ConsistentRead=true` on a GSI is rejected as AWS does; records SuccessfulRequestLatency and ConsumedReadCapacityUnits (with GlobalSecondaryIndexName when IndexName names a real GSI)"
+          "notes": "`KeyConditionExpression` (values type-checked against the declared key types), `FilterExpression`, `Limit` (applied before `FilterExpression` per AWS semantics), `ExclusiveStartKey`/`LastEvaluatedKey` pagination, `ScanIndexForward`, `Select=COUNT`; `ConsistentRead=true` on a GSI is rejected as AWS does; records SuccessfulRequestLatency and ConsumedReadCapacityUnits (with GlobalSecondaryIndexName when IndexName names a real GSI)"
         },
         {
           "operation": "Scan",
@@ -531,13 +531,13 @@
           "operation": "TransactGetItems",
           "category": "Transactions",
           "status": "✅ Supported",
-          "notes": "Up to 100 items across tables; records SuccessfulRequestLatency/ConsumedReadCapacityUnits per table (2x weighted, matching AWS's transactional-read capacity accounting)"
+          "notes": "Up to 100 items across tables; every key is checked against its table's key schema; records SuccessfulRequestLatency/ConsumedReadCapacityUnits per table (2x weighted, matching AWS's transactional-read capacity accounting)"
         },
         {
           "operation": "TransactWriteItems",
           "category": "Transactions",
           "status": "✅ Supported",
-          "notes": "Put, Update, Delete, ConditionCheck; all-or-nothing; records SuccessfulRequestLatency/ConsumedWriteCapacityUnits per table (2x weighted, matching AWS's transactional-write capacity accounting)"
+          "notes": "Put, Update, Delete, ConditionCheck; all-or-nothing; a key-schema mismatch is a `ValidationException` raised before anything is applied, not a cancellation reason; records SuccessfulRequestLatency/ConsumedWriteCapacityUnits per table (2x weighted, matching AWS's transactional-write capacity accounting)"
         },
         {
           "operation": "TagResource",

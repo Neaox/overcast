@@ -56,6 +56,9 @@ func (h *Handler) updateItemTypedCore(ctx context.Context, req *updateItemReques
 	if aerr != nil {
 		return nil, aerr
 	}
+	if aerr := validateKeySchema(table, req.Key, operandKey); aerr != nil {
+		return nil, aerr
+	}
 
 	// Load existing item (may be nil — upsert semantics).
 	existing, aerr := h.store.getItem(ctx, table, req.Key)
