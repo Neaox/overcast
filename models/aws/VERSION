@@ -2,7 +2,7 @@ source=https://github.com/aws/api-models-aws
 revision=06544fdc2709916c72eba2f247529edf8d483d8a
 model-date=2026-08-31
 manifest-sha256=dc9d11e2da499cc19a92138f737a86be427c6b6c0226f0e53ed2a5038b66a1a5
-shapes-sha256=4bc18c12dcd5774830dcc687da9cd6384bcbf069106340ad90e4d2de59a94cd9
+shapes-sha256=01a2709f79ae4d7a666d2be48e5f67b13b4f4c0d256a14d8368aed1679e534be
 license=Apache-2.0
 format=Smithy JSON AST
 
