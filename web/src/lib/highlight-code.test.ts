@@ -1,4 +1,4 @@
-import { highlightCode } from "./highlight-code"
+import { highlightCode, highlightJSON } from "./highlight-code"
 
 describe("highlightCode", () => {
   it("marks up the grammar of the named language", () => {
@@ -41,5 +41,36 @@ describe("highlightCode", () => {
   it("still highlights a document too large to be worth holding onto", () => {
     const huge = JSON.stringify({ blob: "x".repeat(120_000) })
     expect(highlightCode(huge, "json")).toContain("token")
+  })
+})
+
+// Moved from log-format.test.ts (#599) — `highlightJSON` used to live in
+// lib/log-format.ts; it is a thin convenience wrapper around `highlightCode`
+// for the language nearly every caller wants, so its own pin belongs beside
+// `highlightCode`'s.
+describe("highlightJSON", () => {
+  it("marks up the JSON grammar", () => {
+    const html = highlightJSON('{"a": 1}')
+    expect(html).toContain("token property")
+    expect(html).toContain("token number")
+  })
+
+  it("escapes the text it highlights", () => {
+    expect(highlightJSON('{"a": "<img src=x>"}')).not.toContain("<img")
+  })
+
+  it("returns the identical string for a repeated document", () => {
+    const text = '{"requestId":"13aa488f","status":"timeout"}'
+
+    // Identity, not just equality: React skips the DOM write when the value
+    // handed to `dangerouslySetInnerHTML` is unchanged, and a row that mutates
+    // nothing costs nothing downstream — no style recalc, and no mutation
+    // record for whatever extensions are observing the document.
+    expect(highlightJSON(text)).toBe(highlightJSON(text))
+  })
+
+  it("still highlights a document too large to be worth holding onto", () => {
+    const huge = JSON.stringify({ blob: "x".repeat(120_000) })
+    expect(highlightJSON(huge)).toContain("token")
   })
 })

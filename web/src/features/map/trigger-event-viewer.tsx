@@ -1,4 +1,4 @@
-import Prism from "@/lib/prism"
+import { highlightJSON } from "@/lib/highlight-code"
 import { formatTriggerEvent } from "./trigger-event-format"
 
 export function TriggerEventViewer({ event }: { event: unknown }) {
@@ -10,7 +10,7 @@ export function TriggerEventViewer({ event }: { event: unknown }) {
       <pre
         className={className}
         dangerouslySetInnerHTML={{
-          __html: Prism.highlight(formatted.text, Prism.languages.json, "json"),
+          __html: highlightJSON(formatted.text),
         }}
       />
     )

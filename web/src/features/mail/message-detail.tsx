@@ -11,7 +11,7 @@
  */
 import { useState } from "react"
 import { Trash2, Mail, MessageSquare, Webhook, Bell, GitBranch } from "lucide-react"
-import Prism from "@/lib/prism"
+import { highlightJSON } from "@/lib/highlight-code"
 import { EmptyState } from "@/components/ui/primitives"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
@@ -174,7 +174,7 @@ export function MessageDetail({ message, onDelete, deleting }: MessageDetailProp
           <pre
             className="min-h-full p-6 font-mono text-sm whitespace-pre-wrap text-fg"
             dangerouslySetInnerHTML={{
-              __html: Prism.highlight(prettyJSON, Prism.languages.json, "json"),
+              __html: highlightJSON(prettyJSON),
             }}
           />
         ) : effectiveTab === "plain" ? (

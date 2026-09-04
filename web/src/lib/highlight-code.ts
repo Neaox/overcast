@@ -97,6 +97,21 @@ export function highlightCode(text: string, language: string): string {
   return html
 }
 
+/**
+ * `text` highlighted as JSON, as HTML for `dangerouslySetInnerHTML`.
+ *
+ * Convenience wrapper around `highlightCode` for the one language nearly
+ * every call site wants: the event console, the JSON editor, the mail
+ * message detail pane, the map's trigger event viewer, and the log viewers
+ * (via `lib/log-format.ts`, which re-exports this) all highlight JSON and
+ * nothing else, so they reach for this instead of spelling out the language
+ * string — and share the escaping guarantee `highlightCode` already gives,
+ * since every one of them renders the result with `dangerouslySetInnerHTML`.
+ */
+export function highlightJSON(text: string): string {
+  return highlightCode(text, "json")
+}
+
 // ─── Detection matrix ──────────────────────────────────────────────────────
 
 export type HighlightPresentation = "markup" | "ranges"
