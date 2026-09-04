@@ -32,19 +32,82 @@ import java.util.Set;
  *   <li>{@code ../registry.json} relative to the JVM working directory
  *       (i.e. {@code compat/suites/java-sdk/} → {@code compat/suites/})</li>
  * </ol>
+ *
+ * <p>{@code registry.generated.json} — the machine-written half that
+ * {@code cmd/compatgen} owns — is read from the same directory and its groups
+ * are concatenated after the hand-written ones. A missing file is an empty
+ * registry, not an error: suite images, CI artifacts and branches cut before
+ * the file existed all have to keep working. See
+ * {@code docs/plans/compat-coverage-modelgen.md} § 3.6.
  */
 public final class Registry {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final TestFn NOOP = ctx -> {};
 
+    /** Sibling of {@code registry.json} holding the generated groups. */
+    static final String GENERATED_REGISTRY_FILENAME = "registry.generated.json";
+
+    /** The only {@code version} the generated registry may declare. */
+    static final int GENERATED_REGISTRY_VERSION = 1;
+
     // ── Jackson model ─────────────────────────────────────────────────────────
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record RegistryRoot(List<RegistryGroup> groups) {}
 
+    /** The generated sibling. {@code version} is checked; the rest is shared. */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record RegistryGroup(String service, String name, List<RegistryTest> tests) {}
+    public record GeneratedRegistryRoot(Integer version, List<RegistryGroup> groups) {
+        public GeneratedRegistryRoot {
+            if (groups == null) groups = List.of();
+        }
+    }
+
+    /**
+     * One registry group.
+     *
+     * @param service  AWS service identifier, e.g. {@code "s3"}.
+     * @param name     Group name, e.g. {@code "s3-crud"}.
+     * @param tests    The group's tests, in registry order.
+     * @param suites   Suites the group is in scope for; empty means all of them.
+     * @param generated True for a group read from {@code registry.generated.json}.
+     * @param state    {@code candidate} or {@code gated} — generated groups only.
+     * @param scenario Path to the scenario IR the group was generated from, for
+     *                 a scenario backend to interpret. Generated groups only.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RegistryGroup(
+            String service,
+            String name,
+            List<RegistryTest> tests,
+            List<String> suites,
+            boolean generated,
+            String state,
+            String scenario) {
+
+        public RegistryGroup {
+            if (tests == null) tests = List.of();
+            if (suites == null) suites = List.of();
+        }
+
+        /** A hand-written group: in scope everywhere, no generated metadata. */
+        public RegistryGroup(String service, String name, List<RegistryTest> tests) {
+            this(service, name, tests, List.of(), false, null, null);
+        }
+
+        /**
+         * Whether {@code suite} may run this group.
+         *
+         * <p>A group that names its suites is out of scope for every other
+         * suite — not in debt: it is not loaded at all there, so it emits no
+         * tests, no skips and no results. On a generated group the list is
+         * derived from backend availability by {@code cmd/compatgen}.
+         */
+        public boolean inScopeFor(String suite) {
+            return suites.isEmpty() || suites.contains(suite);
+        }
+    }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record RegistryTest(
@@ -78,9 +141,25 @@ public final class Registry {
             Map<String, TestFn> setups,
             Map<String, TestFn> teardowns,
             Set<String> capabilities) throws IOException {
+        return buildGroups(suite, impls, setups, teardowns, capabilities, null);
+    }
+
+    /**
+     * As {@link #buildGroups(String, Map, Map, Map, Set)}, with a
+     * {@link ScenarioBackend} for the generated groups this suite can execute.
+     *
+     * @param backend May be {@code null} — no backend exists yet.
+     */
+    public static List<TestGroup> buildGroups(
+            String suite,
+            Map<String, TestFn> impls,
+            Map<String, TestFn> setups,
+            Map<String, TestFn> teardowns,
+            Set<String> capabilities,
+            ScenarioBackend backend) throws IOException {
         RegistryRoot root = load();
         validateImpls(root, impls, suite);
-        return buildGroups(suite, root, impls, setups, teardowns, capabilities);
+        return buildGroups(suite, root, impls, setups, teardowns, capabilities, backend);
     }
 
     /**
@@ -106,12 +185,34 @@ public final class Registry {
             Map<String, TestFn> setups,
             Map<String, TestFn> teardowns,
             Set<String> capabilities) {
+        return buildGroups(suite, root, impls, setups, teardowns, capabilities, null);
+    }
+
+    /** As above, with an optional {@link ScenarioBackend}. */
+    static List<TestGroup> buildGroups(
+            String suite,
+            RegistryRoot root,
+            Map<String, TestFn> impls,
+            Map<String, TestFn> setups,
+            Map<String, TestFn> teardowns,
+            Set<String> capabilities,
+            ScenarioBackend backend) {
 
         Set<String> ambiguous = ambiguousTestNames(root);
 
         List<TestGroup> groups = new ArrayList<>();
 
         for (RegistryGroup rg : root.groups()) {
+            // A generated group names the backends that can execute it, so a
+            // suite absent from that list is out of scope and loads nothing.
+            //
+            // Hand-written groups are deliberately not filtered here. The only
+            // one that declares "suites" is cdk-lifecycle, which this suite has
+            // always loaded and reported as skips that compat/baseline/java-sdk.json
+            // records — so scoping it out is a behaviour change of its own, not
+            // part of reading the generated registry.
+            if (rg.generated() && !rg.inScopeFor(suite)) continue;
+
             List<TestCase> tests = new ArrayList<>();
 
             for (RegistryTest rt : topoSort(rg.tests())) {
@@ -141,7 +242,15 @@ public final class Registry {
                 // cannot occur even if validation is bypassed.
                 TestFn fn = impls.get(qualifiedKey(rg.name(), rt.name()));
                 if (fn == null && !ambiguous.contains(rt.name())) fn = impls.get(rt.name());
-                if (fn == null) {
+                // A generated group is executed by an interpreter reading its
+                // scenario IR rather than by a registered impl, so the backend
+                // is the last resolution step before the sentinel.
+                if (fn == null && backend != null) fn = backend.resolve(rg, rt);
+                if (fn != null) {
+                    tests.add(new TestCase(rt.name(), fn, op, null, rt.depends()));
+                } else if (rg.generated()) {
+                    tests.add(missingBackend(suite, rg, rt, op));
+                } else {
                     // Sentinel wording is shared by every suite loader: the
                     // parity checker (cmd/compat --check-parity) classifies
                     // registry gaps by this exact phrasing, so it must not
@@ -152,8 +261,6 @@ public final class Registry {
                             op,
                             String.format("not yet implemented in %s test suite", suite),
                             rt.depends()));
-                } else {
-                    tests.add(new TestCase(rt.name(), fn, op, null, rt.depends()));
                 }
             }
 
@@ -170,6 +277,30 @@ public final class Registry {
     }
 
     // ── Internal ──────────────────────────────────────────────────────────────
+
+    /**
+     * The interim result for a generated test this suite cannot execute.
+     *
+     * <p>A generated group's {@code suites} list is derived from backend
+     * availability by {@code cmd/compatgen}, so a suite named in it that has no
+     * scenario backend is a generator or loader bug — and it has to be loud.
+     * Reporting it as the not-implemented sentinel would file it as ordinary
+     * parity debt, and reporting it as {@code na} would call it a permanent,
+     * accepted divergence; both read as "nothing to see here". A candidate group
+     * gates nothing ({@code cmd/compat}, #1367), so this cannot red a build
+     * until the group is promoted to {@code gated} — at which point it is a real
+     * regression and should.
+     *
+     * <p>Failing is how a test body reports, so the body throws. It carries no
+     * {@code depends}: the runner cascade-skips a test whose dependency failed,
+     * and a skip is exactly what this result must never be.
+     */
+    private static TestCase missingBackend(String suite, RegistryGroup rg, RegistryTest rt, String op) {
+        String message = String.format(
+                "generated group \"%s\" is scoped to %s but %s has no scenario backend",
+                rg.name(), suite, suite);
+        return new TestCase(rt.name(), ctx -> { throw new AssertionError(message); }, op, null, List.of());
+    }
 
     /**
      * Topologically sorts tests within a group so that every test runs after
@@ -216,15 +347,88 @@ public final class Registry {
 
     static RegistryRoot load() throws IOException {
         String envPath = System.getenv("OVERCAST_REGISTRY_PATH");
-        File file = envPath != null && !envPath.isEmpty()
+        return load(envPath != null && !envPath.isEmpty()
                 ? new File(envPath)
-                : new File("../registry.json");
+                : new File("../registry.json"));
+    }
 
+    /**
+     * Reads {@code file} and concatenates the generated groups from its
+     * {@code registry.generated.json} sibling.
+     *
+     * <p>Hand-written groups come first, generated groups after, both in file
+     * order — the loader sorts neither.
+     */
+    static RegistryRoot load(File file) throws IOException {
         if (!file.exists()) {
             throw new IOException("registry not found at: " + file.getAbsolutePath()
                     + " — set OVERCAST_REGISTRY_PATH to override");
         }
-        return MAPPER.readValue(file, RegistryRoot.class);
+        RegistryRoot hand = MAPPER.readValue(file, RegistryRoot.class);
+
+        File generated = new File(file.getAbsoluteFile().getParentFile(), GENERATED_REGISTRY_FILENAME);
+        List<RegistryGroup> generatedGroups = loadGenerated(generated, hand);
+        if (generatedGroups.isEmpty()) return hand;
+
+        List<RegistryGroup> all = new ArrayList<>(hand.groups());
+        all.addAll(generatedGroups);
+        return new RegistryRoot(List.copyOf(all));
+    }
+
+    /**
+     * Reads the generated registry, or returns nothing when it is absent.
+     *
+     * <p>Absence is not an error: suite images, CI artifacts and branches cut
+     * before the file existed must all keep working, and "the file is not
+     * there" has to produce the same groups as "the file is there and empty".
+     * Everything else about a file that <em>is</em> there is an error, exactly
+     * as a malformed {@code registry.json} is — a bad generated file must never
+     * be silently dropped.
+     */
+    private static List<RegistryGroup> loadGenerated(File file, RegistryRoot hand) throws IOException {
+        if (!file.exists()) return List.of();
+
+        GeneratedRegistryRoot root;
+        try {
+            root = MAPPER.readValue(file, GeneratedRegistryRoot.class);
+        } catch (IOException e) {
+            throw new IOException("parse generated registry " + file.getAbsolutePath()
+                    + ": " + e.getMessage(), e);
+        }
+        if (root.version() == null || root.version() != GENERATED_REGISTRY_VERSION) {
+            throw new IOException("generated registry " + file.getAbsolutePath()
+                    + " has version " + root.version()
+                    + ", want " + GENERATED_REGISTRY_VERSION);
+        }
+
+        Set<String> handNames = new HashSet<>();
+        for (RegistryGroup rg : hand.groups()) handNames.add(rg.name());
+
+        for (RegistryGroup rg : root.groups()) {
+            // The two registries are concatenated and every gate file
+            // (baseline, flaky, parity-debt) keys on suite/group/test with no
+            // notion of which file a group came from, so a reused name merges
+            // two different groups rather than conflicting. cmd/compat lints
+            // this; the loader is the second line of defence.
+            if (handNames.contains(rg.name())) {
+                throw new IOException("generated group \"" + rg.name()
+                        + "\" in " + file.getAbsolutePath()
+                        + " collides with a hand-written group of the same name");
+            }
+            if (!rg.generated()) {
+                throw new IOException("generated group \"" + rg.name() + "\" in "
+                        + file.getAbsolutePath() + " does not set \"generated\": true");
+            }
+            if (rg.state() == null || rg.state().isEmpty()) {
+                throw new IOException("generated group \"" + rg.name() + "\" in "
+                        + file.getAbsolutePath() + " has no \"state\"");
+            }
+            if (rg.suites().isEmpty()) {
+                throw new IOException("generated group \"" + rg.name() + "\" in "
+                        + file.getAbsolutePath() + " has no \"suites\"");
+            }
+        }
+        return root.groups();
     }
 
     /**
