@@ -298,7 +298,8 @@ const (
 	maxNameLenLambda    = 64  // function names
 	maxNameLenIAM       = 64  // role, policy and instance-profile names
 	maxNameLenS3        = 63  // bucket names
-	maxNameLenSQS       = 80  // queue names
+	maxNameLenSQS       = 80  // queue names (the ".fifo" suffix counts against this)
+	maxNameLenSNS       = 256 // topic names
 	maxNameLenRDS       = 63  // DB instance and cluster identifiers
 	maxNameLenCache     = 50  // ElastiCache cache cluster IDs (lowercase only)
 	maxNameLenECR       = 256 // repository names (lowercase only)
