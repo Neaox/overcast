@@ -404,6 +404,40 @@ func TestLintGeneratedRegistryAcceptsFixture(t *testing.T) {
 	}
 }
 
+// TestLintAcceptsAGeneratedGroupReusingATestName pins the deliberate
+// non-check. A generated group declaring a test name a hand-written group also
+// declares is not a collision: the join key is suite/group/test, the group
+// names differ, and every gate file keeps the two apart.
+//
+// It is also the norm rather than the exception. Generated test names are the
+// PascalCase operation name (docs/plans/compat-coverage-modelgen.md §3.3), so
+// every generated SQS group declares `CreateQueue`, `SendMessage` and the rest
+// beside `sqs-queues` and `sqs-messages`, and a model refresh may add more with
+// no human action at all (§3.11). That is safe because impl keys are
+// group-qualified `group:test` in every suite, enforced by each suite's own
+// registration test (compat/AGENTS.md § Implementation keys) — a shared test
+// name never needs disambiguating here.
+func TestLintAcceptsAGeneratedGroupReusingATestName(t *testing.T) {
+	// Given: a generated group of its own name declaring a test name the
+	// hand-written s3-crud group already declares.
+	gen := &generatedRegistry{Version: generatedRegistryVersion, Groups: []generatedGroup{{
+		Service:   "s3",
+		Name:      "s3-generated-crud",
+		Generated: true,
+		State:     generatedStateCandidate,
+		Suites:    []string{"python-sdk"},
+		Tests:     []generatedTest{{Name: "CreateBucket"}},
+	}}}
+
+	// When: the two registries are linted together.
+	issues := lintGeneratedRegistry(testRegistry(), gen)
+
+	// Then: nothing is flagged.
+	if len(issues) != 0 {
+		t.Fatalf("issues = %#v, want none — a reused test name is not a collision", issues)
+	}
+}
+
 // TestReadParityRegistriesRejectsCollision proves the lint is enforced at the
 // load site, not just available as a function — a collision must stop
 // --check-parity rather than quietly produce a merged registry.
