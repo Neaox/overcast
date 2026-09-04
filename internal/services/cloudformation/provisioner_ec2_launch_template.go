@@ -102,7 +102,31 @@ func (h *ec2LaunchTemplateHandler) Update(ctx context.Context, router http.Handl
 	if err := xml.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		return "", nil, fmt.Errorf("ModifyLaunchTemplate: parse response: %w", err)
 	}
+
+	// The template's own tags are the other property AWS updates without
+	// interruption. CreateLaunchTemplate carried them on the create; on an
+	// update they go through EC2's tag API, since the template already exists.
+	if err := applyEC2Tags(ctx, router, rCtx.Region, physicalID, launchTemplateOwnTags(props["TagSpecifications"])); err != nil {
+		return "", nil, fmt.Errorf("CreateLaunchTemplate tags: %w", err)
+	}
 	return physicalID, launchTemplateAttrs(resp), nil
+}
+
+// launchTemplateOwnTags picks the launch-template-scoped entry out of a
+// TagSpecifications list and returns its Tags, which is the shape applyEC2Tags
+// reads. The other entries tag what a launch creates, not the template.
+func launchTemplateOwnTags(raw any) any {
+	specs, _ := raw.([]any)
+	for _, item := range specs {
+		spec, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if resourceType, _ := spec["ResourceType"].(string); resourceType == "launch-template" {
+			return spec["Tags"]
+		}
+	}
+	return nil
 }
 
 func (h *ec2LaunchTemplateHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {

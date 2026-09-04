@@ -19,13 +19,22 @@ import (
 
 var cfnLaunchTemplateIDPattern = regexp.MustCompile(`^lt-[0-9a-f]{17}$`)
 
-// describeLaunchTemplateByID returns one launch template's record from EC2.
-func describeLaunchTemplateByID(t *testing.T, srv *helpers.TestServer, id string) struct {
+// describedLaunchTemplate is one EC2 launch template as DescribeLaunchTemplates
+// reports it, with its tags flattened for lookup.
+type describedLaunchTemplate struct {
 	LaunchTemplateID     string `xml:"launchTemplateId"`
 	LaunchTemplateName   string `xml:"launchTemplateName"`
 	DefaultVersionNumber int64  `xml:"defaultVersionNumber"`
 	LatestVersionNumber  int64  `xml:"latestVersionNumber"`
-} {
+	TagSet               []struct {
+		Key   string `xml:"key"`
+		Value string `xml:"value"`
+	} `xml:"tagSet>item"`
+	Tags map[string]string `xml:"-"`
+}
+
+// describeLaunchTemplateByID returns one launch template's record from EC2.
+func describeLaunchTemplateByID(t *testing.T, srv *helpers.TestServer, id string) describedLaunchTemplate {
 	t.Helper()
 	resp := ec2Query(t, srv, "DescribeLaunchTemplates", url.Values{"LaunchTemplateId.1": {id}})
 	defer resp.Body.Close()
@@ -34,12 +43,7 @@ func describeLaunchTemplateByID(t *testing.T, srv *helpers.TestServer, id string
 		t.Fatalf("DescribeLaunchTemplates: status %d: %s", resp.StatusCode, body)
 	}
 	var result struct {
-		Templates []struct {
-			LaunchTemplateID     string `xml:"launchTemplateId"`
-			LaunchTemplateName   string `xml:"launchTemplateName"`
-			DefaultVersionNumber int64  `xml:"defaultVersionNumber"`
-			LatestVersionNumber  int64  `xml:"latestVersionNumber"`
-		} `xml:"launchTemplates>item"`
+		Templates []describedLaunchTemplate `xml:"launchTemplates>item"`
 	}
 	if err := xml.Unmarshal(body, &result); err != nil {
 		t.Fatalf("decode DescribeLaunchTemplatesResponse: %v\n%s", err, body)
@@ -47,7 +51,12 @@ func describeLaunchTemplateByID(t *testing.T, srv *helpers.TestServer, id string
 	if len(result.Templates) != 1 {
 		t.Fatalf("DescribeLaunchTemplates returned %d templates, want 1: %s", len(result.Templates), body)
 	}
-	return result.Templates[0]
+	tmpl := result.Templates[0]
+	tmpl.Tags = make(map[string]string, len(tmpl.TagSet))
+	for _, tag := range tmpl.TagSet {
+		tmpl.Tags[tag.Key] = tag.Value
+	}
+	return tmpl
 }
 
 const launchTemplateStackTemplate = `{
@@ -161,7 +170,13 @@ func TestUpdateStack_EC2LaunchTemplateDataCreatesANewVersion(t *testing.T) {
       "Type": "AWS::EC2::LaunchTemplate",
       "Properties": {
         "LaunchTemplateName": "update-me",
-        "LaunchTemplateData": { "ImageId": "ami-0123456789abcdef0", "InstanceType": "m5.large" }
+        "LaunchTemplateData": { "ImageId": "ami-0123456789abcdef0", "InstanceType": "m5.large" },
+        "TagSpecifications": [
+          {
+            "ResourceType": "launch-template",
+            "Tags": [{ "Key": "Owner", "Value": "platform" }]
+          }
+        ]
       }
     }
   }
@@ -195,6 +210,11 @@ func TestUpdateStack_EC2LaunchTemplateDataCreatesANewVersion(t *testing.T) {
 	}
 	if tmpl.DefaultVersionNumber != 2 {
 		t.Errorf("defaultVersionNumber = %d, want 2", tmpl.DefaultVersionNumber)
+	}
+
+	// And: the template's own tags, the other no-interruption property, landed
+	if got := tmpl.Tags["Owner"]; got != "platform" {
+		t.Errorf("launch template tag Owner = %q, want platform", got)
 	}
 }
 
