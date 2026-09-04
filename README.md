@@ -69,10 +69,9 @@ Two images are published to GHCR:
 | `ghcr.io/overcast-sh/overcast`      | Full image with web management console (ports 4566 + 4567) | ~50 MB |
 | `ghcr.io/overcast-sh/overcast-slim` | Headless — Go binary only, no UI, no SQLite (port 4566)    | ~20 MB |
 
-The slim image leaves out SQLite as well as the UI, which means the `hybrid` and
-`persistent` storage backends do not exist in it: it is **memory-only unless you set
-`OVERCAST_STATE=wal`**, and mounting a volume on its own does nothing. See
-[storage.md § Builds without SQLite](./docs/storage.md#builds-without-sqlite).
+The slim image leaves out SQLite as well as the UI, so it is **memory-only
+unless you set `OVERCAST_STATE=wal`** — see
+[Storage and persistence](./docs/storage.md#builds-without-sqlite).
 
 Overcast is pre-1.0, so every build publishes to the `:alpha` channel tag and to
 an exact version tag such as `:0.0.1-alpha.25`. `:latest` also moves with every
@@ -112,7 +111,7 @@ aws dynamodb list-tables
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Staging environments**         | API parity is not 100%. Differences are documented but exist.                                                                                                                     |
 | **Production traffic**           | Overcast is not hardened, not monitored, not replicated.                                                                                                                          |
-| **Self-hosted AWS replacement**  | This is not a platform you host for others. IAM resources are emulated, but Overcast is not a security boundary and has no durability guarantees. Running it as a persistent internal service is building on quicksand. |
+| **Self-hosted AWS replacement**  | Not a platform you host for others: no security boundary, no durability guarantees.                                                                                               |
 | **Security testing**             | Credentials are accepted. SigV4 validation is optional, and IAM policies are not enforced as an authorization layer.                                                               |
 | **Performance / load testing**   | AWS throttling, quotas, and latency are not emulated.                                                                                                                             |
 | **IAM policy testing**           | Enforcement is off by default and covers identity policies only ([details](./docs/services/iam.md#request-time-enforcement-opt-in)). A development aid, not a security boundary.                                                                    |
@@ -131,9 +130,7 @@ docker run --rm \
   -e OVERCAST_LOG_LEVEL=debug \
   ghcr.io/overcast-sh/overcast:latest
 
-# With persistent data (survives container restarts) — mounting a volume at
-# /data is enough; OVERCAST_STATE defaults to "auto", which resolves to
-# hybrid automatically whenever a volume or bind mount is present there.
+# With persistent data: mounting a volume at /data is the whole of it
 docker run --rm \
   -p 4566:4566 \
   -p 4567:4567 \
@@ -141,17 +138,16 @@ docker run --rm \
   -v ~/.overcast:/data \
   ghcr.io/overcast-sh/overcast:latest
 
-# Slim image (no web console) — no Docker socket needed when only using
-# non-container services (S3, SQS, DynamoDB, SNS, etc.)
-#
-# The slim image has no SQLite, so "auto" always resolves to memory here and a
-# volume mounted at /data would be ignored. Ephemeral is what most slim usage
-# (CI) wants; if you do need it to persist, add -e OVERCAST_STATE=wal — see
-# docs/storage.md#builds-without-sqlite.
+# Slim image (no web console) — no Docker socket needed for the services that
+# start no containers (S3, SQS, DynamoDB, SNS, ...)
 docker run --rm \
   -p 4566:4566 \
   ghcr.io/overcast-sh/overcast-slim:latest
 ```
+
+Which backend a run gets, what survives a restart, and why a volume does
+nothing on the slim image are in
+[Storage and persistence](./docs/storage.md).
 
 ### docker compose (recommended for local dev)
 
@@ -164,13 +160,10 @@ services:
       - "4566:4566"
       - "4567:4567"
     environment:
-      # OVERCAST_STATE is left unset: mounting overcast-data below at /data
-      # makes auto resolve to hybrid automatically. Set OVERCAST_STATE
-      # explicitly (memory | hybrid | persistent | wal) to override.
       OVERCAST_LOG_LEVEL: debug
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock # required for Lambda, ECS, RDS, EC2
-      - overcast-data:/data # mounting this is what makes auto resolve to hybrid
+      - overcast-data:/data # persistence; see docs/storage.md
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:4566/_overcast/health"]
       interval: 5s
@@ -187,17 +180,10 @@ docker compose up
 
 ### Testcontainers
 
-Integration tests can start Overcast per-test with the
-[Testcontainers module for Go](https://github.com/overcast-sh/overcast/tree/main/testcontainers/go):
-
-```go
-ctr, err := overcast.Run(ctx, "ghcr.io/overcast-sh/overcast-slim:latest")
-testcontainers.CleanupContainer(t, ctr)
-endpoint, _ := ctr.APIEndpoint(ctx) // point your AWS SDK client here
-```
-
-See [docs/testcontainers.md](./docs/testcontainers.md) — modules for other
-languages are planned ([#1495](https://github.com/overcast-sh/overcast/issues/1495)).
+Integration tests start Overcast per-test through the Testcontainers module for
+Go: three lines to a running emulator and an endpoint to point an SDK client
+at. [Testcontainers](./docs/testcontainers.md) has the module, the pinned-image
+advice and the other-language plans.
 
 > [!NOTE]
 > **Docker socket and container-based services**
@@ -320,12 +306,8 @@ OVERCAST_PORT=4566 OVERCAST_STATE=hybrid OVERCAST_LOG_LEVEL=debug   overcast ser
 ```
 
 The web console (full binary only) is served on port 4567 and loads lazily on
-first request. `--ui-port 0` disables it.
-
-Storage is the other place the two binaries differ: the released `overcastd` is
-built without SQLite, so `OVERCAST_STATE=hybrid` and `persistent` refuse to start
-and `auto` always resolves to `memory`. Use `OVERCAST_STATE=wal`, or the full
-`overcast` binary — see
+first request. `--ui-port 0` disables it. Storage is the other place the two
+binaries differ — the released `overcastd` is built without SQLite; see
 [Builds without SQLite](./docs/storage.md#builds-without-sqlite).
 
 ### Browser-trusted HTTPS
@@ -392,26 +374,14 @@ coverage tables, or browse the generated summary in [STATUS.md](./STATUS.md#serv
 
 ## Documentation
 
-Full documentation lives in [`docs/`](./docs/README.md):
+**[The reference index](./docs/README.md)** routes every guide by the job you
+are doing — getting running, building against it, tuning and inspecting it.
+Four of them answer most first questions:
 
-| Guide | What it covers |
-| --- | --- |
-| [Documentation index](./docs/README.md) | Every guide, routed by what you are trying to do |
-| [Using AWS SDKs and CLI](./docs/sdk-cli.md) | The AWS CLI, Node.js, Python, Go, Java, .NET, Rust, Terraform |
-| [CLI reference](./docs/cli.md) | Every `overcast` subcommand and flag |
-| [Using AWS CDK](./docs/cdk.md) | `cdk bootstrap`, `cdk deploy`, supported resource types |
-| [Networking and host-based addressing](./docs/networking.md) | Host-routed endpoints, wildcard DNS, sibling containers, VPCs |
-| [Service reference](./docs/services/) | Per-service endpoint coverage |
-| [Configuration](./docs/configuration.md) | Where each setting lives, by area |
-| [Environment variable reference](./docs/configuration/reference.md) | Every variable Overcast reads, with its default |
-| [Storage and persistence](./docs/storage.md) | Backends, and what survives a restart |
-| [HTTPS and HTTP/2](./docs/https.md) | Browser-trusted TLS in two commands |
-| [The inner loop](./docs/local-dev.md) | Hot reload for Lambda and ECS, `cdk watch` |
-| [Testcontainers](./docs/testcontainers.md) | Starting Overcast from integration tests |
-| [Debug endpoints](./docs/debug-endpoints.md) | Health, metrics, state dump, request traces, pprof |
-| [Troubleshooting](./docs/troubleshooting.md) | A symptom, and where its answer lives |
-| [Migrating from LocalStack](./docs/migration-from-localstack.md) | Drop-in replacement guide |
-| [LocalStack compatibility matrix](./docs/localstack-compatibility.md) | Every port, URL, variable and convention, with its status |
+- [Using AWS SDKs and CLI](./docs/sdk-cli.md) — pointing the CLI, or any SDK, at Overcast
+- [Service reference](./docs/services/README.md) — what each service supports, operation by operation
+- [Configuration](./docs/configuration.md) — where each setting lives, and every variable with its default
+- [Troubleshooting](./docs/troubleshooting.md) — a symptom, and where its answer lives
 
 ---
 

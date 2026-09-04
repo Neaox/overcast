@@ -204,7 +204,19 @@ func checkDocStructure(docs []docsindex.Doc) error {
 			BodyLineOffset: doc.BodyLineOffset,
 		})
 	}
-	problems := docslint.CheckWith(entries, docslint.Options{Allowlist: readTellsAllowlist(), WholeCorpus: true})
+	overview := map[string]bool{}
+	if doc, err := readOverviewPage(); err == nil {
+		entries = append(entries, doc)
+		overview[doc.Path] = true
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	problems := docslint.CheckWith(entries, docslint.Options{
+		Allowlist:   readTellsAllowlist(),
+		WholeCorpus: true,
+		Overview:    overview,
+	})
 	if len(problems) == 0 {
 		return nil
 	}
@@ -261,6 +273,23 @@ func checkContributorDocs() error {
 		lines = append(lines, p.String())
 	}
 	return fmt.Errorf("contributor docs do not follow the length budget:\n\t%s", strings.Join(lines, "\n\t"))
+}
+
+// overviewPage is the repo's README, linted for the house-style tells alongside
+// the docs.
+//
+// It is not a docs page — no frontmatter, no "## Related" footer, no length
+// budget — but it is the page most people read before any of them, it is
+// written in the same voice, and the only reason the tells rule did not reach
+// it was that it sits outside docs/ (#1620).
+const overviewPage = "README.md"
+
+func readOverviewPage() (docslint.Doc, error) {
+	raw, err := os.ReadFile(overviewPage)
+	if err != nil {
+		return docslint.Doc{}, err
+	}
+	return docslint.Doc{Path: overviewPage, Body: string(raw)}, nil
 }
 
 // readTellsAllowlist loads the house-style exceptions. An absent file means no

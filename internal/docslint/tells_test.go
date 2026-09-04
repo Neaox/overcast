@@ -153,3 +153,40 @@ func TestCheck_acceptsOrdinarySelfReferenceAndNotes(t *testing.T) {
 		})
 	}
 }
+
+// overview is the repo's README as CheckWith sees it: linted for the tells and
+// nothing else.
+func overviewOpts() Options {
+	return Options{Overview: map[string]bool{"README.md": true}}
+}
+
+func TestCheck_appliesTheTellsToTheOverviewPage(t *testing.T) {
+	// Given: the README reaching for marketing vocabulary.
+	d := Doc{Path: "README.md", Body: "# Overcast\n\nSeamlessly emulates AWS.\n"}
+
+	// When / Then: it is the page most people read before any docs page, and
+	// it is written in the same voice.
+	assertReports(t, CheckWith([]Doc{d}, overviewOpts()), "brochure-word")
+}
+
+func TestCheck_appliesOnlyTheTellsToTheOverviewPage(t *testing.T) {
+	// Given: a README with no "## Related" footer, a first line that is a bare
+	// link, and far more prose than a docs page may carry.
+	d := Doc{Path: "README.md", Body: "# Overcast\n\n[Docs](./docs/README.md)\n\n" + prose(MaxProseChars*2)}
+
+	// When / Then: none of those rules describes a project overview.
+	assertClean(t, CheckWith([]Doc{d}, overviewOpts()))
+}
+
+func TestCheck_retiresAnAllowlistEntryWrittenForTheOverviewPage(t *testing.T) {
+	// Given: an exception argued for on the README, and a README that no
+	// longer says it.
+	opts := overviewOpts()
+	opts.WholeCorpus = true
+	opts.Allowlist = []AllowEntry{{Path: "README.md", Match: "Seamlessly"}}
+	d := Doc{Path: "README.md", Body: "# Overcast\n\nEmulates AWS locally.\n"}
+
+	// When / Then: one allowlist, one staleness check, whichever page the
+	// exception was written for.
+	assertReports(t, CheckWith([]Doc{d}, opts), "README.md: Seamlessly")
+}
