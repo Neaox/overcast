@@ -13,6 +13,8 @@ import {
   NO_SELECTION,
   STATUS_ITEMS,
   filterListParam,
+  serviceKey,
+  showsTrace,
   traceListParams,
   validateTracesSearch,
   type TracesSearch,
@@ -40,11 +42,6 @@ export const Route = createFileRoute("/debug/traces/")({
 })
 
 const COL_COUNT = 9
-
-/** Coalesce an empty service name the same way everywhere (options, filter). */
-function serviceKey(service: string): string {
-  return service || "(unknown)"
-}
 
 function curlCmd(t: TraceSummary): string {
   const { baseUrl } = endpointResolver.get()
@@ -167,13 +164,12 @@ function TracesPage() {
 
   const hiddenServices = serviceFilter.selected
   const hideInternal = !search.showInternal
+  const rowFilter = useMemo(() => ({ hideInternal, hiddenServices }), [hideInternal, hiddenServices])
 
-  const displayTraces = useMemo(() => {
-    let filtered = allTraces
-    if (hideInternal) filtered = filtered.filter((t) => !t.internal)
-    if (hiddenServices.size > 0) filtered = filtered.filter((t) => !hiddenServices.has(serviceKey(t.service)))
-    return filtered
-  }, [allTraces, hideInternal, hiddenServices])
+  const displayTraces = useMemo(
+    () => allTraces.filter((t) => showsTrace(t, rowFilter)),
+    [allTraces, rowFilter],
+  )
 
   // The deep scan runs only when the cheap search has come up short — which is
   // exactly the case it exists for, and keeps a query the list already answered
@@ -185,10 +181,13 @@ function TracesPage() {
   // A trace the list already shows must not appear again below it. The deep
   // scan reaches fields the list does not, so the same trace can legitimately
   // match both ways.
+  // The same two filters apply here. They used not to: a deep match rendered
+  // whatever the filter bar said, so ticking a service away or asking for
+  // internal traces to be hidden left the scan's own rows behind (#1613).
   const deepMatches = useMemo(() => {
     const shown = new Set(displayTraces.map((t) => t.requestId))
-    return deep.matches.filter((m) => !shown.has(m.requestId))
-  }, [deep.matches, displayTraces])
+    return deep.matches.filter((m) => !shown.has(m.requestId) && showsTrace(m.summary, rowFilter))
+  }, [deep.matches, displayTraces, rowFilter])
 
   if (!debugEnabled) {
     return (

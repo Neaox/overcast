@@ -664,6 +664,13 @@ var internalPaths = map[string]bool{
 	"/_overcast/ses/inbox":       true,
 	"/_overcast/ses/inbox/":      true,
 	"/_overcast/info":            true,
+	// The console polls both of these through the BFF — the system map reads
+	// the topology graph, and the Lambda pages read the live container list —
+	// so they are its own polling, not a request anybody made. Without them
+	// the traces page lists a row a second for each with "Hide internal"
+	// ticked, which is what #1613 reported.
+	"/_overcast/topology":         true,
+	"/_overcast/lambda/instances": true,
 }
 
 // isInternalPath reports whether p is polled by infrastructure or the web UI

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest"
 import { debugTraceKeys } from "./data"
 import {
   filterListParam,
+  serviceKey,
+  showsTrace,
   traceListParams,
   validateTracesSearch,
   type TracesSearch,
@@ -66,7 +68,9 @@ describe("validateTracesSearch", () => {
   })
 
   it("survives values that are not strings or arrays at all", () => {
-    expect(() => validateTracesSearch({ status: { $ne: null }, method: 7, search: [] })).not.toThrow()
+    expect(() =>
+      validateTracesSearch({ status: { $ne: null }, method: 7, search: [] }),
+    ).not.toThrow()
     expect(validateTracesSearch({ status: { $ne: null }, method: 7, search: [] })).toEqual({})
   })
 
@@ -189,5 +193,46 @@ describe("checkboxFilterLabel", () => {
   it("never counts below zero when the selection names an item that is not listed", () => {
     // A shared URL can hide a service whose traces have not loaded yet.
     expect(checkboxFilterLabel("hide", 0, 1, "services")).toBe("0 selected")
+  })
+})
+
+describe("showsTrace", () => {
+  const NOTHING_HIDDEN = { hideInternal: false, hiddenServices: new Set<string>() }
+
+  it("hides a trace the server marked internal when 'Hide internal' is ticked", () => {
+    // The console polls /_overcast/topology and /_overcast/lambda/instances
+    // through the BFF about once a second; both are marked internal by the
+    // emulator, and #1613 is what a row of each looks like when they are not.
+    expect(
+      showsTrace(
+        { service: "internal", internal: true },
+        { ...NOTHING_HIDDEN, hideInternal: true },
+      ),
+    ).toBe(false)
+  })
+
+  it("shows an internal trace once 'Hide internal' is unticked", () => {
+    expect(showsTrace({ service: "internal", internal: true }, NOTHING_HIDDEN)).toBe(true)
+  })
+
+  it("keeps a user-facing trace whatever 'Hide internal' says", () => {
+    const filter = { ...NOTHING_HIDDEN, hideInternal: true }
+    expect(showsTrace({ service: "s3" }, filter)).toBe(true)
+    expect(showsTrace({ service: "s3", internal: false }, filter)).toBe(true)
+  })
+
+  it("hides a trace whose service is on the dropdown's deny-list", () => {
+    const filter = { hideInternal: true, hiddenServices: new Set(["s3"]) }
+    expect(showsTrace({ service: "s3" }, filter)).toBe(false)
+    expect(showsTrace({ service: "sqs" }, filter)).toBe(true)
+  })
+
+  it("matches an unnamed service by the key the dropdown offers for it", () => {
+    // The options list coalesces "" to "(unknown)", so the deny-list holds
+    // that key and the predicate has to resolve the row the same way.
+    expect(serviceKey("")).toBe("(unknown)")
+    expect(
+      showsTrace({ service: "" }, { hideInternal: true, hiddenServices: new Set(["(unknown)"]) }),
+    ).toBe(false)
   })
 })

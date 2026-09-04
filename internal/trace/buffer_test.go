@@ -619,6 +619,13 @@ func TestIsInternalPathSeparatesPollingFromClientTraffic(t *testing.T) {
 		"/_overcast/ses/inbox",
 		"/_overcast/ses/inbox/messages",
 		"/_overcast/info",
+		// The console's own polling, reached through the BFF: the system map
+		// asks for the topology graph and the Lambda pages ask for the live
+		// container list, both about once a second. #1613 saw them listed on
+		// the traces page with "Hide internal" ticked, because neither was
+		// here.
+		"/_overcast/topology",
+		"/_overcast/lambda/instances",
 	}
 	for _, p := range internal {
 		if !isInternalPath(p) {
@@ -662,6 +669,10 @@ func TestIsInternalPathSeparatesPollingFromClientTraffic(t *testing.T) {
 		"/_overcast/appsync/apis/abc123/realtime",
 		"/_overcast/apigateway/execute-api/abc123/us-east-1/test/hello",
 		"/_overcast/lambda/url-invoke/abc123/",
+		// Neighbours of /_overcast/lambda/instances that are not it. The
+		// allowlist matches exact paths, so adding the instances endpoint must
+		// not drag the rest of /_overcast/lambda in with it.
+		"/_overcast/lambda/instances/abc123",
 		"/_overcast/cloudfront/distributions/E123456789/index.html",
 		"/_overcast/elb/healthz",
 		"/_overcast/cognito/user-pools/us-east-1_abc123/login",
