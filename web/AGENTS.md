@@ -515,5 +515,14 @@ Prefer the `describe("ComponentName > scenario")` → `it("does X")` structure s
 - Never use a plain `<input>` or `<Input>` for an AWS ARN field — use `<ResourceArnCombobox>`.
 - Never call `navigator.clipboard` from a component — use `<CopyButton>` or `useCopyToClipboard()`.
 - Never add dependencies to `web/package.json` without justification.
+- Never leave a new dependency's install script undecided. pnpm 11 (`strictDepBuilds: true`, the
+  default) fails `pnpm install --frozen-lockfile` with `ERR_PNPM_IGNORED_BUILDS` the first time a
+  package with a `preinstall`/`install`/`postinstall` script is added and pnpm doesn't yet know
+  whether to trust it. Decide deliberately and record the entry in `allowBuilds` in
+  `web/pnpm-workspace.yaml`: `true` to let the script run, `false` to skip it — and say why in the
+  commit (e.g. the existing `esbuild: false`/`msw: false` entries: esbuild resolves its platform
+  binary via `optionalDependencies` so the postinstall is redundant, and msw's postinstall only
+  writes the browser service worker file, which this codebase never uses — tests go through
+  `msw/node`). `pnpm approve-builds` can populate the entry interactively.
 - Never commit or push code that fails `cd web && pnpm run lint`, `cd web && pnpm run typecheck`, or
   `cd web && pnpm run test`. `make ci-local-web` runs all three plus the build, in CI's order.
