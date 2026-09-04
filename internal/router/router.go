@@ -947,7 +947,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 			// Snapshot only after the watcher has opened its stream. The initial
 			// connected event covers startup; every reconnect closes a missed-event
 			// gap through the same idempotent reconciliation path.
-			bus.Subscribe(events.DockerDaemonConnected, dockerConnectedHandler(targetsByClient, logger))
+			bus.Subscribe(events.DockerDaemonConnected, dockerConnectedHandler(targetsByClient, store, logger))
 
 			// Start one watcher per unique Docker daemon (blocks until shutdown).
 			dockerSup.Run(context.Background())
@@ -1280,15 +1280,63 @@ func dockerReconcileTargetsByClient(results []docker.ServiceResult, services map
 	return groups
 }
 
-func dockerConnectedHandler(groups map[*docker.Client]*dockerReconcileGroup, logger *zap.Logger) events.HandlerFunc {
+// dockerReconcileStoreWait bounds how long a Docker reconcile waits for the
+// state store's one-time startup migration. A migration still unfinished after
+// this long is a problem of its own, and the reconcile stops waiting on it —
+// each reconciler is then responsible for what it does with a store that still
+// reads back empty (EC2 skips its pass rather than sweeping; see
+// reconcileNetworks).
+const dockerReconcileStoreWait = 90 * time.Second
+
+// awaitStoreReady blocks until the state store has finished the one-time
+// schema migration it may still be running at startup.
+//
+// Every reconciler reads the store to decide what the daemon's containers and
+// networks *mean*: which of them a record still names, and which are litter.
+// A pass that runs while the store is still migrating reads no records at all,
+// so everything on the daemon looks like litter — and EC2's network pass acts
+// on that, removing the networks its own VPC records name. The seed then loads
+// those records pointing at networks deleted seconds earlier, and every ECS
+// task and Lambda placed in the VPC fails with "network … not found" for the
+// life of the process, because a completed pass vouches for every region and
+// nothing revisits the question.
+//
+// A store with no such startup phase (memory, WAL) implements neither
+// interface, and the absence means "already ready" — the same convention
+// state.ReadyAwaiter and middleware.NotReady use.
+func awaitStoreReady(ctx context.Context, store state.Store, logger *zap.Logger) {
+	awaiter, ok := store.(state.ReadyAwaiter)
+	if !ok {
+		return
+	}
+	if r, ok := store.(state.NotReadyReporter); ok && !r.NotReady() {
+		return
+	}
+	logger.Info("docker reconcile: waiting for the state store to finish its startup migration",
+		zap.Duration("timeout", dockerReconcileStoreWait))
+	waitCtx, cancel := context.WithTimeout(ctx, dockerReconcileStoreWait)
+	defer cancel()
+	t0 := time.Now()
+	if err := awaiter.WaitReady(waitCtx); err != nil {
+		logger.Warn("docker reconcile: the state store did not become ready; reconciling against it as it stands",
+			zap.Duration("waited", time.Since(t0)), zap.Error(err))
+		return
+	}
+	logger.Info("docker reconcile: state store ready", zap.Duration("waited", time.Since(t0)))
+}
+
+func dockerConnectedHandler(groups map[*docker.Client]*dockerReconcileGroup, store state.Store, logger *zap.Logger) events.HandlerFunc {
 	return func(ctx context.Context, e events.Event) {
 		p, ok := e.Payload.(docker.DaemonConnectedPayload)
 		if !ok || p.Client == nil {
 			return
 		}
-		if group := groups[p.Client]; group != nil {
-			group.reconcile(ctx, logger)
+		group := groups[p.Client]
+		if group == nil {
+			return
 		}
+		awaitStoreReady(ctx, store, logger)
+		group.reconcile(ctx, logger)
 	}
 }
 

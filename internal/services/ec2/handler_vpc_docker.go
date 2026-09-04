@@ -50,6 +50,25 @@ func (h *Handler) reconcileNetworks(ctx context.Context, snapshot []docker.Netwo
 	h.reconciledAll.Store(false)
 	h.reconciledRegions.Clear()
 
+	// A store still completing its startup migration lists no VPCs however
+	// many it holds, and this pass reads the store to decide what the daemon's
+	// networks mean. Every one of them then looks unclaimed — by no VPC in any
+	// region — and the orphan sweep at the end *removes* them: the pass does
+	// not merely miss the chance to heal a record, it deletes the network the
+	// record names. What the seed then loads is a VPC pointing at a network
+	// that no longer exists, and every ECS task and Lambda placed in it fails
+	// with "network … not found" until the next restart.
+	//
+	// So nothing is done at all, and reconciledAll is left clear: the
+	// per-region backstop (ensureRegionReconciled) then covers each region on
+	// the first placement into it, against a store that has since finished.
+	// The router waits for the store before calling this at all
+	// (router.awaitStoreReady), so this is the path a wait that expired takes.
+	if h.store.notReady() {
+		log.Warn("reconcile networks: the state store is still migrating — skipping this pass; regions will be reconciled on first use")
+		return
+	}
+
 	byRegion, aerr := h.store.vpcsByRegion(ctx)
 	if aerr != nil {
 		log.Error("reconcile networks: list VPCs", zap.String("error", aerr.Message))

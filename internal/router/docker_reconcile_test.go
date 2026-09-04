@@ -7,12 +7,14 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
 	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 type recordingDockerReconciler struct {
@@ -106,7 +108,7 @@ func TestDockerConnectedHandlerReconcilesOnlyTheConnectedDaemon(t *testing.T) {
 		[]docker.ServiceResult{{Name: "ecs", Client: client}},
 		map[string]Service{"ecs": target},
 	)
-	handle := dockerConnectedHandler(groups, zap.NewNop())
+	handle := dockerConnectedHandler(groups, state.NewMemoryStore(), zap.NewNop())
 
 	handle(context.Background(), events.Event{Payload: docker.DaemonConnectedPayload{
 		Client: docker.NewClient("http://other.invalid", zap.NewNop()), Reconnected: true,
@@ -122,5 +124,88 @@ func TestDockerConnectedHandlerReconcilesOnlyTheConnectedDaemon(t *testing.T) {
 	handle(context.Background(), events.Event{Payload: docker.DaemonConnectedPayload{Client: client, Reconnected: true}})
 	if lists != 4 {
 		t.Fatalf("reconnect made %d cumulative list calls, want one new snapshot of each kind", lists)
+	}
+}
+
+// migratingStore reports the startup phase a HybridStore is in while its
+// one-time schema migration runs, and becomes ready when release is closed.
+type migratingStore struct {
+	state.Store
+	release chan struct{}
+}
+
+func (s *migratingStore) NotReady() bool {
+	select {
+	case <-s.release:
+		return false
+	default:
+		return true
+	}
+}
+
+func (s *migratingStore) WaitReady(ctx context.Context) error {
+	select {
+	case <-s.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// TestDockerConnectedHandlerWaitsForTheStoreMigration pins the ordering that
+// #1599's real failure turned on: the reconcile must not read a store that is
+// still migrating. Every reconciler decides what the daemon's objects mean by
+// what the store claims, and an empty read means "nothing claims any of this"
+// — which for EC2's network pass is a sweep of the very networks its VPC
+// records name.
+func TestDockerConnectedHandlerWaitsForTheStoreMigration(t *testing.T) {
+	var mu sync.Mutex
+	lists := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		lists++
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode([]any{})
+	}))
+	t.Cleanup(server.Close)
+	client := docker.NewClient("tcp://"+server.Listener.Addr().String(), zap.NewNop())
+	target := &recordingDockerReconciler{name: "ecs"}
+	groups := dockerReconcileTargetsByClient(
+		[]docker.ServiceResult{{Name: "ecs", Client: client}},
+		map[string]Service{"ecs": target},
+	)
+	store := &migratingStore{Store: state.NewMemoryStore(), release: make(chan struct{})}
+	handle := dockerConnectedHandler(groups, store, zap.NewNop())
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handle(context.Background(), events.Event{Payload: docker.DaemonConnectedPayload{Client: client}})
+	}()
+
+	// While the migration is in flight the daemon is not listed at all.
+	select {
+	case <-done:
+		t.Fatal("the reconcile ran while the store was still migrating")
+	case <-time.After(50 * time.Millisecond):
+	}
+	mu.Lock()
+	early := lists
+	mu.Unlock()
+	if early != 0 {
+		t.Fatalf("the daemon was listed %d times before the store was ready, want 0", early)
+	}
+
+	// Once it finishes, the pass runs against a store that reads back.
+	close(store.release)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the reconcile never ran after the store became ready")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if lists != 2 {
+		t.Fatalf("after the store was ready the daemon was listed %d times, want one container and one network snapshot", lists)
 	}
 }
