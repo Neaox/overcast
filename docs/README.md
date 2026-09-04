@@ -25,6 +25,7 @@ Credentials, regions and per-language client setup are in
 
 | Guide | For |
 | --- | --- |
+| [Install Overcast](./install.md) | The one-line installers for macOS, Linux and Windows, the Docker images, and installing by hand |
 | [Using AWS SDKs and CLI](./sdk-cli.md) | Pointing the AWS CLI, Node.js, Python, Go, Java, .NET, Rust or Terraform at Overcast |
 | [CLI reference](./cli.md) | Every `overcast` subcommand — background instances, introspection, AWS helpers, mDNS and TLS |
 | [Using AWS CDK](./cdk.md) | `cdk bootstrap`, `cdk deploy`, which resource types provision for real, and the local-VPC pattern |

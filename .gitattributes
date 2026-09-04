@@ -24,3 +24,9 @@ scripts/*.ps1 text eol=crlf
 web/src/types/api.gen.ts linguist-generated=true
 internal/capabilities/all.gen.go linguist-generated=true
 web/src/routeTree.gen.ts linguist-generated=true
+
+# The public installers (install/README.md). install.sh must stay LF: a CRLF
+# copy from a Windows checkout is a script sh cannot run. install.ps1 follows
+# the scripts/ convention for PowerShell.
+install/*.sh text eol=lf
+install/*.ps1 text eol=crlf
