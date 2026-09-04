@@ -14,20 +14,62 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   ambiguousTestNames,
   buildGroupsFromRegistry,
+  loadGeneratedRegistry,
   mergeImpls,
+  mergeRegistries,
   testNameOwners,
   validateImpls,
+  type GeneratedRegistry,
   type ImplMap,
   type ImplSource,
   type Registry,
 } from "./registry.ts";
-import type { TestGroup } from "./harness.ts";
+import { runGroup, type TestContext, type TestGroup } from "./harness.ts";
 
 const noop = async () => {};
+
+/** Run one group, capturing the NDJSON events it writes to stdout. */
+async function runGroupCapturingEvents(
+  group: TestGroup,
+): Promise<Record<string, unknown>[]> {
+  const chunks: string[] = [];
+  const realWrite = process.stdout.write.bind(process.stdout);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (process.stdout as any).write = (chunk: string) => {
+    chunks.push(chunk);
+    return true;
+  };
+  try {
+    await runGroup(group, {
+      endpoint: "",
+      region: "us-east-1",
+      runId: "test",
+      log: () => {},
+    } as TestContext);
+  } finally {
+    process.stdout.write = realWrite;
+  }
+  return chunks
+    .join("")
+    .split("\n")
+    .filter((l) => l.trim().length > 0)
+    .map((l) => JSON.parse(l));
+}
+
+function onlyTestResult(
+  events: Record<string, unknown>[],
+): Record<string, unknown> {
+  const found = events.find((e) => e["event"] === "test_result");
+  assert.ok(found, `no test_result event in ${JSON.stringify(events)}`);
+  return found;
+}
 
 /**
  * Two unrelated groups declaring a test of the same name, plus a name owned by
@@ -269,5 +311,344 @@ describe("owner tracking", () => {
       "cognito-userpools",
       "iam-users",
     ]);
+  });
+});
+
+/**
+ * registry.generated.json (#1393): a missing file is a no-op, an empty file
+ * is a no-op, and a non-empty one is concatenated onto the hand-written
+ * groups without disturbing them.
+ *
+ * These assert the *invariant* ("a missing/empty generated file changes
+ * nothing"), never a fact about the checked-in file's current contents — see
+ * the loader contract's note on not pinning a fact another in-flight branch
+ * (the compatgen generator) is about to change.
+ */
+describe("generated registry loading", () => {
+  let tmpDir: string;
+
+  const withTmpDir = () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "oc-registry-generated-"));
+    return () => rmSync(tmpDir, { recursive: true, force: true });
+  };
+
+  it("a missing file is a no-op", () => {
+    const cleanup = withTmpDir();
+    try {
+      const missing = join(tmpDir, "does-not-exist.json");
+      const generated = loadGeneratedRegistry(missing);
+      assert.deepEqual(generated, { version: 1, groups: [] });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("a missing file leaves build output unchanged", () => {
+    const cleanup = withTmpDir();
+    try {
+      const handWritten: Registry = {
+        version: 1,
+        groups: [
+          {
+            service: "s3",
+            name: "s3-crud",
+            tests: [{ name: "CreateBucket" }],
+          },
+        ],
+      };
+      const missing = join(tmpDir, "does-not-exist.json");
+      const withGenerated = mergeRegistries(
+        handWritten,
+        loadGeneratedRegistry(missing),
+      );
+      const without = buildGroupsFromRegistry(handWritten, {}, {
+        suite: "node-js-sdk",
+      });
+      const merged = buildGroupsFromRegistry(withGenerated, {}, {
+        suite: "node-js-sdk",
+      });
+      assert.deepEqual(
+        without.map((g) => g.name),
+        merged.map((g) => g.name),
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("the checked-in empty file is a no-op", () => {
+    // Exercises the real, checked-in registry.generated.json at its default
+    // sibling-of-registry.json location — but asserts only that an empty
+    // file is inert, not that the file stays empty forever.
+    const generated = loadGeneratedRegistry();
+    assert.deepEqual(generated.groups, []);
+  });
+
+  it("a synthetic non-empty file is concatenated after hand-written groups", () => {
+    const cleanup = withTmpDir();
+    try {
+      const handWritten: Registry = {
+        version: 1,
+        groups: [
+          {
+            service: "s3",
+            name: "s3-crud",
+            tests: [{ name: "CreateBucket" }],
+          },
+        ],
+      };
+      const path = join(tmpDir, "registry.generated.json");
+      const generatedJson: GeneratedRegistry = {
+        version: 1,
+        groups: [
+          {
+            service: "kinesis",
+            name: "kinesis-streams",
+            tests: [{ name: "CreateStream" }],
+            generated: true,
+            state: "candidate",
+            suites: ["node-js-sdk"],
+          },
+        ],
+      };
+      writeFileSync(path, JSON.stringify(generatedJson));
+      const generated = loadGeneratedRegistry(path);
+      const merged = mergeRegistries(handWritten, generated);
+      assert.deepEqual(
+        merged.groups.map((g) => g.name),
+        ["s3-crud", "kinesis-streams"],
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("a present but unparsable file is a load error", () => {
+    const cleanup = withTmpDir();
+    try {
+      const path = join(tmpDir, "registry.generated.json");
+      writeFileSync(path, "{not valid json");
+      assert.throws(() => loadGeneratedRegistry(path));
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("a wrong version is a load error", () => {
+    const cleanup = withTmpDir();
+    try {
+      const path = join(tmpDir, "registry.generated.json");
+      writeFileSync(path, JSON.stringify({ version: 2, groups: [] }));
+      assert.throws(
+        () => loadGeneratedRegistry(path),
+        /unsupported registry\.generated\.json version/,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("a group missing generated/state/suites is a load error", () => {
+    const cleanup = withTmpDir();
+    try {
+      const path = join(tmpDir, "registry.generated.json");
+      writeFileSync(
+        path,
+        JSON.stringify({
+          version: 1,
+          groups: [
+            {
+              service: "kinesis",
+              name: "kinesis-streams",
+              tests: [{ name: "CreateStream" }],
+              // Missing generated/state/suites.
+            },
+          ],
+        }),
+      );
+      assert.throws(
+        () => loadGeneratedRegistry(path),
+        /kinesis-streams/,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("a name collision between the two files is a load error", () => {
+    const handWritten: Registry = {
+      version: 1,
+      groups: [
+        { service: "s3", name: "s3-crud", tests: [{ name: "CreateBucket" }] },
+      ],
+    };
+    const generated: GeneratedRegistry = {
+      version: 1,
+      groups: [
+        {
+          service: "s3",
+          name: "s3-crud",
+          tests: [{ name: "PutObject" }],
+          generated: true,
+          state: "candidate",
+          suites: ["node-js-sdk"],
+        },
+      ],
+    };
+    assert.throws(
+      () => mergeRegistries(handWritten, generated),
+      /s3-crud/,
+    );
+  });
+});
+
+describe("generated group suites scoping", () => {
+  const registryWithSuites = (suites: string[]): Registry => ({
+    version: 1,
+    groups: [
+      {
+        service: "kinesis",
+        name: "kinesis-streams",
+        tests: [{ name: "CreateStream" }],
+        generated: true,
+        state: "candidate",
+        suites,
+      },
+    ],
+  });
+
+  it("an out-of-scope group is not loaded at all", () => {
+    const groups = buildGroupsFromRegistry(registryWithSuites(["go-sdk"]), {}, {
+      suite: "node-js-sdk",
+    });
+    assert.deepEqual(groups, []);
+  });
+
+  it("an in-scope group is loaded", () => {
+    const groups = buildGroupsFromRegistry(
+      registryWithSuites(["node-js-sdk"]),
+      {},
+      { suite: "node-js-sdk" },
+    );
+    assert.deepEqual(
+      groups.map((g) => g.name),
+      ["kinesis-streams"],
+    );
+  });
+
+  it("hand-written suites scoping is unaffected (cdk-lifecycle shape)", () => {
+    const registry: Registry = {
+      version: 1,
+      groups: [
+        {
+          service: "cdk",
+          name: "cdk-lifecycle",
+          tests: [{ name: "DeployStack" }],
+          suites: ["cdk"],
+        },
+        {
+          service: "s3",
+          name: "s3-crud",
+          tests: [{ name: "CreateBucket" }],
+        },
+      ],
+    };
+    const groups = buildGroupsFromRegistry(registry, {}, {
+      suite: "node-js-sdk",
+    });
+    assert.deepEqual(
+      groups.map((g) => g.name),
+      ["s3-crud"],
+    );
+  });
+});
+
+/**
+ * A generated group in scope with no registered impl and no scenario backend
+ * must FAIL, not skip and not na (#1393). Until the G2 interpreters land,
+ * this is the only signal that a suite named in a generated group's `suites`
+ * cannot actually run it.
+ */
+describe("generated group interim fail rule", () => {
+  const registryWithScenario = (scenario?: string): Registry => ({
+    version: 1,
+    groups: [
+      {
+        service: "kinesis",
+        name: "kinesis-streams",
+        tests: [{ name: "CreateStream" }],
+        generated: true,
+        state: "candidate",
+        suites: ["node-js-sdk"],
+        ...(scenario !== undefined ? { scenario } : {}),
+      },
+    ],
+  });
+
+  it("no impl and no backend yields fail with the exact message", async () => {
+    const groups = buildGroupsFromRegistry(registryWithScenario(), {}, {
+      suite: "node-js-sdk",
+    });
+    assert.equal(groups.length, 1);
+    const tc = groups[0]?.tests[0];
+    assert.equal(tc?.skip, undefined);
+    assert.equal(tc?.na, undefined);
+
+    const events = await runGroupCapturingEvents(groups[0]!);
+    const result = onlyTestResult(events);
+    assert.equal(result["status"], "fail");
+    assert.equal(
+      result["error"],
+      'generated group "kinesis-streams" is scoped to node-js-sdk but ' +
+        "node-js-sdk has no scenario backend",
+    );
+  });
+
+  it("the scenario backend is consulted first", async () => {
+    const seen: Array<[string, string, string | undefined]> = [];
+    const groups = buildGroupsFromRegistry(
+      registryWithScenario("scenarios/kinesis.ir.json"),
+      {},
+      {
+        suite: "node-js-sdk",
+        scenarioBackend: (group, test, scenario) => {
+          seen.push([group, test, scenario]);
+          return async () => {};
+        },
+      },
+    );
+    assert.deepEqual(seen, [
+      ["kinesis-streams", "CreateStream", "scenarios/kinesis.ir.json"],
+    ]);
+
+    const events = await runGroupCapturingEvents(groups[0]!);
+    assert.equal(onlyTestResult(events)["status"], "pass");
+  });
+
+  it("a declining scenario backend falls back to fail", async () => {
+    const groups = buildGroupsFromRegistry(registryWithScenario(), {}, {
+      suite: "node-js-sdk",
+      scenarioBackend: () => undefined,
+    });
+    const events = await runGroupCapturingEvents(groups[0]!);
+    assert.equal(onlyTestResult(events)["status"], "fail");
+  });
+
+  it("a hand-written group keeps the skip sentinel", () => {
+    // Hand-written groups keep today's sentinel behaviour, byte-for-byte —
+    // only `generated` groups get the new fail rule.
+    const registry: Registry = {
+      version: 1,
+      groups: [
+        { service: "s3", name: "s3-crud", tests: [{ name: "CreateBucket" }] },
+      ],
+    };
+    const groups = buildGroupsFromRegistry(registry, {}, {
+      suite: "node-js-sdk",
+    });
+    assert.equal(
+      groups[0]?.tests[0]?.skip,
+      "not yet implemented in node-js-sdk test suite",
+    );
   });
 });
