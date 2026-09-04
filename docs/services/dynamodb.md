@@ -50,14 +50,15 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 
 ## Differences from AWS
 
-| Area                            | Overcast                                                                                                                                                                                                             |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GSIs are immediately consistent | An item is visible to a GSI query the instant it is written. `ConsistentRead=true` with an `IndexName` is still rejected, exactly as AWS rejects it |
-| TTL is swept, not lazy          | Expired items are deleted by an hourly sweeper rather than being hidden on read, so an expired item can still be returned                                                                                            |
-| No PartiQL                      | `ExecuteStatement`, `ExecuteTransaction` and `BatchExecuteStatement` are out of scope                                                                                                                                |
-| No global tables                | Overcast emulates one region per request; the global-table operations answer `501`                                                                                                                                   |
-| No backups                      | Backups, exports, imports, restores, resource policies and contributor insights answer `501`                                                                                                                         |
-| Throughput is not enforced      | Provisioned capacity is recorded and reported; nothing is throttled                                                                                                                                                  |
+| Area                                                                         | On AWS                                                               | Overcast                                                                             |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| GSI consistency                                                              | Eventually consistent                                                | Immediately consistent — an item is visible to a GSI query the instant it is written |
+| `ConsistentRead=true` with an `IndexName`                                    | Rejected                                                             | Rejected, exactly as AWS rejects it                                                  |
+| TTL                                                                          | Expired items are hidden on read                                     | Deleted by an hourly sweeper instead, so an expired item can still be returned       |
+| PartiQL                                                                      | `ExecuteStatement`, `ExecuteTransaction` and `BatchExecuteStatement` | Out of scope                                                                         |
+| Global tables                                                                | Replicate a table across regions                                     | Overcast emulates one region per request; the global-table operations answer `501`   |
+| Backups, exports, imports, restores, resource policies, contributor insights | Full API                                                             | Answer `501`                                                                         |
+| Throughput                                                                   | Provisioned capacity is enforced                                     | Recorded and reported; nothing is throttled                                          |
 
 Unimplemented-but-modelled operations answer `501 Not Implemented` with
 `x-emulator-unsupported: true`, in DynamoDB's own error envelope. An

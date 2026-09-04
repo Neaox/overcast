@@ -54,15 +54,15 @@ Supported engines: **redis** (`redis:6`, `redis:7`), **valkey**
 
 ## Differences from AWS
 
-| Area                           | Overcast                                                                                                                                                                                          |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| One node, always               | A replication group starts a single primary container — no replicas, no cluster mode, no failover                                                                                                 |
-| Endpoints cannot be told apart | A replication group's `PrimaryEndPoint` and `ConfigurationEndPoint` both carry the same endpoint, because there is nothing to distinguish cluster-mode-enabled from disabled                      |
-| No parameter groups applied    | `CacheParameterGroupName` is recorded and echoed, never pushed into the engine; `SecurityGroupIds` are dropped entirely                                                                           |
-| No snapshots                   | Snapshot, backup and restore operations are not implemented                                                                                                                                       |
-| No scaling                     | `ModifyCacheCluster` node-count changes and `IncreaseReplicaCount` do not add containers                                                                                                          |
-| Create-only subnet group       | `CacheSubnetGroupName` is not returned on the `ReplicationGroup` shape, because AWS does not return it either                                                                                     |
-| CloudFormation names differ    | `AWS::ElastiCache::CacheCluster` takes `ClusterName`, not `CacheClusterId`; omit it and the name is generated from the stack, the logical id and a suffix, lowercased and capped at 50 characters |
+| Area                                         | On AWS                                                  | Overcast                                                                                                                |
+| -------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Cluster size                                 | Replicas, cluster mode and failover                     | A replication group starts a single primary container, always                                                           |
+| Replication-group endpoints                  | `PrimaryEndPoint` and `ConfigurationEndPoint` differ    | Both carry the same endpoint — there is nothing to distinguish cluster-mode-enabled from disabled                       |
+| Parameter and security groups                | Applied to the engine                                   | `CacheParameterGroupName` is recorded and echoed, never pushed into the engine; `SecurityGroupIds` are dropped entirely |
+| Snapshots                                    | Snapshot, backup and restore                            | Not implemented                                                                                                         |
+| Scaling                                      | Node-count changes and `IncreaseReplicaCount` add nodes | `ModifyCacheCluster` node-count changes and `IncreaseReplicaCount` do not add containers                                |
+| `CacheSubnetGroupName` on `ReplicationGroup` | Not returned                                            | Not returned either                                                                                                     |
+| `AWS::ElastiCache::CacheCluster` naming      | The property is `ClusterName`, not `CacheClusterId`     | Omit it and the name is generated from the stack, the logical id and a suffix, lowercased and capped at 50 characters   |
 
 ## Gotchas
 
