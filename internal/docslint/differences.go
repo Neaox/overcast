@@ -96,8 +96,12 @@ func tableCells(row string) []string {
 
 // differencesReason returns the reason given in the page's opt-out marker, and
 // whether the page carries one at all.
+//
+// Fenced code is blanked first: a page showing the marker as an example — the
+// service page template does — is documenting the escape hatch, not taking it.
 func differencesReason(body string) (string, bool) {
-	m := differencesMarkerRE.FindStringSubmatch(body)
+	visible := eachOutsideFences(strings.Split(body, "\n"))
+	m := differencesMarkerRE.FindStringSubmatch(strings.Join(visible, "\n"))
 	if m == nil {
 		return "", false
 	}

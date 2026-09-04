@@ -109,3 +109,15 @@ func TestCheck_doesNotAskSubPagesForTheDifferencesHeader(t *testing.T) {
 	// its own reference tables.
 	assertClean(t, Check([]Doc{{Path: "docs/services/s3/limitations.md", Body: body}}))
 }
+
+func TestCheck_doesNotReadAFencedTwoColumnMarkerAsAnOptOut(t *testing.T) {
+	// Given: a page showing the opt-out as an example, above a two-column
+	// table it has not excused — the shape docs/dev/service-doc-template.md
+	// has, applied to a landing page.
+	body := landing(quickStart, "## Differences from AWS\n\n```md\n<!-- "+DifferencesTwoColumnMarker+
+		" why these rows have no AWS half -->\n```\n\n| Area | Overcast |\n| --- | --- |\n| Access points | Not modelled |")
+
+	// When / Then: documenting the escape hatch is not taking it.
+	assertReports(t, Check([]Doc{doc(body)}),
+		"is `| Area | Overcast |`")
+}
