@@ -54,26 +54,157 @@ export interface RegistryGroup {
   name: string;
   /** Mark slow groups so they are scheduled first (longest-job-first). */
   slow?: boolean;
+  /**
+   * Restrict this group to specific suites; omitted for the normal case
+   * where every SDK/CLI suite implements the group. Reserved for
+   * `cdk-lifecycle` on a hand-written group; required (and mechanically
+   * derived from backend availability) on a group from
+   * registry.generated.json. See registry.schema.json's `suites`.
+   */
+  suites?: string[];
   tests: RegistryTestCase[];
+  /** Only set on a group from registry.generated.json — see GeneratedRegistryGroup. */
+  generated?: boolean;
+  /** Only set on a group from registry.generated.json — see GeneratedRegistryGroup. */
+  scenario?: string;
+  /** Only set on a group from registry.generated.json — see GeneratedRegistryGroup. */
+  state?: "candidate" | "gated";
 }
 
 export interface Registry {
   version: 1;
+  comment?: string;
   groups: RegistryGroup[];
+}
+
+/**
+ * The shared TestGroup shape plus the three fields only a group from
+ * registry.generated.json carries. See registry.generated.schema.json.
+ */
+export interface GeneratedRegistryGroup extends RegistryGroup {
+  generated: true;
+  state: "candidate" | "gated";
+  /** Mechanically derived from backend availability by cmd/compatgen — never hand-edited. */
+  suites: string[];
+}
+
+export interface GeneratedRegistry {
+  version: 1;
+  comment?: string;
+  groups: GeneratedRegistryGroup[];
 }
 
 // ─── Loader ───────────────────────────────────────────────────────────────
 
-/** Load registry.json from the canonical location (compat/suites/registry.json). */
+/**
+ * Load registry.json, concatenated with registry.generated.json.
+ *
+ * See mergeRegistries() for the concatenation, scoping and collision rules.
+ */
 export function loadRegistry(): Registry {
   const require = createRequire(import.meta.url);
   // Three levels up from node-js-sdk/src/lib/ → suites/
-  return require("../../../registry.json") as Registry;
+  const handWritten = require("../../../registry.json") as Registry;
+  return mergeRegistries(handWritten, loadGeneratedRegistry());
+}
+
+/**
+ * Load registry.generated.json if present, or an empty registry.
+ *
+ * A missing file is **not** an error: suite images, CI artifacts and
+ * branches cut before the file existed must keep working, so this returns
+ * `{ version: 1, groups: [] }`. A present-but-unparsable file, a `version`
+ * other than 1, or a group missing `generated`, `state` or `suites` is a
+ * load error — thrown, exactly as a malformed registry.json is today
+ * (loadRegistry() does no validation of its own and simply lets `require()`
+ * throw a SyntaxError).
+ *
+ * @param path Override the file location (absolute, or resolved the way
+ *             `require()` resolves any specifier). Defaults to
+ *             registry.json's sibling. Exists so tests can point at a
+ *             fixture without writing over — or depending on the current
+ *             contents of — the real file.
+ */
+export function loadGeneratedRegistry(path?: string): GeneratedRegistry {
+  const require = createRequire(import.meta.url);
+  const target = path ?? "../../../registry.generated.json";
+
+  let data: GeneratedRegistry;
+  try {
+    data = require(target) as GeneratedRegistry;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | null)?.code;
+    if (code === "MODULE_NOT_FOUND") {
+      return { version: 1, groups: [] };
+    }
+    throw err;
+  }
+
+  if ((data.version as unknown) !== 1) {
+    throw new Error(
+      `${target}: unsupported registry.generated.json version ` +
+        `${JSON.stringify(data.version)} (want 1)`,
+    );
+  }
+  for (const rg of data.groups) {
+    const missing = (["generated", "state", "suites"] as const).filter(
+      (k) => !(k in rg),
+    );
+    if (missing.length > 0) {
+      throw new Error(
+        `${target}: generated group "${rg.name}" is missing required ` +
+          `field(s): ${missing.join(", ")}`,
+      );
+    }
+  }
+  return data;
+}
+
+/**
+ * Concatenate hand-written and generated groups: hand-written groups first,
+ * in file order; generated groups appended after, in file order. Do not
+ * re-sort beyond what the loader already does (e.g. slow-first).
+ *
+ * A group name present in both files is a load error naming the group.
+ * `cmd/compat` already lints this; this is the second line of defence, same
+ * posture as the existing ambiguous-name defence in validateImpls().
+ */
+export function mergeRegistries(
+  handWritten: Registry,
+  generated: GeneratedRegistry,
+): Registry {
+  const hwNames = new Set(handWritten.groups.map((g) => g.name));
+  for (const rg of generated.groups) {
+    if (hwNames.has(rg.name)) {
+      throw new Error(
+        `registry.generated.json: group "${rg.name}" is also declared in ` +
+          `registry.json — a generated group may never reuse a ` +
+          `hand-written name`,
+      );
+    }
+  }
+  return {
+    ...handWritten,
+    groups: [...handWritten.groups, ...generated.groups],
+  };
 }
 
 // ─── Builder ─────────────────────────────────────────────────────────────
 
 export type ImplMap = Record<string, TestFn>;
+
+/**
+ * Resolves an implementation for a generated group's test that has no
+ * registered impl. Given the group name, test name, and the group's
+ * `scenario` path (undefined if absent), it may return a TestFn to run, or
+ * undefined to say it cannot handle this test either. Nothing in this suite
+ * provides one yet — the G2 node-js-sdk interpreter will (#1393, #1113 phase G2).
+ */
+export type ScenarioBackend = (
+  group: string,
+  test: string,
+  scenario: string | undefined,
+) => TestFn | undefined;
 
 export interface BuildOptions {
   suite: string;
@@ -89,6 +220,12 @@ export interface BuildOptions {
     string,
     (ctx: import("./harness.ts").TestContext) => Promise<void>
   >;
+  /**
+   * Optional resolver consulted for a test with no registered impl, before
+   * falling back to the not-implemented sentinel (hand-written groups) or the
+   * interim fail rule (generated groups). Nothing provides one yet (#1393).
+   */
+  scenarioBackend?: ScenarioBackend;
 }
 
 /**
@@ -108,6 +245,26 @@ export interface BuildOptions {
  */
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 const noop = async () => {};
+
+/**
+ * A TestFn that fails with `message` — the interim result for a generated
+ * group in scope with no impl and no scenario backend (#1393). Throwing
+ * (rather than skip/na) is deliberate: the harness's isUnimplemented() only
+ * fires on a wrapped 501 response, so this always surfaces as "fail", never
+ * "unimplemented" or a pass.
+ *
+ * Throws the raw string rather than an Error: runGroup() formats a thrown
+ * Error as `${err.name}: ${err.message}`, which would prefix "Error: " onto
+ * the message the interim rule requires verbatim. `err instanceof Error` is
+ * false for a string, so the harness falls back to String(err) and the NDJSON
+ * `error` field carries this text byte-for-byte.
+ */
+function scenarioBackendMissing(message: string): TestFn {
+  // eslint-disable-next-line @typescript-eslint/only-throw-error
+  return async () => {
+    throw message;
+  };
+}
 
 /**
  * Topologically sort tests within a group using their `depends` edges.
@@ -147,7 +304,20 @@ export function buildGroupsFromRegistry(
   const ambiguous = ambiguousTestNames(registry);
 
   const groups = registry.groups
-    .filter((rg) => rg.service !== "cdk") // CDK lifecycle tests belong to the cdk suite
+    .filter((rg) => {
+      // General suites-scoping: a group scoped to specific suites is not
+      // loaded at all outside that scope — no tests, no skips, no results.
+      // This subsumes the old `rg.service !== "cdk"` special case:
+      // cdk-lifecycle is currently the only hand-written group declaring
+      // `suites` (["cdk"]), and it also happens to have service === "cdk",
+      // so for today's registry.json the two checks are behaviour-identical
+      // for every non-cdk suite (node-js-sdk included). Generated groups
+      // (#1393) always declare `suites`, mechanically derived from backend
+      // availability by cmd/compatgen, so this is now a general rule rather
+      // than a single-group carve-out.
+      if (rg.suites && !rg.suites.includes(opts.suite)) return false;
+      return true;
+    })
     .map((rg) => {
     // Topologically sort tests by their declared dependencies so that
     // prerequisites always execute before the tests that need them.
@@ -188,6 +358,27 @@ export function buildGroupsFromRegistry(
       const bareUsable = !ambiguous.has(rt.name);
       const hasImpl = qualifiedKey in impls || (bareUsable && rt.name in impls);
       if (!hasImpl) {
+        const scenarioFn = opts.scenarioBackend?.(rg.name, rt.name, rg.scenario);
+        if (scenarioFn) {
+          return { name: rt.name, fn: scenarioFn, op, depends };
+        }
+
+        if (rg.generated) {
+          // Interim rule (#1393): `suites` on a generated group is derived
+          // from backend availability by cmd/compatgen, so a suite named in
+          // it that cannot execute the group is a generator/loader bug, and
+          // it has to be loud — never a skip (which reads as "not
+          // implemented yet", i.e. debt) and never `na`. Because `candidate`
+          // groups are excluded from the compare-baseline/max-failures gates
+          // by cmd/compat (#1367) this cannot red a build until a group is
+          // `gated`, at which point it is a real regression and should. What
+          // it can never do is report as a pass or a skip.
+          const message =
+            `generated group "${rg.name}" is scoped to ${opts.suite} but ` +
+            `${opts.suite} has no scenario backend`;
+          return { name: rt.name, fn: scenarioBackendMissing(message), op, depends };
+        }
+
         // No implementation yet — surface as skip so the dashboard shows it.
         return {
           name: rt.name,
