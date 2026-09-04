@@ -77,6 +77,15 @@ func (s *Service) ReferencesFunction(ctx context.Context, functionARN string) bo
 	return false
 }
 
+// InitCognitoValidator wires the Cognito JWT validator used by
+// AMAZON_COGNITO_USER_POOLS authorization. It is consulted only when
+// OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH is on, where a bearer token must be one
+// the local Cognito service minted for the pool the API names; the default
+// relaxed posture never calls it.
+func (s *Service) InitCognitoValidator(v events.CognitoTokenValidator) {
+	s.handler.cognitoValidator = v
+}
+
 // InitDynamoDBInvoker wires the DynamoDB invoker for AMAZON_DYNAMODB data source dispatch.
 func (s *Service) InitDynamoDBInvoker(invoker events.DynamoDBInvoker) {
 	s.handler.dynamoInvoker = invoker

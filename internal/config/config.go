@@ -541,6 +541,16 @@ type Config struct {
 	// OVERCAST_ENFORCE_APIGATEWAY_THROTTLE.
 	EnforceAPIGatewayThrottle bool
 
+	// EnforceAppSyncCognitoAuth turns AppSync's AMAZON_COGNITO_USER_POOLS
+	// authorization from a bearer-token presence check into real verification
+	// against the local Cognito user pool the API is configured with: RS256
+	// signature, issuer, token_use, expiry, and appIdClientRegex. Default
+	// false, which keeps the low-friction local-dev posture where any bearer
+	// token is accepted and its claims are decoded into $ctx.identity — the
+	// behaviour resolver tests that mint unsigned JWTs depend on. Corresponds
+	// to env var OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH.
+	EnforceAppSyncCognitoAuth bool
+
 	// ProtocolStrict restores strict rejection of "claimed-but-undeclared"
 	// wire protocols: when a request's identified protocol isn't one a
 	// service's SupportedProtocols() lists, the service returns 415
@@ -1695,6 +1705,10 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_SIGV4_VALIDATE            false
 //	OVERCAST_ENFORCE_IAM              false
 //	OVERCAST_ENFORCE_APIGATEWAY_THROTTLE false
+//	OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH false  (true = AppSync verifies AMAZON_COGNITO_USER_POOLS
+//	                                           bearer tokens against the local Cognito pool — RS256
+//	                                           signature, issuer, token_use, expiry, appIdClientRegex —
+//	                                           instead of only requiring one to be present)
 //	OVERCAST_PROTOCOL_STRICT           false   (true = 415 on a protocol a service does not
 //	                                           declare, instead of attempting the decode anyway)
 //	OVERCAST_CFN_SYNC_WAIT_MS          1000
@@ -2231,6 +2245,10 @@ func Load() (*Config, error) {
 	// Optional API Gateway usage-plan throttle/quota rejection (default off:
 	// limits are measured and reported, but never turned into a 429).
 	cfg.EnforceAPIGatewayThrottle = envBool("OVERCAST_ENFORCE_APIGATEWAY_THROTTLE", false)
+
+	// Optional AppSync Cognito JWT verification (default off: a bearer token
+	// is required and decoded, but never verified).
+	cfg.EnforceAppSyncCognitoAuth = envBool("OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH", false)
 
 	// Protocol drift strictness (default off — lenient "attempt anyway" posture).
 	cfg.ProtocolStrict = envBool("OVERCAST_PROTOCOL_STRICT", false)

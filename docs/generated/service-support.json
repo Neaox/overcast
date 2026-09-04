@@ -1923,7 +1923,7 @@
           "operation": "ExecuteGraphQL",
           "category": "Execution \u0026 Evaluation",
           "status": "✅ Supported",
-          "notes": "Executes a GraphQL operation against the API"
+          "notes": "Executes a GraphQL operation against the API; Cognito bearer tokens are decoded only, or verified against the local user pool when OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH=true"
         },
         {
           "operation": "EvaluateMappingTemplate",

@@ -4,12 +4,14 @@ package appsync
 //
 // Implemented:
 //   - ExecuteGraphQL        POST /_overcast/appsync/apis/{apiId}/graphql
-//   - API_KEY authentication (x-api-key header validation with expiry check)
+//   - API_KEY, OPENID_CONNECT, AWS_LAMBDA and AWS_IAM authentication, plus the
+//     multi-auth fallback chain. AMAZON_COGNITO_USER_POOLS lives in cognito_auth.go.
 
 import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -188,26 +190,6 @@ func (h *Handler) authenticateAPIKey(r *http.Request, api *GraphqlAPI) *protocol
 	return unauthorizedError("Invalid API key.")
 }
 
-// authenticateCognito checks for a Bearer token in the Authorization header.
-// Since this is a local emulator, JWT signature is NOT validated — only presence.
-// The JWT payload is base64‑decoded to extract claims for $context.identity.
-func (h *Handler) authenticateCognito(r *http.Request, _ json.RawMessage) (map[string]any, *protocol.AWSError) {
-	token := extractBearerToken(r)
-	if token == "" {
-		return nil, unauthorizedError("Missing or invalid Authorization header for AMAZON_COGNITO_USER_POOLS.")
-	}
-	claims := parseJWTClaims(token)
-	identity := map[string]any{
-		"sub":                 claims["sub"],
-		"issuer":              claims["iss"],
-		"username":            claimString(claims, "cognito:username", "username"),
-		"claims":              claims,
-		"sourceIp":            sourceIPs(r),
-		"defaultAuthStrategy": "ALLOW",
-	}
-	return identity, nil
-}
-
 // authenticateOIDC checks for a Bearer token and extracts claims, including the issuer.
 func (h *Handler) authenticateOIDC(r *http.Request, oidcCfg json.RawMessage) (map[string]any, *protocol.AWSError) {
 	token := extractBearerToken(r)
@@ -382,12 +364,24 @@ func extractBearerToken(r *http.Request) string {
 	return ""
 }
 
-// parseJWTClaims base64-decodes the payload section of a JWT (between the two dots)
-// to extract claims. This is NOT a security validation — the emulator trusts the token.
+// parseJWTClaims extracts a JWT's claims, yielding an empty map for anything
+// it cannot read. This is NOT a security validation — the emulator trusts the
+// token. Strict Cognito enforcement calls decodeJWTClaims instead, because it
+// has to tell a malformed token apart from one carrying no claims.
 func parseJWTClaims(token string) map[string]any {
+	claims, err := decodeJWTClaims(token)
+	if err != nil {
+		return map[string]any{}
+	}
+	return claims
+}
+
+// decodeJWTClaims base64url-decodes the payload section of a JWT (between the
+// two dots) and reports why it could not, without verifying anything.
+func decodeJWTClaims(token string) (map[string]any, error) {
 	parts := strings.SplitN(token, ".", 3)
 	if len(parts) < 2 {
-		return map[string]any{}
+		return nil, fmt.Errorf("malformed JWT: expected at least 2 parts, got %d", len(parts))
 	}
 	payload := parts[1]
 	// JWT uses base64url without padding.
@@ -396,13 +390,13 @@ func parseJWTClaims(token string) map[string]any {
 	}
 	decoded, err := base64.URLEncoding.DecodeString(payload)
 	if err != nil {
-		return map[string]any{}
+		return nil, fmt.Errorf("JWT payload decode: %w", err)
 	}
 	var claims map[string]any
 	if err := json.Unmarshal(decoded, &claims); err != nil {
-		return map[string]any{}
+		return nil, fmt.Errorf("JWT payload JSON: %w", err)
 	}
-	return claims
+	return claims, nil
 }
 
 func claimString(claims map[string]any, keys ...string) string {

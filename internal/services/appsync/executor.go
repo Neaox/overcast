@@ -58,7 +58,9 @@ package appsync
 // Phase 5 — Authentication (P2): ✅ DONE (all auth types + multi-auth)
 //   Validates incoming GraphQL requests based on the API's authenticationType:
 //     API_KEY                    → x-api-key header against stored ApiKeys (expiry check)
-//     AMAZON_COGNITO_USER_POOLS  → Bearer token from Authorization header, JWT claims parsed
+//     AMAZON_COGNITO_USER_POOLS  → Bearer token from Authorization header, JWT claims parsed;
+//                                  verified against the local Cognito pool when
+//                                  OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH is on (cognito_auth.go)
 //     OPENID_CONNECT             → Bearer token + JWT claims + issuer validation
 //     AWS_LAMBDA                 → invoke configured Lambda authorizer (accept-all stub)
 //     AWS_IAM                    → accept (SigV4 stub already passes all requests)

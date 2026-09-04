@@ -491,6 +491,16 @@ func WithEnforceAPIGatewayThrottle(enabled bool) Option {
 	}
 }
 
+// WithEnforceAppSyncCognitoAuth turns AppSync's AMAZON_COGNITO_USER_POOLS
+// authorization from a bearer-token presence check into verification against
+// the local Cognito user pool the API names. Off by default, matching the
+// emulator's default posture.
+func WithEnforceAppSyncCognitoAuth(enabled bool) Option {
+	return func(so *serverOptions) {
+		so.cfg.EnforceAppSyncCognitoAuth = enabled
+	}
+}
+
 // WithEC2VPCStrategy sets the VPC network strategy used by the EC2 service.
 // Valid values: "shared" (default), "strict", "remapped". See
 // docs/services/ec2.md § Advanced: VPC networking strategies for details.

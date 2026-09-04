@@ -2,7 +2,7 @@ service: appsync
 status: fixed
 priority: p2
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-07-23
+last_updated: 2026-09-05
 protocols: [rest_json, graphql_execution, websocket_realtime, aws_json_1_0, aws_json_1_1, rpcv2_cbor]
 implementation: [internal/services/appsync]
 integration_tests: [tests/integration/appsync]
@@ -189,6 +189,29 @@ operations:
         status: fixed
         evidence: TestTryAuthLambdaAuthorizer_invokesFunction
         notes: Lambda authorizer events now include queryString, operationName, and variables from the decoded GraphQL request body.
+  ExecuteGraphQLCognitoAuthorization:
+    status: intentionally_partial
+    aws_docs:
+      - https://docs.aws.amazon.com/appsync/latest/devguide/security-authz.html#amazon-cognito-user-pools-authorization
+      - https://docs.aws.amazon.com/appsync/latest/devguide/resolver-context-reference.html#aws-appsync-resolver-context-reference-identity
+      - https://docs.aws.amazon.com/cognito/latest/developerguide/amazon-cognito-user-pools-using-the-id-token.html
+    scenario_matrix:
+      - scenario: Relaxed default accepts any bearer token and decodes its claims
+        status: fixed
+        evidence: TestAuth_cognitoAcceptsBearer; TestAuth_cognitoIdentityAvailableInVTL; TestAuth_multiAuth; TestAuthCognitoRelaxed_acceptsUnsignedToken; TestAuthenticateCognito_relaxedNeverVerifies
+        notes: Default posture is unchanged — a bearer token is required, never verified, and its claims reach $ctx.identity so resolver tests can mint unsigned JWTs.
+      - scenario: Strict enforcement accepts a token minted by the local Cognito user pool
+        status: fixed
+        evidence: TestAuthCognitoStrict_acceptsTokenMintedByLocalCognito; TestAuthCognitoStrict_acceptsAccessToken; TestAuthenticateCognito_strictReturnsVerifiedClaims; TestAuthenticateCognito_strictAcceptsAccessToken
+        notes: With OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH=true, ID and access tokens from InitiateAuth/AdminInitiateAuth are accepted and $ctx.identity still carries sub, username, issuer, claims (including cognito:groups), sourceIp and defaultAuthStrategy.
+      - scenario: Strict enforcement rejects missing, malformed, wrong-signature, wrong-issuer, wrong-token_use and wrong-client tokens
+        status: fixed
+        evidence: TestAuthCognitoStrict_rejectsBadTokens; TestAuthCognitoStrict_rejectsExpiredToken; TestAuthCognitoStrict_honoursAppIdClientRegex; TestAuthenticateCognito_strictRejections; TestAuthenticateCognito_strictWithoutValidatorFailsClosed
+        notes: Each failure returns AppSync's UnauthorizedException with HTTP 401. The issuer must name the API's configured userPoolId by its last path segment, token_use must be id or access, and appIdClientRegex is matched against aud (ID token) or client_id (access token).
+      - scenario: Additional Cognito authentication providers follow the same rule
+        status: fixed
+        evidence: TestAuthCognitoStrict_appliesToAdditionalAuthProvider
+        notes: One verifier serves both the primary authenticationType and every AMAZON_COGNITO_USER_POOLS entry in additionalAuthenticationProviders, so enforcement cannot differ between them.
   TagResource:
     status: fixed
     aws_docs:
@@ -234,13 +257,16 @@ findings:
       - Lambda authorizer deniedFields now null denied resolver fields, mapped Lambda request objects validate operation/invocationType and support Event invocation null results, and direct Lambda nested list batching is implemented for maxBatchSize resolvers.
       - Direct Lambda resolver events now carry pipeline stash and prev.result when invoked from pipeline functions, and deniedFields matching avoids cross-API full-ARN bleed-through.
       - Lambda authorizer requestContext now includes GraphQL query details, authorizer TTL caching honors authorizerResultTtlInSeconds and ttlOverride, and VTL BatchInvoke payloads are merged for nested Lambda batch resolvers.
+      - AMAZON_COGNITO_USER_POOLS authorization can now verify bearer tokens against the local Cognito user pool named by userPoolConfig.userPoolId — RS256 signature, issuer, token_use, expiry and appIdClientRegex — behind OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH, for the primary and additional authentication providers alike.
   remaining_gaps:
     - Continue typed protocol validation tests beyond the UpdateGraphqlApi missing-name, TagResource invalid-key, and CreateGraphqlApi ownerContact boundary cases.
     - Audit support claims category by category.
     - Downgrade or annotate config-only and inert behavior where AWS compatibility is limited.
     - Continue CreateGraphqlApi boundary/nested-config coverage before marking reviewed.
     - Continue broader typed protocol validation and data-source CloudFormation coverage before marking the full AppSync service reviewed.
-  intentionally_partial: []
+    - OPENID_CONNECT authorization still decodes tokens without verifying the signature, issuer, iatTTL/authTTL or the clientId regex; there is no enforcement switch for it as there now is for Cognito.
+  intentionally_partial:
+    - AMAZON_COGNITO_USER_POOLS token verification is opt-in (OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH, default off). The default posture accepts any bearer token and decodes its claims, because the emulator is not a security boundary and local resolver tests mint unsigned JWTs. Even with enforcement on, only tokens minted by Overcast's own Cognito can verify — Overcast holds no key for a pool in real AWS, and does not fetch one — and OPENID_CONNECT and AWS_IAM authorization are unaffected by the switch.
 handoff:
   issue: https://github.com/overcast-sh/overcast/issues/8
   start_with: [remaining typed protocol validation, AppSync data-source CloudFormation end-to-end coverage]

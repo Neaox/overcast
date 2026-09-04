@@ -147,6 +147,9 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.EnforceAPIGatewayThrottle {
 		t.Error("EnforceAPIGatewayThrottle: expected false by default")
 	}
+	if cfg.EnforceAppSyncCognitoAuth {
+		t.Error("EnforceAppSyncCognitoAuth: expected false by default")
+	}
 	if cfg.ProtocolStrict {
 		t.Error("ProtocolStrict: expected false by default (lenient drift posture)")
 	}
@@ -2630,6 +2633,19 @@ func TestLoad_enforceAPIGatewayThrottleEnabled(t *testing.T) {
 	}
 	if !cfg.EnforceAPIGatewayThrottle {
 		t.Fatal("expected EnforceAPIGatewayThrottle=true")
+	}
+}
+
+func TestLoad_enforceAppSyncCognitoAuthEnabled(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH", "true")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.EnforceAppSyncCognitoAuth {
+		t.Fatal("expected EnforceAppSyncCognitoAuth=true")
 	}
 }
 

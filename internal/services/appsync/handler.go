@@ -62,6 +62,12 @@ type Handler struct {
 	// dynamoInvoker invokes DynamoDB operations (for AMAZON_DYNAMODB data sources).
 	dynamoInvoker events.DynamoDBInvoker
 
+	// cognitoValidator verifies AMAZON_COGNITO_USER_POOLS bearer tokens against
+	// the local Cognito service. Read only when
+	// OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH is on; nil leaves relaxed
+	// authorization untouched. See cognito_auth.go.
+	cognitoValidator events.CognitoTokenValidator
+
 	// Execution engine — optional, nil until implementations are wired.
 
 	// vtlEvaluator evaluates VTL mapping templates.
