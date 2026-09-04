@@ -26,7 +26,7 @@ import { CopyButton } from "@/components/ui/copy-button"
 import { useDebugEnabled } from "@/hooks/use-server-info"
 import type { StreamEvent } from "@/hooks/use-event-stream"
 import { cn } from "@/lib/utils"
-import Prism from "@/lib/prism"
+import { highlightJSON } from "@/lib/highlight-code"
 import { defaultEventSummary } from "./event-summary"
 import { ArnLink, LinkifiedText } from "./arn-link"
 
@@ -228,7 +228,7 @@ function formatJSONString(value: string): string | null {
 }
 
 function highlightedJSON(value: string) {
-  return { __html: Prism.highlight(value, Prism.languages.json, "json") }
+  return { __html: highlightJSON(value) }
 }
 
 function jsonLiteral(value: string | number | boolean | null): string {

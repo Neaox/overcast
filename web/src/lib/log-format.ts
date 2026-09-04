@@ -13,9 +13,14 @@
  * these read it: a colourised line starts with an escape sequence, not with
  * `{` or `ERROR`.
  */
-import { highlightCode } from "@/lib/highlight-code"
 import { LruCache } from "@/lib/lru-cache"
 import { stripAnsi } from "@/lib/ansi"
+
+// `highlightJSON` lives in `lib/highlight-code.ts` — the module that owns
+// syntax highlighting — and is re-exported here so the log viewers (and this
+// file's own tests) keep importing it from the log vocabulary they already
+// know. See highlight-code.ts for the implementation and its tests.
+export { highlightJSON } from "@/lib/highlight-code"
 
 export type LogLevel = "error" | "warn" | "info" | "debug"
 
@@ -183,19 +188,6 @@ export function jsonDocumentText(message: string, pretty: boolean): string | nul
   const text = json === null ? null : stringifyJSON(json, pretty)
   jsonTextCache.put(key, text, message.length + (text?.length ?? 0))
   return text
-}
-
-/**
- * PrismJS-highlighted JSON, as HTML.
- *
- * The caching lives in [highlight-code.ts](./highlight-code.ts), which
- * generalised this function's original implementation (LRU, size cap, and the
- * identical-string-on-hit guarantee that keeps `dangerouslySetInnerHTML` from
- * touching the DOM) so the S3 preview could share it. Kept as a named export
- * because "highlight this log document" is what the log rows mean.
- */
-export function highlightJSON(text: string): string {
-  return highlightCode(text, "json")
 }
 
 /**

@@ -6,7 +6,7 @@
  *   <JsonEditor value={text} onChange={setText} error={parseError} />
  */
 import _Editor from "react-simple-code-editor"
-import Prism from "@/lib/prism"
+import { highlightJSON } from "@/lib/highlight-code"
 
 /** CJS/ESM interop: unwraps `.default` when a bundler hands us the whole module object. */
 function getDefaultExport<T>(mod: T): T {
@@ -49,7 +49,7 @@ export function JsonEditor({
           onValueChange={onChange}
           highlight={(code) =>
             code
-              ? Prism.highlight(code, Prism.languages.json, "json")
+              ? highlightJSON(code)
               : placeholder
                 ? `<span class="json-placeholder">${placeholder}</span>`
                 : ""
