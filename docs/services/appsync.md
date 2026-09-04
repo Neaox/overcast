@@ -76,15 +76,15 @@ Overcast serves both endpoints from one place.
 
 ## Differences from AWS
 
-| Area | Overcast |
-| --- | --- |
-| Cognito and OIDC authorization | A bearer token is required and its claims are decoded, but the JWT signature and expiry are **not** verified |
-| IAM authorization | Accepted unconditionally; the SigV4 signature is not verified |
-| Other data source types | OpenSearch, Elasticsearch, RDS, EventBridge and Bedrock Runtime are stored, but a resolver against one fails at execution |
-| API cache | `CreateApiCache` stores configuration; nothing is cached |
-| Domain names | Synthetic `appsyncDomainName` and `hostedZoneId`; no DNS or certificate validation |
-| Complex configs | `logConfig`, `userPoolConfig`, `openIDConnectConfig` and similar are stored as passthrough JSON |
-| `outErrors` | Never populated by either evaluator — `util.appendError` output is not collected |
+| Area                           | On AWS                                                          | Overcast                                                                                                 |
+| ------------------------------ | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Cognito and OIDC authorization | The JWT signature and expiry are verified                       | A bearer token is required and its claims are decoded, but the signature and expiry are **not** verified |
+| IAM authorization              | The SigV4 signature is verified                                 | Accepted unconditionally; the signature is not verified                                                  |
+| Other data source types        | OpenSearch, Elasticsearch, RDS, EventBridge and Bedrock Runtime | Stored, but a resolver against one fails at execution                                                    |
+| API cache                      | `CreateApiCache` provisions a cache                             | It stores configuration; nothing is cached                                                               |
+| Domain names                   | Real DNS and certificate validation                             | Synthetic `appsyncDomainName` and `hostedZoneId`; no DNS or certificate validation                       |
+| Complex configs                | Validated and applied                                           | `logConfig`, `userPoolConfig`, `openIDConnectConfig` and similar are stored as passthrough JSON          |
+| `outErrors`                    | Carries `util.appendError` output                               | Never populated by either evaluator — that output is not collected                                       |
 
 The full list is in [AppSync limitations](./appsync/limitations.md).
 

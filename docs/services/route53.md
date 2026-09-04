@@ -84,13 +84,13 @@ canonicalised to lowercase with a trailing dot.
 
 ## Differences from AWS
 
-| Area | Overcast |
-| --- | --- |
-| Routing policies | Weighted, latency, failover, geolocation and multivalue metadata is stored and returned, but never evaluated — several record sets sharing a name and type are merged into one answer rather than one being chosen |
-| Health checks | No endpoint is ever probed. `GetHealthCheckStatus` and `GetHealthCheckLastFailureReason` return `501` |
-| Private zones | Served to every container Overcast starts, with no VPC filtering. `AssociateVPCWithHostedZone`, `DisassociateVPCFromHostedZone` and `ListHostedZonesByVPC` return `501` |
-| Change propagation | `ChangeResourceRecordSets` applies synchronously, so a change is `INSYNC` immediately — there is no `PENDING` phase |
-| Traffic policies | `CreateTrafficPolicy` returns `501` |
+| Area               | On AWS                                                                  | Overcast                                                                                                                                                                |
+| ------------------ | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Routing policies   | Weighted, latency, failover, geolocation and multivalue pick one answer | The metadata is stored and returned but never evaluated — several record sets sharing a name and type are merged into one answer                                        |
+| Health checks      | Endpoints are probed                                                    | None is ever probed; `GetHealthCheckStatus` and `GetHealthCheckLastFailureReason` return `501`                                                                          |
+| Private zones      | Resolvable only from the associated VPCs                                | Served to every container Overcast starts, with no VPC filtering; `AssociateVPCWithHostedZone`, `DisassociateVPCFromHostedZone` and `ListHostedZonesByVPC` return `501` |
+| Change propagation | `PENDING`, then `INSYNC`                                                | `ChangeResourceRecordSets` applies synchronously, so a change is `INSYNC` immediately                                                                                   |
+| Traffic policies   | Full API                                                                | `CreateTrafficPolicy` returns `501`                                                                                                                                     |
 
 The full list is in [Route 53 limitations](./route53/limitations.md).
 
