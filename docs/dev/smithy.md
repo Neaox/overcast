@@ -1,4 +1,4 @@
-# Wire Protocols
+# Smithy wire protocols
 
 > Describes the Smithy-aligned wire protocols Overcast supports, how they are
 > detected, and how they are added to a service.
