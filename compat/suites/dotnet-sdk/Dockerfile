@@ -13,6 +13,11 @@ COPY dotnet-sdk/Registry/ ./Registry/
 # Sources only: a developer's Tests/bin and Tests/obj would otherwise come along
 # with the directory and carry host paths into the build.
 COPY dotnet-sdk/Tests/*.cs ./Tests/
+# RegistrationTests (#1700) resolves the suite's real registrations against the
+# real registry.json, so it has to be present for the test run below — the
+# runtime stage below copies its own for the same reason, one directory later.
+COPY registry.json ./
+COPY registry.generated.json ./
 # Running the registry loader's unit tests here means a loader regression fails
 # the image build rather than surfacing as a wrong result in a compat run — the
 # guard `mvn package` already gives the java-sdk suite.
