@@ -9,6 +9,7 @@ func init() {
 		capabilities.Capability{Service: "acm", Operation: "RequestCertificate", Category: "Certificates", Status: capabilities.StatusSupported, Notes: "Creates a certificate; immediately ISSUED; inline `Tags` applied at creation"},
 		capabilities.Capability{Service: "acm", Operation: "DescribeCertificate", Category: "Certificates", Status: capabilities.StatusSupported, Notes: "Returns certificate details"},
 		capabilities.Capability{Service: "acm", Operation: "ListCertificates", Category: "Certificates", Status: capabilities.StatusSupported, Notes: "Lists all certificates"},
+		capabilities.Capability{Service: "acm", Operation: "ListCertificateDomainValidations", Category: "Certificates", Status: capabilities.StatusPartial, Notes: "One synthesized SUCCESS entry per DomainName/SAN; no ValidationMethod or DNS/email challenge data — Overcast issues certificates without ever validating them"},
 		capabilities.Capability{Service: "acm", Operation: "DeleteCertificate", Category: "Certificates", Status: capabilities.StatusSupported, Notes: "Deletes a certificate by ARN"},
 		capabilities.Capability{Service: "acm", Operation: "ListTagsForCertificate", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Lists tags for a certificate"},
 		capabilities.Capability{Service: "acm", Operation: "AddTagsToCertificate", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Adds tags to a certificate"},

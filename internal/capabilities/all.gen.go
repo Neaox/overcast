@@ -12,6 +12,7 @@ var AllCapabilities = []Capability{
 	{Service: "acm", Operation: "AddTagsToCertificate", Category: "Tags", Status: StatusSupported, Notes: "Adds tags to a certificate", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "acm", Operation: "DeleteCertificate", Category: "Certificates", Status: StatusSupported, Notes: "Deletes a certificate by ARN", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "acm", Operation: "DescribeCertificate", Category: "Certificates", Status: StatusSupported, Notes: "Returns certificate details", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "acm", Operation: "ListCertificateDomainValidations", Category: "Certificates", Status: StatusPartial, Notes: "One synthesized SUCCESS entry per DomainName/SAN; no ValidationMethod or DNS/email challenge data — Overcast issues certificates without ever validating them", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "acm", Operation: "ListCertificates", Category: "Certificates", Status: StatusSupported, Notes: "Lists all certificates", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "acm", Operation: "ListTagsForCertificate", Category: "Tags", Status: StatusSupported, Notes: "Lists tags for a certificate", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "acm", Operation: "ListTagsForResource", Category: "Tags", Status: StatusSupported, Notes: "Modern alias of `ListTagsForCertificate`", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},

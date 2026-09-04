@@ -16,6 +16,9 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"ListCertificates": op.NewTyped[listCertificatesRequest, listCertificatesResponse](
 			"ListCertificates", h.listCertificatesTyped,
 		),
+		"ListCertificateDomainValidations": op.NewTyped[listCertificateDomainValidationsRequest, listCertificateDomainValidationsResponse](
+			"ListCertificateDomainValidations", h.listCertificateDomainValidationsTyped,
+		),
 		"DeleteCertificate": op.NewTyped[deleteCertificateRequest, struct{}](
 			"DeleteCertificate", h.deleteCertificateTyped,
 		),

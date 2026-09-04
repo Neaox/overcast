@@ -100,7 +100,7 @@
 | Pipes           | 8   |
 | WAF v2          | 7   |
 | Shield          | 8   |
-| ACM             | 10  |
+| ACM             | 11  |
 | Athena          | 11  |
 | Bedrock         | 2   |
 | CloudWatch      | 17  |

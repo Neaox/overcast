@@ -9,6 +9,7 @@ import (
 
 	"github.com/overcast-sh/overcast/internal/middleware"
 	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 type requestCertificateRequest struct {
@@ -40,6 +41,46 @@ type certificateSummaryWire struct {
 	DomainName     string `json:"DomainName"`
 	Status         string `json:"Status"`
 	Type           string `json:"Type"`
+}
+
+type listCertificateDomainValidationsRequest struct {
+	CertificateArn string `json:"CertificateArn"`
+	MaxItems       int    `json:"MaxItems"`
+	NextToken      string `json:"NextToken"`
+}
+
+type listCertificateDomainValidationsResponse struct {
+	DomainValidationSummaryList []domainValidationSummaryWire `json:"DomainValidationSummaryList"`
+	NextToken                   string                        `json:"NextToken,omitempty"`
+}
+
+// domainValidationSummaryWire mirrors ACM's DomainValidationSummary shape —
+// added alongside ACM's email-to-DNS validation-method migration feature
+// (https://aws.amazon.com/about-aws/whats-new/2026/08/AWS-Certificate-Manager-Email-DNS-Switch/),
+// verified against
+// https://docs.aws.amazon.com/acm/latest/APIReference/API_DomainValidationSummary.html.
+// RequestedValidationConfiguration is only ever populated by real AWS while a
+// validation-method migration is in progress; Overcast never starts one, so
+// it is always omitted here.
+type domainValidationSummaryWire struct {
+	DomainName                       string                       `json:"DomainName"`
+	ActiveValidationConfiguration    *validationConfigurationWire `json:"ActiveValidationConfiguration,omitempty"`
+	RequestedValidationConfiguration *validationConfigurationWire `json:"RequestedValidationConfiguration,omitempty"`
+}
+
+// validationConfigurationWire mirrors ACM's ValidationConfiguration shape
+// (https://docs.aws.amazon.com/acm/latest/APIReference/API_ValidationConfiguration.html).
+// ValidationChallenge — the DNS CNAME record or validation email addresses —
+// is deliberately never populated: Overcast issues every certificate
+// immediately with no validation round trip, and describeCertificateTyped's
+// Certificate type carries no DomainValidationOptions/ResourceRecord either.
+// Inventing challenge data here that DescribeCertificate does not also
+// return would itself be a divergence real AWS never produces. ValidationMethod
+// is left unset for the same reason: RequestCertificate does not record which
+// method (DNS/EMAIL) a caller asked for, so reporting one would be a guess.
+type validationConfigurationWire struct {
+	ValidationMethod string `json:"ValidationMethod,omitempty"`
+	ValidationStatus string `json:"ValidationStatus,omitempty"`
 }
 
 type deleteCertificateRequest struct {
@@ -166,6 +207,68 @@ func (h *Handler) listCertificatesTyped(ctx context.Context, req *listCertificat
 	return &listCertificatesResponse{CertificateSummaryList: summaries}, nil
 }
 
+// domainValidationsPageOptions mirrors AWS's documented default and cap for
+// ListCertificateDomainValidations' MaxItems: default 1000, no larger than
+// 1000 (https://docs.aws.amazon.com/acm/latest/APIReference/API_ListCertificateDomainValidations.html).
+var domainValidationsPageOptions = serviceutil.PaginateOptions{DefaultLimit: 1000, MaxLimit: 1000}
+
+func (h *Handler) listCertificateDomainValidationsTyped(ctx context.Context, req *listCertificateDomainValidationsRequest) (*listCertificateDomainValidationsResponse, *protocol.AWSError) {
+	cert, aerr := h.lookupCert(ctx, req.CertificateArn)
+	if aerr != nil {
+		return nil, aerr
+	}
+
+	domains := certDomains(cert)
+	page, err := serviceutil.Paginate(domains, req.MaxItems, req.NextToken, domainValidationsPageOptions)
+	if err != nil {
+		return nil, &protocol.AWSError{
+			Code:       "InvalidArgsException",
+			Message:    "The specified next token is invalid.",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+
+	summaries := make([]domainValidationSummaryWire, 0, len(page.Items))
+	for _, domain := range page.Items {
+		summaries = append(summaries, domainValidationSummaryWire{
+			DomainName: domain,
+			// Overcast never performs real DNS/email validation — every
+			// certificate is ISSUED immediately (RequestCertificate), so
+			// every domain it names is honestly reported as already
+			// validated, consistent with that fiction.
+			ActiveValidationConfiguration: &validationConfigurationWire{
+				ValidationStatus: "SUCCESS",
+			},
+		})
+	}
+	return &listCertificateDomainValidationsResponse{
+		DomainValidationSummaryList: summaries,
+		NextToken:                   page.NextToken,
+	}, nil
+}
+
+// certDomains returns the certificate's DomainName plus each
+// SubjectAlternativeNames entry, de-duplicated in encounter order — one
+// entry per unique domain actually on the certificate. Real AWS's own
+// DescribeCertificate.DomainValidationOptions works the same way: one entry
+// per SAN, and the primary domain name is always among the SANs.
+func certDomains(cert *Certificate) []string {
+	domains := make([]string, 0, 1+len(cert.SubjectAlternativeNames))
+	seen := make(map[string]struct{}, cap(domains))
+	add := func(d string) {
+		if _, ok := seen[d]; ok {
+			return
+		}
+		seen[d] = struct{}{}
+		domains = append(domains, d)
+	}
+	add(cert.DomainName)
+	for _, san := range cert.SubjectAlternativeNames {
+		add(san)
+	}
+	return domains
+}
+
 func (h *Handler) deleteCertificateTyped(ctx context.Context, req *deleteCertificateRequest) (*struct{}, *protocol.AWSError) {
 	if _, found := h.store.getCert(ctx, req.CertificateArn); !found {
 		return nil, errCertificateNotFound(req.CertificateArn)
@@ -223,26 +326,35 @@ func (h *Handler) removeTagsFromCertificateTyped(ctx context.Context, req *remov
 	return &struct{}{}, nil
 }
 
+// lookupCert validates arn and looks up the certificate it names, in a
+// single store read. It is the shared implementation behind requireCert and
+// any caller that also needs the certificate itself (e.g.
+// listCertificateDomainValidationsTyped), so there is exactly one read and
+// one not-found error built per lookup instead of a validate-then-fetch pair
+// that could race with a concurrent DeleteCertificate.
+func (h *Handler) lookupCert(ctx context.Context, arn string) (*Certificate, *protocol.AWSError) {
+	if arn == "" {
+		return nil, &protocol.AWSError{
+			Code: "InvalidArnException", Message: "CertificateArn is required", HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	cert, found := h.store.getCert(ctx, arn)
+	if !found {
+		return nil, errCertificateNotFound(arn)
+	}
+	return cert, nil
+}
+
 // requireCert reports a missing certificate rather than letting a tag write
 // land under an ARN nothing owns — DeleteCertificate is the only thing that
 // clears the tag namespace, so an orphaned entry would never be collected.
 func (h *Handler) requireCert(ctx context.Context, arn string) *protocol.AWSError {
-	if arn == "" {
-		return &protocol.AWSError{
-			Code: "InvalidArnException", Message: "CertificateArn is required", HTTPStatus: http.StatusBadRequest,
-		}
-	}
-	if _, found := h.store.getCert(ctx, arn); !found {
-		return errCertificateNotFound(arn)
-	}
-	return nil
+	_, aerr := h.lookupCert(ctx, arn)
+	return aerr
 }
 
-// errCertificateNotFound is ACM's answer for every operation that fails to
-// find a certificate by ARN. AWS documents ResourceNotFoundException as HTTP
-// Status Code: 400 on every ACM operation that can raise it (e.g.
-// https://docs.aws.amazon.com/acm/latest/APIReference/API_DescribeCertificate.html#API_DescribeCertificate_Errors),
-// not 404 — see https://github.com/overcast-sh/overcast/issues/1729.
+// errCertificateNotFound builds the ResourceNotFoundException ACM returns
+// when CertificateArn doesn't name a certificate that exists.
 func errCertificateNotFound(arn string) *protocol.AWSError {
 	return &protocol.AWSError{
 		Code:       "ResourceNotFoundException",

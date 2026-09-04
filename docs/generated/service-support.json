@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1472,
+  "total_ops": 1473,
   "services": [
     {
       "service": "s3",
@@ -7388,8 +7388,8 @@
     {
       "service": "acm",
       "display_name": "ACM",
-      "total_ops": 10,
-      "implemented_ops": 10,
+      "total_ops": 11,
+      "implemented_ops": 11,
       "operations": [
         {
           "operation": "RequestCertificate",
@@ -7408,6 +7408,12 @@
           "category": "Certificates",
           "status": "✅ Supported",
           "notes": "Lists all certificates"
+        },
+        {
+          "operation": "ListCertificateDomainValidations",
+          "category": "Certificates",
+          "status": "⚠️ Partial",
+          "notes": "One synthesized SUCCESS entry per DomainName/SAN; no ValidationMethod or DNS/email challenge data — Overcast issues certificates without ever validating them"
         },
         {
           "operation": "DeleteCertificate",

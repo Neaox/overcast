@@ -37,19 +37,20 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 
 ## What works
 
-| Area         | Behaviour                                                                                                               |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| Certificates | `RequestCertificate`, `DescribeCertificate`, `ListCertificates`, `DeleteCertificate`                                    |
-| Tags         | The legacy `AddTagsToCertificate` family and the modern `TagResource` / `UntagResource` / `ListTagsForResource` aliases |
-| Inline tags  | `Tags` supplied on `RequestCertificate` are applied at creation                                                         |
+| Area         | Behaviour                                                                                                                 |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Certificates | `RequestCertificate`, `DescribeCertificate`, `ListCertificates`, `ListCertificateDomainValidations`, `DeleteCertificate` |
+| Tags         | The legacy `AddTagsToCertificate` family and the modern `TagResource` / `UntagResource` / `ListTagsForResource` aliases    |
+| Inline tags  | `Tags` supplied on `RequestCertificate` are applied at creation                                                            |
 
 ## Differences from AWS
 
-| Area                 | On AWS                                                       | Overcast                                       |
-| -------------------- | ------------------------------------------------------------ | ---------------------------------------------- |
-| Validation           | DNS or email round-trip; `PENDING_VALIDATION` first          | Skipped; the certificate is `ISSUED` on return |
-| Certificate material | A real X.509 chain is issued                                 | No key or chain is generated                   |
-| Import and renewal   | `ImportCertificate`, `RenewCertificate`, `ExportCertificate` | Not implemented — `501 NotImplemented`         |
+| Area                        | On AWS                                                                                         | Overcast                                                                                                               |
+| ---------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Validation                  | DNS or email round-trip; `PENDING_VALIDATION` first                                            | Skipped; the certificate is `ISSUED` on return                                                                        |
+| Certificate material        | A real X.509 chain is issued                                                                   | No key or chain is generated                                                                                           |
+| Domain validation summaries | `ListCertificateDomainValidations` reports `ValidationMethod` and DNS/email challenge details  | Every domain is reported `SUCCESS` with no `ValidationMethod` or challenge data — nothing was ever actually validated |
+| Import and renewal          | `ImportCertificate`, `RenewCertificate`, `ExportCertificate`                                   | Not implemented — `501 NotImplemented`                                                                                |
 
 ## Gotchas
 
@@ -61,7 +62,7 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 
 ## Operations
 
-All 10 listed operations are implemented.
+All 11 listed operations are implemented.
 Per-operation status, notes and AWS API links: [ACM operations](acm/operations.md).
 
 <!-- END overcast:capabilities -->
