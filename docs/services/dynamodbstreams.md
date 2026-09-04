@@ -49,12 +49,12 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 
 ## Differences from AWS
 
-| Area                     | Overcast                                                                                                                                        |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| One shard per stream     | The shard id is derived from the table name and never rolls over, so shard-splitting and parent/child traversal cannot be exercised             |
-| Nothing is trimmed       | AWS discards stream records after 24 hours; here they survive for the life of the table, so `TRIM_HORIZON` always replays from the first write  |
-| Region-scoped ARNs       | A stream ARN from another region answers `ResourceNotFoundException` on `DescribeStream` and `GetShardIterator`, as AWS's regional endpoints do |
-| No cross-region triggers | A Lambda event source mapping or pipe naming one region's stream is not fired by writes to a same-named table in another region                 |
+| Area                  | On AWS                                                  | Overcast                                                                                                                        |
+| --------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Shards                | Split as throughput grows, with parent/child lineage    | One per stream, its id derived from the table name and never rolling over, so splitting and traversal cannot be exercised       |
+| Trimming              | Records are discarded after 24 hours                    | Records survive for the life of the table, so `TRIM_HORIZON` always replays from the first write                                |
+| Region-scoped ARNs    | A regional endpoint refuses another region's stream ARN | `DescribeStream` and `GetShardIterator` answer `ResourceNotFoundException` the same way                                         |
+| Cross-region triggers | Streams and their consumers are region-scoped           | A Lambda event source mapping or pipe naming one region's stream is not fired by writes to a same-named table in another region |
 
 <!-- BEGIN overcast:capabilities -->
 

@@ -71,16 +71,16 @@ name a stack output hands you is one you can dial. Set
 
 ## Differences from AWS
 
-| Area | Overcast |
-| --- | --- |
-| Deployment | `Status` is `Deployed` on create — no propagation delay |
-| ETags | A quoted version counter (`"1"`, `"2"`), not a content hash |
-| Cache key | Path and query string only — headers, cookies and `Vary` are ignored |
-| Cache TTL | The behaviour's cache policy `DefaultTTL`, else 24 hours; origin `Cache-Control`, `MinTTL` and `MaxTTL` are ignored |
-| Signed URLs and cookies | Not verified; `ActiveTrustedKeyGroups` always reports disabled |
-| Origin access (OAC / OAI) | Stored, never enforced — origin requests are not signed |
-| Response headers and origin request policies | Stored and returned; the proxy applies neither |
-| Monitoring, real-time logs, field-level encryption | Metadata only |
+| Area                                               | On AWS                                                    | Overcast                                                                      |
+| -------------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Deployment                                         | `Status` is `InProgress`, then `Deployed` once propagated | `Status` is `Deployed` on create — no propagation delay                       |
+| ETags                                              | A content hash                                            | A quoted version counter (`"1"`, `"2"`)                                       |
+| Cache key                                          | Path, query string, headers, cookies and `Vary`           | Path and query string only                                                    |
+| Cache TTL                                          | Origin `Cache-Control` within `MinTTL` and `MaxTTL`       | The behaviour's cache policy `DefaultTTL`, else 24 hours; the rest is ignored |
+| Signed URLs and cookies                            | Verified against the trusted key groups                   | Not verified; `ActiveTrustedKeyGroups` always reports disabled                |
+| Origin access (OAC / OAI)                          | Origin requests are signed                                | Stored, never enforced — origin requests are not signed                       |
+| Response headers and origin request policies       | Applied to every request                                  | Stored and returned; the proxy applies neither                                |
+| Monitoring, real-time logs, field-level encryption | Full API                                                  | Metadata only                                                                 |
 
 The full list, with what each unenforced feature means for a stack that relies
 on it, is in [CloudFront limitations](./cloudfront/limitations.md).

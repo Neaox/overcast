@@ -74,15 +74,15 @@ template, as CDK does, are re-hosted onto a reachable origin by
 
 ## Differences from AWS
 
-| Area | Overcast |
-| --- | --- |
-| Mapping templates | Not evaluated as VTL. A `MOCK` integration returns its integration response's `application/json` template verbatim; other values pass through as-is |
-| Lambda and IAM authorizers | `TOKEN`, `REQUEST` and IAM authorizers are stored but not enforced at request time |
-| Request validation | Request validators are stored but not enforced |
-| WebSocket APIs | `WEBSOCKET` is accepted on creation; execution is not implemented, and the connection-management route returns `501` |
-| Usage counters | In memory, so a restart resets them. Real API Gateway carries a quota across the whole period |
-| Usage plans on HTTP APIs | Nothing is measured — as on AWS, v2 has no API-key or usage-plan concept |
-| `GetUsage` range | A range wider than 400 days is refused with `BadRequestException`; AWS documents no such cap |
+| Area                       | On AWS                                     | Overcast                                                                                                                                      |
+| -------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mapping templates          | Evaluated as VTL                           | Not evaluated — a `MOCK` integration returns its integration response's `application/json` template verbatim; other values pass through as-is |
+| Lambda and IAM authorizers | Enforced on every request                  | `TOKEN`, `REQUEST` and IAM authorizers are stored but not enforced at request time                                                            |
+| Request validation         | A request validator rejects a bad request  | Request validators are stored but not enforced                                                                                                |
+| WebSocket APIs             | Execution and connection management        | `WEBSOCKET` is accepted on creation; execution is not implemented, and the connection-management route returns `501`                          |
+| Usage counters             | A quota is carried across the whole period | In memory, so a restart resets them                                                                                                           |
+| Usage plans on HTTP APIs   | v2 has no API-key or usage-plan concept    | Nothing is measured either                                                                                                                    |
+| `GetUsage` range           | No documented cap                          | A range wider than 400 days is refused with `BadRequestException`                                                                             |
 
 ## Usage plan throttling and quotas
 

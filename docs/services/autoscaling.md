@@ -69,13 +69,14 @@ operation rather than stored and quietly disregarded.
 
 ## Differences from AWS
 
-| Area | Overcast |
-| --- | --- |
-| Termination policy | `OldestInstance`, skipping instances protected from scale-in — the same answer AWS's `Default` gives for a single-AZ or uniform group. A `TerminationPolicies` value is stored and echoed but does not change the choice |
-| `HealthCheckType=ELB` | Accepted and echoed, but load-balancer target health is not a health source. Only `SetInstanceHealth` marks an instance unhealthy. `HealthCheckGracePeriod` is stored and echoed |
-| Lifecycle hooks | AWS runs every hook watching a transition; Overcast parks the instance on the first matching hook by name |
-| Region | Groups are global to the emulator, and the reconciler launches into the configured default region |
-| Instances | EC2 instances are metadata — the group converges on records, not on running compute. See [EC2](./ec2.md) |
+| Area                  | On AWS                                                         | Overcast                                                                                                                        |
+| --------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Termination policy    | `Default` — balance across AZs, then the documented tie-breaks | `OldestInstance`, skipping instances protected from scale-in — the same answer `Default` gives for a single-AZ or uniform group |
+| `TerminationPolicies` | Chooses which instance goes                                    | Stored and echoed; it does not change the choice                                                                                |
+| `HealthCheckType=ELB` | Load-balancer target health marks an instance unhealthy        | Accepted and echoed, as is `HealthCheckGracePeriod`; only `SetInstanceHealth` marks an instance unhealthy                       |
+| Lifecycle hooks       | Every hook watching a transition runs                          | The instance parks on the first matching hook by name                                                                           |
+| Region                | Groups are regional                                            | Groups are global to the emulator; the reconciler launches into the configured default region                                   |
+| Instances             | Real compute                                                   | Metadata — the group converges on records, not on running compute. See [EC2](./ec2.md)                                          |
 
 <!-- BEGIN overcast:capabilities -->
 

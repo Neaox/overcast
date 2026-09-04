@@ -201,6 +201,7 @@ func CheckWith(docs []Doc, opts Options) []Problem {
 			landing, waived := checkLanding(doc, pending[stem])
 			problems = append(problems, landing...)
 			problems = append(problems, checkQuickStartCredentials(doc, pending[stem])...)
+			problems = append(problems, checkDifferencesTable(doc)...)
 			if pending[stem] {
 				waivedSatisfied[stem] = waived
 			}

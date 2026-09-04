@@ -54,15 +54,15 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 
 ## Differences from AWS
 
-| Area                            | Overcast                                                                                                                                         |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Synthetic network fields        | `DescribeMountTargets.IpAddress`, availability zone and ENI id are derived from the subnet id; the address is never what an export is reached on |
-| No data plane without Docker    | In `mock` mode — and in `live` mode while no Docker daemon is reachable — mount targets are metadata and there is no storage behind them         |
-| Policies are not enforced       | A file-system policy is JSON-validated, stored and echoed, never applied to a request                                                            |
-| Security groups are not checked | They are stored, not validated against EC2 or enforced                                                                                           |
-| Backup policy has no states     | `PutBackupPolicy` stores `ENABLED`/`DISABLED` with no `ENABLING`/`DISABLING`, and there is no AWS Backup integration                             |
-| No replication                  | The replication configuration operations answer `501`                                                                                            |
-| Long ids always                 | Resource ids are always long-form (`fs-`/`fsmt-`/`fsap-` plus 17 hex characters), whatever the account preference says                           |
+| Area                        | On AWS                                                             | Overcast                                                                                                                                 |
+| --------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Mount target network fields | `IpAddress`, availability zone and ENI id name a real mount target | `DescribeMountTargets` derives them from the subnet id; the address is never what an export is reached on                                |
+| Data plane                  | NFS is always served                                               | In `mock` mode — and in `live` mode while no Docker daemon is reachable — mount targets are metadata and there is no storage behind them |
+| File-system policies        | Evaluated on every request                                         | JSON-validated, stored and echoed, never applied to a request                                                                            |
+| Security groups             | Checked against the mount target                                   | Stored, not validated against EC2 or enforced                                                                                            |
+| Backup policy               | `ENABLING`/`DISABLING` states, backed by AWS Backup                | `PutBackupPolicy` stores `ENABLED`/`DISABLED` only, and there is no AWS Backup integration                                               |
+| Replication                 | Full API                                                           | The replication configuration operations answer `501`                                                                                    |
+| Resource id length          | Follows the account preference                                     | Always long-form (`fs-`/`fsmt-`/`fsap-` plus 17 hex characters)                                                                          |
 
 ## Modes
 

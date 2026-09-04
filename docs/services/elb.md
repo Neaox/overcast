@@ -71,15 +71,15 @@ reached Overcast on.
 
 ## Differences from AWS
 
-| Area | Overcast |
-| --- | --- |
-| Health checks | `DescribeTargetHealth` reports every registered target `healthy`. A target group's `HealthCheck*` properties are stored and echoed, but nothing evaluates them |
-| Listener actions | Only `forward` reaches the data plane |
-| `RedirectConfig`, `FixedResponseConfig` | Round-trip through `DescribeListeners`, but are not applied — a listener carrying only one of these has no target group, so a request to it gets `503` |
-| Listener rules | `CreateRule` and `DescribeRules` return `501`. Only the listener's `DefaultActions` route |
-| `ModifyLoadBalancerAttributes` | Returns `501` |
-| Not modelled | Weighted `ForwardConfig`, `Certificates`, `SslPolicy`, `AlpnPolicy`, `MutualAuthentication`, and the Cognito/OIDC authenticate actions |
-| Listener selection | With several listeners, the port in the `Host` header picks one, defaulting to 80; otherwise the first listener is used |
+| Area                                                                                                              | On AWS                                                               | Overcast                                                                                                                                            |
+| ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Health checks                                                                                                     | Targets are probed and reported healthy or unhealthy                 | `DescribeTargetHealth` reports every registered target `healthy`; a target group's `HealthCheck*` properties are stored and echoed, never evaluated |
+| Listener actions                                                                                                  | `forward`, `redirect`, `fixed-response` and the authenticate actions | Only `forward` reaches the data plane                                                                                                               |
+| `RedirectConfig`, `FixedResponseConfig`                                                                           | Applied to matching requests                                         | Round-trip through `DescribeListeners`, never applied — a listener carrying only one of these has no target group, so a request to it gets `503`    |
+| Listener rules                                                                                                    | Route by path, host, header and more                                 | `CreateRule` and `DescribeRules` return `501`; only the listener's `DefaultActions` route                                                           |
+| `ModifyLoadBalancerAttributes`                                                                                    | Sets idle timeout, access logs and the rest                          | Returns `501`                                                                                                                                       |
+| Weighted `ForwardConfig`, `Certificates`, `SslPolicy`, `AlpnPolicy`, `MutualAuthentication`, Cognito/OIDC actions | Full API                                                             | Not modelled                                                                                                                                        |
+| Listener selection                                                                                                | The port the connection arrived on picks the listener                | The port in the `Host` header picks one, defaulting to 80; otherwise the first listener is used                                                     |
 
 ## Gotchas
 

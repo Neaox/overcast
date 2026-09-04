@@ -44,14 +44,14 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 
 ## Differences from AWS
 
-| Area                          | Overcast                                                                                                                                                                    |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Data Catalog only             | Jobs, crawlers, triggers, workflows, connections, the schema registry and Data Quality are not implemented                                                                  |
-| Schemas are dropped           | A table's `StorageDescriptor` — its columns, serde and `Location` — and its `PartitionKeys` and `Parameters` are accepted and discarded, so `GetTable` returns none of them |
-| Database input is dropped too | `LocationUri`, `Parameters` and `TargetDatabase` are not stored                                                                                                             |
-| No partitions API             | There are no partition rows and no `GetPartitions`                                                                                                                          |
-| No update operations          | There is no `UpdateDatabase` or `UpdateTable`; re-create through `CreateTable` to change a definition                                                                       |
-| One catalog                   | `CatalogId` is echoed, never used to separate catalogs                                                                                                                      |
+| Area                                                                            | On AWS                                                                                      | Overcast                                                               |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Jobs, crawlers, triggers, workflows, connections, schema registry, Data Quality | Full API                                                                                    | Not implemented — the Data Catalog only                                |
+| Table schema                                                                    | `StorageDescriptor` — columns, serde and `Location` — plus `PartitionKeys` and `Parameters` | Accepted and discarded, so `GetTable` returns none of them             |
+| Database input                                                                  | `LocationUri`, `Parameters` and `TargetDatabase` are stored                                 | Not stored                                                             |
+| Partitions                                                                      | `GetPartitions` and the partition API                                                       | There are no partition rows and no `GetPartitions`                     |
+| Updates                                                                         | `UpdateDatabase` and `UpdateTable`                                                          | Neither exists; re-create through `CreateTable` to change a definition |
+| `CatalogId`                                                                     | Selects the catalog                                                                         | Echoed, never used to separate catalogs                                |
 
 ## Gotchas
 

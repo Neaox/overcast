@@ -48,15 +48,15 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 
 ## Differences from AWS
 
-| Area                             | Overcast                                                                                                 |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Nothing is backed up             | Rules are stored, never fired; there are no backup jobs, restore jobs or copy jobs                       |
-| No recovery points               | A vault's `NumberOfRecoveryPoints` is always zero, and the recovery-point operations are not implemented |
-| No vault lock                    | `Locked` is always false and the retention members are absent                                            |
-| No sharing                       | Every vault is a standard unshared vault, so `ListBackupVaults --shared` lists none                      |
-| One plan version                 | Only the current version is kept — `GetBackupPlan` with an older `VersionId` is a miss                   |
-| Plans delete outright            | Nothing is tombstoned, so `ListBackupPlans --include-deleted` adds nothing                               |
-| `AdvancedBackupSettings` dropped | Neither stored nor returned                                                                              |
+| Area                     | On AWS                                                           | Overcast                                                                                                 |
+| ------------------------ | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Backup jobs              | Rules fire on schedule and produce backup, restore and copy jobs | Rules are stored, never fired; there are no jobs of any kind                                             |
+| Recovery points          | Created and listed per vault                                     | A vault's `NumberOfRecoveryPoints` is always zero, and the recovery-point operations are not implemented |
+| Vault lock               | `Locked` and the retention members                               | `Locked` is always false and the retention members are absent                                            |
+| Shared vaults            | `ListBackupVaults --shared` lists them                           | Every vault is a standard unshared vault, so it lists none                                               |
+| Plan versions            | Every version is retrievable by `VersionId`                      | Only the current version is kept — `GetBackupPlan` with an older `VersionId` is a miss                   |
+| Deleted plans            | Tombstoned, so `ListBackupPlans --include-deleted` finds them    | Plans delete outright, so it adds nothing                                                                |
+| `AdvancedBackupSettings` | Stored and returned                                              | Neither stored nor returned                                                                              |
 
 ## Gotchas
 

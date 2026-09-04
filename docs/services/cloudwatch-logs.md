@@ -64,13 +64,13 @@ unsupported `RetentionInDays` fails the resource and rolls the stack back.
 
 ## Differences from AWS
 
-| Area | Overcast |
-| --- | --- |
-| Logs Insights | `StartQuery` and `GetQueryResults` return `501` |
-| Subscription filters | `PutSubscriptionFilter` returns `501`. There is no fan-out to Lambda or Kinesis |
-| Metric filters | `PutMetricFilter` returns `501`. Log events never become metrics |
-| `StartLiveTail` over CBOR | Returns `501`; only the JSON protocol serves it |
-| Write timing | Events are buffered per stream for about 50 ms — flushed early on a burst, and synchronously on graceful shutdown — so a read immediately after a write may not see the last event |
+| Area                      | On AWS                             | Overcast                                                                                                                                                                           |
+| ------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Logs Insights             | `StartQuery` and `GetQueryResults` | Both return `501`                                                                                                                                                                  |
+| Subscription filters      | Fan out to Lambda or Kinesis       | `PutSubscriptionFilter` returns `501`; there is no fan-out                                                                                                                         |
+| Metric filters            | Log events become metrics          | `PutMetricFilter` returns `501`; they never do                                                                                                                                     |
+| `StartLiveTail` over CBOR | Supported                          | Returns `501`; only the JSON protocol serves it                                                                                                                                    |
+| Write timing              | No documented write buffer         | Events are buffered per stream for about 50 ms — flushed early on a burst, and synchronously on graceful shutdown — so a read immediately after a write may not see the last event |
 
 <!-- BEGIN overcast:capabilities -->
 

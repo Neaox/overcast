@@ -64,17 +64,17 @@ spec but never removed — see
 
 ## Differences from AWS
 
-| Area | Overcast |
-| --- | --- |
-| Instances | Metadata only. No VM or container is launched; there is no compute behind an instance ID |
-| Security group rules | Stored and returned, never enforced. Everything on a VPC's network can talk to everything else |
-| Subnets | Recorded as metadata. A VPC is one flat bridge — there is no per-subnet isolation or inter-subnet routing |
-| Route tables, NAT gateways, VPN and transit gateways | Metadata only. Only an internet gateway changes the network topology |
-| Elastic IPs | Allocated and associated, but the addresses are synthetic and not routable |
-| VPC peering | The state machine runs; no cross-network routing is established |
-| NACLs, VPC Flow Logs, DHCP option sets | Not emulated. `DescribeDhcpOptions` returns a fabricated default |
-| `Describe*` filters | A filter name Overcast has not implemented is **refused**, not ignored |
-| Without Docker | Every networking feature degrades to metadata-only. API responses stay correct; container connectivity is lost |
+| Area                                                 | On AWS                                              | Overcast                                                                                                       |
+| ---------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Instances                                            | A VM boots from the AMI                             | Metadata only; no VM or container is launched, and no compute sits behind an instance ID                       |
+| Security group rules                                 | Enforced on every packet                            | Stored and returned, never enforced — everything on a VPC's network can talk to everything else                |
+| Subnets                                              | Each subnet is its own routed network               | Metadata only; a VPC is one flat bridge, with no per-subnet isolation or routing                               |
+| Route tables, NAT gateways, VPN and transit gateways | Shape the network path                              | Metadata only; only an internet gateway changes the topology                                                   |
+| Elastic IPs                                          | Routable public addresses                           | Allocated and associated, but synthetic and not routable                                                       |
+| VPC peering                                          | An accepted peering routes traffic between the VPCs | The state machine runs; no cross-network routing is established                                                |
+| NACLs, VPC Flow Logs, DHCP option sets               | Full API                                            | Not emulated; `DescribeDhcpOptions` returns a fabricated default                                               |
+| `Describe*` filters                                  | Every documented filter name is honoured            | A filter name Overcast has not implemented is **refused**, not ignored                                         |
+| Without Docker                                       | Not applicable                                      | Every networking feature degrades to metadata only: API responses stay correct, container connectivity is lost |
 
 Overlapping CIDRs, the Docker-network model behind all of this, and the full
 filter rules are in [EC2 limitations](./ec2/limitations.md); the Docker

@@ -58,14 +58,14 @@ directory before it accepts anything.
 
 ## Differences from AWS
 
-| Area                                  | Overcast                                                                                                                                                                       |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| The reader endpoint serves the writer | Every member has its own storage, so a reader endpoint spread across replicas would answer from an empty database. Reads are not distributed; replica lag cannot be reproduced |
-| Recorded, not enforced                | Backup windows, maintenance windows, parameter groups, security groups and log exports are stored and reported, never acted on                                                 |
-| No backups or snapshots               | Snapshot, restore and point-in-time operations are not implemented                                                                                                             |
-| Engine version substitution           | Any `EngineVersion` is accepted; one with no image of its own is served by the nearest in its family, and the substitution is logged                                           |
-| Not every engine                      | SQL Server, Oracle and Db2 are not emulated — see [RDS limitations](./rds/limitations.md)                                                                                        |
-| No failover API                       | There is no `FailoverDBCluster`; deleting the writer is the only way to trigger a promotion                                                                                    |
+| Area                                                                           | On AWS                                       | Overcast                                                                                                                     |
+| ------------------------------------------------------------------------------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Reader endpoint                                                                | Serves the replicas                          | Serves the writer — every member has its own storage, so reads are not distributed and replica lag cannot be reproduced      |
+| Backup and maintenance windows, parameter groups, security groups, log exports | Acted on                                     | Stored and reported, never acted on                                                                                          |
+| Snapshots                                                                      | Snapshot, restore and point-in-time recovery | Not implemented                                                                                                              |
+| `EngineVersion`                                                                | The exact version is provisioned             | Any version is accepted; one with no image of its own is served by the nearest in its family, and the substitution is logged |
+| Engines                                                                        | SQL Server, Oracle, Db2 and the rest         | PostgreSQL, MySQL, MariaDB and Aurora only — see [RDS limitations](./rds/limitations.md)                                     |
+| Failover                                                                       | `FailoverDBCluster` promotes a replica       | No such operation; deleting the writer is the only way to trigger a promotion                                                |
 
 Full engine matrix and cluster-setting behaviour:
 [RDS limitations](./rds/limitations.md). Privileges, password rules and rotation:
