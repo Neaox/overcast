@@ -431,6 +431,27 @@ func TestGetObject_notFound(t *testing.T) {
 	helpers.AssertXMLError(t, resp, "NoSuchKey")
 }
 
+// TestGetObject_missingBucketReturnsNoSuchBucket is the regression test for
+// #1635: a GET of any key in a bucket that does not exist must answer
+// NoSuchBucket, not NoSuchKey — the unversioned path in readTarget used to
+// fall straight through to a composite-key lookup that cannot tell "no such
+// bucket" apart from "no such key", so both collapsed to NoSuchKey.
+func TestGetObject_missingBucketReturnsNoSuchBucket(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	// Given: no bucket named "no-such-bucket" exists at all
+
+	// When: we GET any key from it
+	resp, err := http.DefaultClient.Do(get(srv, "/no-such-bucket/key.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: NoSuchBucket, not NoSuchKey
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	helpers.AssertXMLError(t, resp, "NoSuchBucket")
+}
+
 func TestGetObject_rangeBytes(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	createBucket(t, srv, "my-bucket")
@@ -1036,6 +1057,29 @@ func TestCopyObject_missingSourceKey(t *testing.T) {
 	helpers.AssertXMLError(t, resp, "NoSuchKey")
 }
 
+// TestCopyObject_missingSourceBucket is the CopyObject half of the #1635
+// regression: the source lookup in CopyObject calls getObjectMeta directly
+// (handler_object.go, "Load source metadata only"), with no check that
+// srcBucket — which is independent of the already-resolved destination
+// bucket — actually exists. A copy-source naming a bucket that was never
+// created used to answer NoSuchKey instead of NoSuchBucket.
+func TestCopyObject_missingSourceBucket(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "dst-bucket")
+	// Given: "no-such-src-bucket" was never created
+
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/dst-bucket/copy.txt", nil)
+	req.Header.Set("x-amz-copy-source", "/no-such-src-bucket/key.txt")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	helpers.AssertXMLError(t, resp, "NoSuchBucket")
+}
+
 func TestCopyObject_invalidCopySource(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	createBucket(t, srv, "dst-bucket")
@@ -1054,10 +1098,32 @@ func TestCopyObject_invalidCopySource(t *testing.T) {
 
 // ---- HeadObject (bucket not found path) ------------------------------------
 
+// HeadObject shares readTarget's unversioned lookup with GetObject (#1635),
+// but AWS documents that a HEAD error is always a bodyless generic status
+// code — "It's not possible to retrieve the exact exception of these error
+// codes" (HeadObject API reference) — and this codebase sets no
+// x-amz-error-code or similar header to work around that. So a missing
+// bucket and a missing key in an existing bucket are wire-identical for HEAD
+// (404, no body) both before and after the #1635 fix; these two tests pin
+// that pair down so the fix's internal bucket-check cannot regress either
+// case even though neither response distinguishes the reason.
 func TestHeadObject_bucketNotFound(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
 	resp, err := http.DefaultClient.Do(head(srv, "/no-such-bucket/key.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+}
+
+func TestHeadObject_existingBucketMissingKeyReturnsNotFound(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "my-bucket")
+
+	resp, err := http.DefaultClient.Do(head(srv, "/my-bucket/no-such-key.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2967,14 +3033,16 @@ func TestS3VirtualHostedStyle_NonexistentBucketReturnsModeledXMLError(t *testing
 	}
 	defer resp.Body.Close()
 
-	// Then: we get a modeled AWS XML error, not a bare 404. GetObject does
-	// not distinguish a missing bucket from a missing key (pre-existing,
-	// addressing-style-independent behavior — real AWS returns NoSuchBucket
-	// here; Overcast returns NoSuchKey for both cases). This test only pins
+	// Then: we get a modeled AWS XML error, not a bare 404 — NoSuchBucket,
+	// matching real AWS (#1635; GetObject used to answer NoSuchKey for a
+	// missing bucket regardless of addressing style, because the unversioned
+	// read path never checked the bucket at all). This test's job is to pin
 	// that virtual-hosted-style routing reaches the real S3 error path
-	// instead of falling through to chi's bare 404.
+	// instead of falling through to chi's bare 404, with the addressing
+	// style contributing no divergence of its own from the path-style case
+	// covered by TestGetObject_missingBucketReturnsNoSuchBucket.
 	helpers.AssertStatus(t, resp, http.StatusNotFound)
-	helpers.AssertXMLError(t, resp, "NoSuchKey")
+	helpers.AssertXMLError(t, resp, "NoSuchBucket")
 	helpers.AssertRequestID(t, resp)
 }
 
@@ -4130,6 +4198,47 @@ func TestGetObjectTagging_success(t *testing.T) {
 	if len(result.TagSet.Tags) != 1 || result.TagSet.Tags[0].Key != "env" || result.TagSet.Tags[0].Value != "prod" {
 		t.Errorf("unexpected tags: %+v", result.TagSet.Tags)
 	}
+}
+
+// TestGetObjectTagging_missingBucketReturnsNoSuchBucket is the
+// GetObjectTagging half of the #1635 regression: it reaches getObjectMeta
+// through currentObjectForTagging without ever resolving the bucket first,
+// so a nonexistent bucket used to answer NoSuchKey instead of NoSuchBucket.
+func TestGetObjectTagging_missingBucketReturnsNoSuchBucket(t *testing.T) {
+	// Given: no bucket named "no-such-bucket" exists at all
+	srv := helpers.NewTestServer(t)
+
+	// When: GetObjectTagging is called against a key in it
+	resp, err := http.DefaultClient.Do(get(srv, "/no-such-bucket/key.txt?tagging"))
+	if err != nil {
+		t.Fatalf("GetObjectTagging: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: NoSuchBucket, not NoSuchKey
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	helpers.AssertXMLError(t, resp, "NoSuchBucket")
+}
+
+// TestGetObjectTagging_missingKeyInExistingBucketReturnsNoSuchKey is the
+// regression guard: a missing key in a bucket that does exist must still
+// answer NoSuchKey, so the bucket-existence fix cannot collapse the two
+// cases in the other direction.
+func TestGetObjectTagging_missingKeyInExistingBucketReturnsNoSuchKey(t *testing.T) {
+	// Given: a bucket that exists, but no object in it
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "tag-bucket")
+
+	// When: GetObjectTagging is called against a key that was never created
+	resp, err := http.DefaultClient.Do(get(srv, "/tag-bucket/no-such-key.txt?tagging"))
+	if err != nil {
+		t.Fatalf("GetObjectTagging: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Then: NoSuchKey, unchanged
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	helpers.AssertXMLError(t, resp, "NoSuchKey")
 }
 
 func TestGetObjectTagging_emptyTagSet(t *testing.T) {

@@ -118,8 +118,10 @@ func (h *Handler) DeleteBucketTagging(w http.ResponseWriter, r *http.Request) {
 // currentObjectForTagging loads the key's current version for a tagging
 // operation. A key whose current version is a delete marker has nothing to tag,
 // and AWS answers it as it answers any other read hidden behind a marker.
+// Uses readObjectMeta rather than getObjectMeta directly so a nonexistent
+// bucket answers NoSuchBucket, not NoSuchKey (#1635).
 func (h *Handler) currentObjectForTagging(ctx context.Context, bucket, key string) (*Object, *protocol.AWSError) {
-	obj, aerr := h.store.getObjectMeta(ctx, bucket, key)
+	obj, aerr := h.readObjectMeta(ctx, bucket, key)
 	if aerr != nil {
 		return nil, aerr
 	}

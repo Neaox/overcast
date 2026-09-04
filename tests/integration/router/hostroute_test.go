@@ -35,11 +35,11 @@ func TestHostDispatch_unrecognisedLabelFallsThroughToS3(t *testing.T) {
 	defer resp.Body.Close()
 
 	// Then it reaches S3 (not a panic, not a misrouted 200) and returns a
-	// well-formed S3 XML error — the emulator resolves GetObject against a
-	// non-existent bucket straight to NoSuchKey rather than checking bucket
-	// existence first.
+	// well-formed S3 XML error — NoSuchBucket, since neither "abc123..." nor
+	// "some-bucket" was ever created (#1635: GetObject checks the bucket
+	// first and only then the key).
 	helpers.AssertStatus(t, resp, http.StatusNotFound)
-	helpers.AssertXMLError(t, resp, "NoSuchKey")
+	helpers.AssertXMLError(t, resp, "NoSuchBucket")
 }
 
 func TestHostDispatch_plainHostFallsThroughToS3(t *testing.T) {

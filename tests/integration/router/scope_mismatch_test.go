@@ -15,8 +15,8 @@
 // before this change (claimAnswersCaller matched). The defect was only
 // visible with a *mismatched* scope: it fell past restFallback into S3,
 // which read "2015-01-01" as a bucket name and "es/domain/probe" /
-// "es/versions" as an object key neither of which exists, answering
-// NoSuchKey for a question nobody asked.
+// "es/versions" as an object key, answering NoSuchBucket (that bucket was
+// never created either — #1635) for a question nobody asked.
 //
 // Run: go test ./tests/integration/router/...
 package router_test
@@ -142,8 +142,9 @@ func TestScopeMismatch_signingNameDiffersFromOvercastKey(t *testing.T) {
 // TestScopeMismatch_unsignedTraffic_stillFallsThroughToS3 pins the issue's
 // explicit constraint: unsigned traffic is S3's by design (addressesNonS3),
 // and this change must not touch that. Both repro paths, unsigned, must keep
-// answering as S3 reading "2015-01-01/es" as a bucket/key pair — an XML NoSuchKey,
-// not the new JSON 403.
+// answering as S3 reading "2015-01-01/es" as a bucket/key pair — an XML
+// NoSuchBucket, since "2015-01-01" was never created as a bucket (#1635:
+// GetObject checks the bucket before the key) — not the new JSON 403.
 func TestScopeMismatch_unsignedTraffic_stillFallsThroughToS3(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
@@ -160,7 +161,7 @@ func TestScopeMismatch_unsignedTraffic_stillFallsThroughToS3(t *testing.T) {
 			defer resp.Body.Close()
 
 			helpers.AssertStatus(t, resp, http.StatusNotFound)
-			helpers.AssertXMLError(t, resp, "NoSuchKey")
+			helpers.AssertXMLError(t, resp, "NoSuchBucket")
 		})
 	}
 }
@@ -196,7 +197,7 @@ func TestScopeMismatch_unrecognisedScope_stillFallsThroughToS3(t *testing.T) {
 			defer resp.Body.Close()
 
 			helpers.AssertStatus(t, resp, http.StatusNotFound)
-			helpers.AssertXMLError(t, resp, "NoSuchKey")
+			helpers.AssertXMLError(t, resp, "NoSuchBucket")
 		})
 	}
 }

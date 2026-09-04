@@ -297,6 +297,21 @@ func (h *Handler) GetObject(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, f)
 }
 
+// readObjectMeta is the read-side counterpart to getObjectMeta that checks the
+// bucket exists first, so a missing bucket reports NoSuchBucket rather than
+// NoSuchKey — the same distinction resolveVersion already makes for versioned
+// reads. Write paths (PutObject, DeleteObject) resolve the bucket themselves
+// before ever reaching the object store and then call lookupObjectMeta/
+// getObjectMeta directly, so they are unaffected and stay at one lookup; every
+// unversioned read path shares this one extra getBucket call instead of
+// duplicating the check. See #1635.
+func (h *Handler) readObjectMeta(ctx context.Context, bucket, key string) (*Object, *protocol.AWSError) {
+	if _, aerr := h.store.getBucket(ctx, bucket); aerr != nil {
+		return nil, aerr
+	}
+	return h.store.getObjectMeta(ctx, bucket, key)
+}
+
 // readTarget resolves the version a GET or HEAD addresses — the key's current
 // version, or the one named by ?versionId= — and writes the AWS response itself
 // when there is nothing to read, reporting false.
@@ -313,7 +328,7 @@ func (h *Handler) readTarget(w http.ResponseWriter, r *http.Request, bucket, key
 	versionID := serviceutil.QueryString(r, "versionId", "")
 
 	if versionID == "" {
-		obj, aerr := h.store.getObjectMeta(r.Context(), bucket, key)
+		obj, aerr := h.readObjectMeta(r.Context(), bucket, key)
 		if aerr != nil {
 			protocol.WriteXMLError(w, r, aerr)
 			return nil, false
@@ -768,7 +783,7 @@ func (h *Handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 	// Load source metadata only — body is streamed via copyBody.
 	var src *Object
 	if srcVersionID == "" {
-		src, aerr = h.store.getObjectMeta(r.Context(), srcBucket, srcKey)
+		src, aerr = h.readObjectMeta(r.Context(), srcBucket, srcKey)
 		if aerr == nil && src.DeleteMarker {
 			// The source key's current version is a delete marker, so there is
 			// nothing to copy — the same answer a GET of that key gives.
