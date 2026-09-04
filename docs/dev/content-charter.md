@@ -101,6 +101,15 @@ mechanically enforces the rules that are checkable (1, 3, 9, and partially 2).
   predate the budget sit in `LengthBacklog` in `internal/docslint` at the size
   they were: they may shrink, never grow, and the entry is deleted (by failing
   the build) the moment the page comes inside the budget.
+
+  **`docs/dev/` has a budget of its own**, `DevMaxProseChars` and
+  `DevMaxPageChars`: **26,000 characters of prose** and **30,000 characters of
+  page**, measured the same way, opted out of with the same marker, with the
+  same shrink-only backlog. Bigger because these pages are a different kind of
+  writing — a published page answers one question for somebody mid-task, a
+  contributor page explains a mechanism to somebody about to change it — and
+  applied at all because `docs/dev/` came to hold the four largest files in the
+  repository. Nothing else in this charter is enforced there.
 - **The house-style tells (rule 9)**, as fixed phrases and fixed shapes. The
   failure prints the line to paste into the allowlist beside the linter if the
   wording is genuinely right; an allowlist line that stops matching fails too.

@@ -209,7 +209,7 @@ func CheckWith(docs []Doc, opts Options) []Problem {
 		case docIgnored:
 			// Anything outside docs/services/, and the services index itself.
 		}
-		problems = append(problems, checkLength(doc, opts.WholeCorpus)...)
+		problems = append(problems, checkLength(doc, publishedLengthBudget(), opts.WholeCorpus)...)
 		problems = append(problems, checkOutsideLinks(doc)...)
 		problems = append(problems, checkOpeningLine(doc)...)
 		problems = append(problems, checkRelated(doc)...)
@@ -221,7 +221,7 @@ func CheckWith(docs []Doc, opts Options) []Problem {
 	}
 	problems = append(problems, checkPendingIsStillNeeded(waivedSatisfied)...)
 	if opts.WholeCorpus {
-		problems = append(problems, checkBacklogPathsExist(seen)...)
+		problems = append(problems, checkBacklogPathsExist(seen, publishedLengthBudget())...)
 		problems = append(problems, checkAllowlistIsStillNeeded(opts.Allowlist, allowlistUsed)...)
 	}
 	return problems

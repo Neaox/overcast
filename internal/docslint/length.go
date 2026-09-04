@@ -34,6 +34,27 @@ const (
 	MaxPageChars  = 12000
 )
 
+// The contributor budget, for docs/dev/. Bigger, because those pages are not
+// the same kind of thing: a published page answers one question for somebody
+// mid-task, and a contributor page explains a mechanism to somebody about to
+// change it. Cutting docs/dev/networking.md to 6,000 characters would not make
+// it a better page, it would make it a worse one somewhere else.
+//
+// The numbers come from measuring docs/dev/ the day the rule landed — twelve
+// pages, prose median 9,894, p75 18,510, p90 19,743; page median 13,816,
+// p75 23,926, p90 24,164. The budget sits above the largest page that is still
+// about one thing (docs/dev/networking.md, 24,100 characters of prose after
+// the merge with container-networking.md) and far below the one that is not:
+// docs/dev/architecture.md, at 59,103, which is thirteen chapters under one H1
+// and is on ContributorLengthBacklog until it is split.
+//
+// Same mechanism otherwise. LengthReviewMarker opts a page out with a stated
+// reason, and the marker is self-deleting.
+const (
+	DevMaxProseChars = 26000
+	DevMaxPageChars  = 30000
+)
+
 // LengthReviewMarker is the deliberate opt-out: an HTML comment naming why this
 // particular page is legitimately long.
 //
@@ -82,10 +103,25 @@ type LengthBacklogEntry struct {
 // Every entry was measured on the day the budget landed. `Why` names the split
 // the page is waiting for, so the entry is a work item rather than a note that
 // the page is big.
-// The list is empty: every page that predated the budget has been rewritten.
-// Adding an entry back is not the way to land a long page — write the reason on
-// the page in a LengthReviewMarker, where a reader can see it too.
+// The list is empty: every published page that predated the budget has been
+// rewritten. Adding an entry back is not the way to land a long page — write
+// the reason on the page in a LengthReviewMarker, where a reader can see it
+// too. A budget arriving over a tree that never had one is the exception, and
+// ContributorLengthBacklog below is that case.
 var LengthBacklog = map[string]LengthBacklogEntry{}
+
+// ContributorLengthBacklog is the same list for docs/dev/, kept separate
+// because the two trees are linted by separate passes: a stale entry is one
+// naming a page that pass no longer sees, and one list over two passes would
+// call every entry stale in whichever pass did not own it.
+var ContributorLengthBacklog = map[string]LengthBacklogEntry{
+	"docs/dev/architecture.md": {
+		Prose:    59500,
+		Page:     69000,
+		Measured: "59103/68945",
+		Why:      "thirteen numbered chapters under one H1; split it by subsystem, one page each, with this page left as the map",
+	},
+}
 
 // LengthReviewed records a page's authored size as the linter measures it.
 type LengthReviewed struct {
@@ -162,19 +198,75 @@ func Measure(body string) LengthReviewed {
 
 // lengthReviewReason returns the reason given in the page's opt-out marker, and
 // whether the page carries one at all.
+//
+// Fenced code is blanked first. A page that shows the marker as an example —
+// docs/dev/content-charter.md and docs/dev/service-doc-template.md both do,
+// which is how the rule is documented at all — is not a page claiming the
+// exemption, and reading the sample as one told both of them to delete a
+// marker they do not have.
 func lengthReviewReason(body string) (string, bool) {
-	m := lengthMarkerRE.FindStringSubmatch(body)
+	m := lengthMarkerRE.FindStringSubmatch(strings.Join(eachOutsideFences(strings.Split(body, "\n")), "\n"))
 	if m == nil {
 		return "", false
 	}
 	return strings.Join(strings.Fields(m[1]), " "), true
 }
 
-// checkLength applies the budget to one page. retire says whether a stale
-// LengthBacklog entry may be reported: only a whole-corpus run can retire one,
-// because a unit test lints a stub body under a real path and would otherwise
-// be told to delete an entry that is still earning its place.
-func checkLength(doc Doc, retire bool) []Problem {
+// budget is one tree's pair of ceilings, with the backlog of pages that
+// predate them and the name a failure tells the reader to edit.
+type budget struct {
+	prose, page int
+	backlog     map[string]LengthBacklogEntry
+	backlogName string
+}
+
+func publishedLengthBudget() budget {
+	return budget{prose: MaxProseChars, page: MaxPageChars, backlog: LengthBacklog, backlogName: "LengthBacklog"}
+}
+
+func contributorLengthBudget() budget {
+	return budget{prose: DevMaxProseChars, page: DevMaxPageChars, backlog: ContributorLengthBacklog, backlogName: "ContributorLengthBacklog"}
+}
+
+// CheckContributor applies the length budget, and only the length budget, to
+// the contributor tree under docs/dev/.
+//
+// Only that rule. The structure rules describe one published page shape, the
+// tells and the "## Related" footer are promises made to a reader who arrived
+// from search, and a contributor page has neither shape nor that reader. What
+// it does share with a published page is the failure mode the budget exists
+// for: a page that grew until nobody could find anything in it.
+//
+// CheckContributor runs it with no whole-tree claim. See CheckContributorWith.
+func CheckContributor(docs []Doc) []Problem {
+	return CheckContributorWith(docs, Options{})
+}
+
+// CheckContributorWith is CheckContributor with Options. Only WholeCorpus is
+// read, and it carries the same meaning it does for published pages: a stale
+// ContributorLengthBacklog entry can only be retired by a run that saw the
+// whole tree, because "this page is gone" is a true statement about the tree
+// and a meaningless one about the single page a unit test lints.
+func CheckContributorWith(docs []Doc, opts Options) []Problem {
+	var problems []Problem
+	seen := map[string]bool{}
+	sorted := append([]Doc(nil), docs...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Path < sorted[j].Path })
+	for _, doc := range sorted {
+		seen[doc.Path] = true
+		problems = append(problems, checkLength(doc, contributorLengthBudget(), opts.WholeCorpus)...)
+	}
+	if opts.WholeCorpus {
+		problems = append(problems, checkBacklogPathsExist(seen, contributorLengthBudget())...)
+	}
+	return problems
+}
+
+// checkLength applies one budget to one page. retire says whether a stale
+// backlog entry may be reported: only a whole-tree run can retire one, because
+// a unit test lints a stub body under a real path and would otherwise be told
+// to delete an entry that is still earning its place.
+func checkLength(doc Doc, b budget, retire bool) []Problem {
 	var problems []Problem
 	report := func(format string, args ...any) {
 		problems = append(problems, Problem{Path: doc.Path, Msg: fmt.Sprintf(format, args...)})
@@ -182,9 +274,9 @@ func checkLength(doc Doc, retire bool) []Problem {
 
 	size := Measure(doc.Body)
 	reason, opted := lengthReviewReason(doc.Body)
-	backlog, backlogged := LengthBacklog[doc.Path]
-	overProse := size.Prose > MaxProseChars
-	overPage := size.Page > MaxPageChars
+	backlog, backlogged := b.backlog[doc.Path]
+	overProse := size.Prose > b.prose
+	overPage := size.Page > b.page
 
 	if opted {
 		switch {
@@ -193,7 +285,7 @@ func checkLength(doc Doc, retire bool) []Problem {
 				LengthReviewMarker, reason)
 		case !overProse && !overPage:
 			report("carries <!-- %s … --> but is inside the budget (%d/%d prose, %d/%d page). Delete the marker",
-				LengthReviewMarker, size.Prose, MaxProseChars, size.Page, MaxPageChars)
+				LengthReviewMarker, size.Prose, b.prose, size.Page, b.page)
 		}
 		return problems
 	}
@@ -204,8 +296,8 @@ func checkLength(doc Doc, retire bool) []Problem {
 			if !retire {
 				break
 			}
-			report("is inside the budget now (%d/%d prose, %d/%d page). Delete its LengthBacklog entry in internal/docslint/length.go so the rule stays enforced",
-				size.Prose, MaxProseChars, size.Page, MaxPageChars)
+			report("is inside the budget now (%d/%d prose, %d/%d page). Delete its %s entry in internal/docslint/length.go so the rule stays enforced",
+				size.Prose, b.prose, size.Page, b.page, b.backlogName)
 		case size.Prose > backlog.Prose:
 			report("is on the length backlog at %d characters of prose and this grows it to %d. A page waiting to be split may only shrink — %s",
 				backlog.Prose, size.Prose, backlog.Why)
@@ -218,21 +310,21 @@ func checkLength(doc Doc, retire bool) []Problem {
 
 	if overProse {
 		report("%d characters of prose, over the %d budget. Split it: one concern per page, lead with the command or the decision the reader came for, push the exhaustive detail into a table. If it is legitimately long, say why in <!-- %s … --> (see docs/dev/content-charter.md)",
-			size.Prose, MaxProseChars, LengthReviewMarker)
+			size.Prose, b.prose, LengthReviewMarker)
 	}
 	if overPage {
 		report("%d characters, over the %d page budget. Split it by concern, or move the reference tables to their own page. If it is legitimately long, say why in <!-- %s … --> (see docs/dev/content-charter.md)",
-			size.Page, MaxPageChars, LengthReviewMarker)
+			size.Page, b.page, LengthReviewMarker)
 	}
 	return problems
 }
 
-// checkBacklogPathsExist rejects a LengthBacklog entry naming a page that is no
-// longer published — a rename or a deletion that left its ceiling behind, where
-// it would sit forever waiting for a file that never comes back.
-func checkBacklogPathsExist(seen map[string]bool) []Problem {
+// checkBacklogPathsExist rejects a backlog entry naming a page the run no
+// longer sees — a rename or a deletion that left its ceiling behind, where it
+// would sit forever waiting for a file that never comes back.
+func checkBacklogPathsExist(seen map[string]bool, b budget) []Problem {
 	var stale []string
-	for path := range LengthBacklog {
+	for path := range b.backlog {
 		if !seen[path] {
 			stale = append(stale, path)
 		}
@@ -243,7 +335,7 @@ func checkBacklogPathsExist(seen map[string]bool) []Problem {
 	sort.Strings(stale)
 	return []Problem{{
 		Path: "internal/docslint/length.go",
-		Msg: fmt.Sprintf("LengthBacklog names %s that no longer exist; delete the entries: %s",
-			plural(len(stale), "page", "pages"), strings.Join(stale, ", ")),
+		Msg: fmt.Sprintf("%s names %s that no longer exist; delete the entries: %s",
+			b.backlogName, plural(len(stale), "page", "pages"), strings.Join(stale, ", ")),
 	}}
 }
