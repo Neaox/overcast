@@ -742,3 +742,254 @@ func TestRealRegistryBuildsInDependencyOrder(t *testing.T) {
 		}
 	}
 }
+
+// ─── registry.generated.json (#1393) ──────────────────────────────────────
+//
+// Loading rules from the shared loader contract: a missing generated file is
+// a no-op; the checked-in empty file is a no-op; a synthetic non-empty file
+// concatenates after the hand-written groups; a group whose `suites` excludes
+// this suite is not loaded at all; a generated group with no impl and no
+// scenario backend fails loudly with the exact interim-rule message; and a
+// name collision between the two files is a load error.
+
+// writeRegistryPair writes a hand-written registry.json and, if genBody is
+// non-empty, a sibling registry.generated.json in the same temp dir, then
+// points OVERCAST_REGISTRY_PATH at the hand-written file so Load() resolves
+// both from there.
+func writeRegistryPair(t *testing.T, handBody, genBody string) {
+	t.Helper()
+	dir := t.TempDir()
+	handPath := filepath.Join(dir, "registry.json")
+	if err := os.WriteFile(handPath, []byte(handBody), 0o644); err != nil {
+		t.Fatalf("write registry.json: %v", err)
+	}
+	if genBody != "" {
+		if err := os.WriteFile(filepath.Join(dir, "registry.generated.json"), []byte(genBody), 0o644); err != nil {
+			t.Fatalf("write registry.generated.json: %v", err)
+		}
+	}
+	t.Setenv("OVERCAST_REGISTRY_PATH", handPath)
+}
+
+const handWrittenOnly = `{"version":1,"groups":[{"service":"s3","name":"s3-crud","tests":[{"name":"CreateBucket"}]}]}`
+
+// A missing registry.generated.json must be a no-op: Load() returns exactly
+// the hand-written groups, unchanged. Suite images, CI artifacts and branches
+// cut before the file existed have to keep working.
+func TestLoadMissingGeneratedFileIsNoOp(t *testing.T) {
+	writeRegistryPair(t, handWrittenOnly, "")
+
+	reg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() with no generated file = %v, want nil error", err)
+	}
+	if len(reg.Groups) != 1 || reg.Groups[0].Name != "s3-crud" {
+		t.Fatalf("Load() groups = %+v, want only the hand-written s3-crud group", reg.Groups)
+	}
+}
+
+// The checked-in empty file ({"version":1,"groups":[]}) must also be a no-op.
+// Asserting only this invariant — not that the real on-disk file is currently
+// empty — keeps the test from pinning a fact the G2 pilot is about to change.
+func TestLoadEmptyGeneratedFileIsNoOp(t *testing.T) {
+	writeRegistryPair(t, handWrittenOnly, `{"version":1,"groups":[]}`)
+
+	reg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() with empty generated file = %v, want nil error", err)
+	}
+	if len(reg.Groups) != 1 || reg.Groups[0].Name != "s3-crud" {
+		t.Fatalf("Load() groups = %+v, want only the hand-written s3-crud group", reg.Groups)
+	}
+}
+
+// A synthetic non-empty generated file must be concatenated after the
+// hand-written groups, in file order.
+func TestLoadConcatenatesGeneratedGroupsAfterHandWritten(t *testing.T) {
+	gen := `{"version":1,"groups":[{"service":"sqs","name":"sqs-generated","generated":true,"state":"candidate","suites":["go-sdk"],"tests":[{"name":"SendMessage"}]}]}`
+	writeRegistryPair(t, handWrittenOnly, gen)
+
+	reg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want nil error", err)
+	}
+	if len(reg.Groups) != 2 {
+		t.Fatalf("Load() groups = %+v, want 2", reg.Groups)
+	}
+	if reg.Groups[0].Name != "s3-crud" || reg.Groups[1].Name != "sqs-generated" {
+		t.Errorf("Load() order = [%s, %s], want hand-written first: [s3-crud, sqs-generated]",
+			reg.Groups[0].Name, reg.Groups[1].Name)
+	}
+	gg := reg.Groups[1]
+	if !gg.Generated || gg.State != "candidate" || len(gg.Suites) != 1 || gg.Suites[0] != "go-sdk" {
+		t.Errorf("generated group = %+v, want its generated/state/suites fields preserved", gg)
+	}
+}
+
+// An unparsable generated file, a wrong version, and a group missing
+// "generated", "state" or "suites" must each be a load error — the same
+// posture as a malformed registry.json, not a silently-ignored file.
+func TestLoadRejectsMalformedGeneratedFile(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		genBody string
+		wantSub string
+	}{
+		{"unparsable", `{not json`, "parse"},
+		{"wrong version", `{"version":2,"groups":[]}`, "version 2, want 1"},
+		{"missing generated flag", `{"version":1,"groups":[{"name":"x","state":"candidate","suites":["go-sdk"],"tests":[{"name":"A"}]}]}`, `missing "generated": true`},
+		{"missing state", `{"version":1,"groups":[{"name":"x","generated":true,"suites":["go-sdk"],"tests":[{"name":"A"}]}]}`, `missing "state"`},
+		{"missing suites", `{"version":1,"groups":[{"name":"x","generated":true,"state":"candidate","tests":[{"name":"A"}]}]}`, `missing "suites"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writeRegistryPair(t, handWrittenOnly, tc.genBody)
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load() = nil error, want error containing %q", tc.wantSub)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("Load() error = %q, want it to contain %q", err, tc.wantSub)
+			}
+		})
+	}
+}
+
+// A generated group name colliding with a hand-written one must be a load
+// error naming the group: every gate file (baseline, flaky, parity debt) keys
+// on suite/group/test with no notion of which file a group came from, so a
+// collision would merge two different tests into one entry instead of
+// conflicting.
+func TestLoadRejectsGeneratedGroupCollidingWithHandWritten(t *testing.T) {
+	gen := `{"version":1,"groups":[{"service":"s3","name":"s3-crud","generated":true,"state":"candidate","suites":["go-sdk"],"tests":[{"name":"CreateBucket"}]}]}`
+	writeRegistryPair(t, handWrittenOnly, gen)
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() = nil error, want error naming the colliding group")
+	}
+	if !strings.Contains(err.Error(), `"s3-crud"`) {
+		t.Errorf("Load() error = %q, does not name the colliding group", err)
+	}
+}
+
+// A generated group whose `suites` excludes this suite must not be loaded at
+// all: no tests, no skips, no results. This is the same mechanism as the
+// cdk-lifecycle special case, generalised to any group.
+func TestBuildGroupsExcludesGeneratedGroupOutOfSuiteScope(t *testing.T) {
+	reg := &Registry{Groups: []RegistryGroup{
+		{Service: "sqs", Name: "sqs-generated", Generated: true, State: "candidate",
+			Suites: []string{"python-sdk"}, Tests: []RegistryTest{{Name: "SendMessage"}}},
+	}}
+
+	groups := BuildGroups(reg, ImplMap{}, BuildGroupsOptions{Suite: "go-sdk"})
+	if len(groups) != 0 {
+		t.Fatalf("BuildGroups() = %d groups, want 0 (sqs-generated is scoped to python-sdk only)", len(groups))
+	}
+}
+
+// A generated group's `suites` including this suite must be loaded, and its
+// tests keep running through the ordinary impl-resolution machinery.
+func TestBuildGroupsIncludesGeneratedGroupInSuiteScope(t *testing.T) {
+	reg := &Registry{Groups: []RegistryGroup{
+		{Service: "sqs", Name: "sqs-generated", Generated: true, State: "candidate",
+			Suites: []string{"go-sdk"}, Tests: []RegistryTest{{Name: "SendMessage"}}},
+	}}
+
+	groups := BuildGroups(reg, ImplMap{}, BuildGroupsOptions{Suite: "go-sdk"})
+	if len(groups) != 1 {
+		t.Fatalf("BuildGroups() = %d groups, want 1", len(groups))
+	}
+}
+
+// A generated test with no static impl and no scenario backend must fail
+// loudly with the exact interim-rule message — never skip, never na, never
+// pass. This is the mechanism that keeps a coverage hole from reporting as
+// success until the G2 interpreters land.
+func TestBuildGroupsFailsGeneratedTestWithNoBackend(t *testing.T) {
+	reg := &Registry{Groups: []RegistryGroup{
+		{Service: "sqs", Name: "sqs-generated", Generated: true, State: "candidate",
+			Suites: []string{"go-sdk"}, Tests: []RegistryTest{{Name: "SendMessage"}}},
+	}}
+
+	groups := BuildGroups(reg, ImplMap{}, BuildGroupsOptions{Suite: "go-sdk"})
+	tc := findTest(t, groups, "sqs-generated", "SendMessage")
+
+	if tc.Skip != "" {
+		t.Errorf("SendMessage.Skip = %q, want empty — a generated test with no backend must fail, not skip", tc.Skip)
+	}
+	if tc.NA != "" {
+		t.Errorf("SendMessage.NA = %q, want empty — a generated test with no backend must fail, not na", tc.NA)
+	}
+	if tc.Fn == nil {
+		t.Fatal("SendMessage.Fn = nil, want a failing TestFn")
+	}
+	err := tc.Fn(context.Background(), nil)
+	if err == nil {
+		t.Fatal("SendMessage.Fn(...) = nil error, want the interim-rule failure")
+	}
+	want := `generated group "sqs-generated" is scoped to go-sdk but go-sdk has no scenario backend`
+	if err.Error() != want {
+		t.Errorf("SendMessage.Fn(...) error = %q, want %q", err, want)
+	}
+}
+
+// A registered scenario backend takes priority over the interim fail rule —
+// once a G2 interpreter is wired up, a generated test it resolves must run
+// normally rather than fail.
+func TestBuildGroupsUsesScenarioBackendWhenResolved(t *testing.T) {
+	reg := &Registry{Groups: []RegistryGroup{
+		{Service: "sqs", Name: "sqs-generated", Generated: true, State: "candidate",
+			Suites: []string{"go-sdk"}, Tests: []RegistryTest{{Name: "SendMessage"}}},
+	}}
+	backend := ScenarioBackend(func(group RegistryGroup, test RegistryTest) (harness.TestFn, bool) {
+		if group.Name == "sqs-generated" && test.Name == "SendMessage" {
+			return marker("resolved"), true
+		}
+		return nil, false
+	})
+
+	groups := BuildGroups(reg, ImplMap{}, BuildGroupsOptions{Suite: "go-sdk", Scenario: backend})
+	tc := findTest(t, groups, "sqs-generated", "SendMessage")
+	if tc.Skip != "" || tc.NA != "" {
+		t.Fatalf("SendMessage = %+v, want bound to the scenario backend, not skipped or na", tc)
+	}
+	tCtx := harness.NewTestContext("", "", "")
+	if err := tc.Fn(context.Background(), tCtx); err != nil {
+		t.Fatalf("SendMessage.Fn(...) = %v, want nil (bound to the backend's impl)", err)
+	}
+	if got := tCtx.GetString("ran"); got != "resolved" {
+		t.Errorf("ran marker = %q, want %q — the scenario backend's impl did not run", got, "resolved")
+	}
+}
+
+// A hand-written (non-generated) group's test with no static impl must also
+// resolve through a registered scenario backend — not only a generated
+// group's. This is the G6 port path (docs/plans/compat-coverage-modelgen.md
+// § 3.11): a hand-written group ported to an authored scenario keeps its
+// registry group/test names, so the loader must consult opts.Scenario for it
+// exactly as it does for a generated group, with no special-casing on
+// rg.Generated.
+func TestBuildGroupsUsesScenarioBackendForHandWrittenGroup(t *testing.T) {
+	reg := &Registry{Groups: []RegistryGroup{
+		{Service: "sqs", Name: "sqs-queues", Tests: []RegistryTest{{Name: "SendMessage"}}},
+	}}
+	backend := ScenarioBackend(func(group RegistryGroup, test RegistryTest) (harness.TestFn, bool) {
+		if group.Name == "sqs-queues" && test.Name == "SendMessage" {
+			return marker("resolved"), true
+		}
+		return nil, false
+	})
+
+	groups := BuildGroups(reg, ImplMap{}, BuildGroupsOptions{Suite: "go-sdk", Scenario: backend})
+	tc := findTest(t, groups, "sqs-queues", "SendMessage")
+	if tc.Skip != "" || tc.NA != "" {
+		t.Fatalf("SendMessage = %+v, want bound to the scenario backend, not skipped or na", tc)
+	}
+	tCtx := harness.NewTestContext("", "", "")
+	if err := tc.Fn(context.Background(), tCtx); err != nil {
+		t.Fatalf("SendMessage.Fn(...) = %v, want nil (bound to the backend's impl)", err)
+	}
+	if got := tCtx.GetString("ran"); got != "resolved" {
+		t.Errorf("ran marker = %q, want %q — the scenario backend's impl did not run", got, "resolved")
+	}
+}

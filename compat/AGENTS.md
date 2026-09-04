@@ -922,6 +922,17 @@ compat/suites/
   (absent when it matches `name`). Suites may use it for display or filtering
   but must still use the `name` field as the test identifier.
 
+**Every loader concatenates `registry.generated.json`** onto `registry.json`
+(hand-written groups first) and honours `"suites"` for every group it loads,
+not only generated ones (#1393). Interim rule, until the G2 interpreters land:
+a generated group with no static impl **and** no scenario backend must never
+report `skip` or `na` — it is a **`fail`**, with message exactly `generated
+group "<group>" is scoped to <suite> but <suite> has no scenario backend`.
+`"suites"` on a generated group is derived from backend availability by
+`cmd/compatgen`, so a suite named in it that cannot run the group is a
+generator/loader bug, and `candidate`-state groups keep this out of the gates
+until promotion — but it must never look like a pass.
+
 ### Implementation keys — `group:test`, and a bad key aborts the run
 
 Every suite maps a key to each test implementation. The key is either the bare
