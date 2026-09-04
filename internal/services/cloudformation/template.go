@@ -305,7 +305,14 @@ const (
 	maxNameLenEvents    = 64  // EventBridge rule names
 	maxNameLenScheduler = 64  // EventBridge Scheduler schedule and schedule-group names
 	maxNameLenSFN       = 80  // Step Functions state-machine names
-	maxNameLenDefault   = 255
+
+	maxNameLenELBv2 = 32  // ELBv2 load balancer and target group names
+	maxNameLenMSK   = 64  // MSK cluster names
+	maxNameLenPipes = 64  // EventBridge Pipes pipe names
+	maxNameLenEKS   = 100 // EKS cluster names
+	maxNameLenWAFv2 = 128 // WAFv2 web ACL names
+
+	maxNameLenDefault = 255
 )
 
 // physicalIDSuffixLen matches the length of the random component real
@@ -384,6 +391,41 @@ func (c *resolveContext) generatedNameWithin(max int) string {
 // the random suffix is uppercase by construction.
 func (c *resolveContext) generatedNameLowerWithin(max int) string {
 	return strings.ToLower(c.generatedNameWithin(max))
+}
+
+// generatedNameELBv2 is generatedName shaped to what ELBv2 accepts for a load
+// balancer or a target group name, which is the tightest rule in the
+// provisioner: at most 32 characters, alphanumerics and hyphens only, no
+// leading or trailing hyphen, and not beginning with "internal-" — the prefix
+// ELBv2 reserves for the DNS name of an internal load balancer.
+//
+// 32 characters is short enough that a realistic CDK stack name plus a CDK
+// logical ID always overruns it, so the truncation is the normal case rather
+// than the edge one, and a truncation that lands on a hyphen would produce a
+// name the API refuses. generatedNameWithin already caps the length and trims
+// a trailing hyphen; this adds the character set and the two prefix rules.
+//
+// The two types share the length and the character set. Only the load
+// balancer documents the "internal-" rule, but a target group is held to it as
+// well rather than carrying a near-copy of this helper for one clause — no
+// template asks for a generated target group name beginning with "internal-",
+// so nothing is lost by not minting one.
+func (c *resolveContext) generatedNameELBv2() string {
+	var b strings.Builder
+	for _, r := range c.generatedNameWithin(maxNameLenELBv2) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
+			b.WriteRune(r)
+		}
+	}
+	name := strings.Trim(b.String(), "-")
+	name = strings.TrimLeft(strings.TrimPrefix(name, "internal-"), "-")
+	if name == "" {
+		// Only reachable for a stack named entirely out of characters ELBv2
+		// rejects; the suffix alone is still a usable, unique name.
+		return randomPhysicalIDSuffix()
+	}
+	return name
 }
 
 // randomPhysicalIDSuffix returns CloudFormation's random physical-ID component.
