@@ -69,8 +69,10 @@ refuses to invent, is in [CloudWatch limitations](./cloudwatch/limitations.md).
 
 Every modelled CloudWatch operation Overcast does not implement answers `501
 NotImplemented` with `x-emulator-unsupported: true`, in CloudWatch's own error
-envelope. An operation name AWS does not model at all gets `400
-UnknownOperationException`.
+envelope. Over the JSON API, a name AWS does not model at all gets `400
+UnknownOperationException` instead. The Query API answers `501` to that as
+well: it claims a request on `Version=2010-08-01` alone, so it never asks
+whether the `Action` is one AWS models.
 
 ## Gotchas
 
