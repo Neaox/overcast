@@ -5,9 +5,14 @@ IMAGE="oc-dotnet-sdk-compat"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONTEXT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-SRC_HASH=$(find "$SCRIPT_DIR" -type f \( -name '*.cs' -o -name '*.csproj' -o -name 'Dockerfile' -o -name 'run.sh' \) \
+# bin/ and obj/ are pruned: they hold generated sources (AssemblyInfo.cs) whose
+# content varies by machine and configuration, so hashing them would rebuild the
+# image for reasons the image does not depend on.
+SRC_HASH=$(find "$SCRIPT_DIR" \( -name bin -o -name obj \) -prune -o \
+  -type f \( -name '*.cs' -o -name '*.csproj' -o -name 'Dockerfile' -o -name 'run.sh' \) -print \
   | sort | xargs md5sum 2>/dev/null | md5sum | cut -c1-12)
-REGISTRY_HASH=$(md5sum "$CONTEXT_DIR/registry.json" | cut -c1-12)
+REGISTRY_HASH=$(cat "$CONTEXT_DIR/registry.json" "$CONTEXT_DIR/registry.generated.json" \
+  | md5sum | cut -c1-12)
 VERSIONED_IMAGE="${IMAGE}:${SRC_HASH}-${REGISTRY_HASH}"
 
 # Retry docker build up to 3 times to handle transient TLS / registry timeouts.

@@ -4,27 +4,95 @@ using System.Text.Json.Serialization;
 
 namespace OvercastCompat.Registry;
 
+/// <summary>
+/// Resolves a generated group's test to an implementation.
+/// </summary>
+/// <remarks>
+/// A generated group is not implemented by a registered impl the way a
+/// hand-written one is: it is executed by an interpreter that reads the group's
+/// <see cref="RegistryLoader.RegistryGroup.Scenario"/> IR. This is the extension
+/// point that interpreter plugs into - the last step of the loader's resolution
+/// order, after the group-qualified and bare impl keys and before the
+/// not-implemented sentinel. Returns null when the backend cannot execute the
+/// test.
+/// <para>Nothing implements it yet. Until one does, a generated group scoped to
+/// this suite reports a failure rather than a skip.</para>
+/// </remarks>
+internal delegate TestFn? ScenarioBackend(RegistryLoader.RegistryGroup group, RegistryLoader.RegistryTest test);
+
 public static class RegistryLoader
 {
     private static readonly TestFn Noop = _ => Task.CompletedTask;
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+    };
+
+    /// <summary>Sibling of registry.json holding the generated groups.</summary>
+    internal const string GeneratedRegistryFileName = "registry.generated.json";
+
+    /// <summary>The only version the generated registry may declare.</summary>
+    internal const int GeneratedRegistryVersion = 1;
 
     public static IReadOnlyList<TestGroup> BuildGroups(
         string suite,
         IReadOnlyDictionary<string, TestFn> impls,
         IReadOnlyDictionary<string, SetupFn> setups,
         IReadOnlyDictionary<string, SetupFn> teardowns,
-        ISet<string> capabilities)
+        ISet<string> capabilities) =>
+        BuildGroups(suite, impls, setups, teardowns, capabilities, backend: null);
+
+    /// <summary>
+    /// As <see cref="BuildGroups(string, IReadOnlyDictionary{string, TestFn}, IReadOnlyDictionary{string, SetupFn}, IReadOnlyDictionary{string, SetupFn}, ISet{string})"/>,
+    /// with a <see cref="ScenarioBackend"/> for the generated groups this suite
+    /// can execute. <paramref name="backend"/> may be null - none exists yet.
+    /// </summary>
+    internal static IReadOnlyList<TestGroup> BuildGroups(
+        string suite,
+        IReadOnlyDictionary<string, TestFn> impls,
+        IReadOnlyDictionary<string, SetupFn> setups,
+        IReadOnlyDictionary<string, SetupFn> teardowns,
+        ISet<string> capabilities,
+        ScenarioBackend? backend)
     {
         var registry = Load();
         ValidateImpls(registry, impls, suite);
+        return BuildGroups(suite, registry, impls, setups, teardowns, capabilities, backend);
+    }
+
+    /// <summary>
+    /// Assembles groups from an already-loaded registry, without validating the
+    /// impl keys - <see cref="ValidateImpls"/> is a separate step, as in the
+    /// other suite loaders.
+    /// </summary>
+    internal static IReadOnlyList<TestGroup> BuildGroups(
+        string suite,
+        RegistryRoot registry,
+        IReadOnlyDictionary<string, TestFn> impls,
+        IReadOnlyDictionary<string, SetupFn> setups,
+        IReadOnlyDictionary<string, SetupFn> teardowns,
+        ISet<string> capabilities,
+        ScenarioBackend? backend)
+    {
         var ambiguous = AmbiguousTestNames(registry);
 
         return registry.Groups
+            // A generated group names the backends that can execute it, so a
+            // suite absent from that list is out of scope and loads nothing.
+            //
+            // Hand-written groups are deliberately not filtered. The only one
+            // that declares "suites" is cdk-lifecycle, which this suite has
+            // always loaded and reported as skips that
+            // compat/baseline/dotnet-sdk.json records - so scoping it out is a
+            // behaviour change of its own, not part of reading the generated
+            // registry.
+            .Where(group => !group.Generated || group.InScopeFor(suite))
             .Select(group => new TestGroup(
                 suite,
                 group.Service,
                 group.Name,
-                TopoSort(group.Tests).Select(test => BuildTestCase(group, test, suite, impls, capabilities, ambiguous)).ToList(),
+                TopoSort(group.Tests).Select(test => BuildTestCase(group, test, suite, impls, capabilities, ambiguous, backend)).ToList(),
                 setups.TryGetValue(group.Name, out var setup) ? setup : null,
                 teardowns.TryGetValue(group.Name, out var teardown) ? teardown : null))
             .ToList();
@@ -36,7 +104,8 @@ public static class RegistryLoader
         string suite,
         IReadOnlyDictionary<string, TestFn> impls,
         ISet<string> capabilities,
-        ISet<string> ambiguous)
+        ISet<string> ambiguous,
+        ScenarioBackend? backend)
     {
         if (!string.IsNullOrWhiteSpace(test.Skip))
         {
@@ -59,10 +128,42 @@ public static class RegistryLoader
         if (!impls.TryGetValue(qualified, out var implementation)
             && !(bareUsable && impls.TryGetValue(test.Name, out implementation)))
         {
-            return new TestCase(test.Name, Noop, test.Op, $"not yet implemented in {suite} test suite", test.Depends);
+            // A generated group is executed by an interpreter reading its
+            // scenario IR rather than by a registered impl, so the backend is
+            // the last resolution step before the sentinel.
+            implementation = backend?.Invoke(group, test);
         }
 
-        return new TestCase(test.Name, implementation, test.Op, null, test.Depends);
+        if (implementation is not null)
+        {
+            return new TestCase(test.Name, implementation, test.Op, null, test.Depends);
+        }
+
+        return group.Generated
+            ? MissingScenarioBackend(group, test, suite)
+            : new TestCase(test.Name, Noop, test.Op, $"not yet implemented in {suite} test suite", test.Depends);
+    }
+
+    /// <summary>
+    /// The interim result for a generated test this suite cannot execute.
+    /// </summary>
+    /// <remarks>
+    /// A generated group's "suites" list is derived from backend availability by
+    /// cmd/compatgen, so a suite named in it that has no scenario backend is a
+    /// generator or loader bug - and it has to be loud. Reporting it as the
+    /// not-implemented sentinel would file it as ordinary parity debt, and
+    /// reporting it as "na" would call it a permanent, accepted divergence; both
+    /// read as "nothing to see here". A candidate group gates nothing
+    /// (cmd/compat, #1367), so this cannot red a build until the group is
+    /// promoted to "gated" - at which point it is a real regression and should.
+    /// <para>Failing is how a test body reports, so the body throws. It carries
+    /// no Depends: the runner cascade-skips a test whose dependency failed, and
+    /// a skip is exactly what this result must never be.</para>
+    /// </remarks>
+    private static TestCase MissingScenarioBackend(RegistryGroup group, RegistryTest test, string suite)
+    {
+        var message = $"generated group \"{group.Name}\" is scoped to {suite} but {suite} has no scenario backend";
+        return new TestCase(test.Name, _ => throw new InvalidOperationException(message), test.Op, null, Array.Empty<string>());
     }
 
     private static RegistryRoot Load()
@@ -73,13 +174,113 @@ public static class RegistryLoader
             path = Path.Combine("..", "registry.json");
         }
 
-        using var stream = File.OpenRead(path);
-        var registry = JsonSerializer.Deserialize<RegistryRoot>(stream, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true,
-        });
+        return Load(path);
+    }
 
-        return registry ?? throw new InvalidOperationException($"failed to deserialize registry at {path}");
+    /// <summary>
+    /// Reads the registry at <paramref name="path"/> and concatenates the
+    /// generated groups from its registry.generated.json sibling.
+    /// </summary>
+    /// <remarks>
+    /// Hand-written groups come first, generated groups after, both in file
+    /// order - the loader sorts neither.
+    /// </remarks>
+    internal static RegistryRoot Load(string path)
+    {
+        RegistryRoot? registry;
+        using (var stream = File.OpenRead(path))
+        {
+            registry = JsonSerializer.Deserialize<RegistryRoot>(stream, JsonOptions);
+        }
+
+        if (registry is null)
+        {
+            throw new InvalidOperationException($"failed to deserialize registry at {path}");
+        }
+
+        var directory = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".";
+        var generated = LoadGenerated(Path.Combine(directory, GeneratedRegistryFileName), registry);
+        if (generated.Count == 0)
+        {
+            return registry;
+        }
+
+        return registry with { Groups = [.. registry.Groups, .. generated] };
+    }
+
+    /// <summary>
+    /// Reads the generated registry, or returns nothing when it is absent.
+    /// </summary>
+    /// <remarks>
+    /// Absence is not an error: suite images, CI artifacts and branches cut
+    /// before the file existed must all keep working, and "the file is not
+    /// there" has to produce the same groups as "the file is there and empty".
+    /// Everything else about a file that is there is an error, exactly as a
+    /// malformed registry.json is - a bad generated file must never be silently
+    /// dropped.
+    /// </remarks>
+    /// <exception cref="InvalidDataException">If the file is unusable.</exception>
+    private static IReadOnlyList<RegistryGroup> LoadGenerated(string path, RegistryRoot handWritten)
+    {
+        if (!File.Exists(path))
+        {
+            return [];
+        }
+
+        GeneratedRegistryRoot? generated;
+        try
+        {
+            using var stream = File.OpenRead(path);
+            generated = JsonSerializer.Deserialize<GeneratedRegistryRoot>(stream, JsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException($"parse generated registry {path}: {ex.Message}", ex);
+        }
+
+        if (generated is null)
+        {
+            throw new InvalidDataException($"failed to deserialize generated registry at {path}");
+        }
+        if (generated.Version != GeneratedRegistryVersion)
+        {
+            throw new InvalidDataException(
+                $"generated registry {path} has version {generated.Version?.ToString() ?? "none"}, "
+                + $"want {GeneratedRegistryVersion}");
+        }
+
+        var handWrittenNames = handWritten.Groups
+            .Select(group => group.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var group in generated.Groups)
+        {
+            // The two registries are concatenated and every gate file
+            // (baseline, flaky, parity-debt) keys on suite/group/test with no
+            // notion of which file a group came from, so a reused name merges
+            // two different groups rather than conflicting. cmd/compat lints
+            // this; the loader is the second line of defence.
+            if (handWrittenNames.Contains(group.Name))
+            {
+                throw new InvalidDataException(
+                    $"generated group \"{group.Name}\" in {path} collides with a hand-written group of the same name");
+            }
+            if (!group.Generated)
+            {
+                throw new InvalidDataException(
+                    $"generated group \"{group.Name}\" in {path} does not set \"generated\": true");
+            }
+            if (string.IsNullOrEmpty(group.State))
+            {
+                throw new InvalidDataException($"generated group \"{group.Name}\" in {path} has no \"state\"");
+            }
+            if (group.Suites.Count == 0)
+            {
+                throw new InvalidDataException($"generated group \"{group.Name}\" in {path} has no \"suites\"");
+            }
+        }
+
+        return generated.Groups;
     }
 
     private static IReadOnlyList<RegistryTest> TopoSort(IReadOnlyList<RegistryTest> tests)
@@ -266,6 +467,16 @@ public static class RegistryLoader
         public IReadOnlyList<RegistryGroup> Groups { get; init; } = [];
     }
 
+    /// <summary>The generated sibling. Version is checked; the rest is shared.</summary>
+    internal sealed record GeneratedRegistryRoot
+    {
+        [JsonPropertyName("version")]
+        public int? Version { get; init; }
+
+        [JsonPropertyName("groups")]
+        public IReadOnlyList<RegistryGroup> Groups { get; init; } = [];
+    }
+
     internal sealed record RegistryGroup
     {
         [JsonPropertyName("service")]
@@ -276,6 +487,37 @@ public static class RegistryLoader
 
         [JsonPropertyName("tests")]
         public IReadOnlyList<RegistryTest> Tests { get; init; } = [];
+
+        /// <summary>Suites the group is in scope for; empty means all of them.</summary>
+        [JsonPropertyName("suites")]
+        public IReadOnlyList<string> Suites { get; init; } = [];
+
+        /// <summary>True for a group read from registry.generated.json.</summary>
+        [JsonPropertyName("generated")]
+        public bool Generated { get; init; }
+
+        /// <summary>"candidate" or "gated" - generated groups only.</summary>
+        [JsonPropertyName("state")]
+        public string? State { get; init; }
+
+        /// <summary>
+        /// Path to the scenario IR the group was generated from, for a
+        /// <see cref="ScenarioBackend"/> to interpret. Generated groups only.
+        /// </summary>
+        [JsonPropertyName("scenario")]
+        public string? Scenario { get; init; }
+
+        /// <summary>
+        /// Whether <paramref name="suite"/> may run this group.
+        /// </summary>
+        /// <remarks>
+        /// A group that names its suites is out of scope for every other suite -
+        /// not in debt: it is not loaded at all there, so it emits no tests, no
+        /// skips and no results. On a generated group the list is derived from
+        /// backend availability by cmd/compatgen.
+        /// </remarks>
+        public bool InScopeFor(string suite) =>
+            Suites.Count == 0 || Suites.Contains(suite, StringComparer.Ordinal);
     }
 
     internal sealed record RegistryTest

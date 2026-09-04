@@ -8,6 +8,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Tests/ is its own project. Without this the SDK's default glob would
+         compile its sources into this one as well. -->
+    <Compile Remove="Tests/**" />
+    <InternalsVisibleTo Include="OvercastCompat.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="AWSSDK.Core" Version="4.0.0" />
     <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.0.0" />
     <PackageReference Include="AWSSDK.EventBridge" Version="4.0.0" />
