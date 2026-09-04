@@ -223,6 +223,17 @@ func (s NetworkSpec) Resolve(ctx context.Context, dc *Client) ResolvedNetworkSpe
 	return r
 }
 
+// Decision is what this run resolved the spec's isolation to, and why —
+// NetworkDecision built from the answer rather than from the network it was
+// applied to.
+//
+// The distinction matters because the two can disagree: a network that drifted
+// and could not be repaired reports what it *is*, while the decision has to
+// keep saying what this configuration asked for. See Tracker.RecordDecisions.
+func (r ResolvedNetworkSpec) Decision() NetworkDecision {
+	return NetworkDecision{Network: r.Name, Internal: r.Internal, Reason: r.Reason}
+}
+
 // driver returns the driver this spec asks for, defaulted.
 func (r ResolvedNetworkSpec) driver() string {
 	if r.Driver == "" {
@@ -446,12 +457,7 @@ func EnsureNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, lo
 	// the function whose selling point is that it is cheap enough to run on
 	// every startup for every network.
 	spec.hash = spec.SpecHash()
-	status := NetworkStatus{
-		Name:     spec.Name,
-		Internal: spec.Internal,
-		Reason:   spec.Reason,
-		SpecHash: spec.hash,
-	}
+	status := baseStatus(spec)
 	if dc == nil || spec.Name == "" {
 		return status, nil
 	}
@@ -543,6 +549,10 @@ func EnsureNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, lo
 				zap.String("network", spec.Name),
 				zap.String("removed_id", info.ID),
 				zap.Strings("differed", DiffStrings(v.diffs)))
+			// `status`, not `v.status`, and the difference is the point: the
+			// rebuild is what makes the spec true, so the network this returns
+			// has no mismatch and no drift. v.status describes the network as
+			// it was found a moment ago and no longer exists.
 			return status, nil
 		}
 		// Fall through to the warning: the rebuild did not happen, and saying
@@ -571,9 +581,11 @@ func EnsureNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, lo
 // one caller: the Docker event watcher, on a network `create`. Without it, a
 // network `overcast network reset` has just repaired vanishes from
 // /_overcast/health — the destroy drops the entry (#1583) and nothing puts one
-// back until the next probe — so an operator runs the command the advisory told
-// them to run, watches it succeed, and the network they were warned about
-// reports nothing at all rather than reporting that it is now fine (#1599).
+// back, because Supervisor.Probe runs exactly once per process: "until the next
+// probe" means "until Overcast is restarted". An operator runs the command the
+// advisory told them to run, watches it succeed, and the network they were
+// warned about reports nothing at all rather than reporting that it is now
+// fine (#1599).
 //
 // **It never creates and never repairs, and that is not an omission.** During
 // an `overcast network reset` this daemon is watching another process rebuild a
@@ -594,18 +606,21 @@ func EnsureNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, lo
 // reason is a fact about the daemon rather than about the network somebody has
 // just created; degrading health from an opportunistic re-check would make this
 // worse than the silence it replaces.
+//
+// The cost of that choice, stated plainly: this one read is the only one
+// coming. There is no retry here — inspectForVerify's exists to settle the
+// startup path before services are handed the daemon — and no later probe,
+// since Probe runs once and a Docker reconnect runs the reconcile rather than a
+// new one. So a create whose inspect fails transiently leaves the entry absent
+// until Overcast restarts, exactly as it was before this existed. What this
+// closes is the ordinary case, not every case.
 func VerifyNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec,
 	logger *zap.Logger) (NetworkStatus, bool) {
 	if dc == nil || spec.Name == "" {
 		return NetworkStatus{}, false
 	}
 	spec.hash = spec.SpecHash()
-	status := NetworkStatus{
-		Name:     spec.Name,
-		Internal: spec.Internal,
-		Reason:   spec.Reason,
-		SpecHash: spec.hash,
-	}
+	status := baseStatus(spec)
 
 	info, err := dc.InspectNetwork(ctx, spec.Name)
 	if err != nil || info == nil {
@@ -665,6 +680,18 @@ type networkVerification struct {
 	status  NetworkStatus
 	verdict networkVerdict
 	diffs   []NetworkFieldDiff
+}
+
+// baseStatus is what a network reports before anything has been read about it:
+// the spec's own answers, which stand unless the comparison replaces them.
+// Callers memoize spec.hash first; an unmemoized spec simply computes it.
+func baseStatus(spec ResolvedNetworkSpec) NetworkStatus {
+	return NetworkStatus{
+		Name:     spec.Name,
+		Internal: spec.Internal,
+		Reason:   spec.Reason,
+		SpecHash: spec.SpecHash(),
+	}
 }
 
 // verifyAgainstSpec compares a live network with its resolved spec and builds

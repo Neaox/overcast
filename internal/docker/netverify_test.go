@@ -21,6 +21,7 @@ package docker
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/overcast-sh/overcast/internal/events"
@@ -40,6 +41,7 @@ type verifyHarness struct {
 	tracker    *Tracker
 	watcher    *Watcher
 	daemon     *specDaemon
+	bus        *events.Bus
 }
 
 func newVerifyHarness(t *testing.T, spec ResolvedNetworkSpec, seed ...*NetworkInspect) *verifyHarness {
@@ -53,17 +55,27 @@ func newVerifyHarness(t *testing.T, spec ResolvedNetworkSpec, seed ...*NetworkIn
 	sup.clients[fakeSocket] = dc
 	sup.specs[fakeSocket] = []ResolvedNetworkSpec{spec}
 
-	w := &Watcher{tracker: tracker, logger: zap.NewNop()}
+	// Wired exactly as Supervisor.Run wires a watcher, including the bus: these
+	// events go in through dispatch, which is where the label gate used to be
+	// and where the name gate now is.
+	w := &Watcher{tracker: tracker, logger: zap.NewNop(), bus: bus}
 	w.verifyNetwork = func(ctx context.Context, name string) {
 		sup.VerifyNetwork(ctx, fakeSocket, name)
 	}
-	return &verifyHarness{supervisor: sup, tracker: tracker, watcher: w, daemon: daemon}
+	w.hasNetworkSpec = func(name string) bool {
+		sup.mu.Lock()
+		defer sup.mu.Unlock()
+		return sup.specFor(fakeSocket, name) != nil
+	}
+	return &verifyHarness{supervisor: sup, tracker: tracker, watcher: w, daemon: daemon, bus: bus}
 }
 
-// deliver feeds one network event through the watcher, as the event stream
-// would.
+// deliver feeds one network event through the watcher the way the event stream
+// does — through dispatch, not into recordTrackerEvent underneath it. The
+// event carries `name` and nothing else, which is every attribute the Engine
+// sends for a network.
 func (h *verifyHarness) deliver(action, name string) {
-	h.watcher.recordTrackerEvent(context.Background(), event("network", action, name))
+	h.watcher.dispatch(context.Background(), event("network", action, name))
 }
 
 // networks returns what health would report.
@@ -227,12 +239,13 @@ func TestVerifyOnCreate_ignoresANetworkItHasNoSpecFor(t *testing.T) {
 // every record would widen an interface two packages implement and consume.
 func TestVerifyOnCreate_healsAnEraseByALateDestroy(t *testing.T) {
 	spec := testSpec()
+	spec.Reason = "OVERCAST_CONTROL_PLANE_INTERNAL=false"
 	h := newVerifyHarness(t, spec, asCreated(spec))
 
 	// The probe rebuilt the network and recorded that it is fine.
+	h.tracker.RecordDecisions([]NetworkDecision{spec.Decision()})
 	h.tracker.RecordNetworks([]NetworkStatus{{
-		Name: spec.Name, Internal: spec.Internal, SpecHash: spec.SpecHash(),
-		Reason: "OVERCAST_CONTROL_PLANE_INTERNAL=false",
+		Name: spec.Name, Internal: spec.Internal, SpecHash: spec.SpecHash(), Reason: spec.Reason,
 	}})
 
 	// The rebuild's own destroy arrives late and takes the entry with it.
@@ -248,9 +261,14 @@ func TestVerifyOnCreate_healsAnEraseByALateDestroy(t *testing.T) {
 	if len(got) != 1 || !got[0].OK() {
 		t.Fatalf("networks = %+v, want the erased entry restored as OK", got)
 	}
-	if snap := h.tracker.Snapshot(); len(snap.Decisions) != 1 {
-		t.Errorf("decisions = %+v, want exactly one per network across the erase and the heal",
+	snap := h.tracker.Snapshot()
+	if len(snap.Decisions) != 1 {
+		t.Fatalf("decisions = %+v, want exactly one per network across the erase and the heal",
 			snap.Decisions)
+	}
+	if snap.Decisions[0].Internal != spec.Internal || snap.Decisions[0].Reason == "" {
+		t.Errorf("decision = %+v, want the isolation this run resolved and the reason it gave",
+			snap.Decisions[0])
 	}
 }
 
@@ -281,8 +299,8 @@ func TestVerifyNetwork_recordsNothingWhenTheNetworkCannotBeRead(t *testing.T) {
 
 // One inspect, and it is not retried. The retry in inspectForVerify buys the
 // startup path a settled answer before it hands the daemon to services; here
-// the next event or the next probe is the retry, and a doubled read on the
-// event goroutine buys nothing.
+// there is no retry here at all, deliberately: see VerifyNetwork on what that
+// costs, and why a doubled read on the event goroutine does not buy it back.
 func TestVerifyNetwork_readsTheNetworkExactlyOnce(t *testing.T) {
 	spec := testSpec()
 	dc, daemon := newSpecDaemon(t, asCreated(spec))
@@ -314,5 +332,154 @@ func TestVerifyNetwork_keepsTheOwnershipCheck(t *testing.T) {
 	}
 	if n := daemon.removeCount(spec.Name); n != 0 {
 		t.Errorf("removes = %d, want 0", n)
+	}
+}
+
+// ─── The label-free stream, end to end through dispatch ────────────────────
+
+// The regression this whole change exists to fix, pinned where it can actually
+// recur: `dispatch` must not gate a network event on a label, because a network
+// event carries none. The event here has `name` and nothing else, which is
+// every attribute the Engine sends — so anyone re-adding
+// `if de.Actor.Attributes[LabelManaged] != "true" { return }` to the network
+// branch fails this, rather than passing a suite that only ever called
+// recordTrackerEvent underneath it.
+func TestDispatch_actsOnANetworkEventThatCarriesNoLabels(t *testing.T) {
+	spec := testSpec()
+	h := newVerifyHarness(t, spec, asCreated(spec))
+	h.tracker.RecordNetworks([]NetworkStatus{{Name: spec.Name, Drift: "drifted"}})
+
+	h.watcher.dispatch(context.Background(), event("network", "destroy", spec.Name))
+
+	if got := h.networks(); len(got) != 0 {
+		t.Fatalf("networks = %+v, want the destroyed network forgotten", got)
+	}
+	if last := h.tracker.Snapshot().LastEvent; last != "network:destroy" {
+		t.Errorf("lastEvent = %q, want the network event recorded", last)
+	}
+}
+
+// The other half of the gate. Nothing labels a network event, so a name this
+// process manages nothing about is the only thing separating Overcast's own
+// networks from every compose project, devcontainer and CI job on the host —
+// and `dispatch` publishes, which is what puts an event on the rolling history
+// that GET /_overcast/events replays whether or not anything is subscribed.
+//
+// Two consequences if this gate is missing, both user-visible: unattributed
+// `network:connect` rows on the Events page (a network event carries no
+// service or resource id either), pushing real events out of the replay
+// window, and `docker.lastEvent` in health reporting somebody else's project.
+func TestDispatch_dropsANetworkEventForAnameItManagesNothingAbout(t *testing.T) {
+	spec := testSpec()
+	h := newVerifyHarness(t, spec, asCreated(spec))
+
+	for _, action := range []string{"create", "connect", "disconnect", "destroy"} {
+		h.watcher.dispatch(context.Background(), event("network", action, "someone-elses-compose_default"))
+	}
+
+	if last := h.tracker.Snapshot().LastEvent; last != "" {
+		t.Errorf("lastEvent = %q, want nothing: none of those networks are Overcast's", last)
+	}
+	published, cancel := h.bus.SnapshotAndSubscribeAll(func(context.Context, events.Event) {})
+	cancel()
+	if len(published) != 0 {
+		t.Errorf("bus history = %+v, want nothing published for a foreign network", published)
+	}
+}
+
+// A per-VPC network has no spec here — EC2 resolves those from its own store —
+// but it does have a record, and its destroy still has to be acted on: that is
+// half of what #1583 was for. The record is the gate.
+func TestDispatch_actsOnAVPCNetworkItHasARecordFor(t *testing.T) {
+	spec := testSpec()
+	h := newVerifyHarness(t, spec, asCreated(spec))
+	h.tracker.RecordNetworks([]NetworkStatus{{Name: "ocv-vpc-vpc-1", Internal: true}})
+
+	h.watcher.dispatch(context.Background(), event("network", "destroy", "ocv-vpc-vpc-1"))
+
+	if got := h.networks(); len(got) != 0 {
+		t.Fatalf("networks = %+v, want the VPC network forgotten on its destroy", got)
+	}
+}
+
+// ─── The decision is not an observation ────────────────────────────────────
+
+// A create event for a drifted control plane must not move the decision.
+//
+// NetworkStatus.Internal is what the network *is* once a mismatch is found —
+// deliberately, because reporting the ask beside a drift is #1564's original
+// confusion — and Status.Decisions answers a different question: what did this
+// configuration resolve, and why. Letting the observation become the decision
+// flips `Internal` to true while the reason still says the host would not take
+// an isolated plane, and `controlPlaneRoutable` then reads false and switches
+// the vpc-egress-not-withheld advisory off. #1595 spent a whole field closing
+// that same hole one route over; an event must not reopen it.
+func TestVerifyOnCreate_doesNotLetADriftOverwriteTheDecision(t *testing.T) {
+	spec := testSpec() // Internal false — the control plane left routable
+	spec.Reason = "OVERCAST_VPC_EGRESS=none, overridden: an internal control plane would sever the Runtime API on this host"
+
+	// Drifted the wrong way round: the live network *is* internal, which is
+	// exactly the shape that would flip the advisory off if it were believed.
+	h := newVerifyHarness(t, spec, drifted(spec))
+	h.supervisor.tracker.RecordDecisions([]NetworkDecision{spec.Decision()})
+
+	h.deliver("create", spec.Name)
+
+	snap := h.tracker.Snapshot()
+	if len(snap.Decisions) != 1 {
+		t.Fatalf("decisions = %+v, want exactly one", snap.Decisions)
+	}
+	if snap.Decisions[0].Internal {
+		t.Error("the decision took the drifted network's isolation; the advisory that reads it is now off " +
+			"while the shortfall it reports is unchanged")
+	}
+	if !strings.Contains(snap.Decisions[0].Reason, "overridden: ") {
+		t.Errorf("reason = %q, want the resolved reason kept", snap.Decisions[0].Reason)
+	}
+
+	// The observation is still reported — on the network entry, which is where
+	// an operator looks for what the network is.
+	got := h.networks()
+	if len(got) != 1 || !got[0].Internal || got[0].OK() {
+		t.Errorf("network = %+v, want the live isolation and the drift reported there", got)
+	}
+}
+
+// The same rule on the probe path, which is where it was already being broken
+// before any of this: a drifted network's status must not become the decision,
+// and a network that never had one records none — absence fires no rule, which
+// is the right answer for a network whose state nobody can account for.
+func TestRecordNetworks_aDriftedStatusIsNotADecision(t *testing.T) {
+	tr := NewTracker()
+	tr.RecordDecisions([]NetworkDecision{{
+		Network: "overcast_control", Internal: false, Reason: "OVERCAST_VPC_EGRESS=none, overridden: host",
+	}})
+
+	tr.RecordNetworks([]NetworkStatus{{
+		Name: "overcast_control", Internal: true, Reason: "OVERCAST_VPC_EGRESS=none, overridden: host",
+		Drift: "network is not in the configured state (internal: want false, got true)",
+	}})
+	if d := tr.Snapshot().Decisions; len(d) != 1 || d[0].Internal {
+		t.Errorf("decisions = %+v, want the resolved answer, not the drifted network's", d)
+	}
+
+	tr.RecordNetworks([]NetworkStatus{{Name: "never-decided", Internal: true, Drift: "unverified"}})
+	for _, d := range tr.Snapshot().Decisions {
+		if d.Network == "never-decided" {
+			t.Errorf("decisions = %+v, want no decision invented from an observation", d)
+		}
+	}
+
+	// A clean status still records one: it is an observation that agrees with
+	// the spec by definition, and EC2's per-VPC networks have no other route in.
+	tr.RecordNetworks([]NetworkStatus{{Name: "overcast-vpc-vpc-1", Internal: true, Reason: "no gateway"}})
+	found := false
+	for _, d := range tr.Snapshot().Decisions {
+		if d.Network == "overcast-vpc-vpc-1" && d.Internal {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("a clean status recorded no decision; EC2's per-VPC networks have no other way to report one")
 	}
 }

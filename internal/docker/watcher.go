@@ -34,13 +34,19 @@ type Watcher struct {
 	// which is the only thing that holds the specs; nil for a watcher built
 	// without one, which then reports nothing on a create.
 	verifyNetwork func(ctx context.Context, name string)
+
+	// hasNetworkSpec answers whether this process resolved a spec for a
+	// network name — the plane half of managesNetwork. Supplied by the
+	// Supervisor for the same reason verifyNetwork is; nil is "no specs
+	// here", which is the truth for a watcher built without one.
+	hasNetworkSpec func(name string) bool
 }
 
 // networkVerifyTimeout bounds the one inspect a network `create` costs. It runs
 // on the event-stream goroutine, so it has to be short: an unbounded read
 // against a wedged daemon would stall every container event behind it, and a
-// re-verification that has not answered in this long has been overtaken by the
-// next probe anyway.
+// daemon that has not answered one inspect in five seconds is not one whose
+// answer is worth holding the stream for.
 const networkVerifyTimeout = 5 * time.Second
 
 // DaemonConnectedPayload identifies the Docker client whose event stream has
@@ -135,6 +141,15 @@ func (w *Watcher) stream(ctx context.Context, reconnected bool) error {
 	// forget, a spec to verify against — which is a stronger gate than the
 	// label anyway: it is scoped to the networks this configuration manages
 	// rather than to every network Overcast has ever labelled.
+	//
+	// **It costs something, and it is not nothing.** The daemon now sends every
+	// container event on the host for all ten actions — `health_status` repeats
+	// per healthcheck interval per container — plus every network event, and
+	// this goroutine JSON-decodes each one and drops it on a map lookup or a
+	// name comparison. Small and bounded, and the alternative is not on offer:
+	// Docker ANDs its filter keys, so one stream cannot express "containers
+	// with our label *or* any network", and two streams would be two
+	// connections and two backoff loops to keep in step.
 	filtersJSON := `{"type":["container","network"],` +
 		`"event":["start","stop","die","kill","oom","health_status","create","destroy","connect","disconnect"]}`
 	filters.Set("filters", filtersJSON)
@@ -192,6 +207,20 @@ func (w *Watcher) dispatch(ctx context.Context, de *dockerEvent) {
 		}
 		w.dispatchContainer(ctx, de)
 	case "network":
+		// The gate the label filter cannot be: a network event carries no
+		// labels at all (see stream), so "is this ours" is answered from what
+		// this process knows about the name.
+		//
+		// It has to be here and not only in recordTrackerEvent, because
+		// dispatchNetwork publishes — and events.Bus keeps a rolling history
+		// that GET /_overcast/events replays whether or not anything is
+		// subscribed. Without this, every `docker run` on the host put an
+		// unattributed `network:connect` row on the user's Events page and
+		// pushed a real one out of the window, and `docker.lastEvent` reported
+		// somebody else's compose project as the last thing Overcast saw.
+		if !w.managesNetwork(de.Actor.Attributes["name"]) {
+			return
+		}
 		w.dispatchNetwork(ctx, de)
 	default:
 		return
@@ -225,16 +254,16 @@ func (w *Watcher) recordTrackerEvent(ctx context.Context, de *dockerEvent) {
 	// goroutine, which is what makes the forget safe. A destroy delivered after
 	// the probe recorded the rebuilt network erases the entry (#1601); the
 	// create behind it puts back one that was read a moment ago, so the window
-	// closes itself in the time it takes to deliver one event rather than
-	// lasting until the next probe.
+	// closes itself in the time it takes to deliver one event, rather than
+	// standing for the life of the process.
 	//
 	// Connect and disconnect are untouched: a container joining a network says
 	// nothing about whether the network matches its spec.
 	//
-	// Both calls are gated on the name rather than on a label the daemon does
-	// not send (see stream): ForgetNetwork drops only a name the report holds,
-	// and VerifyNetwork acts only on a name this process resolved a spec for.
-	// A network nothing here manages reaches neither.
+	// A network nothing here manages never reaches this far — dispatch drops it
+	// on managesNetwork — and both calls below are gated again by what they can
+	// act on: ForgetNetwork drops only a name the report holds, and
+	// VerifyNetwork only a name a spec was resolved for.
 	if de.Type != "network" {
 		return
 	}
@@ -249,7 +278,7 @@ func (w *Watcher) recordTrackerEvent(ctx context.Context, de *dockerEvent) {
 
 // verifyOnCreate re-reads a newly created network and records what it is, so a
 // network that was just repaired reports `ok` rather than dropping out of
-// /_overcast/health until the next probe (#1599).
+// /_overcast/health for the rest of this process's life (#1599).
 //
 // Inline on the event goroutine, under a short timeout. One inspect is the
 // budget the whole verification is built around — cheap enough to run for every
@@ -262,6 +291,28 @@ func (w *Watcher) verifyOnCreate(ctx context.Context, name string) {
 	ctx, cancel := context.WithTimeout(ctx, networkVerifyTimeout)
 	defer cancel()
 	w.verifyNetwork(ctx, name)
+}
+
+// managesNetwork reports whether a network name is one this process is
+// entitled to say anything about.
+//
+// The two halves are the two classes Overcast manages, and each is covered by
+// the thing that knows about it: a plane always has a resolved spec, and a
+// per-VPC network has a record from the moment EC2 creates one. Anything else
+// — a compose project's bridge, a devcontainer's network, another Overcast
+// instance under a name this configuration does not use — is dropped whole,
+// before the bus and before the tracker.
+//
+// Deliberately not "carries our label": a network event has no labels to read.
+// That is the fact this whole change is built on, and the name is what is left.
+func (w *Watcher) managesNetwork(name string) bool {
+	if name == "" {
+		return false
+	}
+	if w.tracker != nil && w.tracker.hasNetwork(name) {
+		return true
+	}
+	return w.hasNetworkSpec != nil && w.hasNetworkSpec(name)
 }
 
 // dispatchContainer handles container lifecycle events.

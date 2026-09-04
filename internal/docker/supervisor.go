@@ -110,6 +110,16 @@ func (s *Supervisor) Probe(ctx context.Context, configs []ServiceConfig, network
 			probeCache[cfg.Socket] = entry
 			if err == nil {
 				if s.tracker != nil {
+					// Decisions from the specs, records from the networks.
+					// A network that drifted and could not be repaired
+					// reports what it *is*, and that observation must not
+					// become this run's answer about what it asked for — see
+					// Tracker.RecordDecisions.
+					decisions := make([]NetworkDecision, 0, len(pr.Specs))
+					for _, spec := range pr.Specs {
+						decisions = append(decisions, spec.Decision())
+					}
+					s.tracker.RecordDecisions(decisions)
 					s.tracker.RecordNetworks(pr.Networks)
 				}
 				s.specs[cfg.Socket] = pr.Specs
@@ -192,6 +202,11 @@ func (s *Supervisor) Run(ctx context.Context) {
 				w.verifyNetwork = func(ctx context.Context, name string) {
 					s.VerifyNetwork(ctx, socket, name)
 				}
+				w.hasNetworkSpec = func(name string) bool {
+					s.mu.Lock()
+					defer s.mu.Unlock()
+					return s.specFor(socket, name) != nil
+				}
 			} else {
 				w = NewWatcher(dc, s.bus, s.logger.With(zap.String("socket", socket)))
 			}
@@ -224,22 +239,35 @@ func (s *Supervisor) VerifyNetwork(ctx context.Context, socket, name string) {
 
 	s.mu.Lock()
 	dc := s.clients[socket]
-	var spec ResolvedNetworkSpec
-	found := false
-	for _, candidate := range s.specs[socket] {
-		if candidate.Name == name {
-			spec, found = candidate, true
-			break
-		}
-	}
+	spec := s.specFor(socket, name)
 	s.mu.Unlock()
 
-	if dc == nil || !found {
+	if dc == nil || spec == nil {
 		return
 	}
-	if status, ok := VerifyNetwork(ctx, dc, spec, s.logger); ok {
+	if status, ok := VerifyNetwork(ctx, dc, *spec, s.logger); ok {
+		// The decision first, and from the spec: a drifted network's status
+		// carries the isolation it *has*, and letting that become the decision
+		// would answer "what did this configuration ask for" with an
+		// observation. RecordDecisions says why that matters.
+		s.tracker.RecordDecisions([]NetworkDecision{spec.Decision()})
 		s.tracker.RecordNetworks([]NetworkStatus{status})
 	}
+}
+
+// specFor returns the resolved spec this process holds for one network on one
+// daemon, or nil when it holds none. Caller holds s.mu.
+//
+// A nil answer is what tells the watcher a network is none of Overcast's
+// business — or is a per-VPC network, whose spec lives in EC2's store and which
+// is reported through the same tracker on EC2's own schedule.
+func (s *Supervisor) specFor(socket, name string) *ResolvedNetworkSpec {
+	for i, candidate := range s.specs[socket] {
+		if candidate.Name == name {
+			return &s.specs[socket][i]
+		}
+	}
+	return nil
 }
 
 // Close signals all background goroutines (including Probe blockers and
