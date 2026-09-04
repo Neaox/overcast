@@ -29,8 +29,11 @@ func newTestService(t *testing.T) (*Service, *clock.Mock) {
 	return svc, mock
 }
 
-// settle advances the mock clock so pending 0-delay lifecycle transitions fire.
-func settle(mock *clock.Mock) { mock.Add(time.Millisecond) }
+// settle advances the mock clock so pending 0-delay lifecycle transitions
+// fire, and waits for the scheduler to finish running them. mock.Add alone
+// does not wait: the mock runs each AfterFunc callback on a goroutine of its
+// own, so a read on the next line would race the transition it just triggered.
+func settle(svc *Service, mock *clock.Mock) { svc.scheduler.AdvanceAndSettle(mock, time.Millisecond) }
 
 func mustCreateFS(t *testing.T, svc *Service, mock *clock.Mock, token string) *FileSystemDescription {
 	t.Helper()
@@ -38,7 +41,7 @@ func mustCreateFS(t *testing.T, svc *Service, mock *clock.Mock, token string) *F
 	if aerr != nil {
 		t.Fatalf("CreateFileSystem(%s): %v", token, aerr)
 	}
-	settle(mock)
+	settle(svc, mock)
 	return fs
 }
 
@@ -107,7 +110,7 @@ func TestCreateFileSystem_lifecycleAndIdempotency(t *testing.T) {
 	}
 
 	// When the transition fires; Then describe reports "available".
-	settle(mock)
+	settle(svc, mock)
 	resp, aerr := svc.describeFileSystemsTyped(ctx, &describeFileSystemsRequest{FileSystemId: fs.FileSystemId})
 	if aerr != nil {
 		t.Fatalf("DescribeFileSystems: %v", aerr)
@@ -196,7 +199,7 @@ func TestMountTargets_lifecycleAndConflicts(t *testing.T) {
 	}
 	_, aerr = svc.createMountTargetTyped(ctx, &createMountTargetRequest{FileSystemId: fs.FileSystemId, SubnetId: "subnet-a"})
 	expectAWSError(t, aerr, "IncorrectFileSystemLifeCycleState")
-	settle(mock)
+	settle(svc, mock)
 
 	// When the file system is available; Then the mount target is created.
 	mt, aerr := svc.createMountTargetTyped(ctx, &createMountTargetRequest{
@@ -211,7 +214,7 @@ func TestMountTargets_lifecycleAndConflicts(t *testing.T) {
 	if mt.IpAddress == "" || mt.AvailabilityZoneName == "" || mt.NetworkInterfaceId == "" {
 		t.Fatalf("expected synthesized network fields, got %+v", mt)
 	}
-	settle(mock)
+	settle(svc, mock)
 
 	// Then the file system counts it and it becomes available.
 	described, aerr := svc.describeMountTargetsTyped(ctx, &describeMountTargetsRequest{FileSystemId: fs.FileSystemId})
@@ -259,11 +262,11 @@ func TestMountTargets_lifecycleAndConflicts(t *testing.T) {
 	if _, aerr = svc.deleteMountTargetTyped(ctx, &deleteMountTargetRequest{MountTargetId: mt.MountTargetId}); aerr != nil {
 		t.Fatalf("DeleteMountTarget: %v", aerr)
 	}
-	settle(mock)
+	settle(svc, mock)
 	if _, aerr = svc.deleteFileSystemTyped(ctx, &deleteFileSystemRequest{FileSystemId: fs.FileSystemId}); aerr != nil {
 		t.Fatalf("DeleteFileSystem: %v", aerr)
 	}
-	settle(mock)
+	settle(svc, mock)
 	_, aerr = svc.describeFileSystemsTyped(ctx, &describeFileSystemsRequest{FileSystemId: fs.FileSystemId})
 	expectAWSError(t, aerr, "FileSystemNotFound")
 
@@ -293,7 +296,7 @@ func TestAccessPoints_lifecycle(t *testing.T) {
 	if ap.RootDirectory == nil || ap.RootDirectory.Path != "/" {
 		t.Fatalf("expected default root directory /, got %+v", ap.RootDirectory)
 	}
-	settle(mock)
+	settle(svc, mock)
 
 	// Duplicate client token conflicts.
 	_, aerr = svc.createAccessPointTyped(ctx, &createAccessPointRequest{ClientToken: "ct-1", FileSystemId: fs.FileSystemId})
@@ -321,7 +324,7 @@ func TestAccessPoints_lifecycle(t *testing.T) {
 	if _, aerr = svc.deleteFileSystemTyped(ctx, &deleteFileSystemRequest{FileSystemId: fs.FileSystemId}); aerr != nil {
 		t.Fatalf("DeleteFileSystem: %v", aerr)
 	}
-	settle(mock)
+	settle(svc, mock)
 	_, aerr = svc.describeAccessPointsTyped(ctx, &describeAccessPointsRequest{AccessPointId: ap.AccessPointId})
 	expectAWSError(t, aerr, "AccessPointNotFound")
 }
@@ -409,7 +412,7 @@ func TestBackupPolicy(t *testing.T) {
 	if aerr != nil {
 		t.Fatalf("CreateFileSystem: %v", aerr)
 	}
-	settle(mock)
+	settle(svc, mock)
 	fsOff := mustCreateFS(t, svc, mock, "b-off")
 
 	on, _ := svc.describeBackupPolicyTyped(ctx, &describeBackupPolicyRequest{FileSystemId: fsOn.FileSystemId})
