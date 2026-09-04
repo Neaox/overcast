@@ -18,6 +18,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -26,8 +27,10 @@ from lib.harness import TestContext, run_group  # noqa: E402
 from lib.registry import (  # noqa: E402
     ambiguous_test_names,
     build_groups_from_registry,
+    load_generated_registry,
     load_registry,
     merge_impls,
+    merge_registries,
     test_name_owners,
     validate_impls,
 )
@@ -617,6 +620,287 @@ class RealRegistrations(unittest.TestCase):
         # merge_impls raises if two group modules claim the same key; the
         # discarded implementation would otherwise never run.
         self._merge_all()
+
+
+class GeneratedRegistryLoading(unittest.TestCase):
+    """
+    registry.generated.json (#1393): a missing file is a no-op, an empty file
+    is a no-op, and a non-empty one is concatenated onto the hand-written
+    groups without disturbing them.
+
+    These assert the *invariant* ("a missing/empty generated file changes
+    nothing"), never a fact about the checked-in file's current contents —
+    see the loader contract's note on not pinning a fact another in-flight
+    branch (the compatgen generator) is about to change.
+    """
+
+    def test_missing_file_is_a_no_op(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = os.path.join(tmp, "does-not-exist.json")
+            generated = load_generated_registry(missing)
+            self.assertEqual({"version": 1, "groups": []}, generated)
+
+    def test_missing_file_leaves_build_output_unchanged(self):
+        registry = {
+            "groups": [
+                {"service": "s3", "name": "s3-crud", "tests": [{"name": "CreateBucket"}]},
+            ]
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = os.path.join(tmp, "does-not-exist.json")
+            with_generated = merge_registries(registry, load_generated_registry(missing))
+            without = build_groups_from_registry(registry, {}, "python-sdk")
+            merged = build_groups_from_registry(with_generated, {}, "python-sdk")
+            self.assertEqual([g.name for g in without], [g.name for g in merged])
+
+    def test_checked_in_empty_file_is_a_no_op(self):
+        # Exercises the real, checked-in registry.generated.json at its
+        # default sibling-of-registry.json location — but asserts only that
+        # an empty file is inert, not that the file stays empty forever.
+        generated = load_generated_registry()
+        self.assertEqual([], generated["groups"])
+
+    def test_synthetic_file_is_concatenated_after_hand_written(self):
+        hand_written = {
+            "groups": [
+                {"service": "s3", "name": "s3-crud", "tests": [{"name": "CreateBucket"}]},
+            ]
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "registry.generated.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "version": 1,
+                    "groups": [
+                        {
+                            "service": "kinesis",
+                            "name": "kinesis-streams",
+                            "tests": [{"name": "CreateStream"}],
+                            "generated": True,
+                            "state": "candidate",
+                            "suites": ["python-sdk"],
+                        },
+                    ],
+                }, f)
+            generated = load_generated_registry(path)
+            merged = merge_registries(hand_written, generated)
+            self.assertEqual(
+                ["s3-crud", "kinesis-streams"],
+                [g["name"] for g in merged["groups"]],
+            )
+
+    def test_present_but_unparsable_file_is_a_load_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "registry.generated.json")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("{not valid json")
+            with self.assertRaises(json.JSONDecodeError):
+                load_generated_registry(path)
+
+    def test_wrong_version_is_a_load_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "registry.generated.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"version": 2, "groups": []}, f)
+            with self.assertRaises(ValueError):
+                load_generated_registry(path)
+
+    def test_group_missing_required_fields_is_a_load_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "registry.generated.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "version": 1,
+                    "groups": [
+                        {
+                            "service": "kinesis",
+                            "name": "kinesis-streams",
+                            "tests": [{"name": "CreateStream"}],
+                            # Missing generated/state/suites.
+                        },
+                    ],
+                }, f)
+            with self.assertRaises(ValueError) as cm:
+                load_generated_registry(path)
+            self.assertIn("kinesis-streams", str(cm.exception))
+
+    def test_name_collision_between_files_is_a_load_error(self):
+        hand_written = {
+            "groups": [
+                {"service": "s3", "name": "s3-crud", "tests": [{"name": "CreateBucket"}]},
+            ]
+        }
+        generated = {
+            "version": 1,
+            "groups": [
+                {
+                    "service": "s3",
+                    "name": "s3-crud",
+                    "tests": [{"name": "PutObject"}],
+                    "generated": True,
+                    "state": "candidate",
+                    "suites": ["python-sdk"],
+                },
+            ],
+        }
+        with self.assertRaises(ValueError) as cm:
+            merge_registries(hand_written, generated)
+        self.assertIn("s3-crud", str(cm.exception))
+
+
+class GeneratedGroupSuitesScoping(unittest.TestCase):
+    """A generated group's `suites` list is honoured exactly like a
+    hand-written group's — a suite not named in it does not get the group at
+    all: no tests, no skips, no results."""
+
+    def _registry(self, suites):
+        return {
+            "groups": [
+                {
+                    "service": "kinesis",
+                    "name": "kinesis-streams",
+                    "tests": [{"name": "CreateStream"}],
+                    "generated": True,
+                    "state": "candidate",
+                    "suites": suites,
+                },
+            ]
+        }
+
+    def test_out_of_scope_group_is_not_loaded_at_all(self):
+        groups = build_groups_from_registry(
+            self._registry(["go-sdk"]), {}, "python-sdk"
+        )
+        self.assertEqual([], groups)
+
+    def test_in_scope_group_is_loaded(self):
+        groups = build_groups_from_registry(
+            self._registry(["python-sdk"]), {}, "python-sdk"
+        )
+        self.assertEqual(["kinesis-streams"], [g.name for g in groups])
+
+    def test_hand_written_suites_scoping_unaffected(self):
+        # cdk-lifecycle-shaped: a hand-written group scoped away from an SDK
+        # suite must still be excluded, matching today's `service == "cdk"`
+        # special case that this general check replaces.
+        registry = {
+            "groups": [
+                {
+                    "service": "cdk",
+                    "name": "cdk-lifecycle",
+                    "tests": [{"name": "DeployStack"}],
+                    "suites": ["cdk"],
+                },
+                {
+                    "service": "s3",
+                    "name": "s3-crud",
+                    "tests": [{"name": "CreateBucket"}],
+                },
+            ]
+        }
+        groups = build_groups_from_registry(registry, {}, "python-sdk")
+        self.assertEqual(["s3-crud"], [g.name for g in groups])
+
+
+def _only_test_result(buf: io.StringIO) -> dict:
+    """The sole `test_result` event from a single-test group's captured
+    stdout (a group also emits a `test_start` line first)."""
+    for line in buf.getvalue().splitlines():
+        event = json.loads(line)
+        if event.get("event") == "test_result":
+            return event
+    raise AssertionError(f"no test_result event in output: {buf.getvalue()!r}")
+
+
+class GeneratedGroupInterimFailRule(unittest.TestCase):
+    """
+    A generated group in scope with no registered impl and no scenario
+    backend must FAIL, not skip and not na (#1393). Until the G2 interpreters
+    land, this is the only signal that a suite named in a generated group's
+    `suites` cannot actually run it.
+    """
+
+    def _registry(self, scenario=None):
+        group = {
+            "service": "kinesis",
+            "name": "kinesis-streams",
+            "tests": [{"name": "CreateStream"}],
+            "generated": True,
+            "state": "candidate",
+            "suites": ["python-sdk"],
+        }
+        if scenario is not None:
+            group["scenario"] = scenario
+        return {"groups": [group]}
+
+    def test_no_impl_no_backend_yields_fail_with_exact_message(self):
+        groups = build_groups_from_registry(self._registry(), {}, "python-sdk")
+        self.assertEqual(1, len(groups))
+        tc = groups[0].tests[0]
+        self.assertIsNone(tc.skip)
+        self.assertIsNone(tc.na)
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            counts = run_group(groups[0], TestContext("", "us-east-1", "test"))
+        passed, failed, skipped, unimplemented, _cancelled = counts
+        self.assertEqual((0, 1, 0, 0), (passed, failed, skipped, unimplemented))
+
+        result = _only_test_result(buf)
+        self.assertEqual("fail", result["status"])
+        self.assertEqual(
+            'generated group "kinesis-streams" is scoped to python-sdk but '
+            "python-sdk has no scenario backend",
+            result["error"],
+        )
+
+    def test_scenario_backend_is_consulted_first(self):
+        seen = []
+
+        def backend(group, test, scenario):
+            seen.append((group, test, scenario))
+            return lambda ctx: None  # a passing impl
+
+        groups = build_groups_from_registry(
+            self._registry(scenario="scenarios/kinesis.ir.json"),
+            {},
+            "python-sdk",
+            scenario_backend=backend,
+        )
+        self.assertEqual(
+            [("kinesis-streams", "CreateStream", "scenarios/kinesis.ir.json")], seen
+        )
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            run_group(groups[0], TestContext("", "us-east-1", "test"))
+        result = _only_test_result(buf)
+        self.assertEqual("pass", result["status"])
+
+    def test_scenario_backend_declining_falls_back_to_fail(self):
+        groups = build_groups_from_registry(
+            self._registry(),
+            {},
+            "python-sdk",
+            scenario_backend=lambda group, test, scenario: None,
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            run_group(groups[0], TestContext("", "us-east-1", "test"))
+        result = _only_test_result(buf)
+        self.assertEqual("fail", result["status"])
+
+    def test_hand_written_group_keeps_the_skip_sentinel(self):
+        # Hand-written groups keep today's sentinel behaviour, byte-for-byte —
+        # only `generated` groups get the new fail rule.
+        registry = {
+            "groups": [
+                {"service": "s3", "name": "s3-crud", "tests": [{"name": "CreateBucket"}]},
+            ]
+        }
+        groups = build_groups_from_registry(registry, {}, "python-sdk")
+        tc = groups[0].tests[0]
+        self.assertEqual("not yet implemented in python-sdk test suite", tc.skip)
 
 
 if __name__ == "__main__":
