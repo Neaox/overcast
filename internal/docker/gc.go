@@ -383,13 +383,13 @@ func (g *GC) Sweep(service string) {
 // destroyed with it. The instance-identity check runs first and is what makes
 // the veto safe.
 //
-// Under a memory backend this sweep removes nothing, because the identity is
-// minted fresh each start and so nothing predating the process is in scope.
-// That is a deliberate trade and a smaller one than it looks: DrainAndSweep
-// already cleans up on an orderly shutdown, so what leaks is the containers of
-// a run that crashed. A durable backend still recognises and sweeps them.
-// Deleting a container whose owner cannot be established is not a choice worth
-// the disk it reclaims; `docker rm $(docker ps -aq --filter
+// The identity is derived from the data directory (serviceutil.DataDirAnchor),
+// so a memory backend, a wiped store and a restart all resolve to the same
+// one, and the containers of a run that crashed are in scope for this sweep
+// whatever backend the run used. Only an instance whose environment yields no
+// anchor mints an identity per store, and then inherits nothing from a run
+// before it. Deleting a container whose owner cannot be established is not a
+// choice worth the disk it reclaims; `docker rm $(docker ps -aq --filter
 // label=overcast.managed=true)` reclaims it on request.
 //
 // KeepContainers disables the sweep outright. A container held back for

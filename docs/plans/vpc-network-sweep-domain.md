@@ -1,6 +1,6 @@
 # Handover: the VPC network sweep domain, and a full review of network lifecycle
 
-**Status:** design agreed, implementation not started. A failing test pins the bug.
+**Status:** implemented on the branch — the identity is anchored to the data directory (`serviceutil.DataDirAnchor`), the review in §5 is answered in the PR body, and both tests pass.
 **Branch:** `fix/vpc-network-sweep-domain-survives-a-wiped-store`
 **Date:** 2026-09-04
 

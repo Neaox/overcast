@@ -41,33 +41,52 @@ const InstanceNamespaceSuffix = ":instance"
 // The label stays honest through a reset precisely because the identity does:
 // the reset's own leftovers are still stamped as ours, no record claims them
 // any more, and the next reconcile's orphan sweep removes them for that reason.
+//
+// An identity derived from the data directory (Anchor) would survive the reset
+// on its own; the one this protects is the identity a store from before
+// anchors existed still holds, which is the only label its older resources
+// carry.
 func IsInstanceNamespace(namespace string) bool {
 	return strings.HasSuffix(namespace, InstanceNamespaceSuffix)
 }
 
 // InstanceIdentity returns the identity that scopes this instance's sweeps of
-// shared Docker resources, minting and recording one on first use. It is the
-// value services stamp into docker.LabelInstance.
+// shared Docker resources, recording one on first use. It is the value
+// services stamp into docker.LabelInstance.
 //
-// The identity's lifetime is exactly the lifetime of the store it is read
-// from, and that is the whole point rather than an implementation detail. A
-// durable backend (persistent, hybrid, wal) hands back the same identity after
-// a restart, so a volume this instance orphaned by crashing is still
-// recognisably its own and can be swept. Two processes pointed at the same
-// data directory read the same identity and therefore share a sweep domain,
-// which is correct: they share the records that say which resources are still
-// wanted. A memory backend loses the identity along with those records, so the
-// next process mints a fresh one and inherits nothing — it can prove ownership
-// of nothing that predates it, and so sweeps nothing that predates it.
+// The identity names the data directory, and that is the whole point rather
+// than an implementation detail. Instances that share a data directory share
+// records, and so share a sweep domain: the records are what say which
+// resources are still wanted. Instances with different data directories are
+// different domains, whatever daemon they share, and neither can touch the
+// other's resources.
 //
-// No caller needs to ask which backend it got. Durability answers the question
-// on its own, and answers it the same way for every service, including one
-// given a per-service backend override.
+// Three sources, in order:
 //
-// Returns "" if the identity can neither be read nor recorded. Callers must
-// treat "" as "ownership cannot be established" and sweep nothing: the store
-// being unavailable is not evidence that anything on the daemon is litter.
-func InstanceIdentity(ctx context.Context, st state.Store, namespace string) string {
+//   - The store. A durable backend (persistent, hybrid, wal) hands back the
+//     identity it recorded, so a volume this instance orphaned by crashing is
+//     still recognisably its own and can be swept — and a store from before
+//     anchors existed keeps the UUID its resources are already labelled with.
+//   - The anchor: an identity derived from where the data directory is
+//     (DataDirAnchor). It is recorded in the store on first use, and it is
+//     what makes the identity survive the store being wiped: the same
+//     directory derives the same anchor, so the networks the previous
+//     incarnation created still carry *this* instance's label and the orphan
+//     sweep reclaims them, rather than leaving their CIDRs held against the
+//     very next deploy. A memory backend derives it on every start for the
+//     same reason.
+//   - A minted UUID, where the environment gives no anchor. Its lifetime is
+//     the store's, so a wiped or memory-backed store then inherits nothing —
+//     it can prove ownership of nothing that predates it, and sweeps nothing
+//     that predates it.
+//
+// Returns "" if the store can neither be read nor written. Callers must treat
+// "" as "ownership cannot be established" and sweep nothing: the store being
+// unavailable is not evidence that anything on the daemon is litter. The
+// anchor does not stand in for the store here, because a store that cannot
+// be read may hold an older identity the resources are labelled with, and a
+// label stamped from the anchor meanwhile would be the wrong one.
+func InstanceIdentity(ctx context.Context, st state.Store, namespace string, anchor Anchor) string {
 	if st == nil {
 		return ""
 	}
@@ -79,7 +98,10 @@ func InstanceIdentity(ctx context.Context, st state.Store, namespace string) str
 		return id
 	}
 
-	minted := uuid.NewString()
+	minted := anchor.ID
+	if minted == "" {
+		minted = uuid.NewString()
+	}
 	if err := st.Set(ctx, namespace, InstanceKey, minted); err != nil {
 		return ""
 	}
@@ -87,7 +109,8 @@ func InstanceIdentity(ctx context.Context, st state.Store, namespace string) str
 	// a single domain instead of each keeping its own. They can still race
 	// closely enough that each reads back its own write, in which case the
 	// domains stay split — that costs an unswept volume, never a deleted one,
-	// which is the direction this whole mechanism errs in.
+	// which is the direction this whole mechanism errs in. Two anchored
+	// processes cannot even race: they derive the same value.
 	if settled, found, err := st.Get(ctx, namespace, InstanceKey); err == nil && found && settled != "" {
 		return settled
 	}
@@ -101,9 +124,9 @@ func InstanceIdentity(ctx context.Context, st state.Store, namespace string) str
 // at each call site.
 //
 // A successful resolution is cached for the life of the process: the identity
-// is a property of the store, and re-reading it per container would put a
-// store round-trip on the creation path for an answer that cannot change. A
-// failed one is deliberately not cached, so a store that is briefly
+// is a property of the data directory, and re-reading it per container would
+// put a store round-trip on the creation path for an answer that cannot
+// change. A failed one is deliberately not cached, so a store that is briefly
 // unavailable at startup does not leave the service unable to sweep anything
 // until it is restarted.
 //
@@ -113,23 +136,36 @@ func InstanceIdentity(ctx context.Context, st state.Store, namespace string) str
 type InstanceDomain struct {
 	store     state.Store
 	namespace string
+	anchor    Anchor
 
 	mu sync.Mutex
 	id string
 }
 
-// NewInstanceDomain returns an InstanceDomain reading from st under namespace.
-// The namespace is per-service (e.g. "rds:instance") so that services given
-// separate backend overrides get separate identities, matching the rule that
-// the identity's lifetime is its store's.
+// NewInstanceDomain returns an InstanceDomain reading from st under namespace,
+// with no anchor: the identity is whatever the store holds, minted if it holds
+// none. That is the right constructor only where no data directory is known;
+// a service constructs its domain with NewAnchoredInstanceDomain.
+//
+// The namespace is per-service (e.g. "rds:instance") so that a service given
+// a separate backend override keeps its own record of the identity. With an
+// anchor every service derives the same value regardless.
 //
 // Nothing is read until the first Resolve, which keeps service construction
 // free of store I/O.
 func NewInstanceDomain(st state.Store, namespace string) *InstanceDomain {
-	return &InstanceDomain{store: st, namespace: namespace}
+	return NewAnchoredInstanceDomain(st, namespace, Anchor{})
 }
 
-// Resolve returns this service's sweep-domain identity, minting one on first
+// NewAnchoredInstanceDomain is NewInstanceDomain with the data directory's
+// anchor, which every service that stamps docker.LabelInstance should pass:
+// it is what lets the identity outlive the store. See InstanceIdentity for
+// how the two combine.
+func NewAnchoredInstanceDomain(st state.Store, namespace string, anchor Anchor) *InstanceDomain {
+	return &InstanceDomain{store: st, namespace: namespace, anchor: anchor}
+}
+
+// Resolve returns this service's sweep-domain identity, recording one on first
 // use. Safe for concurrent use. Returns "" when ownership cannot be
 // established.
 func (d *InstanceDomain) Resolve(ctx context.Context) string {
@@ -139,7 +175,7 @@ func (d *InstanceDomain) Resolve(ctx context.Context) string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.id == "" {
-		d.id = InstanceIdentity(ctx, d.store, d.namespace)
+		d.id = InstanceIdentity(ctx, d.store, d.namespace, d.anchor)
 	}
 	return d.id
 }
@@ -153,12 +189,12 @@ func (d *InstanceDomain) Resolve(ctx context.Context) string {
 // pointed at one data directory. Matching on it alone lets one Overcast stop,
 // adopt or fail another's live container.
 //
-// docker.LabelInstance settles it where it is present — it names the state
-// store that created the container, and a record lives in exactly one such
-// store. Where it is absent, the record's own note of the container ID does:
-// this instance wrote that down when it created the container, and container
-// IDs are daemon-unique. Records that track several containers (an ECS task)
-// pass all of them; one is enough to claim it.
+// docker.LabelInstance settles it where it is present — it names the data
+// directory whose store created the container, and a record lives in exactly
+// one such store. Where it is absent, the record's own note of the container
+// ID does: this instance wrote that down when it created the container, and
+// container IDs are daemon-unique. Records that track several containers (an
+// ECS task) pass all of them; one is enough to claim it.
 //
 // That fallback is where matching parts company with sweeping, which treats an
 // unlabelled resource as one it cannot claim. The asymmetry is in what being

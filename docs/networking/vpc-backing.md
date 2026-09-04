@@ -34,7 +34,7 @@ console's activity feed.
 | `overcast.service` | `ec2` |
 | `overcast.resource-id` | The VPC ID |
 | `overcast.vpc-id` | The VPC ID |
-| `overcast.instance` | The Overcast instance that created it. An instance only ever removes networks carrying its own value, so two instances on one daemon leave each other's alone |
+| `overcast.instance` | The Overcast instance that created it — an identity derived from its data directory, so it survives the directory being wiped and a memory-backed restart alike. An instance only ever removes networks carrying its own value, so two instances on one daemon leave each other's alone; two that share a data directory share one value and one sweep, which is why each live instance needs its own — see [Running two instances on one host](../configuration/two-instances.md) |
 | `overcast.network.spec-hash` | The state the network was created in, checked on every start — see [Network state verification](./network-state.md) |
 | `overcast.network.vpc-role` | `plane` for the VPC's own network, `egress` for the routable one beside it under `OVERCAST_VPC_EGRESS=routed`. Both carry the same VPC ID, so this is what tells them apart |
 
@@ -78,6 +78,20 @@ quoted is the thing to look at.
 
 A gateway change on the default VPC is recorded as metadata and the network is
 left alone: it is the shared data plane, which already has the internet.
+
+## When a network cannot be created
+
+`CreateVpc` still answers 200 when Docker refuses the network — usually an
+address pool another network holds. The VPC is `unbacked` — nothing can be
+placed in it — until a reconcile's retry succeeds, and the
+`vpc-network-unbacked` advisory on the console's Metrics & Health page names it
+and quotes Docker's reason. Whose network holds the range decides the remedy:
+
+| It is | What frees it |
+| --- | --- |
+| This instance's own, from a VPC that no longer exists | The next startup reconcile removes it. The identity a network carries is derived from the data directory, so this holds across a wiped `OVERCAST_DATA_DIR` and a memory-backed restart too |
+| Another live Overcast instance's, or a compose project's | Not Overcast's to remove. Run with `OVERCAST_EC2_VPC_STRATEGY=remapped`, which gives the VPC a Docker subnet of its own, or change the CIDR |
+| An orphan from before networks carried an identity, or from a data directory that no longer exists | `docker network rm` it by hand; `overcast network status` says which networks match this configuration and whose they are |
 
 ## Overlapping CIDRs
 
@@ -136,7 +150,7 @@ an RDS/ELB endpoint name is unaffected.
 
 | Event | What happens |
 | --- | --- |
-| `CreateVpc` with Docker unavailable | The VPC is stored as `unbacked` and reconcile picks it up later. If Docker is available and the create fails, the API call still succeeds and the network is best-effort |
+| `CreateVpc` with Docker unavailable | The VPC is stored as `unbacked` and reconcile picks it up later. If Docker is available and refuses the create, the API call still succeeds, the VPC stays `unbacked` until a reconcile succeeds, and the `vpc-network-unbacked` advisory names it — see [When a network cannot be created](#when-a-network-cannot-be-created) |
 | `DeleteVpc` | The Docker network is torn down only when the VPC being deleted was the last one using it |
 | Internet gateway attach or detach | Flips the network for every sharer at once: a shared network is external while *any* VPC on it has a gateway attached, and goes back to `--internal` only when the last gateway is detached. Every sharer's record follows the recreated network |
 

@@ -54,8 +54,9 @@ startup pass reconciles every region; one it did not reach is reconciled on the
 first placement into it, which adopts and recreates networks without repairing
 their isolation until the next startup. A network another instance on the same
 daemon created is left alone, and an unlabelled one is adopted and rebuilt to
-spec but never removed — see
-[How a VPC is backed by a Docker network](../networking/vpc-backing.md).
+spec but never removed. An instance is identified by its data directory, so the
+networks it created before its state was wiped are still its own to reclaim —
+see [How a VPC is backed by a Docker network](../networking/vpc-backing.md).
 
 > [!NOTE]
 > The default VPC's backing network is Overcast's own shared data plane

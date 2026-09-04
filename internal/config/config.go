@@ -1363,8 +1363,8 @@ func (c *Config) ControlNetwork() string {
 //   - **Per-VPC networks** are scoped by *label*. Their names come from an
 //     emulated resource id rather than from configuration, so two instances can
 //     mint the same one; docker.LabelInstance carries the EC2 service's
-//     store-scoped identity (serviceutil.InstanceDomain) and decides who may
-//     remove them.
+//     data-directory-scoped identity (serviceutil.InstanceDomain) and decides
+//     who may remove them.
 //
 // The default value reproduces the historical name exactly (`overcast-vpc-…`),
 // so an installation that never set OVERCAST_NETWORK keeps adopting the

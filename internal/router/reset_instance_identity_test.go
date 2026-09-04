@@ -58,8 +58,8 @@ func TestReset_keepsEveryServiceIdentityAndWipesEverythingElse(t *testing.T) {
 
 	// Given: two services that stamp docker.LabelInstance have resolved an
 	// identity, and there is ordinary emulated state beside it.
-	ec2ID := serviceutil.InstanceIdentity(ctx, store, "ec2:instance")
-	lambdaID := serviceutil.InstanceIdentity(ctx, store, "lambda:instance")
+	ec2ID := serviceutil.InstanceIdentity(ctx, store, "ec2:instance", serviceutil.Anchor{})
+	lambdaID := serviceutil.InstanceIdentity(ctx, store, "lambda:instance", serviceutil.Anchor{})
 	if ec2ID == "" || lambdaID == "" {
 		t.Fatal("no identity was minted; the rest of this test proves nothing")
 	}
@@ -86,7 +86,7 @@ func TestReset_keepsEveryServiceIdentityAndWipesEverythingElse(t *testing.T) {
 func TestReset_theNextStartReadsTheSameIdentity(t *testing.T) {
 	store := state.NewMemoryStore()
 	ctx := context.Background()
-	before := serviceutil.InstanceIdentity(ctx, store, "ec2:instance")
+	before := serviceutil.InstanceIdentity(ctx, store, "ec2:instance", serviceutil.Anchor{})
 
 	postReset(t, store)
 
@@ -104,7 +104,7 @@ func TestReset_theNextStartReadsTheSameIdentity(t *testing.T) {
 func TestReset_keepsTheIdentityOnBothWipePaths(t *testing.T) {
 	t.Run("memory fast path", func(t *testing.T) {
 		store := state.NewMemoryStore()
-		before := serviceutil.InstanceIdentity(context.Background(), store, "ec2:instance")
+		before := serviceutil.InstanceIdentity(context.Background(), store, "ec2:instance", serviceutil.Anchor{})
 		postReset(t, store)
 		if got := identityOf(t, store, "ec2:instance"); got != before {
 			t.Errorf("identity = %q, want %q", got, before)
@@ -114,7 +114,7 @@ func TestReset_keepsTheIdentityOnBothWipePaths(t *testing.T) {
 	t.Run("generic path", func(t *testing.T) {
 		store := &plainStore{state.NewMemoryStore()}
 		ctx := context.Background()
-		before := serviceutil.InstanceIdentity(ctx, store, "ec2:instance")
+		before := serviceutil.InstanceIdentity(ctx, store, "ec2:instance", serviceutil.Anchor{})
 		if err := store.Set(ctx, "ec2:vpcs", "vpc-1", `{"VpcId":"vpc-1"}`); err != nil {
 			t.Fatal(err)
 		}
@@ -141,8 +141,8 @@ func TestReset_keepsTheIdentityOnBothWipePaths(t *testing.T) {
 			"lambda": lambdaStore,
 		})
 		ctx := context.Background()
-		ec2ID := serviceutil.InstanceIdentity(ctx, ns, "ec2:instance")
-		lambdaID := serviceutil.InstanceIdentity(ctx, ns, "lambda:instance")
+		ec2ID := serviceutil.InstanceIdentity(ctx, ns, "ec2:instance", serviceutil.Anchor{})
+		lambdaID := serviceutil.InstanceIdentity(ctx, ns, "lambda:instance", serviceutil.Anchor{})
 		if err := ns.Set(ctx, "lambda:functions", "f1", `{}`); err != nil {
 			t.Fatal(err)
 		}
@@ -166,7 +166,7 @@ func TestReset_keepsTheIdentityOnBothWipePaths(t *testing.T) {
 func TestResetService_keepsTheIdentityOfTheServiceItWipes(t *testing.T) {
 	store := state.NewMemoryStore()
 	ctx := context.Background()
-	before := serviceutil.InstanceIdentity(ctx, store, "ec2:instance")
+	before := serviceutil.InstanceIdentity(ctx, store, "ec2:instance", serviceutil.Anchor{})
 	if err := store.Set(ctx, "ec2:vpcs", "vpc-1", `{"VpcId":"vpc-1"}`); err != nil {
 		t.Fatal(err)
 	}

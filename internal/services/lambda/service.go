@@ -816,7 +816,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		stop:                make(chan struct{}),
 		probe:               docker.Probe,
 		dockerRetryInterval: dockerRetryInterval,
-		instances:           serviceutil.NewInstanceDomain(store, nsInstance),
+		instances:           serviceutil.NewAnchoredInstanceDomain(store, nsInstance, serviceutil.DataDirAnchor(cfg.DataDir)),
 	}
 
 	// Probe Docker in the background so startup of other services is not delayed.
