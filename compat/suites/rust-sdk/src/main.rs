@@ -64,7 +64,11 @@ async fn main() {
         capabilities.insert(String::from("docker"));
     }
 
-    let mut all_groups = match build_groups(suite, &impls, &setups, &teardowns, &capabilities) {
+    // No scenario backend yet: rust-sdk has no interpreter for the generated
+    // registry's scenario groups, so a generated group scoped to this suite
+    // reports a loud failure rather than a skip. See registry::ScenarioBackend.
+    let mut all_groups = match build_groups(suite, &impls, &setups, &teardowns, &capabilities, None)
+    {
         Ok(groups) => groups,
         Err(err) => {
             // Covers both a registry that will not load and unusable impl
