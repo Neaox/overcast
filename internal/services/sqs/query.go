@@ -49,7 +49,7 @@ func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 		// so an unowned Action is live traffic: a real SQS operation Overcast
 		// has not implemented gets an honest 501 in Query XML; InvalidAction
 		// stays for a name AWS does not model (#1645).
-		serviceutil.WriteUnhandledOperation(w, r, codec.QueryXML, serviceName, action, errInvalidAction(action))
+		serviceutil.WriteUnhandledOperation(w, r, codec.QueryXML, awsapiService, action, errInvalidAction(action))
 		return
 	}
 

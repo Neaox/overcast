@@ -40,7 +40,7 @@ Such an alarm is never left silent. It declares itself in three places:
 | Configuration | Response |
 | --- | --- |
 | `EvaluationCriteria` — PromQL alarms | `501 NotImplemented` from `PutMetricAlarm` |
-| `PutCompositeAlarm`, `PutAnomalyDetector` | `501 NotImplemented` |
+| Any modelled CloudWatch operation Overcast does not implement — `PutCompositeAlarm`, `PutAnomalyDetector`, `PutDashboard` and the rest of the dashboard, metric-stream and Contributor Insights calls | `501 NotImplemented` |
 | An action ARN with no sink — EC2 instance actions, Systems Manager OpsItems | The transition still happens and is still published; the undelivered action is logged and recorded as an `Action` history item saying it was **NOT executed** |
 
 Values AWS itself rejects still get AWS's `400 ValidationError`, not a `501`:

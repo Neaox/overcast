@@ -26,6 +26,12 @@ import (
 
 const serviceName = "secretsmanager"
 
+// awsapiService is Secrets Manager's key in the generated AWS model corpus.
+// serviceutil.MustAWSService validates it at package initialisation, so a
+// key the models do not carry fails immediately rather than silently
+// answering every unimplemented operation with a 400.
+var awsapiService = serviceutil.MustAWSService(serviceName)
+
 // Service implements router.Service for Secrets Manager.
 type Service struct {
 	cfg     *config.Config
@@ -184,7 +190,7 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 		// A real Secrets Manager operation Overcast has not implemented gets
 		// an honest 501, in the request's own wire format;
 		// UnknownOperationException stays for a name AWS does not model (#1645).
-		serviceutil.WriteUnhandledOperation(w, r, c, serviceName, opName, errUnknownOperation(opName))
+		serviceutil.WriteUnhandledOperation(w, r, c, awsapiService, opName, errUnknownOperation(opName))
 		return
 	}
 
@@ -200,7 +206,7 @@ func (s *Service) dispatchLegacy(w http.ResponseWriter, r *http.Request, target 
 	// This path serves the JSON families only — Dispatch sends RPC v2 CBOR to
 	// the typed operations — so JSON11 writes the bytes WriteJSONError always
 	// did for an unknown name.
-	serviceutil.WriteUnhandledOperation(w, r, codec.JSON11, serviceName, target, errUnknownOperation(target))
+	serviceutil.WriteUnhandledOperation(w, r, codec.JSON11, awsapiService, target, errUnknownOperation(target))
 }
 
 // errUnknownOperation is AWS's answer for a target naming no Secrets Manager

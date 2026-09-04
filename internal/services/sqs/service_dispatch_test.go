@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/overcast-sh/overcast/internal/awsapi"
 	"github.com/overcast-sh/overcast/internal/protocol/codec"
 	"github.com/overcast-sh/overcast/internal/serviceutil/dispatchtest"
 )
@@ -27,9 +26,7 @@ func TestDispatch_unimplementedVsUnknownOperation(t *testing.T) {
 	if _, ok := svc.handler.typedOp[unimplemented]; ok {
 		t.Fatalf("test setup: %q is implemented, pick an unimplemented operation", unimplemented)
 	}
-	if !awsapi.HasOperation(serviceName, unimplemented) || awsapi.HasOperation(serviceName, unknown) {
-		t.Fatalf("test setup: %q must be modeled and %q must not", unimplemented, unknown)
-	}
+	dispatchtest.AssertModeled(t, awsapiService, unimplemented, unknown)
 
 	cases := dispatchtest.UnimplementedVsUnknown(unimplemented, unknown, "InvalidAction")
 	cases = append(cases,
@@ -37,4 +34,27 @@ func TestDispatch_unimplementedVsUnknownOperation(t *testing.T) {
 		dispatchtest.Refusal{Name: "unmodeled name over Query keeps 400 in XML", Operation: unknown, Codec: codec.QueryXML, Status: http.StatusBadRequest, Code: "InvalidAction"},
 	)
 	dispatchtest.AssertRefusals(t, svc.Dispatch, "AmazonSQS.", cases)
+}
+
+// TestDispatchQuery_opsCoversEveryTypedOperation pins the assumption
+// DispatchQuery and OwnsAction both rest on: the queue-URL Query route
+// resolves an Action through handler.ops alone, so an operation that were
+// ever registered typed-only would be refused there — and, since the refusal
+// now consults the model corpus, refused with a 501 claiming Overcast does
+// not emulate something it does emulate over JSON. That is a worse answer
+// than the InvalidAction it replaced, so the two maps have to stay in step.
+//
+// The fix if this fails is to give the Query route the same typed fallback
+// Dispatch has, not to shrink typedOp.
+func TestDispatchQuery_opsCoversEveryTypedOperation(t *testing.T) {
+	// Given: SQS's two operation registries.
+	svc := newTestSQSService(t)
+
+	// Then: every typed operation is also reachable by name through ops,
+	// which is the only map the Query route consults.
+	for name := range svc.handler.typedOp {
+		if _, ok := svc.handler.ops[name]; !ok {
+			t.Errorf("%s is registered typed-only; the queue-URL Query route would refuse it with a 501", name)
+		}
+	}
 }

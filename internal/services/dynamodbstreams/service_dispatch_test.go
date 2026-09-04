@@ -36,7 +36,7 @@ func TestDispatch_unknownOperation(t *testing.T) {
 func TestDispatch_everyModeledOperationImplemented(t *testing.T) {
 	svc := New(nil, zap.NewNop())
 	awsapi.WalkOperations(func(op awsapi.Operation) bool {
-		if awsapi.ServiceKey(op.Service) != serviceName {
+		if awsapi.ServiceKey(op.Service) != string(awsapiService) {
 			return true
 		}
 		if _, ok := svc.handler.typedOp[op.Name]; !ok {

@@ -17,7 +17,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
-	"github.com/overcast-sh/overcast/internal/awsapi"
 	"github.com/overcast-sh/overcast/internal/clock"
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/protocol"
@@ -27,6 +26,12 @@ import (
 )
 
 const serviceName = "acm"
+
+// awsapiService is ACM's key in the generated AWS model corpus.
+// serviceutil.MustAWSService validates it at package initialisation, so a
+// key the models do not carry fails immediately rather than silently
+// answering every unimplemented operation with a 400.
+var awsapiService = serviceutil.MustAWSService(serviceName)
 
 // Certificate represents an ACM certificate.
 type Certificate struct {
@@ -176,21 +181,11 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 		}
 		// A real, documented ACM operation Overcast has not implemented gets an
 		// honest 501 rather than UnknownOperationException, which would wrongly
-		// claim AWS has no such operation — the same rule cloudwatch/service.go's
-		// dispatchJSON states and follows. awsapi.HasOperation consults the
-		// generated model corpus, so this list cannot drift the way a
-		// hand-maintained one would. c.WriteError (not a fixed JSON helper) keeps
-		// the error in whatever wire format this request was identified as,
-		// including RPCv2 CBOR.
-		if awsapi.HasOperation(serviceName, opName) {
-			c.WriteError(w, r, protocol.ErrNotImplemented)
-			return
-		}
-		c.WriteError(w, r, &protocol.AWSError{
-			Code:       "UnknownOperationException",
-			Message:    "Unknown ACM operation: " + opName,
-			HTTPStatus: http.StatusBadRequest,
-		})
+		// claim AWS has no such operation; a name AWS does not model keeps the
+		// 400. #1656 made this split inline here; it is now the one helper the
+		// other eleven JSON-tier services share (#1645), writing through the
+		// request's own codec so an RPC v2 CBOR caller gets CBOR.
+		serviceutil.WriteUnhandledOperation(w, r, c, awsapiService, opName, errUnknownOperation(opName))
 		return
 	}
 
@@ -203,7 +198,20 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 		fn(w, r)
 		return
 	}
-	protocol.NotImplementedJSON(w, r)
+	// The same split on the no-codec fallback. This path served a blanket 501
+	// for every name, so a target AWS does not model moves to the 400 the
+	// codec arm has always answered it with. JSON11 writes what
+	// protocol.NotImplementedJSON did: both go through protocol.WriteJSONError.
+	serviceutil.WriteUnhandledOperation(w, r, codec.JSON11, awsapiService, op, errUnknownOperation(op))
+}
+
+// errUnknownOperation is ACM's answer for a name the AWS models do not carry.
+func errUnknownOperation(op string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "UnknownOperationException",
+		Message:    "Unknown ACM operation: " + op,
+		HTTPStatus: http.StatusBadRequest,
+	}
 }
 
 // mergeTags returns existing plus overrides, with overrides winning on key

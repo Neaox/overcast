@@ -25,6 +25,12 @@ import (
 
 const serviceName = "stepfunctions"
 
+// awsapiService is Step Functions's key in the generated AWS model corpus.
+// serviceutil.MustAWSService validates it at package initialisation, so a
+// key the models do not carry fails immediately rather than silently
+// answering every unimplemented operation with a 400.
+var awsapiService = serviceutil.MustAWSService(serviceName)
+
 // Service implements router.Service and router.TargetDispatcher for Step Functions.
 type Service struct {
 	log     *serviceutil.ServiceLogger
@@ -96,7 +102,7 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 		// A real Step Functions operation Overcast has not implemented gets an
 		// honest 501, in the request's own wire format;
 		// UnknownOperationException stays for a name AWS does not model (#1645).
-		serviceutil.WriteUnhandledOperation(w, r, c, serviceName, opName, errUnknownOperation(opName))
+		serviceutil.WriteUnhandledOperation(w, r, c, awsapiService, opName, errUnknownOperation(opName))
 		return
 	}
 
@@ -109,7 +115,7 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 		fn(w, r)
 		return
 	}
-	serviceutil.WriteUnhandledOperation(w, r, codec.JSON10, serviceName, suffix, errUnknownOperation(suffix))
+	serviceutil.WriteUnhandledOperation(w, r, codec.JSON10, awsapiService, suffix, errUnknownOperation(suffix))
 }
 
 // errUnknownOperation is AWS's answer for a target naming no Step Functions

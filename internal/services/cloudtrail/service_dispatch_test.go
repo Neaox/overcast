@@ -5,7 +5,6 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/overcast-sh/overcast/internal/awsapi"
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/serviceutil/dispatchtest"
 	"github.com/overcast-sh/overcast/internal/state"
@@ -27,9 +26,7 @@ func TestDispatch_unimplementedVsUnknownOperation(t *testing.T) {
 	if _, ok := svc.handler.typedOp[unimplemented]; ok {
 		t.Fatalf("test setup: %q is implemented, pick an unimplemented operation", unimplemented)
 	}
-	if !awsapi.HasOperation(serviceName, unimplemented) || awsapi.HasOperation(serviceName, unknown) {
-		t.Fatalf("test setup: %q must be modeled and %q must not", unimplemented, unknown)
-	}
+	dispatchtest.AssertModeled(t, awsapiService, unimplemented, unknown)
 
 	dispatchtest.AssertRefusals(t, svc.Dispatch, svc.TargetPrefix(), dispatchtest.UnimplementedVsUnknown(unimplemented, unknown, "InvalidAction"))
 }

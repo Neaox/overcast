@@ -3,7 +3,6 @@ package cloudwatch
 import (
 	"testing"
 
-	"github.com/overcast-sh/overcast/internal/awsapi"
 	"github.com/overcast-sh/overcast/internal/serviceutil/dispatchtest"
 )
 
@@ -24,9 +23,7 @@ func TestDispatch_unimplementedVsUnknownOperation(t *testing.T) {
 	if _, ok := svc.typedOp[unimplemented]; ok {
 		t.Fatalf("test setup: %q is implemented, pick an unimplemented operation", unimplemented)
 	}
-	if !awsapi.HasOperation(serviceName, unimplemented) || awsapi.HasOperation(serviceName, unknown) {
-		t.Fatalf("test setup: %q must be modeled and %q must not", unimplemented, unknown)
-	}
+	dispatchtest.AssertModeled(t, awsapiService, unimplemented, unknown)
 
 	dispatchtest.AssertRefusals(t, svc.Dispatch, cloudwatchJSONTargetPrefix, dispatchtest.UnimplementedVsUnknown(unimplemented, unknown, "UnknownOperationException"))
 }

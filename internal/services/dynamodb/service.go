@@ -28,6 +28,12 @@ import (
 
 const serviceName = "dynamodb"
 
+// awsapiService is DynamoDB's key in the generated AWS model corpus.
+// serviceutil.MustAWSService validates it at package initialisation, so a
+// key the models do not carry fails immediately rather than silently
+// answering every unimplemented operation with a 400.
+var awsapiService = serviceutil.MustAWSService(serviceName)
+
 // Service implements router.Service for DynamoDB.
 type Service struct {
 	cfg       *config.Config
@@ -333,7 +339,7 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 		// whatever the operation. Refuse here instead, in the request's own
 		// wire format: 501 for a real DynamoDB operation Overcast has not
 		// implemented, UnknownOperationException for a name AWS does not model.
-		serviceutil.WriteUnhandledOperation(cw, r, c, serviceName, opName, errUnknownOperation(opName))
+		serviceutil.WriteUnhandledOperation(cw, r, c, awsapiService, opName, errUnknownOperation(opName))
 		return
 	}
 

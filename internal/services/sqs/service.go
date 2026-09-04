@@ -39,6 +39,12 @@ import (
 
 const serviceName = "sqs"
 
+// awsapiService is SQS's key in the generated AWS model corpus.
+// serviceutil.MustAWSService validates it at package initialisation, so a
+// key the models do not carry fails immediately rather than silently
+// answering every unimplemented operation with a 400.
+var awsapiService = serviceutil.MustAWSService(serviceName)
+
 // Service implements router.Service for SQS.
 type Service struct {
 	cfg               *config.Config
@@ -279,7 +285,7 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		serviceutil.WriteUnhandledOperation(w, r, c, serviceName, opName, errInvalidAction(opName))
+		serviceutil.WriteUnhandledOperation(w, r, c, awsapiService, opName, errInvalidAction(opName))
 		return
 	}
 
@@ -295,7 +301,7 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 	}
 	// A real SQS operation Overcast has not implemented gets an honest 501;
 	// InvalidAction stays for a name AWS does not model (#1645).
-	serviceutil.WriteUnhandledOperation(w, r, codec.JSON10, serviceName, target, errInvalidAction(target))
+	serviceutil.WriteUnhandledOperation(w, r, codec.JSON10, awsapiService, target, errInvalidAction(target))
 }
 
 // errInvalidAction is SQS's answer for an action naming no modeled operation,

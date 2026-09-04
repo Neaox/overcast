@@ -19,6 +19,12 @@ import (
 
 const serviceName = "dynamodbstreams"
 
+// awsapiService is DynamoDB Streams's key in the generated AWS model corpus.
+// serviceutil.MustAWSService validates it at package initialisation, so a
+// key the models do not carry fails immediately rather than silently
+// answering every unimplemented operation with a 400.
+var awsapiService = serviceutil.MustAWSService(serviceName)
+
 // DynamoDBService is the narrow interface the streams service needs from the
 // DynamoDB service. *dynamodb.Service satisfies this automatically.
 type DynamoDBService interface {
@@ -74,7 +80,7 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 		// UnknownOperationException stays for a name AWS does not model
 		// (#1645). Every modeled Streams operation is implemented today, so
 		// the 501 arm is insurance against the next model refresh.
-		serviceutil.WriteUnhandledOperation(w, r, c, serviceName, opName, errUnknownOperation(opName))
+		serviceutil.WriteUnhandledOperation(w, r, c, awsapiService, opName, errUnknownOperation(opName))
 		return
 	}
 
@@ -87,7 +93,7 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 		fn(w, r)
 		return
 	}
-	serviceutil.WriteUnhandledOperation(w, r, codec.JSON10, serviceName, target, errUnknownOperation(target))
+	serviceutil.WriteUnhandledOperation(w, r, codec.JSON10, awsapiService, target, errUnknownOperation(target))
 }
 
 // errUnknownOperation is AWS's answer for a target naming no DynamoDB Streams

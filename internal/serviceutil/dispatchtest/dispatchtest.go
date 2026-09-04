@@ -1,8 +1,8 @@
 // Package dispatchtest drives a service's Dispatch the way middleware.Protocol
 // would — codec and operation already in the request context — for the
-// refusal cases every X-Amz-Target service shares. It exists so the eleven
+// refusal cases every X-Amz-Target service shares. It exists so the twelve
 // services that pin #1645 assert one contract from one place rather than
-// eleven hand-copied tables.
+// twelve hand-copied tables.
 package dispatchtest
 
 import (
@@ -12,8 +12,33 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/overcast-sh/overcast/internal/awsapi"
 	"github.com/overcast-sh/overcast/internal/protocol/codec"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
+
+// AssertModeled fails unless service is an established Overcast service key
+// whose modeled operations include unimplemented and exclude unknown — the
+// setup every UnimplementedVsUnknown table rests on.
+//
+// The key half is the load-bearing one. serviceutil.WriteUnhandledOperation
+// asks the model corpus about a (key, operation) pair, so a key the corpus
+// does not carry answers "not modeled" for every real operation and silently
+// keeps the 400 the rule exists to replace. serviceutil.MustAWSService rules
+// that out at package initialisation; this is the same check stated where the
+// service's expectations are written down.
+func AssertModeled(t *testing.T, service serviceutil.AWSService, unimplemented, unknown string) {
+	t.Helper()
+	if !awsapi.IsServiceKey(string(service)) {
+		t.Fatalf("test setup: %q is not an established Overcast service key", service)
+	}
+	if !awsapi.KnownOperation(string(service), unimplemented) {
+		t.Fatalf("test setup: %q is not a modeled %s operation, so it cannot pin the 501", unimplemented, service)
+	}
+	if awsapi.KnownOperation(string(service), unknown) {
+		t.Fatalf("test setup: %q is a modeled %s operation, so it cannot pin the 400", unknown, service)
+	}
+}
 
 // Refusal is one operation a service is expected to refuse, and how.
 type Refusal struct {
