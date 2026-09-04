@@ -1,0 +1,233 @@
+{
+  "$comment": "SQS pilot recipe (docs/plans/compat-coverage-modelgen.md §4.1). Four resources: a dead-letter queue that exists only to be required, the queue itself (with the DLQ topology that ListDeadLetterSourceQueues and StartMessageMoveTask need), a single message, and a batch. Every ReceiveMessage that must leave the message visible passes VisibilityTimeout 0; the two that must leave it in flight — the message read and the batch read-back — do not, because ChangeMessageVisibility on a visible message is MessageNotInflight on AWS.",
+  "service": "sqs",
+  "resources": [
+    {
+      "id": "queue",
+      "requires": ["dlq"],
+      "create": {
+        "op": "CreateQueue",
+        "params": {
+          "QueueName": { "$name": "q" },
+          "Attributes": {
+            "RedrivePolicy": { "$concat": ["{\"deadLetterTargetArn\":\"", { "$ref": "dlq.arn" }, "\",\"maxReceiveCount\":\"5\"}"] }
+          }
+        }
+      },
+      "exports": { "url": "$.QueueUrl" },
+      "derived": [
+        {
+          "export": "arn",
+          "op": "GetQueueAttributes",
+          "params": { "QueueUrl": { "$ref": "queue.url" }, "AttributeNames": ["QueueArn"] },
+          "path": "$.Attributes.QueueArn"
+        }
+      ],
+      "binds": { "QueueUrl": "queue.url", "QueueArn": "queue.arn", "DestinationArn": "queue.arn" },
+      "read": {
+        "op": "GetQueueAttributes",
+        "params": { "AttributeNames": ["All"] },
+        "identityPath": "$.Attributes.QueueArn",
+        "identity": "arn"
+      },
+      "reads": [
+        {
+          "op": "GetQueueUrl",
+          "params": { "QueueName": { "$name": "q" } },
+          "identityPath": "$.QueueUrl",
+          "identity": "url"
+        }
+      ],
+      "list": {
+        "op": "ListQueues",
+        "params": { "QueueNamePrefix": { "$name": "q" } },
+        "itemsPath": "$.QueueUrls",
+        "identityPath": "$",
+        "identity": "url"
+      },
+      "mutable": [
+        { "op": "SetQueueAttributes", "member": "Attributes.VisibilityTimeout", "from": "30", "to": "60", "readPath": "$.Attributes.VisibilityTimeout" }
+      ],
+      "tags": {
+        "tag": { "op": "TagQueue", "member": "Tags" },
+        "untag": { "op": "UntagQueue", "member": "TagKeys" },
+        "list": { "op": "ListQueueTags", "path": "$.Tags" }
+      },
+      "delete": { "op": "DeleteQueue" },
+      "notFound": { "error": "QueueDoesNotExist" },
+      "async": { "maxAttempts": 10, "delayMs": 500 },
+      "operations": [
+        {
+          "op": "ListDeadLetterSourceQueues",
+          "params": { "QueueUrl": { "$ref": "dlq.url" } },
+          "assert": [
+            { "kind": "listContains", "itemsPath": "$.queueUrls", "where": { "$": { "$ref": "queue.url" } } }
+          ]
+        },
+        {
+          "$comment": "The DLQ is a valid source because the queue's RedrivePolicy targets it; the task moves nothing, so only the handle is observable.",
+          "op": "StartMessageMoveTask",
+          "params": { "SourceArn": { "$ref": "dlq.arn" }, "DestinationArn": { "$ref": "queue.arn" } },
+          "assert": [
+            { "kind": "responseField", "checks": { "$.TaskHandle": { "nonEmpty": true } } }
+          ]
+        },
+        {
+          "$comment": "Puts one message on the queue so the purge that follows has something to remove; the counter is the observable a queue-level test has.",
+          "name": "SendMessageBeforePurge",
+          "op": "SendMessage",
+          "params": { "MessageBody": "compat scenario message before purge" },
+          "assert": [
+            { "kind": "responseField", "checks": { "$.MessageId": { "nonEmpty": true } } },
+            {
+              "kind": "eventually", "maxAttempts": 10, "delayMs": 500,
+              "assert": {
+                "kind": "readback",
+                "call": { "op": "GetQueueAttributes", "params": { "AttributeNames": ["ApproximateNumberOfMessages"] } },
+                "checks": { "$.Attributes.ApproximateNumberOfMessages": { "equals": "1" } }
+              }
+            }
+          ]
+        },
+        {
+          "op": "PurgeQueue",
+          "assert": [
+            {
+              "kind": "eventually", "maxAttempts": 12, "delayMs": 5000,
+              "assert": {
+                "kind": "readback",
+                "call": { "op": "GetQueueAttributes", "params": { "AttributeNames": ["ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible"] } },
+                "checks": {
+                  "$.Attributes.ApproximateNumberOfMessages": { "equals": "0" },
+                  "$.Attributes.ApproximateNumberOfMessagesNotVisible": { "equals": "0" }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dlq",
+      "setupOnly": true,
+      "create": { "op": "CreateQueue", "params": { "QueueName": { "$name": "dlq" } } },
+      "exports": { "url": "$.QueueUrl" },
+      "derived": [
+        {
+          "export": "arn",
+          "op": "GetQueueAttributes",
+          "params": { "QueueUrl": { "$ref": "dlq.url" }, "AttributeNames": ["QueueArn"] },
+          "path": "$.Attributes.QueueArn"
+        }
+      ],
+      "binds": { "QueueUrl": "dlq.url", "SourceArn": "dlq.arn" },
+      "delete": { "op": "DeleteQueue" }
+    },
+    {
+      "id": "message",
+      "requires": ["queue"],
+      "create": {
+        "op": "SendMessage",
+        "params": { "MessageBody": "compat scenario message" },
+        "assert": [
+          {
+            "kind": "readback",
+            "call": { "op": "ReceiveMessage", "params": { "MaxNumberOfMessages": 1, "WaitTimeSeconds": 5, "VisibilityTimeout": 0 } },
+            "checks": {
+              "$.Messages[0].MessageId": { "equals": { "$ref": "message.id" } },
+              "$.Messages[0].Body": { "equals": "compat scenario message" }
+            }
+          }
+        ]
+      },
+      "exports": { "id": "$.MessageId", "md5": "$.MD5OfMessageBody" },
+      "binds": { "ReceiptHandle": "message.receiptHandle" },
+      "read": {
+        "op": "ReceiveMessage",
+        "params": { "MaxNumberOfMessages": 1, "WaitTimeSeconds": 5 },
+        "identityPath": "$.Messages[0].MessageId",
+        "identity": "id",
+        "consuming": true,
+        "exports": { "receiptHandle": "$.Messages[0].ReceiptHandle" }
+      },
+      "list": {
+        "op": "ReceiveMessage",
+        "params": { "MaxNumberOfMessages": 10, "WaitTimeSeconds": 1, "VisibilityTimeout": 0 },
+        "itemsPath": "$.Messages",
+        "identityPath": "$.MessageId",
+        "identity": "id"
+      },
+      "delete": { "op": "DeleteMessage" },
+      "async": { "maxAttempts": 5, "delayMs": 1000 },
+      "operations": [
+        {
+          "$comment": "Timeout 0 makes the in-flight message visible at once; the read-back proves it and takes the fresh receipt handle the delete needs.",
+          "op": "ChangeMessageVisibility",
+          "params": { "VisibilityTimeout": 0 },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "ReceiveMessage",
+                "params": { "MaxNumberOfMessages": 1, "WaitTimeSeconds": 5, "VisibilityTimeout": 0 },
+                "export": { "message.receiptHandle": "$.Messages[0].ReceiptHandle" }
+              },
+              "checks": { "$.Messages[0].MessageId": { "equals": { "$ref": "message.id" } } }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "batch",
+      "requires": ["queue"],
+      "create": {
+        "op": "SendMessageBatch",
+        "params": { "Entries": [ { "Id": "1", "MessageBody": "compat batch message 1" }, { "Id": "2", "MessageBody": "compat batch message 2" } ] },
+        "assert": [
+          {
+            "$comment": "Receives in flight, so the visibility change below is legal; whichever entry arrives first is the one the rest of the group tracks.",
+            "kind": "readback",
+            "call": {
+              "op": "ReceiveMessage",
+              "params": { "MaxNumberOfMessages": 10, "WaitTimeSeconds": 5 },
+              "export": { "batch.id": "$.Messages[0].MessageId", "batch.receiptHandle": "$.Messages[0].ReceiptHandle" }
+            },
+            "checks": { "$.Messages[0].ReceiptHandle": { "nonEmpty": true } }
+          }
+        ]
+      },
+      "exports": { "firstId": "$.Successful[0].MessageId", "secondId": "$.Successful[1].MessageId" },
+      "list": {
+        "op": "ReceiveMessage",
+        "params": { "MaxNumberOfMessages": 10, "WaitTimeSeconds": 1, "VisibilityTimeout": 0 },
+        "itemsPath": "$.Messages",
+        "identityPath": "$.MessageId",
+        "identity": "id"
+      },
+      "delete": {
+        "op": "DeleteMessageBatch",
+        "params": { "Entries": [ { "Id": "1", "ReceiptHandle": { "$ref": "batch.receiptHandle" } } ] }
+      },
+      "async": { "maxAttempts": 5, "delayMs": 1000 },
+      "operations": [
+        {
+          "op": "ChangeMessageVisibilityBatch",
+          "params": { "Entries": [ { "Id": "1", "ReceiptHandle": { "$ref": "batch.receiptHandle" }, "VisibilityTimeout": 0 } ] },
+          "assert": [
+            { "kind": "responseField", "checks": { "$.Successful[0].Id": { "equals": "1" } } },
+            {
+              "kind": "readback",
+              "call": {
+                "op": "ReceiveMessage",
+                "params": { "MaxNumberOfMessages": 10, "WaitTimeSeconds": 5, "VisibilityTimeout": 0 },
+                "export": { "batch.receiptHandle": "$.Messages[0].ReceiptHandle" }
+              },
+              "checks": { "$.Messages[0].MessageId": { "equals": { "$ref": "batch.id" } } }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

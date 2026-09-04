@@ -1,0 +1,53 @@
+{
+  "$comment": "Organizations pilot recipe (docs/plans/compat-coverage-modelgen.md §4.2). The policy is the one real lifecycle the emulator implements; the organization is pre-existing and read-only, and its master account id is what lets account-scoped probes call with an id that is legal on AWS too. Everything else is a probe.",
+  "service": "organizations",
+  "resources": [
+    {
+      "id": "policy",
+      "create": {
+        "op": "CreatePolicy",
+        "params": {
+          "Name": { "$name": "policy" },
+          "Type": "SERVICE_CONTROL_POLICY",
+          "Content": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}]}"
+        }
+      },
+      "exports": { "id": "$.Policy.PolicySummary.Id", "arn": "$.Policy.PolicySummary.Arn" },
+      "binds": { "PolicyId": "policy.id", "ResourceId": "policy.id" },
+      "read": { "op": "DescribePolicy", "identityPath": "$.Policy.PolicySummary.Id", "identity": "id" },
+      "list": {
+        "op": "ListPolicies",
+        "params": { "Filter": "SERVICE_CONTROL_POLICY" },
+        "itemsPath": "$.Policies",
+        "identityPath": "$.Id",
+        "identity": "id"
+      },
+      "mutable": [
+        {
+          "op": "UpdatePolicy",
+          "member": "Description",
+          "from": "compat scenario policy",
+          "to": "compat scenario policy, updated",
+          "readPath": "$.Policy.PolicySummary.Description"
+        }
+      ],
+      "tags": {
+        "tag": { "op": "TagResource", "member": "Tags" },
+        "untag": { "op": "UntagResource", "member": "TagKeys" },
+        "list": { "op": "ListTagsForResource", "path": "$.Tags" }
+      },
+      "delete": { "op": "DeletePolicy" },
+      "notFound": { "error": "PolicyNotFoundException" }
+    },
+    {
+      "$comment": "Pre-existing: an organization is never created or deleted by a test. Its read is the group's only test; its exports let probes name the management account.",
+      "id": "organization",
+      "read": {
+        "op": "DescribeOrganization",
+        "identityPath": "$.Organization.Arn",
+        "exports": { "id": "$.Organization.Id", "arn": "$.Organization.Arn", "masterAccountId": "$.Organization.MasterAccountId" }
+      },
+      "binds": { "AccountId": "organization.masterAccountId" }
+    }
+  ]
+}

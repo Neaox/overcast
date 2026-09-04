@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "gaps": [
+    {
+      "service": "organizations",
+      "operation": "DeleteOrganization",
+      "group": "organizations-gen-probe",
+      "reason": "no-output-to-assert",
+      "detail": "DeleteOrganization returns no identifying member and is bound to no readable resource, so a probe would assert nothing"
+    },
+    {
+      "service": "organizations",
+      "operation": "DeleteOrganizationalUnit",
+      "group": "organizations-gen-probe",
+      "reason": "no-output-to-assert",
+      "detail": "DeleteOrganizationalUnit returns no identifying member and is bound to no readable resource, so a probe would assert nothing"
+    },
+    {
+      "service": "organizations",
+      "operation": "DeleteResourcePolicy",
+      "group": "organizations-gen-probe",
+      "reason": "no-output-to-assert",
+      "detail": "DeleteResourcePolicy returns no identifying member and is bound to no readable resource, so a probe would assert nothing"
+    },
+    {
+      "service": "organizations",
+      "operation": "DisableAWSServiceAccess",
+      "group": "organizations-gen-probe",
+      "reason": "no-output-to-assert",
+      "detail": "DisableAWSServiceAccess returns no identifying member and is bound to no readable resource, so a probe would assert nothing"
+    },
+    {
+      "service": "organizations",
+      "operation": "EnableAWSServiceAccess",
+      "group": "organizations-gen-probe",
+      "reason": "no-output-to-assert",
+      "detail": "EnableAWSServiceAccess returns no identifying member and is bound to no readable resource, so a probe would assert nothing"
+    },
+    {
+      "service": "organizations",
+      "operation": "InviteOrganizationToTransferResponsibility",
+      "group": "organizations-gen-probe",
+      "reason": "unbound-required-member:StartTimestamp",
+      "detail": "InviteOrganizationToTransferResponsibility.StartTimestamp (Timestamp, a timestamp) has no bind, no matching export, no curated value and no derivable literal"
+    },
+    {
+      "service": "organizations",
+      "operation": "LeaveOrganization",
+      "group": "organizations-gen-probe",
+      "reason": "no-output-to-assert",
+      "detail": "LeaveOrganization returns no identifying member and is bound to no readable resource, so a probe would assert nothing"
+    }
+  ]
+}

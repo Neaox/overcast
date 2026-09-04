@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/overcast-dev/overcast/compat/model/gaps.schema.json",
+  "title": "Overcast Compat Generation Gaps",
+  "description": "compat/model/gaps.json — every operation cmd/compatgen refused to generate, with a machine-readable reason, keyed by service and operation and sorted. Refusals are a feature: this is the exception queue a recipe author works from. Written by the generator, never hand-edited.",
+  "type": "object",
+  "required": ["version", "gaps"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["service", "operation", "group", "reason", "detail"],
+        "additionalProperties": false,
+        "properties": {
+          "service": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "operation": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]*$" },
+          "group": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "description": "The group the operation would have joined." },
+          "reason": {
+            "type": "string",
+            "description": "A stable code, optionally suffixed with the member or shape it names: unbound-required-member:<Member>, update-without-mutable, no-readback-path, probe-of-implemented-op, no-output-to-assert, setup-refused:<resource>, unsupported-tag-shape:<Shape>.",
+            "pattern": "^[a-z]+(-[a-z]+)*(:[A-Za-z0-9_]+)?$"
+          },
+          "detail": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

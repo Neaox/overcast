@@ -55,7 +55,7 @@ SLIM_IMAGE    ?= overcast-slim:$(IMAGE_TAG)
         ci-local ci-local-web ci-local-go \
         bench bench-startup lint lint-go lint-web lint-actions lint-encoding fmt vet tidy check verify aws-models-check docker docker-slim docker-console docker-run docker-clean docker-clean-test-networks clean \
         compat compat-build compat-serve compat-dev compat-docker compat-report compat-registry-check \
-        generate-caps check-caps generate-ts check-ts generate-aws-operations aws-models-check aws-models-check-ci docs docs-lint docs-check supportmeta-check check-binary-symbols
+        generate-caps check-caps generate-ts check-ts generate-aws-operations aws-models-check aws-models-check-ci generate-compat-model compat-model-check docs docs-lint docs-check supportmeta-check check-binary-symbols
 
 ## help: print this help message
 help:
@@ -290,6 +290,18 @@ aws-models-check: aws-models-check-ci
 		$(GO) run ./cmd/awsmodelgen -models "$(AWS_MODELS_DIR)" -output internal/awsapi/manifest.gen.go -source-revision "$(AWS_MODELS_REVISION)" \
 			-shapes-out models/aws/shapes -shapes-services models/aws/shapes-services.txt -check; \
 	fi
+
+## generate-compat-model: regenerate the compat scenario IR, gaps.json and registry.generated.json from compat/model/recipes/
+## Offline: reads the committed shape snapshot (models/aws/shapes/) and the capability table, never the raw AWS models.
+generate-compat-model:
+	$(GO) run -tags dev ./cmd/compatgen
+
+## compat-model-check: prove the committed compat model is byte-identical to what the generator produces (CI gate)
+## Runs the generator's own tests (the fixture suite plus the committed-corpus sync and schema checks) and then
+## the -check mode, which regenerates in memory and diffs without writing.
+compat-model-check:
+	$(GO) test -count=1 -tags dev ./cmd/compatgen
+	$(GO) run -tags dev ./cmd/compatgen -check
 
 ## docs-lint: check docs frontmatter, anchors, service page structure, the length budget and house-style tells
 # There is nothing to regenerate: the console derives its docs navigation and

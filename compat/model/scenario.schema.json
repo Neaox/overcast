@@ -1,0 +1,287 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/overcast-dev/overcast/compat/model/scenario.schema.json",
+  "title": "Overcast Compat Scenario IR",
+  "description": "One generated scenario file per service, compat/model/scenarios/<service>.json, written by cmd/compatgen and executed by the suite interpreters. The IR is closed: every construct an interpreter must implement is defined here, and README.md in this directory is the normative description. A test cannot be represented without at least one assertion clause.",
+  "type": "object",
+  "required": ["version", "service", "client", "groups"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "service": {
+      "type": "string",
+      "description": "The Overcast capability service key (compat registry `service`).",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "client": { "$ref": "#/definitions/Client" },
+    "groups": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/Group" }
+    }
+  },
+  "definitions": {
+    "Client": {
+      "type": "object",
+      "description": "What an interpreter needs to construct a client for this service without a naming table of its own. Per-SDK package names are derived from sdkId (see README § Naming).",
+      "required": ["sdkId", "endpointPrefix", "protocol", "apiVersion"],
+      "additionalProperties": false,
+      "properties": {
+        "sdkId": { "type": "string", "description": "The Smithy aws.api#service sdkId, e.g. \"SQS\", \"Organizations\", \"Cost Explorer\"." },
+        "endpointPrefix": { "type": "string", "description": "The aws.api#service endpointPrefix; also the aws CLI command name for every service in the pilot." },
+        "signingName": { "type": "string", "description": "The SigV4 signing name." },
+        "protocol": {
+          "type": "string",
+          "enum": ["awsJson1_0", "awsJson1_1", "awsQuery", "ec2Query", "restJson1", "restXml", "rpcv2Cbor", "rpcv2Json"],
+          "description": "The wire protocol, spelled as the Smithy protocol trait is (aws.protocols#awsJson1_0 → awsJson1_0)."
+        },
+        "apiVersion": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "targetPrefix": { "type": "string", "description": "For AWS JSON protocols, the X-Amz-Target prefix without its trailing dot: the header is `<targetPrefix>.<Operation>`." }
+      }
+    },
+    "Group": {
+      "type": "object",
+      "required": ["name", "kind", "setup", "tests", "teardown"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "description": "The registry group name: <service>-gen-<resource> or <service>-gen-probe." },
+        "kind": { "type": "string", "enum": ["lifecycle", "probe"] },
+        "setup": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Call" },
+          "description": "Calls made before the first test, in order. A failure skips every test in the group and still runs teardown."
+        },
+        "tests": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/Test" }
+        },
+        "teardown": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Call" },
+          "description": "Calls made after the last test, in order, each wrapped individually: an error or an unresolvable $ref skips that call and continues."
+        }
+      }
+    },
+    "Call": {
+      "type": "object",
+      "required": ["op", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "op": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]*$", "description": "The AWS operation name." },
+        "params": {
+          "type": "object",
+          "description": "Input members, as modeled, each a Value.",
+          "additionalProperties": { "$ref": "#/definitions/Value" }
+        },
+        "export": {
+          "type": "object",
+          "description": "Context paths to set from the response: `\"queue.url\": \"$.QueueUrl\"`.",
+          "propertyNames": { "pattern": "^[a-z][a-z0-9]*\\.[a-zA-Z][a-zA-Z0-9]*$" },
+          "additionalProperties": { "$ref": "#/definitions/Path" },
+          "minProperties": 1
+        }
+      }
+    },
+    "Test": {
+      "type": "object",
+      "required": ["name", "op", "call", "assert"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]+$", "description": "The registry test name." },
+        "op": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]*$", "description": "The operation the test exercises; equals the primary call's op." },
+        "call": { "$ref": "#/definitions/Call" },
+        "assert": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/Assertion" },
+          "description": "At least one clause, always. A test with no assertion is not representable."
+        },
+        "depends": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "Earlier tests in the group whose exports this test consumes; mirrored into the registry."
+        }
+      }
+    },
+    "Assertion": {
+      "description": "One clause of the closed assertion set. `kind` selects which other fields are present.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "checks"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "responseField" },
+            "checks": { "$ref": "#/definitions/Checks" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "call", "checks"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "readback" },
+            "call": { "$ref": "#/definitions/Call" },
+            "checks": { "$ref": "#/definitions/Checks" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "itemsPath", "where"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "listContains" },
+            "call": { "$ref": "#/definitions/Call" },
+            "itemsPath": { "$ref": "#/definitions/Path" },
+            "where": { "$ref": "#/definitions/Where" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "itemsPath", "where"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "absent" },
+            "call": { "$ref": "#/definitions/Call" },
+            "itemsPath": { "$ref": "#/definitions/Path" },
+            "where": { "$ref": "#/definitions/Where" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "call", "error"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "absent" },
+            "call": { "$ref": "#/definitions/Call" },
+            "error": { "$ref": "#/definitions/Error" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "error"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "errorCode" },
+            "error": { "$ref": "#/definitions/Error" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "maxAttempts", "assert"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "eventually" },
+            "maxAttempts": { "type": "integer", "minimum": 1 },
+            "delayMs": { "type": "integer", "minimum": 0 },
+            "assert": {
+              "description": "The retried clause: readback, listContains or absent.",
+              "allOf": [
+                { "$ref": "#/definitions/Assertion" },
+                { "properties": { "kind": { "enum": ["readback", "listContains", "absent"] } } }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "Checks": {
+      "type": "object",
+      "description": "Response path → exactly one check.",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/definitions/Path" },
+      "additionalProperties": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 1,
+        "additionalProperties": false,
+        "properties": {
+          "nonEmpty": { "const": true, "description": "The path resolves to a value that is not null, \"\", [] or {}." },
+          "equals": { "$ref": "#/definitions/Value", "description": "The path resolves to a value equal (as JSON) to the evaluated expression." },
+          "matches": { "type": "string", "description": "The path resolves to a string matching this RE2-compatible regular expression." },
+          "missing": { "const": true, "description": "The path does not resolve (any segment absent)." }
+        }
+      }
+    },
+    "Where": {
+      "type": "object",
+      "description": "Item-relative path → expected value. An item matches when every entry is equal. `$` is the item itself.",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/definitions/Path" },
+      "additionalProperties": { "$ref": "#/definitions/Value" }
+    },
+    "Error": {
+      "type": "object",
+      "required": ["shape", "code"],
+      "additionalProperties": false,
+      "properties": {
+        "shape": { "type": "string", "description": "The modeled error shape name." },
+        "code": { "type": "string", "description": "The wire error code: the awsQueryError code where declared, else the shape name. An interpreter accepts an error whose SDK-reported code or type name equals either." }
+      }
+    },
+    "Path": {
+      "type": "string",
+      "description": "A response path: `$`, then any number of `.Member` or `[index]` segments. Not JSONPath.",
+      "pattern": "^\\$(\\.[A-Za-z_][A-Za-z0-9_\\-:/]*|\\[(0|[1-9][0-9]*)\\])*$"
+    },
+    "Value": {
+      "description": "A value expression: an expression object with exactly one $-key, or structural JSON whose leaves are values.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["$lit"],
+          "additionalProperties": false,
+          "properties": { "$lit": { "description": "Any JSON, taken verbatim." } }
+        },
+        {
+          "type": "object",
+          "required": ["$ref"],
+          "additionalProperties": false,
+          "properties": { "$ref": { "type": "string", "pattern": "^[a-z][a-z0-9]*\\.[a-zA-Z][a-zA-Z0-9]*$" } }
+        },
+        {
+          "type": "object",
+          "required": ["$name"],
+          "additionalProperties": false,
+          "properties": { "$name": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" } }
+        },
+        {
+          "type": "object",
+          "required": ["$concat"],
+          "additionalProperties": false,
+          "properties": {
+            "$concat": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/definitions/Value" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["$index"],
+          "additionalProperties": false,
+          "properties": {
+            "$index": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": [{ "$ref": "#/definitions/Value" }, { "type": "integer", "minimum": 0 }]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": { "pattern": "^[^$]" },
+          "additionalProperties": { "$ref": "#/definitions/Value" }
+        },
+        {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Value" }
+        },
+        { "type": ["string", "number", "boolean", "null"] }
+      ]
+    }
+  }
+}

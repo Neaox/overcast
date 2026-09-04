@@ -1,0 +1,305 @@
+//go:build dev
+
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// Value expressions.
+//
+// A value in a recipe or a scenario is ordinary JSON with five expression
+// forms, each an object with exactly one `$`-prefixed key:
+//
+//	{"$lit": <json>}                 the JSON verbatim, never interpreted
+//	{"$ref": "queue.url"}            a value exported earlier in the group
+//	{"$name": "q"}                   {runId}-{group}-q, the only way to name a resource
+//	{"$concat": [<part>, ...]}       string concatenation; a bare string part is a literal
+//	{"$index": [<value>, n]}         element n of a list-valued expression
+//
+// Everything else is structural: an object is a structure or map whose values
+// are themselves values, an array is a list of values, and a scalar is itself.
+// No conditionals, no arithmetic, no scripting — eight implementations have to
+// agree on every value, so the grammar is closed and total.
+
+// exprKeys is the closed set of expression forms.
+var exprKeys = map[string]struct{}{"$lit": {}, "$ref": {}, "$name": {}, "$concat": {}, "$index": {}}
+
+// exprOf returns the expression form of a value, or "" for a structural value.
+func exprOf(v any) (key string, arg any, ok bool) {
+	object, isObject := v.(map[string]any)
+	if !isObject || len(object) != 1 {
+		return "", nil, false
+	}
+	for k, a := range object {
+		if _, known := exprKeys[k]; known {
+			return k, a, true
+		}
+	}
+	return "", nil, false
+}
+
+// validateValue checks that a value uses the grammar above and nothing else.
+// It reports where the fault is in terms of the value's own structure.
+func validateValue(v any, where string) error {
+	switch value := v.(type) {
+	case map[string]any:
+		dollar := 0
+		for k := range value {
+			if strings.HasPrefix(k, "$") {
+				dollar++
+			}
+		}
+		if dollar > 0 && (dollar != 1 || len(value) != 1) {
+			return fmt.Errorf("%s: an expression is an object with exactly one $-key, got %s", where, sortedKeys(value))
+		}
+		key, arg, isExpr := exprOf(value)
+		if !isExpr {
+			if dollar == 1 {
+				for k := range value {
+					return fmt.Errorf("%s: unknown expression %q (want one of $lit, $ref, $name, $concat, $index)", where, k)
+				}
+			}
+			for k, child := range value {
+				if err := validateValue(child, where+"."+k); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		return validateExpr(key, arg, where)
+	case []any:
+		for i, child := range value {
+			if err := validateValue(child, fmt.Sprintf("%s[%d]", where, i)); err != nil {
+				return err
+			}
+		}
+		return nil
+	case string, bool, json.Number, float64, nil:
+		return nil
+	}
+	return fmt.Errorf("%s: unsupported JSON value %T", where, v)
+}
+
+func validateExpr(key string, arg any, where string) error {
+	switch key {
+	case "$lit":
+		return nil
+	case "$ref":
+		ref, ok := arg.(string)
+		if !ok || !validContextPath(ref) {
+			return fmt.Errorf("%s: $ref must be a context path like queue.url, got %v", where, arg)
+		}
+	case "$name":
+		suffix, ok := arg.(string)
+		if !ok || !validNameSuffix(suffix) {
+			return fmt.Errorf("%s: $name must be a kebab-case suffix, got %v", where, arg)
+		}
+	case "$concat":
+		parts, ok := arg.([]any)
+		if !ok || len(parts) == 0 {
+			return fmt.Errorf("%s: $concat takes a non-empty array of parts", where)
+		}
+		for i, part := range parts {
+			if _, isString := part.(string); isString {
+				continue
+			}
+			if _, _, isExpr := exprOf(part); !isExpr {
+				return fmt.Errorf("%s: $concat part %d must be a string or an expression", where, i)
+			}
+			if err := validateValue(part, fmt.Sprintf("%s.$concat[%d]", where, i)); err != nil {
+				return err
+			}
+		}
+	case "$index":
+		pair, ok := arg.([]any)
+		if !ok || len(pair) != 2 {
+			return fmt.Errorf("%s: $index takes [<value>, <index>]", where)
+		}
+		if err := validateValue(pair[0], where+".$index[0]"); err != nil {
+			return err
+		}
+		if _, err := integerOf(pair[1]); err != nil {
+			return fmt.Errorf("%s: $index position must be a non-negative integer", where)
+		}
+	}
+	return nil
+}
+
+// integerOf accepts a JSON number that is a non-negative integer.
+func integerOf(v any) (int, error) {
+	switch n := v.(type) {
+	case json.Number:
+		i, err := n.Int64()
+		if err != nil || i < 0 {
+			return 0, fmt.Errorf("not a non-negative integer: %v", v)
+		}
+		return int(i), nil
+	case float64:
+		if n < 0 || n != float64(int(n)) {
+			return 0, fmt.Errorf("not a non-negative integer: %v", v)
+		}
+		return int(n), nil
+	}
+	return 0, fmt.Errorf("not a number: %v", v)
+}
+
+// refsIn collects every $ref in a value, sorted and deduplicated.
+func refsIn(v any) []string {
+	set := make(map[string]struct{})
+	walkValue(v, func(key string, arg any) {
+		if key == "$ref" {
+			set[arg.(string)] = struct{}{}
+		}
+	})
+	return sortedSet(set)
+}
+
+// namesIn collects every $name suffix in a value, sorted and deduplicated.
+func namesIn(v any) []string {
+	set := make(map[string]struct{})
+	walkValue(v, func(key string, arg any) {
+		if key == "$name" {
+			set[arg.(string)] = struct{}{}
+		}
+	})
+	return sortedSet(set)
+}
+
+// walkValue visits every expression in a validated value.
+func walkValue(v any, visit func(key string, arg any)) {
+	switch value := v.(type) {
+	case map[string]any:
+		if key, arg, ok := exprOf(value); ok {
+			visit(key, arg)
+			switch key {
+			case "$concat":
+				for _, part := range arg.([]any) {
+					walkValue(part, visit)
+				}
+			case "$index":
+				walkValue(arg.([]any)[0], visit)
+			}
+			return
+		}
+		for _, child := range value {
+			walkValue(child, visit)
+		}
+	case []any:
+		for _, child := range value {
+			walkValue(child, visit)
+		}
+	}
+}
+
+// literalKind classifies a structural (non-expression) JSON value the way the
+// model classifies shapes, so a literal can be checked against the member it
+// is sent as. Expressions report the kind they evaluate to where that is
+// knowable ($name and $concat are strings) and "" otherwise.
+func literalKind(v any, exports exportKinds) string {
+	if key, arg, ok := exprOf(v); ok {
+		switch key {
+		case "$name", "$concat":
+			return "string"
+		case "$ref":
+			return exports[arg.(string)]
+		case "$lit":
+			return literalKind(arg, exports)
+		}
+		return ""
+	}
+	switch value := v.(type) {
+	case string:
+		return "string"
+	case bool:
+		return "boolean"
+	case json.Number:
+		if strings.ContainsAny(value.String(), ".eE") {
+			return "float"
+		}
+		return "integer"
+	case float64:
+		if value == float64(int64(value)) {
+			return "integer"
+		}
+		return "float"
+	case []any:
+		return "list"
+	case map[string]any:
+		return "object"
+	}
+	return ""
+}
+
+// exportKinds records the model kind of every exported context path, so a
+// $ref can be type-checked where it is used.
+type exportKinds map[string]string
+
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedSet(set map[string]struct{}) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// cloneValue deep-copies a value so a recipe's params can be extended per
+// test without mutating the recipe.
+func cloneValue(v any) any {
+	switch value := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(value))
+		for k, child := range value {
+			out[k] = cloneValue(child)
+		}
+		return out
+	case []any:
+		out := make([]any, len(value))
+		for i, child := range value {
+			out[i] = cloneValue(child)
+		}
+		return out
+	}
+	return v
+}
+
+// setMemberPath sets a dotted member path (`Attributes.VisibilityTimeout`)
+// inside a params object, creating intermediate objects. It refuses to
+// descend through an expression, since the generator cannot know what an
+// expression evaluates to.
+func setMemberPath(params map[string]any, memberPath string, value any) error {
+	parts := strings.Split(memberPath, ".")
+	current := params
+	for i, part := range parts[:len(parts)-1] {
+		child, exists := current[part]
+		if !exists {
+			next := make(map[string]any)
+			current[part] = next
+			current = next
+			continue
+		}
+		object, isObject := child.(map[string]any)
+		if !isObject {
+			return fmt.Errorf("member path %s: %s is not an object", memberPath, strings.Join(parts[:i+1], "."))
+		}
+		if _, _, isExpr := exprOf(object); isExpr {
+			return fmt.Errorf("member path %s: %s is an expression, so the generator cannot set a field inside it", memberPath, strings.Join(parts[:i+1], "."))
+		}
+		current = object
+	}
+	current[parts[len(parts)-1]] = value
+	return nil
+}

@@ -1,0 +1,36 @@
+{
+  "$comment": "Curated literals for required input members no recipe binds (docs/plans/compat-coverage-modelgen.md §3.3 rule 3). Every value must be legal on AWS, not merely accepted by the emulator; the generator checks each against the model's enum, length, range and pattern constraints. Identifiers here are syntactically valid and deliberately nonexistent — they bind probes of operations the emulator does not implement, where the call is expected to fail before the value is looked at.",
+  "version": 1,
+  "services": {
+    "sqs": {
+      "operations": {
+        "AddPermission": { "AWSAccountIds": ["123456789012"], "Actions": ["SendMessage"] },
+        "CancelMessageMoveTask": { "TaskHandle": "compat-scenario-task-handle" }
+      },
+      "members": { "Label": "compat-scenario" }
+    },
+    "organizations": {
+      "operations": {
+        "InviteAccountToOrganization": { "Target": { "Id": "123456789012", "Type": "ACCOUNT" } },
+        "InviteOrganizationToTransferResponsibility": { "Target": { "Id": "123456789012", "Type": "ACCOUNT" } },
+        "MoveAccount": { "SourceParentId": "r-abcd", "DestinationParentId": "ou-abcd-12345678" }
+      },
+      "shapes": {
+        "CreateAccountName": "compat-scenario-account",
+        "CreateAccountRequestId": "car-abcdefgh12345678",
+        "ChildId": "ou-abcd-12345678",
+        "Email": "compat-scenario@example.com",
+        "HandshakeId": "h-abcdefgh12345678",
+        "OrganizationalUnitId": "ou-abcd-12345678",
+        "OrganizationalUnitName": "compat-scenario-ou",
+        "ParentId": "r-abcd",
+        "PolicyTargetId": "r-abcd",
+        "ResourcePolicyContent": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"123456789012\"},\"Action\":\"organizations:DescribeOrganization\",\"Resource\":\"*\"}]}",
+        "ResponsibilityTransferId": "rt-abcdefgh12345678",
+        "ResponsibilityTransferName": "compat-scenario-transfer",
+        "RootId": "r-abcd",
+        "ServicePrincipal": "config.amazonaws.com"
+      }
+    }
+  }
+}

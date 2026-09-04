@@ -1,0 +1,1390 @@
+{
+  "version": 1,
+  "service": "sqs",
+  "client": {
+    "sdkId": "SQS",
+    "endpointPrefix": "sqs",
+    "signingName": "sqs",
+    "protocol": "awsJson1_0",
+    "apiVersion": "2012-11-05",
+    "targetPrefix": "AmazonSQS"
+  },
+  "groups": [
+    {
+      "name": "sqs-gen-queue",
+      "kind": "lifecycle",
+      "setup": [
+        {
+          "op": "CreateQueue",
+          "params": {
+            "QueueName": {
+              "$name": "dlq"
+            }
+          },
+          "export": {
+            "dlq.url": "$.QueueUrl"
+          }
+        },
+        {
+          "op": "GetQueueAttributes",
+          "params": {
+            "AttributeNames": [
+              "QueueArn"
+            ],
+            "QueueUrl": {
+              "$ref": "dlq.url"
+            }
+          },
+          "export": {
+            "dlq.arn": "$.Attributes.QueueArn"
+          }
+        }
+      ],
+      "tests": [
+        {
+          "name": "CreateQueue",
+          "op": "CreateQueue",
+          "call": {
+            "op": "CreateQueue",
+            "params": {
+              "Attributes": {
+                "RedrivePolicy": {
+                  "$concat": [
+                    "{\"deadLetterTargetArn\":\"",
+                    {
+                      "$ref": "dlq.arn"
+                    },
+                    "\",\"maxReceiveCount\":\"5\"}"
+                  ]
+                },
+                "VisibilityTimeout": "30"
+              },
+              "QueueName": {
+                "$name": "q"
+              }
+            },
+            "export": {
+              "queue.url": "$.QueueUrl"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.QueueUrl": {
+                  "nonEmpty": true
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 10,
+              "delayMs": 500,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "GetQueueAttributes",
+                  "params": {
+                    "AttributeNames": [
+                      "QueueArn"
+                    ],
+                    "QueueUrl": {
+                      "$ref": "queue.url"
+                    }
+                  },
+                  "export": {
+                    "queue.arn": "$.Attributes.QueueArn"
+                  }
+                },
+                "checks": {
+                  "$.Attributes.QueueArn": {
+                    "nonEmpty": true
+                  }
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 10,
+              "delayMs": 500,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "GetQueueAttributes",
+                  "params": {
+                    "AttributeNames": [
+                      "All"
+                    ],
+                    "QueueUrl": {
+                      "$ref": "queue.url"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.Attributes.QueueArn": {
+                    "equals": {
+                      "$ref": "queue.arn"
+                    }
+                  },
+                  "$.Attributes.VisibilityTimeout": {
+                    "equals": "30"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 10,
+              "delayMs": 500,
+              "assert": {
+                "kind": "listContains",
+                "call": {
+                  "op": "ListQueues",
+                  "params": {
+                    "QueueNamePrefix": {
+                      "$name": "q"
+                    }
+                  }
+                },
+                "itemsPath": "$.QueueUrls",
+                "where": {
+                  "$": {
+                    "$ref": "queue.url"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "GetQueueAttributes",
+          "op": "GetQueueAttributes",
+          "call": {
+            "op": "GetQueueAttributes",
+            "params": {
+              "AttributeNames": [
+                "All"
+              ],
+              "QueueUrl": {
+                "$ref": "queue.url"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Attributes.QueueArn": {
+                  "equals": {
+                    "$ref": "queue.arn"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateQueue"
+          ]
+        },
+        {
+          "name": "GetQueueUrl",
+          "op": "GetQueueUrl",
+          "call": {
+            "op": "GetQueueUrl",
+            "params": {
+              "QueueName": {
+                "$name": "q"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.QueueUrl": {
+                  "equals": {
+                    "$ref": "queue.url"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateQueue"
+          ]
+        },
+        {
+          "name": "SetQueueAttributes",
+          "op": "SetQueueAttributes",
+          "call": {
+            "op": "SetQueueAttributes",
+            "params": {
+              "Attributes": {
+                "VisibilityTimeout": "60"
+              },
+              "QueueUrl": {
+                "$ref": "queue.url"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 10,
+              "delayMs": 500,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "GetQueueAttributes",
+                  "params": {
+                    "AttributeNames": [
+                      "All"
+                    ],
+                    "QueueUrl": {
+                      "$ref": "queue.url"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.Attributes.VisibilityTimeout": {
+                    "equals": "60"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateQueue"
+          ]
+        },
+        {
+          "name": "TagQueue",
+          "op": "TagQueue",
+          "call": {
+            "op": "TagQueue",
+            "params": {
+              "QueueUrl": {
+                "$ref": "queue.url"
+              },
+              "Tags": {
+                "compat": "scenario"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 10,
+              "delayMs": 500,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "ListQueueTags",
+                  "params": {
+                    "QueueUrl": {
+                      "$ref": "queue.url"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.Tags.compat": {
+                    "equals": "scenario"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateQueue"
+          ]
+        },
+        {
+          "name": "ListQueueTags",
+          "op": "ListQueueTags",
+          "call": {
+            "op": "ListQueueTags",
+            "params": {
+              "QueueUrl": {
+                "$ref": "queue.url"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Tags.compat": {
+                  "equals": "scenario"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateQueue"
+          ]
+        },
+        {
+          "name": "UntagQueue",
+          "op": "UntagQueue",
+          "call": {
+            "op": "UntagQueue",
+            "params": {
+              "QueueUrl": {
+                "$ref": "queue.url"
+              },
+              "TagKeys": [
+                "compat"
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 10,
+              "delayMs": 500,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "ListQueueTags",
+                  "params": {
+                    "QueueUrl": {
+                      "$ref": "queue.url"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.Tags.compat": {
+                    "missing": true
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateQueue"
+          ]
+        },
+        {
+          "name": "ListDeadLetterSourceQueues",
+          "op": "ListDeadLetterSourceQueues",
+          "call": {
+            "op": "ListDeadLetterSourceQueues",
+            "params": {
+              "QueueUrl": {
+                "$ref": "dlq.url"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.queueUrls",
+              "where": {
+                "$": {
+                  "$ref": "queue.url"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateQueue"
+          ]
+        },
+        {
+          "name": "StartMessageMoveTask",
+          "op": "StartMessageMoveTask",
+          "call": {
+            "op": "StartMessageMoveTask",
+            "params": {
+              "DestinationArn": {
+                "$ref": "queue.arn"
+              },
+              "SourceArn": {
+                "$ref": "dlq.arn"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.TaskHandle": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateQueue"
+          ]
+        },
+        {
+          "name": "SendMessageBeforePurge",
+          "op": "SendMessage",
+          "call": {
+            "op": "SendMessage",
+            "params": {
+              "MessageBody": "compat scenario message before purge",
+              "QueueUrl": {
+                "$ref": "queue.url"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.MessageId": {
+                  "nonEmpty": true
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 10,
+              "delayMs": 500,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "GetQueueAttributes",
+                  "params": {
+                    "AttributeNames": [
+                      "ApproximateNumberOfMessages"
+                    ],
+                    "QueueUrl": {
+                      "$ref": "queue.url"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.Attributes.ApproximateNumberOfMessages": {
+                    "equals": "1"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateQueue"
+          ]
+        },
+        {
+          "name": "PurgeQueue",
+          "op": "PurgeQueue",
+          "call": {
+            "op": "PurgeQueue",
+            "params": {
+              "QueueUrl": {
+                "$ref": "queue.url"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 12,
+              "delayMs": 5000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "GetQueueAttributes",
+                  "params": {
+                    "AttributeNames": [
+                      "ApproximateNumberOfMessages",
+                      "ApproximateNumberOfMessagesNotVisible"
+                    ],
+                    "QueueUrl": {
+                      "$ref": "queue.url"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.Attributes.ApproximateNumberOfMessages": {
+                    "equals": "0"
+                  },
+                  "$.Attributes.ApproximateNumberOfMessagesNotVisible": {
+                    "equals": "0"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateQueue"
+          ]
+        },
+        {
+          "name": "ListQueues",
+          "op": "ListQueues",
+          "call": {
+            "op": "ListQueues",
+            "params": {
+              "QueueNamePrefix": {
+                "$name": "q"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.QueueUrls",
+              "where": {
+                "$": {
+                  "$ref": "queue.url"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateQueue"
+          ]
+        },
+        {
+          "name": "DeleteQueue",
+          "op": "DeleteQueue",
+          "call": {
+            "op": "DeleteQueue",
+            "params": {
+              "QueueUrl": {
+                "$ref": "queue.url"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 10,
+              "delayMs": 500,
+              "assert": {
+                "kind": "absent",
+                "call": {
+                  "op": "GetQueueAttributes",
+                  "params": {
+                    "AttributeNames": [
+                      "All"
+                    ],
+                    "QueueUrl": {
+                      "$ref": "queue.url"
+                    }
+                  }
+                },
+                "error": {
+                  "shape": "QueueDoesNotExist",
+                  "code": "AWS.SimpleQueueService.NonExistentQueue"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateQueue"
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeleteQueue",
+          "params": {
+            "QueueUrl": {
+              "$ref": "queue.url"
+            }
+          }
+        },
+        {
+          "op": "DeleteQueue",
+          "params": {
+            "QueueUrl": {
+              "$ref": "dlq.url"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sqs-gen-message",
+      "kind": "lifecycle",
+      "setup": [
+        {
+          "op": "CreateQueue",
+          "params": {
+            "QueueName": {
+              "$name": "dlq"
+            }
+          },
+          "export": {
+            "dlq.url": "$.QueueUrl"
+          }
+        },
+        {
+          "op": "GetQueueAttributes",
+          "params": {
+            "AttributeNames": [
+              "QueueArn"
+            ],
+            "QueueUrl": {
+              "$ref": "dlq.url"
+            }
+          },
+          "export": {
+            "dlq.arn": "$.Attributes.QueueArn"
+          }
+        },
+        {
+          "op": "CreateQueue",
+          "params": {
+            "Attributes": {
+              "RedrivePolicy": {
+                "$concat": [
+                  "{\"deadLetterTargetArn\":\"",
+                  {
+                    "$ref": "dlq.arn"
+                  },
+                  "\",\"maxReceiveCount\":\"5\"}"
+                ]
+              },
+              "VisibilityTimeout": "30"
+            },
+            "QueueName": {
+              "$name": "q"
+            }
+          },
+          "export": {
+            "queue.url": "$.QueueUrl"
+          }
+        },
+        {
+          "op": "GetQueueAttributes",
+          "params": {
+            "AttributeNames": [
+              "QueueArn"
+            ],
+            "QueueUrl": {
+              "$ref": "queue.url"
+            }
+          },
+          "export": {
+            "queue.arn": "$.Attributes.QueueArn"
+          }
+        }
+      ],
+      "tests": [
+        {
+          "name": "SendMessage",
+          "op": "SendMessage",
+          "call": {
+            "op": "SendMessage",
+            "params": {
+              "MessageBody": "compat scenario message",
+              "QueueUrl": {
+                "$ref": "queue.url"
+              }
+            },
+            "export": {
+              "message.id": "$.MessageId",
+              "message.md5": "$.MD5OfMessageBody"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.MD5OfMessageBody": {
+                  "nonEmpty": true
+                },
+                "$.MessageId": {
+                  "nonEmpty": true
+                }
+              }
+            },
+            {
+              "kind": "readback",
+              "call": {
+                "op": "ReceiveMessage",
+                "params": {
+                  "MaxNumberOfMessages": 1,
+                  "QueueUrl": {
+                    "$ref": "queue.url"
+                  },
+                  "VisibilityTimeout": 0,
+                  "WaitTimeSeconds": 5
+                }
+              },
+              "checks": {
+                "$.Messages[0].Body": {
+                  "equals": "compat scenario message"
+                },
+                "$.Messages[0].MessageId": {
+                  "equals": {
+                    "$ref": "message.id"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ReceiveMessage",
+          "op": "ReceiveMessage",
+          "call": {
+            "op": "ReceiveMessage",
+            "params": {
+              "MaxNumberOfMessages": 1,
+              "QueueUrl": {
+                "$ref": "queue.url"
+              },
+              "WaitTimeSeconds": 5
+            },
+            "export": {
+              "message.receiptHandle": "$.Messages[0].ReceiptHandle"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Messages[0].MessageId": {
+                  "equals": {
+                    "$ref": "message.id"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "SendMessage"
+          ]
+        },
+        {
+          "name": "ChangeMessageVisibility",
+          "op": "ChangeMessageVisibility",
+          "call": {
+            "op": "ChangeMessageVisibility",
+            "params": {
+              "QueueUrl": {
+                "$ref": "queue.url"
+              },
+              "ReceiptHandle": {
+                "$ref": "message.receiptHandle"
+              },
+              "VisibilityTimeout": 0
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "ReceiveMessage",
+                "params": {
+                  "MaxNumberOfMessages": 1,
+                  "QueueUrl": {
+                    "$ref": "queue.url"
+                  },
+                  "VisibilityTimeout": 0,
+                  "WaitTimeSeconds": 5
+                },
+                "export": {
+                  "message.receiptHandle": "$.Messages[0].ReceiptHandle"
+                }
+              },
+              "checks": {
+                "$.Messages[0].MessageId": {
+                  "equals": {
+                    "$ref": "message.id"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "SendMessage"
+          ]
+        },
+        {
+          "name": "DeleteMessage",
+          "op": "DeleteMessage",
+          "call": {
+            "op": "DeleteMessage",
+            "params": {
+              "QueueUrl": {
+                "$ref": "queue.url"
+              },
+              "ReceiptHandle": {
+                "$ref": "message.receiptHandle"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 5,
+              "delayMs": 1000,
+              "assert": {
+                "kind": "absent",
+                "call": {
+                  "op": "ReceiveMessage",
+                  "params": {
+                    "MaxNumberOfMessages": 10,
+                    "QueueUrl": {
+                      "$ref": "queue.url"
+                    },
+                    "VisibilityTimeout": 0,
+                    "WaitTimeSeconds": 1
+                  }
+                },
+                "itemsPath": "$.Messages",
+                "where": {
+                  "$.MessageId": {
+                    "$ref": "message.id"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "ChangeMessageVisibility",
+            "SendMessage"
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeleteMessage",
+          "params": {
+            "QueueUrl": {
+              "$ref": "queue.url"
+            },
+            "ReceiptHandle": {
+              "$ref": "message.receiptHandle"
+            }
+          }
+        },
+        {
+          "op": "DeleteQueue",
+          "params": {
+            "QueueUrl": {
+              "$ref": "queue.url"
+            }
+          }
+        },
+        {
+          "op": "DeleteQueue",
+          "params": {
+            "QueueUrl": {
+              "$ref": "dlq.url"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sqs-gen-batch",
+      "kind": "lifecycle",
+      "setup": [
+        {
+          "op": "CreateQueue",
+          "params": {
+            "QueueName": {
+              "$name": "dlq"
+            }
+          },
+          "export": {
+            "dlq.url": "$.QueueUrl"
+          }
+        },
+        {
+          "op": "GetQueueAttributes",
+          "params": {
+            "AttributeNames": [
+              "QueueArn"
+            ],
+            "QueueUrl": {
+              "$ref": "dlq.url"
+            }
+          },
+          "export": {
+            "dlq.arn": "$.Attributes.QueueArn"
+          }
+        },
+        {
+          "op": "CreateQueue",
+          "params": {
+            "Attributes": {
+              "RedrivePolicy": {
+                "$concat": [
+                  "{\"deadLetterTargetArn\":\"",
+                  {
+                    "$ref": "dlq.arn"
+                  },
+                  "\",\"maxReceiveCount\":\"5\"}"
+                ]
+              },
+              "VisibilityTimeout": "30"
+            },
+            "QueueName": {
+              "$name": "q"
+            }
+          },
+          "export": {
+            "queue.url": "$.QueueUrl"
+          }
+        },
+        {
+          "op": "GetQueueAttributes",
+          "params": {
+            "AttributeNames": [
+              "QueueArn"
+            ],
+            "QueueUrl": {
+              "$ref": "queue.url"
+            }
+          },
+          "export": {
+            "queue.arn": "$.Attributes.QueueArn"
+          }
+        }
+      ],
+      "tests": [
+        {
+          "name": "SendMessageBatch",
+          "op": "SendMessageBatch",
+          "call": {
+            "op": "SendMessageBatch",
+            "params": {
+              "Entries": [
+                {
+                  "Id": "1",
+                  "MessageBody": "compat batch message 1"
+                },
+                {
+                  "Id": "2",
+                  "MessageBody": "compat batch message 2"
+                }
+              ],
+              "QueueUrl": {
+                "$ref": "queue.url"
+              }
+            },
+            "export": {
+              "batch.firstId": "$.Successful[0].MessageId",
+              "batch.secondId": "$.Successful[1].MessageId"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Successful[0].MessageId": {
+                  "nonEmpty": true
+                },
+                "$.Successful[1].MessageId": {
+                  "nonEmpty": true
+                }
+              }
+            },
+            {
+              "kind": "readback",
+              "call": {
+                "op": "ReceiveMessage",
+                "params": {
+                  "MaxNumberOfMessages": 10,
+                  "QueueUrl": {
+                    "$ref": "queue.url"
+                  },
+                  "WaitTimeSeconds": 5
+                },
+                "export": {
+                  "batch.id": "$.Messages[0].MessageId",
+                  "batch.receiptHandle": "$.Messages[0].ReceiptHandle"
+                }
+              },
+              "checks": {
+                "$.Messages[0].ReceiptHandle": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ChangeMessageVisibilityBatch",
+          "op": "ChangeMessageVisibilityBatch",
+          "call": {
+            "op": "ChangeMessageVisibilityBatch",
+            "params": {
+              "Entries": [
+                {
+                  "Id": "1",
+                  "ReceiptHandle": {
+                    "$ref": "batch.receiptHandle"
+                  },
+                  "VisibilityTimeout": 0
+                }
+              ],
+              "QueueUrl": {
+                "$ref": "queue.url"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Successful[0].Id": {
+                  "equals": "1"
+                }
+              }
+            },
+            {
+              "kind": "readback",
+              "call": {
+                "op": "ReceiveMessage",
+                "params": {
+                  "MaxNumberOfMessages": 10,
+                  "QueueUrl": {
+                    "$ref": "queue.url"
+                  },
+                  "VisibilityTimeout": 0,
+                  "WaitTimeSeconds": 5
+                },
+                "export": {
+                  "batch.receiptHandle": "$.Messages[0].ReceiptHandle"
+                }
+              },
+              "checks": {
+                "$.Messages[0].MessageId": {
+                  "equals": {
+                    "$ref": "batch.id"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "SendMessageBatch"
+          ]
+        },
+        {
+          "name": "ReceiveMessage",
+          "op": "ReceiveMessage",
+          "call": {
+            "op": "ReceiveMessage",
+            "params": {
+              "MaxNumberOfMessages": 10,
+              "QueueUrl": {
+                "$ref": "queue.url"
+              },
+              "VisibilityTimeout": 0,
+              "WaitTimeSeconds": 1
+            }
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.Messages",
+              "where": {
+                "$.MessageId": {
+                  "$ref": "batch.id"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "SendMessageBatch"
+          ]
+        },
+        {
+          "name": "DeleteMessageBatch",
+          "op": "DeleteMessageBatch",
+          "call": {
+            "op": "DeleteMessageBatch",
+            "params": {
+              "Entries": [
+                {
+                  "Id": "1",
+                  "ReceiptHandle": {
+                    "$ref": "batch.receiptHandle"
+                  }
+                }
+              ],
+              "QueueUrl": {
+                "$ref": "queue.url"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 5,
+              "delayMs": 1000,
+              "assert": {
+                "kind": "absent",
+                "call": {
+                  "op": "ReceiveMessage",
+                  "params": {
+                    "MaxNumberOfMessages": 10,
+                    "QueueUrl": {
+                      "$ref": "queue.url"
+                    },
+                    "VisibilityTimeout": 0,
+                    "WaitTimeSeconds": 1
+                  }
+                },
+                "itemsPath": "$.Messages",
+                "where": {
+                  "$.MessageId": {
+                    "$ref": "batch.id"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "ChangeMessageVisibilityBatch",
+            "SendMessageBatch"
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeleteMessageBatch",
+          "params": {
+            "Entries": [
+              {
+                "Id": "1",
+                "ReceiptHandle": {
+                  "$ref": "batch.receiptHandle"
+                }
+              }
+            ],
+            "QueueUrl": {
+              "$ref": "queue.url"
+            }
+          }
+        },
+        {
+          "op": "DeleteQueue",
+          "params": {
+            "QueueUrl": {
+              "$ref": "queue.url"
+            }
+          }
+        },
+        {
+          "op": "DeleteQueue",
+          "params": {
+            "QueueUrl": {
+              "$ref": "dlq.url"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sqs-gen-probe",
+      "kind": "probe",
+      "setup": [
+        {
+          "op": "CreateQueue",
+          "params": {
+            "QueueName": {
+              "$name": "dlq"
+            }
+          },
+          "export": {
+            "dlq.url": "$.QueueUrl"
+          }
+        },
+        {
+          "op": "GetQueueAttributes",
+          "params": {
+            "AttributeNames": [
+              "QueueArn"
+            ],
+            "QueueUrl": {
+              "$ref": "dlq.url"
+            }
+          },
+          "export": {
+            "dlq.arn": "$.Attributes.QueueArn"
+          }
+        },
+        {
+          "op": "CreateQueue",
+          "params": {
+            "Attributes": {
+              "RedrivePolicy": {
+                "$concat": [
+                  "{\"deadLetterTargetArn\":\"",
+                  {
+                    "$ref": "dlq.arn"
+                  },
+                  "\",\"maxReceiveCount\":\"5\"}"
+                ]
+              },
+              "VisibilityTimeout": "30"
+            },
+            "QueueName": {
+              "$name": "q"
+            }
+          },
+          "export": {
+            "queue.url": "$.QueueUrl"
+          }
+        },
+        {
+          "op": "GetQueueAttributes",
+          "params": {
+            "AttributeNames": [
+              "QueueArn"
+            ],
+            "QueueUrl": {
+              "$ref": "queue.url"
+            }
+          },
+          "export": {
+            "queue.arn": "$.Attributes.QueueArn"
+          }
+        }
+      ],
+      "tests": [
+        {
+          "name": "AddPermission",
+          "op": "AddPermission",
+          "call": {
+            "op": "AddPermission",
+            "params": {
+              "AWSAccountIds": [
+                "123456789012"
+              ],
+              "Actions": [
+                "SendMessage"
+              ],
+              "Label": "compat-scenario",
+              "QueueUrl": {
+                "$ref": "queue.url"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "GetQueueAttributes",
+                "params": {
+                  "AttributeNames": [
+                    "All"
+                  ],
+                  "QueueUrl": {
+                    "$ref": "queue.url"
+                  }
+                }
+              },
+              "checks": {
+                "$.Attributes.QueueArn": {
+                  "equals": {
+                    "$ref": "queue.arn"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "CancelMessageMoveTask",
+          "op": "CancelMessageMoveTask",
+          "call": {
+            "op": "CancelMessageMoveTask",
+            "params": {
+              "TaskHandle": "compat-scenario-task-handle"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.ApproximateNumberOfMessagesMoved": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListMessageMoveTasks",
+          "op": "ListMessageMoveTasks",
+          "call": {
+            "op": "ListMessageMoveTasks",
+            "params": {
+              "SourceArn": {
+                "$ref": "dlq.arn"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Results": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "RemovePermission",
+          "op": "RemovePermission",
+          "call": {
+            "op": "RemovePermission",
+            "params": {
+              "Label": "compat-scenario",
+              "QueueUrl": {
+                "$ref": "queue.url"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "GetQueueAttributes",
+                "params": {
+                  "AttributeNames": [
+                    "All"
+                  ],
+                  "QueueUrl": {
+                    "$ref": "queue.url"
+                  }
+                }
+              },
+              "checks": {
+                "$.Attributes.QueueArn": {
+                  "equals": {
+                    "$ref": "queue.arn"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeleteQueue",
+          "params": {
+            "QueueUrl": {
+              "$ref": "queue.url"
+            }
+          }
+        },
+        {
+          "op": "DeleteQueue",
+          "params": {
+            "QueueUrl": {
+              "$ref": "dlq.url"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

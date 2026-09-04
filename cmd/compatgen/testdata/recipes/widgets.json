@@ -1,0 +1,30 @@
+{
+  "$comment": "Test fixture: one resource exercising every recipe role against testdata/shapes/widgets.json.",
+  "service": "widgets",
+  "resources": [
+    {
+      "id": "widget",
+      "create": { "op": "CreateWidget", "params": { "Name": { "$name": "w" }, "Color": "blue" } },
+      "exports": { "id": "$.WidgetId", "arn": "$.Arn" },
+      "binds": { "WidgetId": "widget.id" },
+      "read": { "op": "GetWidget", "identityPath": "$.Widget.WidgetId", "identity": "id" },
+      "list": {
+        "op": "ListWidgets",
+        "params": { "NamePrefix": { "$name": "w" } },
+        "itemsPath": "$.Widgets",
+        "identityPath": "$.WidgetId",
+        "identity": "id"
+      },
+      "mutable": [
+        { "op": "UpdateWidget", "member": "Description", "from": "one", "to": "two", "readPath": "$.Widget.Description" }
+      ],
+      "tags": {
+        "tag": { "op": "TagWidget", "member": "Tags" },
+        "untag": { "op": "UntagWidget", "member": "TagKeys" },
+        "list": { "op": "ListWidgetTags", "path": "$.Tags" }
+      },
+      "delete": { "op": "DeleteWidget" },
+      "notFound": { "error": "WidgetNotFound" }
+    }
+  ]
+}

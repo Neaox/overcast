@@ -901,6 +901,15 @@ compat/suites/
   registry.schema.json  ← JSON Schema for the registry
 ```
 
+**The generated sibling.** `registry.generated.json` is the other half of the
+matrix: `cmd/compatgen` rewrites it wholly from the scenario IR under
+`compat/model/scenarios/`, and every loader concatenates it with
+`registry.json`. Never hand-edit it, and never add a generated group to
+`registry.json` — see [compat/model/README.md](./model/README.md) for the IR,
+the recipes that produce it and the refusal report, and
+[cmd/compatgen/README.md](../../cmd/compatgen/README.md) for the workflow
+(`make generate-compat-model`, `make compat-model-check`).
+
 **Rules for every suite:**
 
 - A suite must implement **every** group in `registry.json`, except groups a
