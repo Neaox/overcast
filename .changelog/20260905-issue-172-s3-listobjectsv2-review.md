@@ -6,3 +6,7 @@
 + [s3] `encoding-type=url` and `fetch-owner` on the bucket listings
   `Key`, `Prefix`, `Delimiter`, `StartAfter` and `CommonPrefixes` come back percent-encoded, with `EncodingType` echoed; an unsupported value is rejected with `InvalidArgument`
   `fetch-owner=true` adds the `Owner` element to each `ListObjectsV2` entry
+*! [s3] `PutBucketTagging` and `PutObjectTagging` enforce the documented tag-set limits
+  a tag set repeating a key, or carrying a key outside 1-128 characters or a value over 256, is rejected with `InvalidTag` instead of silently collapsing to the last value
+  more than 50 bucket tags or 10 object tags is rejected with `BadRequest`
+  migration: a client sending duplicate tag keys or an over-long key/value now gets a 400 and must deduplicate or shorten the tag set
