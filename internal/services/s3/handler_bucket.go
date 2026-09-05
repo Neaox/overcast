@@ -354,9 +354,9 @@ func (h *Handler) ListBuckets(w http.ResponseWriter, r *http.Request) {
 
 // maxListPageSize is the largest page any S3 bucket listing returns, and the
 // value used when max-keys is omitted. ListObjectsV2 documents it as
-// "Returns some or all (up to 1,000) of the objects in a bucket with each
-// request … By default, the action returns up to 1,000 key names. The
-// response might contain fewer keys but will never contain more."
+// returning "some or all (up to 1,000) of the objects in a bucket with each
+// request", with a response that "might contain fewer keys but will never
+// contain more".
 const maxListPageSize = 1000
 
 // errInvalidMaxKeys is S3's rejection of a max-keys value it cannot use.
