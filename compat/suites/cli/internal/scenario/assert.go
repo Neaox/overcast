@@ -183,6 +183,15 @@ func (e *execution) matchItem(obs observed, list []any, where map[string]any, ki
 // read-back inside applies its exports only on the attempt that passes —
 // which assert already guarantees, because it applies them only when the
 // checks hold.
+//
+// That last failure is reported behind the budget that was spent on it. Bare,
+// it is indistinguishable from a clause evaluated once, and the two want
+// opposite fixes: a real disagreement, or a poll budget too short for how long
+// this service takes to settle. The sibling interpreters word the prefix
+// identically (compat/suites/python-sdk/lib/scenario/assertions.py), so a
+// generated group's failure reads the same whichever suite reports it. It is
+// wrapped rather than interpolated so an inner 501 still carries
+// harness.ErrUnimplemented out to the harness.
 func (e *execution) eventually(ctx context.Context, a *Assertion, primary observed, step string) error {
 	if a.Assert == nil {
 		return e.fail(primary, step, kindEventually, "", "a clause to retry", "<none>")
@@ -204,7 +213,8 @@ func (e *execution) eventually(ctx context.Context, a *Assertion, primary observ
 			return nil
 		}
 	}
-	return last
+	return fmt.Errorf("eventually gave up after %d attempt(s) %dms apart; last failure: %w",
+		attempts, a.DelayMs, last)
 }
 
 // checkAll evaluates every check of a clause against one response, in path
@@ -316,14 +326,16 @@ func renderWhereExpected(where map[string]any) string {
 }
 
 // renderList prints the list a membership check searched. It is the actual
-// value of the failure, so it is printed whole rather than truncated: a
-// generated failure that says only "no match" cannot be diagnosed without
-// re-running.
+// value of the failure, so it is printed rather than summarised — a generated
+// failure that says only "no match" cannot be diagnosed without re-running —
+// but it is capped: a ListObjectsV2 or a ListPolicies against a shared account
+// can return thousands of items, and the whole list goes into one NDJSON
+// `error` field that the dashboard and the report tooling both read.
 func renderList(list []any) string {
 	if len(list) == 0 {
 		return "an empty list"
 	}
-	return render(list)
+	return clip(render(list))
 }
 
 // sortedKeys orders a map's keys so failure messages and check order are

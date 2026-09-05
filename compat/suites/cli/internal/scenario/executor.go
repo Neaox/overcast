@@ -25,8 +25,13 @@ type runner interface {
 
 type awscliRunner struct{}
 
-func (awscliRunner) run(_ context.Context, t *harness.TestContext, args []string) (map[string]any, error) {
-	return awscli.RunOutput(t.Endpoint, t.Region, args...)
+// run uses the context-aware variant so an `aws` that never answers dies with
+// the group's five-minute timeout or with a dashboard cancellation, instead of
+// holding a parallel slot open until the whole suite is killed. A generated
+// group makes far more calls than a hand-written one, so it is likelier to be
+// the group sitting on a hung process.
+func (awscliRunner) run(ctx context.Context, t *harness.TestContext, args []string) (map[string]any, error) {
+	return awscli.RunOutputContext(ctx, t.Endpoint, t.Region, args...)
 }
 
 // bagKey is where a group's context bag lives on the harness TestContext. The
@@ -79,9 +84,12 @@ func (b *Backend) Resolve(rg registry.RegistryGroup, rt registry.RegistryTest) (
 // setup steps — a probe group carries neither setup nor teardown, and must not
 // be given one.
 //
-// A setup failure is reported to the harness as an error, which reports every
-// test in the group as skip with "setup failed: <message>" and still runs
-// teardown. That is the IR's rule, already implemented by harness.RunGroup.
+// A setup failure is reported to the harness as an error. harness.RunGroup then
+// reports every test in the group as skip with "setup failed: <message>" and
+// still runs the group's teardown, which is the IR's rule
+// (compat/model/README.md § The scenario file) and matters most here: a setup
+// that failed on its third step has already created what its first two made,
+// and no test will run to delete it.
 func (b *Backend) Setup(rg registry.RegistryGroup) (func(context.Context, *harness.TestContext) error, bool) {
 	f, g, claimed, err := b.groupOf(rg)
 	if !claimed {
@@ -236,16 +244,14 @@ func (e *execution) callRaw(ctx context.Context, c *Call, step string) (obs obse
 		return obs, nil, fmt.Errorf("%s/%s: %s: %w", e.group.Name, e.test, c.Op, ctxErr)
 	}
 
-	rawParams, rawErr := canonicalJSON(c.Params)
-	if rawErr != nil {
-		rawParams = fmt.Sprintf("%v", c.Params)
-	}
-
 	params, evalErr := e.eval.evalParams(c.Params)
 	if evalErr != nil {
 		// Nothing was sent, so field 3 shows the params as the scenario file
-		// writes them rather than a JSON document that never existed.
-		obs.params = rawParams
+		// writes them rather than a JSON document that never existed. It is
+		// rendered inside the error branches that use it: every call the run
+		// makes takes the successful path, and encoding the unevaluated params
+		// there would be work no message ever prints.
+		obs.params = rawParams(c)
 		var ref *refError
 		if errors.As(evalErr, &ref) {
 			return obs, nil, e.fail(obs, step, "params", ref.path, "the context path to be set", "<unset>")
@@ -255,7 +261,7 @@ func (e *execution) callRaw(ctx context.Context, c *Call, step string) (obs obse
 
 	sent, encErr := canonicalJSON(params)
 	if encErr != nil {
-		obs.params = rawParams
+		obs.params = rawParams(c)
 		return obs, nil, e.fail(obs, step, "params", "", "params that encode as JSON", quote(encErr.Error()))
 	}
 	obs.params = sent
@@ -266,6 +272,16 @@ func (e *execution) callRaw(ctx context.Context, c *Call, step string) (obs obse
 	}
 	obs.body, obs.ok = body, true
 	return obs, nil, nil
+}
+
+// rawParams renders a call's params as the scenario file writes them — value
+// expressions unevaluated — for a failure raised before anything was sent.
+func rawParams(c *Call) string {
+	s, err := canonicalJSON(c.Params)
+	if err != nil {
+		return fmt.Sprintf("%v", c.Params)
+	}
+	return s
 }
 
 // call is callRaw with the CLI's error turned into a failure — what every
@@ -281,13 +297,32 @@ func (e *execution) call(ctx context.Context, c *Call, step string) (observed, e
 	return obs, nil
 }
 
-// failedCall reports a call that should have succeeded. The CLI's error text
-// is quoted verbatim as the actual value — it carries the error code in
-// parentheses, and it is what keeps harness.IsUnimplemented able to classify a
-// 501 as unimplemented rather than as a failure.
+// failedCall reports a call that should have succeeded. The CLI's error text is
+// quoted verbatim as the actual value, so the reader sees what the CLI said.
+//
+// Classification is decided here rather than left to the message: this is the
+// one place holding the *raw* CLI error, and a composed failure message is not
+// something harness.LooksUnimplemented may be pointed at — it embeds the params
+// JSON, where a run id or a port number puts a "501" that means nothing. So a
+// 501 is stated by wrapping harness.ErrUnimplemented, and every other failure
+// carries no sentinel and is a plain fail.
 func (e *execution) failedCall(obs observed, step string, cliErr error) error {
-	return e.fail(obs, step, "call", "", "the call to succeed", quote(cliErr.Error()))
+	f := e.fail(obs, step, "call", "", "the call to succeed", quote(cliErr.Error()))
+	if harness.LooksUnimplemented(cliErr.Error()) {
+		return unimplementedFailure{f}
+	}
+	return f
 }
+
+// unimplementedFailure is a failure the emulator answered with 501. It reads as
+// the failure it wraps and unwraps to both it and the sentinel, so the message
+// in the NDJSON `error` field is unchanged and harness.IsUnimplemented still
+// classifies the test as unimplemented.
+type unimplementedFailure struct{ err error }
+
+func (u unimplementedFailure) Error() string { return u.err.Error() }
+
+func (u unimplementedFailure) Unwrap() []error { return []error{u.err, harness.ErrUnimplemented} }
 
 // invoke is call plus its exports, for a setup or teardown step, whose whole
 // purpose is the context values it leaves behind.
@@ -340,18 +375,73 @@ func wait(ctx context.Context, delayMs int) error {
 // The clause carries both the modeled shape and the wire code, because SDKs
 // disagree about which of the two they surface — for SQS's not-found,
 // QueueDoesNotExist and AWS.SimpleQueueService.NonExistentQueue — so either is
-// accepted. The test is containment over the CLI's message, which is what every
-// hand-written group in this suite already does (internal/groups/util.go): the
-// AWS CLI prints the code in parentheses and nothing machine-readable beside
-// it, so the message is the only place the code exists.
+// accepted, but by **equality** against a code parsed out of the CLI's output,
+// never by containment over the whole message. Containment cannot tell a code
+// from a code that ends with it: an `absent` clause naming NotFoundException
+// would be satisfied by a ResourceNotFoundException, which is a different error
+// from a different branch of the service, and by a NotFoundException named
+// anywhere else in the CLI's prose.
+//
+// errorCodes below reads the two places a code can appear. Only when neither is
+// present — the CLI failed before it reached the wire, or printed something
+// this parser does not know — does the match fall back to containment, which is
+// what every hand-written group in this suite does (internal/groups/util.go)
+// and is better than reporting no match at all.
 func matchesError(err error, want *ErrorClause) bool {
 	if err == nil || want == nil {
 		return false
 	}
 	msg := err.Error()
+	if codes := errorCodes(msg); len(codes) > 0 {
+		for _, got := range codes {
+			if (want.Shape != "" && got == want.Shape) || (want.Code != "" && got == want.Code) {
+				return true
+			}
+		}
+		return false
+	}
 	return (want.Shape != "" && strings.Contains(msg, want.Shape)) ||
 		(want.Code != "" && strings.Contains(msg, want.Code))
 }
+
+// errorCodes returns every error code the CLI's output states, in the order
+// they were found, or nil when it states none.
+//
+// Two surfaces, because the CLI has two. Its own rendering of a modeled error
+// is the banner `An error occurred (<Code>) when calling the <Op> operation:`.
+// When it cannot model the response it prints the body instead, and a JSON
+// error body carries the code in `__type` (the AWS JSON protocols) or `Code`
+// (a query-protocol error the CLI printed as JSON) — which is also how an
+// Overcast fallback error arrives.
+func errorCodes(msg string) []string {
+	var codes []string
+	for _, m := range cliErrorBannerRe.FindAllStringSubmatch(msg, -1) {
+		codes = append(codes, normaliseErrorCode(m[1]))
+	}
+	for _, m := range jsonErrorCodeRe.FindAllStringSubmatch(msg, -1) {
+		codes = append(codes, normaliseErrorCode(m[1]))
+	}
+	return codes
+}
+
+// normaliseErrorCode strips the namespace an AWS JSON `__type` carries:
+// `com.amazonaws.sqs#QueueDoesNotExist` states the same code as
+// `QueueDoesNotExist`, and the IR only ever names the bare form.
+func normaliseErrorCode(code string) string {
+	if _, after, found := strings.Cut(code, "#"); found {
+		return after
+	}
+	return code
+}
+
+var (
+	// cliErrorBannerRe matches the AWS CLI's own error line. The fixture in
+	// executor_test.go writes it the same way the CLI does.
+	cliErrorBannerRe = regexp.MustCompile(`An error occurred \(([^()]+)\) when calling the `)
+	// jsonErrorCodeRe matches the code member of a JSON error body the CLI
+	// echoed rather than modeled.
+	jsonErrorCodeRe = regexp.MustCompile(`"(?:__type|Code)"\s*:\s*"([^"]+)"`)
+)
 
 // acceptedCodes renders both halves of an error clause for a failure message.
 func acceptedCodes(want *ErrorClause) string {

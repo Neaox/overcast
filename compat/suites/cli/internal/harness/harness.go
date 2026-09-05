@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -102,12 +103,47 @@ func (t *TestContext) Reset() {
 	t.state = make(map[string]any)
 }
 
-// IsUnimplemented reports whether an error represents a 501 / not-implemented response.
+// ErrUnimplemented marks an error the emulator answered with 501, for a caller
+// that has already read the raw CLI text and classified it. Wrap it rather than
+// returning it bare, so the reported message stays the caller's own.
+var ErrUnimplemented = errors.New("unimplemented")
+
+// Composed is implemented by an error whose message an interpreter assembled
+// out of scenario data rather than one the AWS CLI produced — the params JSON
+// that was sent, expected and actual values, the CLI's own text quoted inside
+// it.
+//
+// LooksUnimplemented must never be applied to such a message. It matches a bare
+// "501", and a run id (`oc-` plus eight hex digits) or a port like 4501 in the
+// params is enough to put one there, which would report every failure of that
+// test as unimplemented. A composed error states the 501 by wrapping
+// ErrUnimplemented instead.
+type Composed interface{ ComposedFailure() }
+
+// IsUnimplemented reports whether an error represents a 501 / not-implemented
+// response.
+//
+// The sentinel is checked first, so a caller that has already classified the
+// CLI's own text is believed. The substring heuristic is applied only to an
+// error nobody classified, and never to a composed message — see Composed.
 func IsUnimplemented(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
+	if errors.Is(err, ErrUnimplemented) {
+		return true
+	}
+	var composed Composed
+	if errors.As(err, &composed) {
+		return false
+	}
+	return LooksUnimplemented(err.Error())
+}
+
+// LooksUnimplemented is the substring heuristic over one raw AWS CLI error
+// text. The CLI prints an error's code but never its HTTP status, so a 501 only
+// ever reaches us inside prose; pass it what the CLI said and nothing else.
+func LooksUnimplemented(s string) bool {
 	return strings.Contains(s, "501") ||
 		strings.Contains(s, "NotImplemented") ||
 		strings.Contains(s, "UnknownOperationException") ||
@@ -151,22 +187,51 @@ func RunGroup(ctx context.Context, g TestGroup) GroupCounts {
 	}
 
 	var counts GroupCounts
-	failedOrSkipped := map[string]bool{}
 
-	if g.Setup != nil {
-		if err := g.Setup(ctx, t); err != nil {
-			emit(map[string]any{"event": "group_setup_error", "suite": g.Suite, "group": g.Name, "error": err.Error()})
-			for _, tc := range g.Tests {
-				emit(map[string]any{
-					"event": "test_result", "suite": g.Suite, "service": g.Service,
-					"group": g.Name, "test": tc.Name, "status": "skip",
-					"error": fmt.Sprintf("setup failed: %v", err), "duration_ms": 0,
-				})
-				counts.Skipped++
-			}
-			return counts
+	if runSetup(ctx, g, t, &counts) {
+		runTests(ctx, g, t, &counts)
+	}
+
+	// Teardown runs whether or not setup succeeded. A setup that failed halfway
+	// has already created some of what it was going to create, and that is
+	// exactly the run that leaks: the tests were all skipped, so nothing else
+	// will ever delete it.
+	if g.Teardown != nil {
+		if err := g.Teardown(ctx, t); err != nil {
+			emit(map[string]any{"event": "group_teardown_error", "suite": g.Suite, "group": g.Name, "error": err.Error()})
 		}
 	}
+	return counts
+}
+
+// runSetup runs a group's setup, if it has one. It reports whether the tests
+// should run: a setup failure emits one skip per test and returns false, and
+// RunGroup still runs teardown — the IR's rule (compat/model/README.md § The
+// scenario file).
+func runSetup(ctx context.Context, g TestGroup, t *TestContext, counts *GroupCounts) bool {
+	if g.Setup == nil {
+		return true
+	}
+	err := g.Setup(ctx, t)
+	if err == nil {
+		return true
+	}
+	emit(map[string]any{"event": "group_setup_error", "suite": g.Suite, "group": g.Name, "error": err.Error()})
+	for _, tc := range g.Tests {
+		emit(map[string]any{
+			"event": "test_result", "suite": g.Suite, "service": g.Service,
+			"group": g.Name, "test": tc.Name, "status": "skip",
+			"error": fmt.Sprintf("setup failed: %v", err), "duration_ms": 0,
+		})
+		counts.Skipped++
+	}
+	return false
+}
+
+// runTests runs every test in a group, honouring skips, na, cancellation and
+// the dependency gate.
+func runTests(ctx context.Context, g TestGroup, t *TestContext, counts *GroupCounts) {
+	failedOrSkipped := map[string]bool{}
 
 	for _, tc := range g.Tests {
 		if ctx.Err() != nil {
@@ -242,13 +307,6 @@ func RunGroup(ctx context.Context, g TestGroup) GroupCounts {
 			failedOrSkipped[tc.Name] = true
 		}
 	}
-
-	if g.Teardown != nil {
-		if err := g.Teardown(ctx, t); err != nil {
-			emit(map[string]any{"event": "group_teardown_error", "suite": g.Suite, "group": g.Name, "error": err.Error()})
-		}
-	}
-	return counts
 }
 
 // RunSuite executes all groups in parallel.

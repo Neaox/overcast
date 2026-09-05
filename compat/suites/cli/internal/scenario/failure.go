@@ -3,6 +3,7 @@ package scenario
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // Debuggability is the interpreter's whole cost, and it is paid here: one
@@ -54,6 +55,12 @@ func (f *failure) Error() string {
 	return b.String()
 }
 
+// ComposedFailure marks this message as the interpreter's own, so
+// harness.IsUnimplemented never runs its "501" substring test over it: field 3
+// is the params JSON, and a run id or a port number in there says nothing about
+// the status. A 501 is stated by the sentinel instead — see failedCall.
+func (f *failure) ComposedFailure() {}
+
 // observed is a response together with the call that produced it, so a clause
 // that reads the primary response and a clause that makes its own call both
 // name the right operation and the right params in field 2 and field 3.
@@ -85,7 +92,31 @@ func (e *execution) fail(obs observed, step, kind, path, expected, actual string
 
 // quote renders a string as a failure message's expected or actual value. CLI
 // error text is multi-line, so it is folded onto one line: the NDJSON `error`
-// field is read as a single line by the report tooling.
+// field is read as a single line by the report tooling. It is capped too — an
+// `aws` invocation that dies before it reaches the wire can put a whole Python
+// traceback, or the CLI's usage text, on stderr.
 func quote(s string) string {
-	return fmt.Sprintf("%q", strings.Join(strings.Fields(s), " "))
+	return fmt.Sprintf("%q", clip(strings.Join(strings.Fields(s), " ")))
+}
+
+// maxRendered caps one field of one failure message. Every failure ends up in a
+// single-line NDJSON `error` that the dashboard renders and the report tooling
+// diffs, so a field running to megabytes costs far more than the diagnosis it
+// buys. A few KiB is enough to identify a wrong value and to see the start of
+// the list or the message it came from.
+const maxRendered = 4096
+
+// clip trims a rendered value to maxRendered bytes and says how much it
+// dropped, so the reader knows the value is not all of what was there. The cut
+// is moved back to a rune boundary: the result is still read by a human and
+// still goes through encoding/json on its way to the NDJSON line.
+func clip(s string) string {
+	if len(s) <= maxRendered {
+		return s
+	}
+	cut := maxRendered
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s… (%d bytes elided)", s[:cut], len(s)-cut)
 }

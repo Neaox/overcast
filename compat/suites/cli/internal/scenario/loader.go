@@ -42,6 +42,13 @@ type File struct {
 // table of its own (compat/model/README.md § Naming). The cli backend uses
 // EndpointPrefix as the `aws` command name; the remaining fields are carried so
 // the type matches the IR and a later protocol-sensitive check has them.
+//
+// The `aws` command name is botocore's service name, which is the endpoint
+// prefix for every service in the corpus but not for all of them:
+// `elasticloadbalancing` is `aws elb`, `monitoring` is `aws cloudwatch`,
+// `email` is `aws ses`, `states` is `aws stepfunctions`. Those four need the
+// per-backend override table compat/model/README.md § Naming records as a
+// follow-up, not a naming field added to the IR.
 type Client struct {
 	SDKID          string `json:"sdkId"`
 	EndpointPrefix string `json:"endpointPrefix"`
@@ -233,6 +240,38 @@ func readFile(abs, rel string) (*File, error) {
 	if f.Client.EndpointPrefix == "" {
 		return nil, fmt.Errorf("scenario: %s: client.endpointPrefix is empty, so no aws command name can be derived", rel)
 	}
+	if err := validate(&f, rel); err != nil {
+		return nil, err
+	}
 	f.Path = rel
 	return &f, nil
+}
+
+// validate rejects a file the interpreter would otherwise run while quietly
+// ignoring part of it. A load error fails every test in the group loudly and
+// names the file, which is the right outcome for a generated corpus: the fix is
+// in the recipe or the generator, never here.
+func validate(f *File, rel string) error {
+	for gi := range f.Groups {
+		g := &f.Groups[gi]
+		for ti := range g.Tests {
+			tc := &g.Tests[ti]
+			// A test has one primary call, so it has one outcome to check
+			// against an errorCode clause. errorCodeClause takes the first and
+			// runTest skips the rest, so a second clause naming a different
+			// error would never be evaluated and the test would pass on the
+			// strength of a check nobody made.
+			n := 0
+			for i := range tc.Assert {
+				if tc.Assert[i].Kind == kindErrorCode {
+					n++
+				}
+			}
+			if n > 1 {
+				return fmt.Errorf("scenario: %s: %s/%s carries %d errorCode clauses; the primary call has one outcome, so only the first would be checked",
+					rel, g.Name, tc.Name, n)
+			}
+		}
+	}
+	return nil
 }

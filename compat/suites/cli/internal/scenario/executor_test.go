@@ -493,6 +493,140 @@ func TestUnimplementedSurvivesTheFailureMessage(t *testing.T) {
 	}
 }
 
+// TestUnimplementedIgnoresA501InsideTheParams is the fault the sentinel exists
+// for. Field 3 of every failure message is the params JSON that was sent, so a
+// run id, an account number, a port or a resource name carrying "501" used to
+// make the substring heuristic report a perfectly ordinary failure — a real
+// compatibility gap — as `unimplemented`, where nothing counts it.
+func TestUnimplementedIgnoresA501InsideTheParams(t *testing.T) {
+	build := func(id string) (*Backend, *fakeRunner, registry.RegistryGroup) {
+		return fixture(t, scenarioFile(lifecycle("widgets-gen-thing", obj{
+			"name": "GetThing", "op": "GetThing",
+			"call":   obj{"op": "GetThing", "params": obj{"Id": id}},
+			"assert": []any{obj{"kind": "responseField", "checks": obj{"$.Id": obj{"nonEmpty": true}}}},
+		})))
+	}
+
+	// A run id with "501" in its hex, and a plain not-found from the service.
+	b, fake, rg := build("oc-501abcde-thing")
+	fake.script["get-thing"] = []fakeResult{awsErr("ResourceNotFoundException")}
+	err := runOneTest(t, b, rg, "GetThing")
+	if err == nil {
+		t.Fatal("want a failure")
+	}
+	if !strings.Contains(err.Error(), "oc-501abcde-thing") {
+		t.Fatalf("the params must still be in the message — that is why this is a hazard: %v", err)
+	}
+	if harness.IsUnimplemented(err) {
+		t.Errorf("a 501 inside the params says nothing about the status: %v", err)
+	}
+
+	// The same params, and this time the CLI really did report a 501.
+	b, fake, rg = build("oc-501abcde-thing")
+	fake.script["get-thing"] = []fakeResult{{err: errors.New(
+		"aws widgets get-thing: exit status 254: An error occurred (501) when calling the GetThing operation")}}
+	err = runOneTest(t, b, rg, "GetThing")
+	if err == nil {
+		t.Fatal("want a failure")
+	}
+	if !harness.IsUnimplemented(err) {
+		t.Errorf("the CLI's own 501 must still classify as unimplemented: %v", err)
+	}
+	if !errors.Is(err, harness.ErrUnimplemented) {
+		t.Errorf("the classification must be the sentinel, not the prose: %v", err)
+	}
+}
+
+// ─── error-code matching ──────────────────────────────────────────────────────
+
+// TestErrorClauseMatchesTheCodeExactly: containment over the CLI's whole
+// message cannot tell a code from a code that ends with it, and the two are
+// different errors from different branches of the service — an `absent` clause
+// naming NotFoundException was satisfied by a ResourceNotFoundException, so the
+// test passed while the emulator answered with something else.
+func TestErrorClauseMatchesTheCodeExactly(t *testing.T) {
+	cases := []struct {
+		name      string
+		shape     string
+		code      string
+		cliErr    error
+		wantMatch bool
+	}{
+		{
+			name: "the same code matches", shape: "ResourceNotFoundException", code: "ResourceNotFoundException",
+			cliErr: awsErr("ResourceNotFoundException").err, wantMatch: true,
+		},
+		{
+			name: "a longer code is not the one named", shape: "NotFoundException", code: "NotFoundException",
+			cliErr: awsErr("ResourceNotFoundException").err, wantMatch: false,
+		},
+		{
+			name: "the wire code matches when the shape does not", shape: "QueueDoesNotExist",
+			code:   "AWS.SimpleQueueService.NonExistentQueue",
+			cliErr: awsErr("AWS.SimpleQueueService.NonExistentQueue").err, wantMatch: true,
+		},
+		{
+			name: "an unrelated code does not match", shape: "ValidationException", code: "ValidationException",
+			cliErr: awsErr("AccessDeniedException").err, wantMatch: false,
+		},
+		{
+			name:  "a __type in a JSON body the CLI echoed, namespace and all",
+			shape: "QueueDoesNotExist", code: "QueueDoesNotExist",
+			cliErr:    errors.New(`aws sqs get-queue-url: exit status 255: {"__type":"com.amazonaws.sqs#QueueDoesNotExist","message":"…"}`),
+			wantMatch: true,
+		},
+		{
+			name: "a Code member in a JSON body", shape: "NoSuchEntity", code: "NoSuchEntity",
+			cliErr:    errors.New(`aws iam get-role: exit status 255: {"Code":"NoSuchEntity","Message":"…"}`),
+			wantMatch: true,
+		},
+		{
+			name:  "a code named only in the message text is not the error's code",
+			shape: "ValidationException", code: "ValidationException",
+			cliErr: errors.New(`aws widgets create-thing: exit status 254: An error occurred (AccessDeniedException) ` +
+				`when calling the CreateThing operation: not a ValidationException`),
+			wantMatch: false,
+		},
+		{
+			// Nothing this parser recognises — a CLI that died before the wire.
+			// Containment is all that is left, and it beats reporting no match.
+			name:  "containment is the fallback when no code surface is present",
+			shape: "ValidationError", code: "ValidationError",
+			cliErr:    errors.New(`aws widgets create-thing: exit status 252: Invalid length for parameter Name, ValidationError`),
+			wantMatch: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := matchesError(tc.cliErr, &ErrorClause{Shape: tc.shape, Code: tc.code})
+			if got != tc.wantMatch {
+				t.Errorf("matchesError = %v, want %v for %v", got, tc.wantMatch, tc.cliErr)
+			}
+		})
+	}
+}
+
+// TestErrorCodeClauseRejectsANearMissEndToEnd runs the same distinction through
+// a whole test: matchesError on its own does not prove the clause uses it.
+func TestErrorCodeClauseRejectsANearMissEndToEnd(t *testing.T) {
+	b, fake, rg := fixture(t, scenarioFile(lifecycle("widgets-gen-thing", obj{
+		"name": "GetThingAbsent", "op": "GetThing",
+		"call": obj{"op": "GetThing", "params": obj{"Id": "absent"}},
+		"assert": []any{
+			obj{"kind": "errorCode", "error": obj{"shape": "NotFoundException", "code": "NotFoundException"}},
+		},
+	})))
+	fake.script["get-thing"] = []fakeResult{awsErr("ResourceNotFoundException")}
+
+	err := runOneTest(t, b, rg, "GetThingAbsent")
+	if err == nil {
+		t.Fatal("ResourceNotFoundException is not the NotFoundException the clause names")
+	}
+	if !strings.Contains(err.Error(), "ResourceNotFoundException") {
+		t.Errorf("the failure must quote what came back: %v", err)
+	}
+}
+
 // ─── cancellation ─────────────────────────────────────────────────────────────
 
 func TestCancelledContextStopsBeforeTheNextCall(t *testing.T) {

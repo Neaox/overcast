@@ -1,6 +1,8 @@
 package awscli
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -69,5 +71,59 @@ aws: [ERROR]: An error occurred (ResourceNotFoundException) when calling the Des
 	}
 	if strings.Contains(got, "botocore") {
 		t.Fatalf("stripDebugLog left trace lines in: %q", got)
+	}
+}
+
+// Every invocation blanks AWS_PAGER, signed or not. The CLI pipes output
+// through $AWS_PAGER, $PAGER or its built-in default, and a pager with no
+// terminal to draw on blocks forever holding the pipe runCLI is reading — the
+// hang the repository's own awslocal wrapper exists to prevent. It used to be
+// set only for signed calls, which are the small minority.
+func TestCommandEnv_blanksThePagerOnEveryInvocation(t *testing.T) {
+	for _, sign := range []bool{false, true} {
+		var pager string
+		var found bool
+		for _, kv := range commandEnv(sign) {
+			if name, value, _ := strings.Cut(kv, "="); name == "AWS_PAGER" {
+				pager, found = value, true
+			}
+		}
+		if !found {
+			t.Errorf("sign=%v: AWS_PAGER is not set; a piped call can hang on a pager", sign)
+		}
+		if pager != "" {
+			t.Errorf("sign=%v: AWS_PAGER = %q, want it blank", sign, pager)
+		}
+	}
+}
+
+// A signed call still gets its placeholder credentials: commandEnv adds the
+// pager on top of signingEnv rather than replacing it, and an unsigned call
+// gains nothing it did not already have.
+func TestCommandEnv_keepsTheSigningCredentials(t *testing.T) {
+	joined := strings.Join(commandEnv(true), "\n")
+	for _, want := range []string{"AWS_ACCESS_KEY_ID=overcast", "AWS_SECRET_ACCESS_KEY=overcast"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("signed environment is missing %q", want)
+		}
+	}
+	if strings.Contains(strings.Join(commandEnv(false), "\n"), "AWS_ACCESS_KEY_ID=overcast") {
+		t.Error("an unsigned call must not gain credentials it did not have")
+	}
+}
+
+// A cancelled context spawns no process and answers with the cancellation, so a
+// hung `aws` cannot outlive the per-group timeout RunSuite sets or a dashboard
+// cancel. It needs no `aws` on PATH: exec refuses to start at all.
+func TestRunOutputContext_honoursCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := RunOutputContext(ctx, "http://127.0.0.1:4570", "us-east-1", "sqs", "list-queues")
+	if err == nil {
+		t.Fatal("want the cancellation, not a call")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want it to carry context.Canceled", err)
 	}
 }

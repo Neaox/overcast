@@ -267,8 +267,50 @@ func TestEventuallyReportsTheLastFailureAfterMaxAttempts(t *testing.T) {
 	if !strings.Contains(err.Error(), `"THREE"`) {
 		t.Errorf("the reported failure must be the last attempt's: %v", err)
 	}
+	// The budget is stated in front of it. Bare, the message is
+	// indistinguishable from a clause evaluated once, and the two want opposite
+	// fixes — a real disagreement, or a poll budget that was too short.
+	if !strings.HasPrefix(err.Error(), "eventually gave up after 3 attempt(s) 0ms apart; last failure: ") {
+		t.Errorf("failure = %v, want it to open with the budget it spent", err)
+	}
 	if got := fake.ops(); len(got) != 4 {
 		t.Errorf("calls = %v, want exactly maxAttempts attempts", got)
+	}
+}
+
+// TestEventuallyNamesTheDelayItWaited: the delay is half the budget, so a
+// message reporting only the attempt count cannot say whether the resource was
+// given a second or a minute to settle.
+func TestEventuallyNamesTheDelayItWaited(t *testing.T) {
+	b, fake, rg := fixture(t, scenarioFile(lifecycle("widgets-gen-thing", obj{
+		"name": "SetThing", "op": "SetThing",
+		"call": obj{"op": "SetThing", "params": obj{}},
+		"assert": []any{obj{
+			"kind": "eventually", "maxAttempts": float64(2), "delayMs": float64(25),
+			"assert": obj{"kind": "readback",
+				"call":   obj{"op": "GetThing", "params": obj{}},
+				"checks": obj{"$.State": obj{"equals": "READY"}}},
+		}},
+	})))
+	fake.script["set-thing"] = []fakeResult{ok(obj{})}
+	fake.script["get-thing"] = []fakeResult{ok(obj{"State": "PENDING"})}
+
+	err := runOneTest(t, b, rg, "SetThing")
+	if err == nil {
+		t.Fatal("want a failure")
+	}
+	if !strings.Contains(err.Error(), "eventually gave up after 2 attempt(s) 25ms apart") {
+		t.Errorf("failure = %v, want the attempts and the delay", err)
+	}
+	// The six-field message is still in there: the prefix adds to it, it does
+	// not replace it.
+	for _, want := range []string{
+		"widgets-gen-thing/SetThing", "$.State",
+		`expected "READY", actual "PENDING"`, "assert[0].assert",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("failure is missing %q:\n  %v", want, err)
+		}
 	}
 }
 
@@ -380,6 +422,13 @@ func TestUnresolvableRefFailsTheStepNamingThePath(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "thing.id") || !strings.Contains(err.Error(), "<unset>") {
 		t.Errorf("failure = %v, want it to name the unresolvable path", err)
+	}
+	// Field 3 shows the params as the scenario file writes them — nothing was
+	// sent, so there is no evaluated JSON document to quote. It is rendered
+	// inside this branch rather than before every call, which is why it needs
+	// pinning: the successful path must not pay for it.
+	if !strings.Contains(err.Error(), `params {"Id":{"$ref":"thing.id"}}`) {
+		t.Errorf("failure = %v, want the params as the file writes them", err)
 	}
 	if len(fake.calls) != 0 {
 		t.Error("nothing may be sent when a value expression does not evaluate")

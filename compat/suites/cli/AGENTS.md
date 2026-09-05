@@ -47,6 +47,11 @@ The `docker` capability is likewise probed (`docker info`) rather than
 configured: tests the registry marks `requires: [docker]` are skipped when no
 daemon answers, and there is no `OVERCAST_COMPAT_SKIP_DOCKER` here.
 
+**On Windows, check `aws --version` before believing an argument-parsing
+failure**: a pip-installed CLI **v1** leaves an `aws.cmd` shim whose argument
+and quoting rules differ from the v2 `aws.exe` this suite expects, so a call
+can die on its own arguments before it reaches the wire.
+
 ---
 
 ## File layout

@@ -17,6 +17,24 @@ func TestLoadRejectsAMalformedScenario(t *testing.T) {
 		{name: "unparsable", body: `{`, wantErr: "parse"},
 		{name: "the wrong version", body: `{"version":2,"service":"widgets","client":{"endpointPrefix":"widgets"},"groups":[]}`, wantErr: "version 2, want 1"},
 		{name: "no command name", body: `{"version":1,"service":"widgets","client":{},"groups":[]}`, wantErr: "endpointPrefix"},
+		{
+			// A test has one primary call, so it has one outcome to check
+			// against an errorCode clause. errorCodeClause takes the first and
+			// runTest skips the rest, so a second clause naming a different
+			// error would never be evaluated and the test would pass on the
+			// strength of a check nobody made. Refusing the file is the honest
+			// outcome; the fix belongs in the recipe or the generator.
+			name: "two errorCode clauses on one test",
+			body: `{"version":1,"service":"widgets","client":{"endpointPrefix":"widgets"},"groups":[
+				{"name":"widgets-gen-thing","kind":"lifecycle","setup":[],"teardown":[],"tests":[
+					{"name":"GetThingAbsent","op":"GetThing","call":{"op":"GetThing","params":{}},"assert":[
+						{"kind":"errorCode","error":{"shape":"NotFoundException","code":"NotFoundException"}},
+						{"kind":"errorCode","error":{"shape":"AccessDenied","code":"AccessDenied"}}
+					]}
+				]}
+			]}`,
+			wantErr: "widgets-gen-thing/GetThingAbsent carries 2 errorCode clauses",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
