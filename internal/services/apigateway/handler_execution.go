@@ -271,6 +271,10 @@ func (h *Handler) executeRestLambdaProxy(
 		return
 	}
 
+	if !h.authorizeLambdaIntegration(w, r, functionName, api.ID, resource.Path) {
+		return
+	}
+
 	outcome, err := h.invoker.Invoke(r.Context(), functionName, payload)
 	if err != nil {
 		log.Error("lambda invocation failed",
@@ -573,6 +577,10 @@ func (h *Handler) executeV2LambdaProxy(
 
 	if err != nil {
 		writeGatewayError(w, http.StatusInternalServerError, "Failed to build proxy event")
+		return
+	}
+
+	if !h.authorizeLambdaIntegration(w, r, functionName, api.ApiID, requestPath) {
 		return
 	}
 
@@ -1133,7 +1141,7 @@ func (h *Handler) executeV2HTTPProxy(w http.ResponseWriter, r *http.Request, int
 // passing the body as-is without the proxy event wrapper.
 func (h *Handler) executeRestLambdaNonProxy(
 	w http.ResponseWriter, r *http.Request,
-	_ *RestAPI, integration *Integration, _ string,
+	api *RestAPI, integration *Integration, requestPath string,
 ) {
 	log := h.log.WithRecorder(r.Context())
 	if h.invoker == nil {
@@ -1162,6 +1170,10 @@ func (h *Handler) executeRestLambdaNonProxy(
 	if len(payload) == 0 {
 		// Send empty JSON object if body is empty.
 		payload = []byte("{}")
+	}
+
+	if !h.authorizeLambdaIntegration(w, r, functionName, api.ID, requestPath) {
+		return
 	}
 
 	outcome, invokeErr := h.invoker.Invoke(r.Context(), functionName, payload)

@@ -102,7 +102,7 @@ func TestPublish_RecordsNumberOfMessagesPublishedAndSize(t *testing.T) {
 
 func TestPublish_LambdaDeliverySuccess_RecordsNotificationsDelivered(t *testing.T) {
 	svc, rec, mock := newMetricsFanOutFixture(t, "orders")
-	svc.InitLambdaDelivery(&fakeInvoker{})
+	svc.InitLambdaDelivery(&fakeInvoker{}, nil)
 	addSubscription(t, svc, "orders", "lambda", testFunctionARN, nil)
 	topicARN := protocol.TopicARN(svc.cfg.Region, svc.cfg.AccountID, "orders")
 
@@ -119,7 +119,7 @@ func TestPublish_LambdaDeliverySuccess_RecordsNotificationsDelivered(t *testing.
 
 func TestPublish_LambdaDeliveryFailure_RecordsNotificationsFailed(t *testing.T) {
 	svc, rec, mock := newMetricsFanOutFixture(t, "orders")
-	svc.InitLambdaDelivery(&fakeInvoker{err: errors.New("invoke failed")})
+	svc.InitLambdaDelivery(&fakeInvoker{err: errors.New("invoke failed")}, nil)
 	addSubscription(t, svc, "orders", "lambda", testFunctionARN, nil)
 	topicARN := protocol.TopicARN(svc.cfg.Region, svc.cfg.AccountID, "orders")
 

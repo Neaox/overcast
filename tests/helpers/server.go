@@ -501,6 +501,17 @@ func WithEnforceAppSyncCognitoAuth(enabled bool) Option {
 	}
 }
 
+// WithEnforceLambdaResourcePolicy makes a service-originated Lambda invocation
+// — an S3 notification, an SNS subscription delivery, an API Gateway
+// integration, an EventBridge rule target — check the function's
+// resource-based policy first. Off by default: statements are stored and
+// returned but never consulted.
+func WithEnforceLambdaResourcePolicy(enabled bool) Option {
+	return func(so *serverOptions) {
+		so.cfg.EnforceLambdaResourcePolicy = enabled
+	}
+}
+
 // WithEC2VPCStrategy sets the VPC network strategy used by the EC2 service.
 // Valid values: "shared" (default), "strict", "remapped". See
 // docs/services/ec2.md § Advanced: VPC networking strategies for details.

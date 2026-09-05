@@ -49,6 +49,11 @@ type Handler struct {
 	clk   clock.Clock
 	bus   *events.Bus
 
+	// lambdaAuth answers whether s3.amazonaws.com may invoke a Lambda
+	// notification destination. Set by InitNotifications; nil when the server
+	// was wired without Lambda.
+	lambdaAuth events.FunctionInvokeAuthorizer
+
 	// lifecycle caches every bucket's lifecycle configuration so the object
 	// routes cost an atomic load rather than a store read. See lifecycle.go.
 	lifecycle lifecycleIndex

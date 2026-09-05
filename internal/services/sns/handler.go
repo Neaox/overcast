@@ -19,19 +19,22 @@ import (
 
 // Handler holds SNS handler dependencies.
 type Handler struct {
-	cfg       *config.Config
-	snsStore  *snsStore
-	log       *serviceutil.ServiceLogger
-	clk       clock.Clock
-	enqueuer  events.MessageEnqueuer
-	invoker   events.FunctionEventInvoker
-	mailer    smtp.Mailer
-	smsSender smtp.SMSSender
-	outbound  smtp.OutboundCapture
-	bus       *events.Bus
-	ops       map[string]http.HandlerFunc
-	typedOp   map[string]op.Operation
-	wg        sync.WaitGroup
+	cfg      *config.Config
+	snsStore *snsStore
+	log      *serviceutil.ServiceLogger
+	clk      clock.Clock
+	enqueuer events.MessageEnqueuer
+	invoker  events.FunctionEventInvoker
+	// lambdaAuth answers whether sns.amazonaws.com may invoke a lambda-protocol
+	// subscriber's function. nil when the server was wired without Lambda.
+	lambdaAuth events.FunctionInvokeAuthorizer
+	mailer     smtp.Mailer
+	smsSender  smtp.SMSSender
+	outbound   smtp.OutboundCapture
+	bus        *events.Bus
+	ops        map[string]http.HandlerFunc
+	typedOp    map[string]op.Operation
+	wg         sync.WaitGroup
 
 	// metrics is nil until Service.InitMetrics is called (or when automatic
 	// collection is disabled — see config.ServiceMetricsMode). Every call

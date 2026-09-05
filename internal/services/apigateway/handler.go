@@ -29,10 +29,11 @@ type Handler struct {
 	log              *serviceutil.ServiceLogger
 	clk              clock.Clock
 	bus              *events.Bus
-	invoker          events.FunctionSyncInvoker   // nil until InitLambdaInvoker is called
-	cognitoValidator events.CognitoTokenValidator // nil until InitCognitoValidator is called
-	domainRegistry   *domainregistry.Registry     // nil until InitDomainRegistry is called
-	hydrateOnce      sync.Once                    // guards lazy domain-registry hydration
+	invoker          events.FunctionSyncInvoker      // nil until InitLambdaInvoker is called
+	lambdaAuth       events.FunctionInvokeAuthorizer // nil until InitLambdaInvoker is called
+	cognitoValidator events.CognitoTokenValidator    // nil until InitCognitoValidator is called
+	domainRegistry   *domainregistry.Registry        // nil until InitDomainRegistry is called
+	hydrateOnce      sync.Once                       // guards lazy domain-registry hydration
 
 	// usage measures usage-plan throttle and quota consumption per
 	// (usage plan, API key). In-memory only, no background goroutine —

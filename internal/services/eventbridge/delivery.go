@@ -232,6 +232,11 @@ func (s *Service) dispatchTarget(ctx context.Context, rule ebRule, target ebTarg
 	if kind == eventtarget.KindEventBus {
 		return dispatcher.Deliver(ctx, busTargetRequest(target, event, payload))
 	}
+	if kind == eventtarget.KindLambda {
+		if err := s.authorizeLambdaTarget(ctx, rule, target); err != nil {
+			return err
+		}
+	}
 	return dispatcher.Deliver(ctx, eventtarget.Request{
 		ARN:            target.ARN,
 		Kind:           kind,
@@ -240,6 +245,37 @@ func (s *Service) dispatchTarget(ctx context.Context, rule ebRule, target ebTarg
 		MessageGroupID: stringValue(target.SQSParams, "MessageGroupId"),
 	})
 }
+
+// authorizeLambdaTarget checks the function's resource-based policy before a
+// Lambda target is invoked, contributing the rule ARN as aws:SourceArn — the
+// condition AWS's own documented statement for an EventBridge target carries.
+//
+// A target configured with a RoleARN is skipped: "For Lambda, Amazon SNS, and
+// Amazon SQS targets, you can use either an IAM execution role or a
+// resource-based policy… If no execution role is configured, EventBridge uses
+// resource-based policies on the target resource." Overcast does not evaluate
+// the role's own policies here, so a target that names one is taken at its word.
+//
+// Returning an error puts the delivery on EventBridge's existing failure path:
+// it is retried per the target's RetryPolicy, then dead-lettered if the target
+// has a DeadLetterConfig and dropped if it does not, and either way the outcome
+// is recorded against the rule.
+//
+// https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-use-resource-based.html
+func (s *Service) authorizeLambdaTarget(ctx context.Context, rule ebRule, target ebTarget) error {
+	if s.lambdaAuth == nil || target.RoleARN != "" {
+		return nil
+	}
+	if aerr := s.lambdaAuth.AuthorizeServiceInvoke(ctx, target.ARN, eventbridgeServicePrincipal, rule.ARN, s.cfg.AccountID); aerr != nil {
+		return fmt.Errorf("%s: %s", aerr.Code, aerr.Message)
+	}
+	return nil
+}
+
+// eventbridgeServicePrincipal is the principal an EventBridge rule target
+// invokes a Lambda function as, and the value `add-permission --principal` is
+// given for one.
+const eventbridgeServicePrincipal = "events.amazonaws.com"
 
 // busTargetRequest builds the delivery for an event-bus target.
 //

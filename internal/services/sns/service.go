@@ -60,8 +60,12 @@ func (s *Service) InitSQSDelivery(eq events.MessageEnqueuer) {
 // subscribers are invoked on Publish. Call this after both SNS and Lambda
 // services have been constructed. Without it, a lambda subscription reports a
 // delivery failure rather than quietly doing nothing.
-func (s *Service) InitLambdaDelivery(inv events.FunctionEventInvoker) {
-	s.handler.setLambdaInvoker(inv)
+//
+// auth is the same service's resource-policy authorizer: with
+// OVERCAST_ENFORCE_LAMBDA_RESOURCE_POLICY set, a subscription whose function
+// does not grant sns.amazonaws.com fails delivery rather than invoking.
+func (s *Service) InitLambdaDelivery(inv events.FunctionEventInvoker, auth events.FunctionInvokeAuthorizer) {
+	s.handler.setLambdaInvoker(inv, auth)
 }
 
 // InitEmailDelivery wires the SMTP mailer so that email/email-json subscribers

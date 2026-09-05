@@ -27,7 +27,7 @@ carries the detail.
 | SnapStart | Not emulated — no restore records; `platform.runtimeDone` reports only `responseLatency` | [Logging](./logging.md) |
 | `LoggingConfig: {}` (explicitly empty) | `UpdateFunctionConfiguration` returns `501` | [Logging](./logging.md) |
 | `TracingConfig` / `EphemeralStorage` / `KMSKeyArn` | Stored and returned, never enforced | Below |
-| Resource policies | Stored and validated; statements are not evaluated at invoke time, and `PutResourcePolicy` always refuses a public policy | Below |
+| Resource policies | Evaluated for service-originated invokes only, and only under a knob; `PutResourcePolicy` always refuses a public policy | Below |
 | Update status | Every update but an image `UpdateFunctionCode` answers `Successful` rather than `InProgress` | Below |
 | Unqualified `DeleteFunction` | Removes the function record; versions, aliases and version counters are left behind | Below |
 | Tagging | Functions and event source mappings only; other taggable resources return `501` | Below |
@@ -59,6 +59,28 @@ that really is asynchronous — `UpdateFunctionCode`
 pointing a `PackageType=Image` function at a new image — answers `InProgress` and
 settles to `Successful`, or `Failed` with
 `ImageAccessDenied`/`InvalidImage`/`InternalError`, when the pull does.
+
+## Resource policies
+
+`AddPermission` and `PutResourcePolicy` always store and validate what they are
+given. Whether a statement then *decides* anything is a switch:
+`OVERCAST_ENFORCE_LAMBDA_RESOURCE_POLICY`, off by default.
+
+Turned on, it gates the invocations Overcast originates on another service's
+behalf — S3 bucket notifications, SNS subscription deliveries, API Gateway
+integrations and EventBridge rule targets — against the target's policy, and
+each caller fails the way AWS does: S3 refuses the notification configuration
+with `InvalidArgument`, SNS dead-letters the delivery, API Gateway answers 500,
+and EventBridge records a failed invocation. A direct `Invoke` is never gated in
+either setting: Overcast accepts credentials without validating them, so there
+is no caller identity to authorise.
+
+Three things the evaluation does not do. A condition key it cannot evaluate —
+anything but `aws:SourceArn` and `aws:SourceAccount` — refuses the statement
+rather than ignoring the condition. A policy is read at the qualifier being
+invoked, so a `Resource` ending `:*` written against the unqualified function
+does not reach its own aliases. And EventBridge Scheduler is not gated at all,
+because AWS grants it through an execution role instead.
 
 ## The reactive S3 code sync
 

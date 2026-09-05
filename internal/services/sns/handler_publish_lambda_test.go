@@ -86,7 +86,7 @@ func newLambdaFanOutFixture(t *testing.T, topicName string) (*Service, *fakeInvo
 
 	inv := &fakeInvoker{}
 	eq := newFakeEnqueuer()
-	svc.InitLambdaDelivery(inv)
+	svc.InitLambdaDelivery(inv, nil)
 	svc.InitSQSDelivery(eq)
 
 	arn := protocol.TopicARN(cfg.Region, cfg.AccountID, topicName)

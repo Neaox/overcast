@@ -150,6 +150,9 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.EnforceAppSyncCognitoAuth {
 		t.Error("EnforceAppSyncCognitoAuth: expected false by default")
 	}
+	if cfg.EnforceLambdaResourcePolicy {
+		t.Error("EnforceLambdaResourcePolicy: expected false by default")
+	}
 	if cfg.ProtocolStrict {
 		t.Error("ProtocolStrict: expected false by default (lenient drift posture)")
 	}
@@ -2635,7 +2638,6 @@ func TestLoad_enforceAPIGatewayThrottleEnabled(t *testing.T) {
 		t.Fatal("expected EnforceAPIGatewayThrottle=true")
 	}
 }
-
 func TestLoad_enforceAppSyncCognitoAuthEnabled(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH", "true")
@@ -2646,6 +2648,19 @@ func TestLoad_enforceAppSyncCognitoAuthEnabled(t *testing.T) {
 	}
 	if !cfg.EnforceAppSyncCognitoAuth {
 		t.Fatal("expected EnforceAppSyncCognitoAuth=true")
+	}
+}
+
+func TestLoad_enforceLambdaResourcePolicyEnabled(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_ENFORCE_LAMBDA_RESOURCE_POLICY", "true")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.EnforceLambdaResourcePolicy {
+		t.Fatal("expected EnforceLambdaResourcePolicy=true")
 	}
 }
 
@@ -2778,6 +2793,7 @@ func clearEnv(t *testing.T) {
 		"OVERCAST_WAL_FSYNC", "OVERCAST_WAL_FSYNC_INTERVAL", "OVERCAST_WAL_MAX_LOG_BYTES",
 		"OVERCAST_DATA_DIR", "OVERCAST_DATA_DIR_SOURCE", "OVERCAST_DEFAULT_REGION", "OVERCAST_ACCOUNT_ID",
 		"OVERCAST_SIGV4_VALIDATE", "OVERCAST_ENFORCE_IAM", "OVERCAST_ENFORCE_APIGATEWAY_THROTTLE",
+		"OVERCAST_ENFORCE_LAMBDA_RESOURCE_POLICY",
 		"OVERCAST_PROTOCOL_STRICT", "OVERCAST_LOG_LEVEL", "OVERCAST_SHUTDOWN_TIMEOUT",
 		"OVERCAST_LAMBDA_HOT_RELOAD",
 		"OVERCAST_DEBUG", "OVERCAST_TLS", "OVERCAST_TLS_CERT", "OVERCAST_TLS_KEY",
