@@ -203,7 +203,7 @@ func (cr *ContainerRuntime) ensureInitVolume(ctx context.Context, binary []byte,
 // path of a container that has been *created* and never started, which is what
 // makes this cheap: no container start, no runtime, just create, copy, remove.
 // (Pinned against a real daemon by TestInvoke_initIsMountedFromASeededVolume
-// in tests/integration/lambda, because it is the assumption the whole
+// in tests/integration/lambdadocker, because it is the assumption the whole
 // mechanism rests on and it is not in any Docker API guarantee.)
 func (cr *ContainerRuntime) seedInitVolume(ctx context.Context, name string, binary []byte, goarch, resolvedRef, platform string) error {
 	// cr.instances.ManagedLabels stamps docker.LabelInstance (from the same

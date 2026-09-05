@@ -1,4 +1,4 @@
-package lambda_test
+package lambdadocker_test
 
 // image_from_ecr_test.go — AWS's own container-image deployment pattern, whole.
 //

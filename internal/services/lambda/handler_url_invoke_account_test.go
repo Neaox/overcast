@@ -21,8 +21,9 @@ import (
 //
 // This is asserted as a unit test rather than through the invoke path because
 // the only integration cover for function-URL events is Docker-gated
-// (TestInvokeFunctionURL_hostRouted_success in tests/integration/lambda), so a
-// suite run without Docker would skip the finding entirely.
+// (TestInvokeFunctionURL_hostRouted_success in
+// tests/integration/lambdadocker), so a suite run without Docker would skip
+// the finding entirely.
 //
 // API Gateway hardcodes the same literal in the same position, at three sites:
 // internal/services/apigateway/handler_execution.go:221 (REST v1 proxy), :442

@@ -42,7 +42,7 @@ const distDirRel = "internal/services/lambda/initbin/dist"
 //     lambda-init` has ever run — carries no init, and nothing it builds
 //     mid-run can change that. The test bootstraps (this package's users have
 //     one each: internal/services/lambda's TestMain and
-//     tests/integration/lambda's requireLambdaInit) build the artefacts and
+//     tests/helpers/lambdafixture's EnsureInit) build the artefacts and
 //     point this variable at dist/, so the FIRST `go test` on a fresh clone
 //     passes rather than the second.
 //   - A developer iterating on the init itself, who wants a container to run a

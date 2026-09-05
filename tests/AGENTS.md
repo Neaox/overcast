@@ -105,6 +105,34 @@ func TestPutObject_success(t *testing.T) {
 Integration tests live in `tests/integration/<service>/`.
 Run with: `make test-integration`
 
+#### Lambda is two packages, split on Docker
+
+The Lambda suite is two sibling packages so `go test ./...` runs them at the
+same time instead of serialising ~250 metadata tests behind the container ones.
+Which half a new test belongs in:
+
+- **`tests/integration/lambda`** — the control plane over HTTP. Starts no
+  container and talks to no daemon. This is the default home; put a test here
+  unless it needs a running Lambda.
+- **`tests/integration/lambdadocker`** — everything that starts a container:
+  anything that would call `skipIfNoDocker`, `helpers.WithLambdaDocker()` or
+  `requireLambdaInit`. **Never add `t.Parallel()` to a test here** — they share
+  named Docker networks, fixed registry ports and the daemon's address pool.
+
+The two halves cannot see each other's unexported declarations, so anything
+both need — the wire types, `doJSON`, `lambdaURL`, the in-container init
+bootstrap — lives once in `tests/helpers/lambdafixture`, and each package's
+`fixtures_test.go` binds it back to the short local name. Extend that package
+and add a binding; never write a second copy of a helper body.
+
+`lambdafixture.EnsureInit` is why the container half passes on a fresh
+checkout: the init artefacts are build output and the embed is baked at compile
+time, so that half's `TestMain` builds them once per test binary and points
+`initbin.EnvDistDir` at the result. Do that from `TestMain`, never from
+whichever test happens to sort first — that is what the old single package did,
+and it made `go test -run TestInvoke_nodeRuntime_success` fail on a fresh
+checkout with an "Unhandled" function error naming nothing.
+
 ---
 
 ## Build-tag-sensitive tests — guard the test like its subject

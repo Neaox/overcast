@@ -1,4 +1,4 @@
-package lambda_test
+package lambdadocker_test
 
 // logging_json_init_phase_test.go — the init-phase platform records, end to
 // end.
