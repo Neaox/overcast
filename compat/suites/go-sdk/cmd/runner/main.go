@@ -21,7 +21,10 @@ import (
 const suite = "go-sdk"
 
 func main() {
-	endpoint := envOr("OVERCAST_ENDPOINT", "http://localhost:4566")
+	// 127.0.0.1, not localhost: on a dual-stack host "localhost" resolves to
+	// ::1 first while the container publishes IPv4 only, so every new
+	// connection pays a ~2s IPv6-then-IPv4 fallback.
+	endpoint := envOr("OVERCAST_ENDPOINT", "http://127.0.0.1:4566")
 	region := envOr("OVERCAST_DEFAULT_REGION", "us-east-1")
 	runID := envOr("OVERCAST_COMPAT_RUN_ID", makeRunID())
 	skipDocker := os.Getenv("OVERCAST_COMPAT_SKIP_DOCKER") == "1"

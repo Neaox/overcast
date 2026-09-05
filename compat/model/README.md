@@ -45,7 +45,8 @@ exists to replace. See
   "version": 1,
   "service": "sqs",
   "client": { "sdkId": "SQS", "endpointPrefix": "sqs", "signingName": "sqs",
-              "protocol": "awsJson1_0", "apiVersion": "2012-11-05", "targetPrefix": "AmazonSQS" },
+              "protocol": "awsJson1_0", "apiVersion": "2012-11-05", "targetPrefix": "AmazonSQS",
+              "awsQueryCompatible": true },
   "groups": [
     {
       "name": "sqs-gen-queue",
@@ -84,6 +85,13 @@ name (`awsJson1_0`, `awsJson1_1`, `awsQuery`, `ec2Query`, `restJson1`,
 AWS JSON protocols, and the `X-Amz-Target` header is `<targetPrefix>.<Op>`.
 Per-SDK package names are deliberately not in the file — see
 [Naming](#naming).
+
+`awsQueryCompatible` is the service's `aws.protocols#awsQueryCompatible`
+trait: the service was migrated from the Query protocol, and AWS still returns
+the Query error code in an `x-amzn-query-error` response header alongside the
+JSON body. It is present on every scenario, `true` or `false`, so that `false`
+and "this file predates the field" cannot be confused. What an interpreter
+does with it is under [Assertions](#assertions).
 
 ### A call
 
@@ -162,6 +170,17 @@ again — for SQS, `QueueDoesNotExist` and
 they surface, so an interpreter accepts an error whose reported code **or**
 type name equals **either**. An error whose code matches neither, or a call
 that succeeds, fails the clause.
+
+`client.awsQueryCompatible` says whether a third spelling can reach the
+interpreter. When it is `true`, AWS also returns the Query code in an
+`x-amzn-query-error` response header, as `<code>;<Sender|Receiver>` — a
+missing SQS queue answers
+`AWS.SimpleQueueService.NonExistentQueue;Sender`. An SDK that surfaces that
+header rather than the JSON `__type` therefore reports the code with a fault
+suffix on it, which matches neither accepted value literally, so an
+interpreter that reads the header splits on the first `;` and compares the
+code half on the same terms as the other two. When it is `false` there is no
+such header and the JSON `__type`/`code` is the only carrier.
 
 Equality "as JSON": compare the SDK's value after mapping it to JSON the way
 the SDK itself would (a boto3 `int` is a JSON number, a `bool` a boolean, a
@@ -324,24 +343,41 @@ different shape, one of the two is wrong — quietly preferring either hides it
 rule: a page can legally sit deeper in the response than a top-level member,
 and the derivation only ever looks at the top level.
 
-One field sits outside the resource list. **`neverProbe`** maps an operation
-the generator may never place in the probe group to the curated reason why,
-which is what `gaps.json` then reports. It is the half of the probe-safety
-rule the binder cannot see: the binder refuses a probe that would bind a value
-exported from a resource the run owns, but an operation that is irreversible
-against *anyone's* identifiers — or that takes no identifier that could miss,
-like `EnableAllFeatures` or `DeleteOrganization` — has to be named. Each entry
-is one sentence saying what the call does that cannot be undone.
+Two fields sit outside the resource list, and both are exceptions to one
+rule: **probes are default-deny by verb**. A probe calls an operation the
+emulator does not implement, so nothing in the scenario undoes it and against
+a real account nothing would. Only a `Describe*`, `List*` or `Get*` — matched
+at a word boundary, so a `Listen*` operation is not a `List*` — is probed at
+all. Everything else is refused `never-probe` before it is bound, with a
+generated sentence saying so.
+
+**`neverProbe`** denies an operation the verb rule would have allowed, and
+**`allowProbe`** allows one it would have refused. Each entry is one sentence,
+and the sentence is the whole of the exception:
 
 ```jsonc
 {
   "service": "organizations",
   "neverProbe": {
+    // A read verb that is not a read. Only a human knows this.
+    "GetSessionToken": "Rotates the token it returns, so every holder of the old one is broken by the call.",
+    // A write the verb rule already refuses. The entry is still worth having:
+    // its sentence replaces the generated one in gaps.json, and "cannot be
+    // reopened" tells a reader far more than "not a read operation".
     "CloseAccount": "Closes a member account. AWS suspends it immediately and permanently deletes its resources; the account cannot be reopened."
+  },
+  "allowProbe": {
+    // A read AWS happens to spell with another verb.
+    "Scan": "Reads a page of items and changes nothing; DynamoDB simply does not call it List."
   },
   "resources": [ ... ]
 }
 ```
+
+An `allowProbe` entry naming an operation that already starts with a read verb
+is refused as saying nothing, and an operation may not appear in both maps.
+`smithy.api#readonly` would settle the question outright, but `cmd/awsmodelgen`
+does not keep the trait, so the committed snapshots do not carry it.
 
 Every `params` object lists only what the binder does not supply: the
 generator binds each remaining required member by rule (an explicit bind,
@@ -356,6 +392,50 @@ tag/list/untag, authored operations, list, delete. An operation gets at most
 one derived test per group; a read or list whose operation already has one
 is folded and noted in the review report.
 
+### Scaffolding
+
+`go run -tags dev ./cmd/compatgen -scaffold <service>` proposes a skeleton of
+the above: one resource per `Create`/`Get`|`Describe`/`List`/`Update`|`Set`/
+`Delete` name cluster, with a `Get*`/`Set*`/`Tag*` on a noun *under* the noun
+the create names folded into that cluster — `GetQueueAttributes` and
+`SetQueueAttributes` are the queue's read and its mutation, not a resource
+called `queueattributes`. A Smithy `resource` shape is used where the model
+has one; at the pinned revision no service in scope declares any.
+
+The skeleton is a time-saver, never an authority, so it is written to show
+which of its own values you can lean on. Three markers do that, and
+`recipe.schema.json` refuses all three — a skeleton cannot become a recipe by
+deleting the comment at the top:
+
+| Marker | Means |
+| --- | --- |
+| `$comment` | a derived value, and the trait or rule that produced it: `itemsPath from @paginated.items`, `identity path from the identity-member rule over the CreateQueue response: QueueUrl`, `from the read's modeled errors: QueueDoesNotExist`. Check it — otherwise a wrong derivation looks exactly like a right one |
+| `$todo` | a value only you can supply, with a one-line hint. Every field of the vocabulary above that the model cannot propose carries one, including the ones this service turns out not to need, so you decide rather than never seeing the question |
+| `$review` | the lifecycle's create or delete is not read-only-safe by the verb rule, and the proposal needs confirming against real AWS before it is kept |
+
+The `$todo` vocabulary is the whole curated half: `requires`, `derived`,
+every `binds` target, `mutable.member`/`from`/`to`/`readPath`, `tags`, `async`
+and `operations`. `tags` names the Tag/Untag/List\*Tags operations name
+clustering found, and leaves the member names and the read-back path to you:
+`aws.api#taggable` hangs off a resource shape, so no service in scope carries
+it.
+
+A path the identity-member rule lands on that turns out to be a structure,
+list or map is *not* proposed as an identity. `$.Organization` and
+`$.CreateAccountStatus` are envelopes, and which member inside identifies the
+resource is a choice only you can make, so those come back as a `$todo`
+listing what the envelope holds.
+
+`$review` follows the default-deny reasoning the probe rule uses. `Create*`
+and `Delete*` are never read-only-safe against a live account, so a lifecycle
+earns an unmarked proposal only where the model shows the run undoing its own
+create: a delete operation, **and** a modeled not-found error proving the
+delete took effect. Organizations is the worked example — `CreateAccount` and
+`CreateGovCloudAccount` have no delete at all, because an AWS account cannot
+be deleted, and `DeleteOrganization` has no not-found error to verify it
+with, so all three are marked; `organizationalunit` and `policy`, which have
+both, are not.
+
 ## Refusals
 
 `gaps.json` lists every operation the generator did not produce, keyed by
@@ -369,7 +449,7 @@ service and operation, with a stable reason:
 | `no-readback-path` | the role exists but nothing can verify it: a create whose read, list and authored `create.assert` between them make no call of their own; a delete with neither `notFound` nor `list`, or one whose `notFound` has no non-consuming read to raise it; a mutation whose read consumes |
 | `probe-of-implemented-op` | an implemented operation the recipe gives no role — it may not be probed, so it needs a role |
 | `probe-binds-live-resource:<Member>` | a probe would have bound that member to a value exported from a resource the run owns. Add a curated literal to `values.json` — deliberately nonexistent, so the call misses — or leave the operation refused |
-| `never-probe` | the recipe's `neverProbe` list forbids probing the operation; the detail is the curated reason |
+| `never-probe` | the operation is not a `Describe*`, `List*` or `Get*` and no `allowProbe` entry says it is safe, or the recipe's `neverProbe` names it. The detail is the recipe's curated sentence where it has one, and a generated one where it does not |
 | `ambiguous-list-page` | a `list` with no `itemsPath`, whose operation's output holds two lists with no `@paginated` `items` trait to choose between them, or no list at all. Give the resource an explicit `list.itemsPath` |
 | `no-output-to-assert` | a probe of an operation that returns nothing a probe can assert: no output at all, or no identity member and no single list to check the shape of. Reading back the resource it names would assert something that was already true before the call, so there is nothing honest to assert |
 | `setup-refused:<resource>` | a required resource could not be bound |
@@ -408,8 +488,9 @@ with nothing but a token, is refused (`no-output-to-assert`).
 
 A probe is the one generated call no create/delete pair contains: the
 emulator does not implement the operation, so nothing undoes it, and the same
-scenario file is meant to be runnable against real AWS. Binding rules 1 and 2
-are therefore switched off inside a probe group. A probe binds only curated
+scenario file is meant to be runnable against real AWS. That is why only a
+read verb is probed at all (above), and why binding rules 1 and 2 are switched
+off inside a probe group. A probe binds only curated
 literals from `values.json` and constraint-derived ones — syntactically valid
 and deliberately nonexistent — so the call misses rather than lands. The two
 refusals above (`probe-binds-live-resource`, `never-probe`) are the two ways

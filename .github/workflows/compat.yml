@@ -520,8 +520,10 @@ jobs:
       - name: Wait for Overcast to become healthy
         if: env.RUN_SUITES == 'true'
         run: |
+          # 127.0.0.1, not localhost: avoids a dual-stack ::1-first resolution
+          # paying an IPv6-then-IPv4 fallback on every retry.
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:4566/_overcast/health > /dev/null; then
+            if curl -sf http://127.0.0.1:4566/_overcast/health > /dev/null; then
               echo "Overcast ready (attempt $i)"
               exit 0
             fi
@@ -537,7 +539,8 @@ jobs:
       - name: Run compat suite
         if: env.RUN_SUITES == 'true'
         env:
-          OVERCAST_ENDPOINT: http://localhost:4566
+          # 127.0.0.1, not localhost: see the health-check step above.
+          OVERCAST_ENDPOINT: http://127.0.0.1:4566
           OVERCAST_COMPAT_RESULTS_FILE: compat-results-${{ matrix.suite }}.json
           # A tuning knob, for the `cli` suite only.
           #
@@ -562,7 +565,7 @@ jobs:
           OVERCAST_COMPAT_PARALLEL_SLOTS: ${{ matrix.suite == 'cli' && '16' || '' }}
         run: |
           ./bin/compat \
-            --endpoint http://localhost:4566 \
+            --endpoint http://127.0.0.1:4566 \
             --format pretty \
             --suite "${{ matrix.suite }}" \
             --results-file "compat-results-${{ matrix.suite }}.json"

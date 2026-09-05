@@ -116,12 +116,13 @@ func clientInfoFor(model *serviceModel, service string) (clientInfo, error) {
 	}
 	op := entries[0]
 	return clientInfo{
-		SDKID:          op.SDKID,
-		EndpointPrefix: model.EndpointPrefix,
-		SigningName:    model.SigningName,
-		Protocol:       string(op.Protocol),
-		APIVersion:     op.APIVersion,
-		TargetPrefix:   strings.TrimSuffix(op.TargetPrefix, "."),
+		SDKID:              op.SDKID,
+		EndpointPrefix:     model.EndpointPrefix,
+		SigningName:        model.SigningName,
+		Protocol:           string(op.Protocol),
+		APIVersion:         op.APIVersion,
+		TargetPrefix:       strings.TrimSuffix(op.TargetPrefix, "."),
+		AWSQueryCompatible: model.QueryCompatible,
 	}, nil
 }
 
@@ -158,9 +159,14 @@ func (g *generator) checkRecipeAgainstModel() error {
 			return fmt.Errorf("resource %q: notFound error %q is not an error shape in the model", res.ID, res.NotFound.Error)
 		}
 	}
-	for _, op := range sortedStringKeys(g.recipe.NeverProbe) {
-		if !g.model.HasOperation(op) {
-			return fmt.Errorf("neverProbe names operation %q, which %s does not model", op, g.recipe.modelService())
+	for _, exceptions := range []struct {
+		field string
+		ops   map[string]string
+	}{{"allowProbe", g.recipe.AllowProbe}, {"neverProbe", g.recipe.NeverProbe}} {
+		for _, op := range sortedStringKeys(exceptions.ops) {
+			if !g.model.HasOperation(op) {
+				return fmt.Errorf("%s names operation %q, which %s does not model", exceptions.field, op, g.recipe.modelService())
+			}
 		}
 	}
 	return nil
@@ -1315,12 +1321,13 @@ func (gb *groupBuilder) deleteTest(res resource) error {
 // rather than an omission. A probe is the one generated call no create/delete
 // pair contains, so it binds only curated or synthetic literals — deliberately
 // nonexistent identifiers — and never a value exported from a resource the run
-// owns (the probe branch in binder.go). Two refusals follow: an operation
+// owns (the probe branch in binder.go). Two refusals follow. An operation
 // whose required members only a live export could supply is refused
-// (probe-binds-live-resource), and an operation the recipe lists under
-// `neverProbe` is refused before it is bound at all, for the operations that
-// are irreversible even against a stranger's identifiers or against none
-// (EnableAllFeatures, DeleteOrganization).
+// (probe-binds-live-resource). And membership is default-deny by verb: only a
+// `Describe*`, `List*` or `Get*` — or an operation the recipe explicitly
+// allows — is probed at all, and everything else is refused (never-probe)
+// before it is bound, with the recipe's curated sentence where it has one and
+// a generated one where it does not. See recipe.probeDecision.
 func (g *generator) probeGroup() error {
 	name := g.groupName("probe")
 	// Recipe order, so the first resource a recipe lists is the one a refusal
@@ -1333,7 +1340,7 @@ func (g *generator) probeGroup() error {
 		if _, covered := g.out.covered[op]; covered {
 			continue
 		}
-		if why, forbidden := g.recipe.neverProbe(op); forbidden {
+		if probeable, why := g.recipe.probeDecision(op); !probeable {
 			g.refuseOp(name, op, refuse(reasonNeverProbe, why))
 			continue
 		}

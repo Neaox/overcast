@@ -370,8 +370,11 @@ $cid = & docker @runArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Output "container: $cid"
-Write-Output "API endpoint: http://localhost:$apiPort"
-Write-Output "Web UI:       http://localhost:$uiPort"
+# 127.0.0.1, not localhost: the port is published on 127.0.0.1 only (see
+# above), and on a dual-stack host "localhost" resolves to ::1 first, adding
+# a ~2s IPv6-then-IPv4 fallback to every connection this printed URL feeds.
+Write-Output "API endpoint: http://127.0.0.1:$apiPort"
+Write-Output "Web UI:       http://127.0.0.1:$uiPort"
 Write-Output "stop with:    docker stop $($cid.Substring(0, [Math]::Min(12, $cid.Length)))"
 if ($NoLogs) { exit 0 }
 Write-Output "--- logs (Ctrl-C detaches; container keeps running) ---"

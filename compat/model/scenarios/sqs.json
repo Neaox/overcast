@@ -7,7 +7,8 @@
     "signingName": "sqs",
     "protocol": "awsJson1_0",
     "apiVersion": "2012-11-05",
-    "targetPrefix": "AmazonSQS"
+    "targetPrefix": "AmazonSQS",
+    "awsQueryCompatible": true
   },
   "groups": [
     {
@@ -1206,26 +1207,6 @@
       "kind": "probe",
       "setup": [],
       "tests": [
-        {
-          "name": "CancelMessageMoveTask",
-          "op": "CancelMessageMoveTask",
-          "call": {
-            "op": "CancelMessageMoveTask",
-            "params": {
-              "TaskHandle": "eyJ0YXNrSWQiOiJjb21wYXQtc2NlbmFyaW8ifQ=="
-            }
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.ApproximateNumberOfMessagesMoved": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
-        },
         {
           "name": "ListMessageMoveTasks",
           "op": "ListMessageMoveTasks",

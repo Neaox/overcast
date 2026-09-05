@@ -181,6 +181,22 @@ at full operation depth (§3.9).
 > **327** entries; and `compat/suites/registry.generated.json` is still
 > `groups: []`, which is what keeps G0's empty-file gate meaningful.
 
+> **Model-utilisation audit, 2026-09-06 (#1795).** Counted from the files at
+> the revision `models/aws/VERSION` pins: **12 of the 46 traits** the pruner
+> keeps are read by any shipped consumer, and 26 are held for an inert
+> generator that does not exist yet. **Zero** Smithy `resource` shapes appear
+> in any committed snapshot (121 of 426 upstream model files carry any), so
+> §3.4's and §3.7's expectation that resource bindings would supply lifecycles
+> was false for every service in scope and both pilots use name clustering —
+> those two sections now say so. Three derivations the pilots had typed by
+> hand reproduce from the model exactly: `notFound.error` from the read's
+> modeled errors, `list.itemsPath` from `@paginated.items` or the sole list
+> member (6 of 6 pilot values), and 31 of the organizations recipe's 83
+> `neverProbe` lines from a default-deny verb rule — zero misses, zero
+> effective over-refusals. #1795 moves all three into the generator, the
+> recipe value staying as an override, and makes `-scaffold` name the rule
+> behind every value it proposes.
+
 Counts below were computed from the checked-in generated artifacts, not from
 `STATUS.md` — **`STATUS.md` prose is stale** (it describes Shield as "Stub — all
 ops return 501" while `internal/capabilities/all.gen.go:*` declares five Shield
@@ -530,11 +546,15 @@ guessing is never allowed.
 ### 3.4 D3 — Assertion generation
 
 Derivable from the model: which output member carries identity, which members
-echo input, the error shapes an operation can raise, and (from the AST resource
-bindings) which operation reads a resource back. Not derivable: which fields are
-*semantically* comparable versus server-assigned — so the recipe declares
-`read`, `list`, `identityPath`, `notFound` and `mutable`, and the generator does
-the rest.
+echo input, and the error shapes an operation can raise. Which operation reads
+a resource back is **proposed by operation-name clustering and confirmed by a
+human**, not read off the AST: the 2026-09-06 audit found **zero** Smithy
+`resource` shapes in every committed snapshot (121 of 426 upstream model files
+carry any), so the resource bindings this plan expected to lean on do not
+exist for a service in scope. Where a service does declare them, `-scaffold`
+uses them. Not derivable either way: which fields are *semantically*
+comparable versus server-assigned — so the recipe declares `read`, `list`,
+`identityPath`, `notFound` and `mutable`, and the generator does the rest.
 
 The IR has a closed set of assertion kinds:
 
@@ -590,12 +610,16 @@ Structural guards (the generator physically cannot emit the bad cases):
    inside a probe group: it binds only curated `values.json` literals and
    constraint-derived ones, syntactically valid and deliberately nonexistent, so
    the call misses rather than lands. A member only a live export could supply
-   refuses the operation (`probe-binds-live-resource:<Member>`). (b) A recipe's
-   **`neverProbe`** map names each operation that is irreversible even against a
-   stranger's identifiers, or that takes no identifier that could miss, with a
-   curated sentence saying what it does that cannot be undone; the generator
-   refuses those before binding them (`never-probe`), and the sentence is what
-   `gaps.json` reports.
+   refuses the operation (`probe-binds-live-resource:<Member>`). (b) Probe
+   membership is **default-deny by verb** (#1795): only a `Describe*`,
+   `List*` or `Get*` is probed at all, and every other operation is refused
+   (`never-probe`) before it is bound, with a generated sentence saying so. A
+   recipe's **`neverProbe`** map denies one the verb rule would have allowed —
+   a read verb that is not a read — or restates a denial with a curated
+   sentence where the prose says more than "not a read", and that sentence is
+   what `gaps.json` then reports; **`allowProbe`** is the exception in the
+   other direction, for an operation AWS spells with another verb that a human
+   has judged safe to call.
 6. **No assertion a probe cannot honestly make** (#1709). A pagination token is
    never chosen as the identity — the member `@paginated` names as its
    `outputToken`, or any member named `NextToken`/`Marker`/`NextMarker`/
@@ -751,8 +775,12 @@ from the emulator tree.** That is the boundary
   (the raw corpus stays out of the tree, nothing at runtime parses models) while
   giving the generator the shape data the routing manifest deliberately omits.
   A size budget is part of the acceptance gate. Smithy `resource` shapes *are*
-  vendored into `shapes.json` because they are the single best source of
-  lifecycle bindings and they make scaffolding materially better.
+  vendored into `shapes.json`, and they cost nothing to keep — but they are not
+  the lifecycle source this plan expected. The 2026-09-06 audit counted **zero**
+  resource shapes across every committed snapshot (121 of 426 upstream model
+  files carry any at all), so `-scaffold` proposes a lifecycle by
+  operation-name clustering and a human confirms it; resource bindings are used
+  where a service has them, which so far is nowhere in scope.
 - **Regeneration workflow.** Hook into the existing weekly model-refresh
   automation ([aws-api-operation-coverage.md §8](./aws-api-operation-coverage.md)):
   when the pinned revision moves, the same bot PR regenerates `shapes.json`,

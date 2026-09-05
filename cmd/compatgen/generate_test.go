@@ -23,17 +23,20 @@ import (
 //	SetWidgetSize                   implemented, update family   → update-without-mutable
 //	ArchiveWidget                   implemented, no role         → probe-of-implemented-op
 //	CreateWidget (as `spare`)       requires an unbindable cog   → setup-refused:cog
-//	CreateCog                       Name unbound                 → unbound-required-member
-//	FreezeWidget                    would bind widget.id         → probe-binds-live-resource
-//	PingWidgets                     undeclared, returns Status   → probe with a responseField
+//	CreateCog                       Name unbound, but a write    → never-probe (by verb)
+//	GetWidgetHistory                would bind widget.id         → probe-binds-live-resource
+//	PingWidgets                     a write verb under allowProbe → probe with a responseField
 //	ListCogs                        a page and a NextToken       → probe with isList on the page
 //	ListGauges                      @paginated names the token   → probe with isList on the page
-//	ScanWidgets                     a NextToken and nothing else → no-output-to-assert
+//	ScanWidgets                     allowProbe, token-only output → no-output-to-assert
+//	GetWidgetAck                    a read that returns nothing  → no-output-to-assert
 //	ListWidgetsAndCogs              two lists, no @paginated     → no-output-to-assert
-//	PurgeWidgets                    listed under neverProbe      → never-probe
-//	RotateWidget                    Unsupported, Angle unbound   → unbound-required-member
+//	PurgeWidgets                    a write, curated sentence    → never-probe (curated)
+//	GetWidgetSecret                 a read verb that mutates     → never-probe (curated)
+//	FreezeWidget                    a write, returns nothing     → never-probe (by verb, before the output check)
+//	RotateWidget                    Unsupported, and a write     → never-probe (by verb)
+//	SyncWidgets                     a write, nothing to see      → never-probe (by verb)
 //	DescribeGizmo                   undeclared, GizmoArn unbound → unbound-required-member
-//	SyncWidgets                     undeclared, nothing to see   → no-output-to-assert
 
 func fixtureCaps() capabilityTable {
 	table := capabilityTable{}
@@ -122,16 +125,19 @@ func TestGenerate_refusesWithMachineReadableReasons(t *testing.T) {
 	_, gen := generateFixture(t)
 	want := map[string]string{
 		"ArchiveWidget":      reasonProbeOfImplementedOp,
-		"CreateCog":          reasonUnboundRequiredMember + ":Name",
+		"CreateCog":          reasonNeverProbe,
 		"CreateWidget":       reasonSetupRefused + ":cog",
 		"DescribeGizmo":      reasonUnboundRequiredMember + ":GizmoArn",
-		"FreezeWidget":       reasonProbeBindsLiveResource + ":WidgetId",
-		"PurgeWidgets":       reasonNeverProbe,
-		"RotateWidget":       reasonUnboundRequiredMember + ":Angle",
+		"FreezeWidget":       reasonNeverProbe,
+		"GetWidgetAck":       reasonNoOutputToAssert,
+		"GetWidgetHistory":   reasonProbeBindsLiveResource + ":WidgetId",
+		"GetWidgetSecret":    reasonNeverProbe,
 		"ListWidgetsAndCogs": reasonNoOutputToAssert,
+		"PurgeWidgets":       reasonNeverProbe,
+		"RotateWidget":       reasonNeverProbe,
 		"ScanWidgets":        reasonNoOutputToAssert,
 		"SetWidgetSize":      reasonUpdateWithoutMutable,
-		"SyncWidgets":        reasonNoOutputToAssert,
+		"SyncWidgets":        reasonNeverProbe,
 	}
 	got := map[string]string{}
 	for _, gp := range gen.gaps {
@@ -192,16 +198,16 @@ func TestGenerate_probeGroupHoldsNoImplementedOperation(t *testing.T) {
 }
 
 func TestGenerate_probeOfAnOperationThatWouldTouchALiveResourceIsRefused(t *testing.T) {
-	// Given: FreezeWidget takes the WidgetId the recipe binds to widget.id,
-	// and the emulator does not implement it.
+	// Given: GetWidgetHistory is a read the emulator does not implement, and
+	// it takes the WidgetId the recipe binds to widget.id.
 	// When: the fixture is generated.
 	_, gen := generateFixture(t)
 
 	// Then: it is refused rather than probed, and the refusal names the
 	// member so a curated literal can fix it.
-	got := gapIn(gen, "widgets-gen-probe", "FreezeWidget")
+	got := gapIn(gen, "widgets-gen-probe", "GetWidgetHistory")
 	if got.Reason != reasonProbeBindsLiveResource+":WidgetId" {
-		t.Fatalf("FreezeWidget refusal = %q, want %s:WidgetId", got.Reason, reasonProbeBindsLiveResource)
+		t.Fatalf("GetWidgetHistory refusal = %q, want %s:WidgetId", got.Reason, reasonProbeBindsLiveResource)
 	}
 	if !strings.Contains(got.Detail, "widget.id") {
 		t.Errorf("the refusal does not name the export it would have bound: %q", got.Detail)
@@ -878,4 +884,104 @@ func encoded(t *testing.T, value any) []byte {
 		t.Fatal(err)
 	}
 	return contents
+}
+
+// ---------------------------------------------------------------------------
+// Probes are default-deny by verb (#1795 B2)
+// ---------------------------------------------------------------------------
+
+// TestProbeDecision_isDefaultDenyByVerb states the rule on its own: a probe
+// calls an operation the emulator does not implement, so against a real
+// account nothing undoes it, and only a read is safe to make. The recipe's
+// two exception maps are the only way past it.
+func TestProbeDecision_isDefaultDenyByVerb(t *testing.T) {
+	r := recipe{
+		NeverProbe: map[string]string{"GetWidgetSecret": "rotates the secret it returns"},
+		AllowProbe: map[string]string{"ScanWidgets": "a read spelled with another verb"},
+	}
+	cases := []struct {
+		op        string
+		probeable bool
+		detail    string
+	}{
+		{op: "DescribeWidget", probeable: true},
+		{op: "ListWidgets", probeable: true},
+		{op: "GetWidget", probeable: true},
+		{op: "List", probeable: true}, // the verb alone is still a read
+		{op: "Get2Widgets", probeable: true},
+		// A word boundary, not a prefix: these only begin with the letters.
+		{op: "Listen", detail: notAReadOperation("Listen")},
+		{op: "Getaway", detail: notAReadOperation("Getaway")},
+		{op: "Describes", detail: notAReadOperation("Describes")},
+		// Every other verb, whatever it does.
+		{op: "CreateWidget", detail: notAReadOperation("CreateWidget")},
+		{op: "DeleteWidget", detail: notAReadOperation("DeleteWidget")},
+		{op: "PurgeWidgets", detail: notAReadOperation("PurgeWidgets")},
+		// The exceptions, in both directions.
+		{op: "GetWidgetSecret", detail: "rotates the secret it returns"},
+		{op: "ScanWidgets", probeable: true, detail: "a read spelled with another verb"},
+	}
+	for _, tc := range cases {
+		probeable, detail := r.probeDecision(tc.op)
+		if probeable != tc.probeable {
+			t.Errorf("%s: probeable = %v, want %v", tc.op, probeable, tc.probeable)
+		}
+		if tc.detail != "" && detail != tc.detail {
+			t.Errorf("%s: detail = %q, want %q", tc.op, detail, tc.detail)
+		}
+	}
+}
+
+// TestGenerate_neverProbeReasonsComeFromTheRecipeWhereItHasOne is the
+// migration the organizations recipe depends on: the curated sentence is
+// still what gaps.json reports for an operation the recipe names, and the
+// generated one covers everything else, so the 29 sentences did not have to
+// become 29 restatements of "not a read".
+func TestGenerate_neverProbeReasonsComeFromTheRecipeWhereItHasOne(t *testing.T) {
+	_, gen := generateFixture(t)
+	cases := []struct{ op, want string }{
+		// A read verb the recipe denies: only the recipe could know.
+		{"GetWidgetSecret", "the read verb in its name is a lie"},
+		// A write the recipe denies anyway, because the prose says more.
+		{"PurgeWidgets", "cannot be undone"},
+		// A write the recipe says nothing about.
+		{"FreezeWidget", notAReadOperation("FreezeWidget")},
+		{"CreateCog", notAReadOperation("CreateCog")},
+	}
+	for _, tc := range cases {
+		got := gapIn(gen, "widgets-gen-probe", tc.op)
+		if got.Reason != reasonNeverProbe || !strings.Contains(got.Detail, tc.want) {
+			t.Errorf("%s: gap = %+v, want %s saying %q", tc.op, got, reasonNeverProbe, tc.want)
+		}
+	}
+	// And the two allowProbe operations are probed: one gets a test, the
+	// other is refused for what its own output cannot support — which is the
+	// point, since the verb rule would have hidden both answers.
+	if _, _, ok := gen.scenario.findTest("widgets-gen-probe", "PingWidgets"); !ok {
+		t.Error("PingWidgets, which allowProbe names, was not probed")
+	}
+	if got := gapIn(gen, "widgets-gen-probe", "ScanWidgets"); got.Reason != reasonNoOutputToAssert {
+		t.Errorf("ScanWidgets, which allowProbe names, was refused %q", got.Reason)
+	}
+}
+
+func TestRecipe_rejectsAProbeExceptionThatSaysNothing(t *testing.T) {
+	f := loadFixture(t)
+	const resources = `,"resources":[{"id":"a","create":{"op":"CreateWidget"},"read":{"op":"GetWidget","identityPath":"$.Widget.WidgetId"}}]}`
+	cases := []struct{ name, body, want string }{
+		{"allowProbe with no reason", `{"service":"w","allowProbe":{"PurgeWidgets":"  "}` + resources, "say why calling the operation"},
+		{"neverProbe with no reason", `{"service":"w","neverProbe":{"PurgeWidgets":""}` + resources, "recipe.schema.json"},
+		{"both at once", `{"service":"w","neverProbe":{"PurgeWidgets":"no"},"allowProbe":{"PurgeWidgets":"yes"}` + resources, "decide which"},
+		{"allowProbe on a read verb", `{"service":"w","allowProbe":{"ListWidgets":"safe"}` + resources, "already probeable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "w.json")
+			writeFile(t, path, tc.body)
+			_, err := loadRecipe(path, f.schemas)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
 }

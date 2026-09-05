@@ -5,7 +5,10 @@ using OvercastCompat.Registry;
 
 const string suite = "dotnet-sdk";
 
-var endpoint = EnvOr("OVERCAST_ENDPOINT", "http://localhost:4566");
+// 127.0.0.1, not localhost: on a dual-stack host "localhost" resolves to ::1
+// first while the container publishes IPv4 only, so every new connection
+// pays a ~2s IPv6-then-IPv4 fallback.
+var endpoint = EnvOr("OVERCAST_ENDPOINT", "http://127.0.0.1:4566");
 var region = EnvOr("OVERCAST_DEFAULT_REGION", "us-east-1");
 var skipDocker = Environment.GetEnvironmentVariable("OVERCAST_COMPAT_SKIP_DOCKER") == "1";
 

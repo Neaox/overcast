@@ -51,6 +51,10 @@ type clientInfo struct {
 	Protocol       string `json:"protocol"`
 	APIVersion     string `json:"apiVersion"`
 	TargetPrefix   string `json:"targetPrefix,omitempty"`
+	// AWSQueryCompatible is emitted for every service, true or false, because
+	// its absence would be indistinguishable from "this scenario predates the
+	// field" — and it decides which error codes an interpreter accepts.
+	AWSQueryCompatible bool `json:"awsQueryCompatible"`
 }
 
 type group struct {

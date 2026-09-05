@@ -309,6 +309,56 @@ class TestErrorNames(unittest.TestCase):
         self.assertFalse(error_matches(client_error("AccessDenied"), self.ERROR))
 
 
+class TestClientCacheSharing(unittest.TestCase):
+    """Building a boto3 client parses botocore's service model — slow enough
+    (~460ms) that paying it once per group rather than once per service would
+    be a real cost across a run with several groups on the same service. Two
+    interpreters (one per group, as `runner.py` builds for every scenario
+    group) must resolve the same underlying client for the same service."""
+
+    def test_two_scenario_interpreters_share_the_default_client_cache(self):
+        # ScenarioInterpreter() with no explicit `clients` is exactly what a
+        # per-group interpreter would get if one were built per group; both
+        # must land on the same process-wide cache, not a fresh one each.
+        first = ScenarioInterpreter()
+        second = ScenarioInterpreter()
+        self.assertIs(first._clients, second._clients)
+
+    def test_two_groups_resolving_the_same_service_share_one_client(self):
+        calls: list[tuple[str, str, str]] = []
+
+        def factory(endpoint: str, region: str, service: str) -> object:
+            calls.append((endpoint, region, service))
+            return object()
+
+        shared = ClientCache(factory)
+        queue_group = make_group(name="sqs-gen-queue")
+        message_group = make_group(name="sqs-gen-message")
+
+        # Each group gets its own TestContext (as the harness does), but the
+        # same cache instance — the shape scenario_hooks()/ScenarioInterpreter
+        # produce for every group in one run.
+        client_for_queue_group = shared.get(make_ctx(), queue_group.client["endpointPrefix"])
+        client_for_message_group = shared.get(make_ctx(), message_group.client["endpointPrefix"])
+
+        self.assertIs(client_for_queue_group, client_for_message_group)
+        self.assertEqual(len(calls), 1, "the factory must build the sqs client only once")
+
+    def test_a_different_service_still_gets_its_own_client(self):
+        calls: list[str] = []
+
+        def factory(endpoint: str, region: str, service: str) -> object:
+            calls.append(service)
+            return object()
+
+        shared = ClientCache(factory)
+        ctx = make_ctx()
+        shared.get(ctx, "sqs")
+        shared.get(ctx, "organizations")
+
+        self.assertEqual(calls, ["sqs", "organizations"])
+
+
 # ─── Assertion kinds ──────────────────────────────────────────────────────────
 
 

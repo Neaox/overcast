@@ -65,9 +65,13 @@ is required because the capability table it reads
 
 1. Make sure its shapes are in the snapshot (`models/aws/shapes-services.txt`).
 2. `go run -tags dev ./cmd/compatgen -scaffold <service> > compat/model/recipes/<service>.json`
-   and complete the skeleton against the real AWS API semantics — the
-   skeleton carries `$todo` placeholders the schema rejects, so it cannot be
-   mistaken for a finished recipe.
+   and complete the skeleton against the real AWS API semantics. It marks its
+   own three kinds of line and the schema refuses each of them, so it cannot
+   be mistaken for a finished recipe: `$comment` on a derived value names the
+   trait or rule that produced it, `$todo` stands where only a human can
+   supply the value, and `$review` marks a lifecycle whose create or delete is
+   not read-only-safe by the verb rule. See
+   [compat/model/README.md § Scaffolding](../../compat/model/README.md#scaffolding).
 3. `make generate-compat-model`, then read `gaps.json`: each refusal is a
    line in the recipe or in `values.json`, or a deliberate gap.
 4. Put `go run -tags dev ./cmd/compatgen -review-report <service>` in the PR

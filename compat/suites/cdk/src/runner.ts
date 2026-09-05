@@ -5,7 +5,10 @@ import { startCommandLoop } from "./lib/commands.ts";
 
 const SUITE = "cdk";
 
-const endpoint = process.env["OVERCAST_ENDPOINT"] ?? "http://localhost:4566";
+// 127.0.0.1, not localhost: on a dual-stack host "localhost" resolves to ::1
+// first while the container publishes IPv4 only, so every new connection
+// pays a ~2s IPv6-then-IPv4 fallback.
+const endpoint = process.env["OVERCAST_ENDPOINT"] ?? "http://127.0.0.1:4566";
 const region = process.env["OVERCAST_DEFAULT_REGION"] ?? "us-east-1";
 const runId = process.env["OVERCAST_COMPAT_RUN_ID"] ?? makeRunId();
 const stackName = `OcCompat-${runId}`;

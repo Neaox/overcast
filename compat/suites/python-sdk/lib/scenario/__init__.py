@@ -33,6 +33,19 @@ from .loader import ScenarioGroup, ScenarioLibrary
 
 __all__ = ["ScenarioHooks", "ScenarioInterpreter", "scenario_hooks"]
 
+# One ClientCache for the whole process, not one per ScenarioInterpreter.
+# `runner.py` happens to build a single interpreter today, so this was
+# already the practical effect — but that made the sharing an accident of
+# call-site scoping rather than something the code guarantees. Building a
+# boto3 client parses botocore's service model (~460ms per service the first
+# time it is touched), so a second ScenarioInterpreter() — a batch dispatcher
+# built per group, a future call site, a test helper — silently paying that
+# cost again per group sharing the same service is exactly the regression a
+# module-level default forecloses. ClientCache() itself does no I/O and holds
+# no botocore state until first use, so constructing it at import time costs
+# nothing up front.
+_default_client_cache = ClientCache()
+
 
 @dataclass
 class ScenarioHooks:
@@ -49,7 +62,12 @@ class ScenarioInterpreter:
     def __init__(self, library: Optional[ScenarioLibrary] = None,
                  clients: Optional[ClientCache] = None) -> None:
         self._library = library if library is not None else ScenarioLibrary()
-        self._clients = clients if clients is not None else ClientCache()
+        # Shared by default (see _default_client_cache above) rather than a
+        # fresh ClientCache() per instance, so every group's interpreter for
+        # the run resolves the same client — and pays botocore's model load
+        # once per service, not once per group. Callers that genuinely want
+        # an isolated cache (tests, above all) still pass one explicitly.
+        self._clients = clients if clients is not None else _default_client_cache
 
     def group_spec(self, scenario: Optional[str], group: str) -> Optional[ScenarioGroup]:
         """The scenario group behind a registry group, or None."""
