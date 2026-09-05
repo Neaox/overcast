@@ -2,7 +2,12 @@
   "$comment": "Test fixture: five resources between them exercising every recipe role against testdata/shapes/widgets.json. `widget` is the full lifecycle (create, two reads, a mutation, map-shaped tags, an authored operation, list, delete); `cog` is setup-only and its create cannot be bound, so `spare`, which requires it, has its whole group refused with setup-refused; `gauge` is pre-existing and shows that such a resource carries more than its read; `sprocket` requires `gauge`, verifies its create with an authored assertion rather than a derived read-back, carries list-shaped tags, and is declared async so every clause that calls the service again — authored ones included — is wrapped in `eventually`.",
   "service": "widgets",
   "neverProbe": {
+    "GetWidgetSecret": "Rotates the secret it returns, so the read verb in its name is a lie; every later reader of the old secret is broken by the call.",
     "PurgeWidgets": "Purges every widget in the account and cannot be undone. It takes no identifier, so no curated literal could make the call miss; the only safe probe is none."
+  },
+  "allowProbe": {
+    "PingWidgets": "A liveness check: it takes no input, changes nothing, and returns the service's own status.",
+    "ScanWidgets": "A read AWS happens to spell with a different verb, as DynamoDB does with Scan; it lists widgets and changes nothing."
   },
   "resources": [
     {

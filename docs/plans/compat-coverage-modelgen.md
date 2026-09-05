@@ -584,12 +584,16 @@ Structural guards (the generator physically cannot emit the bad cases):
    inside a probe group: it binds only curated `values.json` literals and
    constraint-derived ones, syntactically valid and deliberately nonexistent, so
    the call misses rather than lands. A member only a live export could supply
-   refuses the operation (`probe-binds-live-resource:<Member>`). (b) A recipe's
-   **`neverProbe`** map names each operation that is irreversible even against a
-   stranger's identifiers, or that takes no identifier that could miss, with a
-   curated sentence saying what it does that cannot be undone; the generator
-   refuses those before binding them (`never-probe`), and the sentence is what
-   `gaps.json` reports.
+   refuses the operation (`probe-binds-live-resource:<Member>`). (b) Probe
+   membership is **default-deny by verb** (#1795): only a `Describe*`,
+   `List*` or `Get*` is probed at all, and every other operation is refused
+   (`never-probe`) before it is bound, with a generated sentence saying so. A
+   recipe's **`neverProbe`** map denies one the verb rule would have allowed —
+   a read verb that is not a read — or restates a denial with a curated
+   sentence where the prose says more than "not a read", and that sentence is
+   what `gaps.json` then reports; **`allowProbe`** is the exception in the
+   other direction, for an operation AWS spells with another verb that a human
+   has judged safe to call.
 6. **No assertion a probe cannot honestly make** (#1709). A pagination token is
    never chosen as the identity — the member `@paginated` names as its
    `outputToken`, or any member named `NextToken`/`Marker`/`NextMarker`/
