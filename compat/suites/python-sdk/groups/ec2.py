@@ -139,6 +139,47 @@ def RunInstances(ctx: TestContext) -> None:
     ctx["ec2_instance_id"] = instance_id
 
 
+def RunInstancesHonoursPlacementAvailabilityZone(ctx: TestContext) -> None:
+    """Launch into a zone that is deliberately not the region's first one.
+
+    A server that ignores ``Placement.AvailabilityZone`` and reports its own
+    default is caught: both the RunInstances response and a follow-up
+    DescribeInstances must report the requested zone.
+    """
+    ec2 = _ec2(ctx)
+    zone = f"{ctx.region}c"
+    resp = ec2.run_instances(
+        ImageId="ami-00000000",
+        InstanceType="t2.micro",
+        MinCount=1,
+        MaxCount=1,
+        Placement={"AvailabilityZone": zone},
+    )
+    instances = resp.get("Instances", [])
+    if not instances:
+        raise AssertionError("RunInstances: no instances returned")
+    instance_id = instances[0].get("InstanceId")
+    if not instance_id:
+        raise AssertionError("RunInstances: missing InstanceId")
+    ctx["ec2_az_instance_id"] = instance_id
+    got = instances[0].get("Placement", {}).get("AvailabilityZone")
+    if got != zone:
+        raise AssertionError(
+            f"RunInstances: Placement.AvailabilityZone = {got!r}, want {zone!r}"
+        )
+
+    desc = ec2.describe_instances(InstanceIds=[instance_id])
+    reservations = desc.get("Reservations", [])
+    described = reservations[0].get("Instances", []) if reservations else []
+    if not described:
+        raise AssertionError(f"DescribeInstances: instance {instance_id} not returned")
+    got = described[0].get("Placement", {}).get("AvailabilityZone")
+    if got != zone:
+        raise AssertionError(
+            f"DescribeInstances: Placement.AvailabilityZone = {got!r}, want {zone!r}"
+        )
+
+
 def StopInstances(ctx: TestContext) -> None:
     ec2 = _ec2(ctx)
     instance_id = ctx.get("ec2_instance_id")
@@ -350,6 +391,7 @@ IMPLS = {
     # the loader refuses it.
     "ec2-instances:DescribeImages": DescribeImages,
     "ec2-instances:RunInstances": RunInstances,
+    "ec2-instances:RunInstancesHonoursPlacementAvailabilityZone": RunInstancesHonoursPlacementAvailabilityZone,
     "ec2-instances:StopInstances": StopInstances,
     "ec2-instances:StartInstances": StartInstances,
     "ec2-instances:TerminateInstances": TerminateInstances,
@@ -431,8 +473,10 @@ def _teardown_vpc(ctx: TestContext) -> None:
 
 def _teardown_instances(ctx: TestContext) -> None:
     ec2 = _ec2(ctx)
-    instance_id = ctx.get("ec2_instance_id")
-    if instance_id:
+    for key in ("ec2_instance_id", "ec2_az_instance_id"):
+        instance_id = ctx.get(key)
+        if not instance_id:
+            continue
         try:
             ec2.terminate_instances(InstanceIds=[instance_id])
         except Exception:

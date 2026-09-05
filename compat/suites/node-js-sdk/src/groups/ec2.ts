@@ -115,6 +115,52 @@ export function makeEC2Groups(suite: string): TestGroup[] {
           },
         },
         {
+          // Launch into a zone that is deliberately not the region's first
+          // one, so that a server which ignores Placement.AvailabilityZone
+          // and reports its own default is caught. Both the RunInstances
+          // response and a follow-up DescribeInstances must report it back.
+          name: "RunInstancesHonoursPlacementAvailabilityZone",
+          fn: async (ctx) => {
+            const { ec2 } = makeClients(ctx);
+            const zone = `${ctx.region}c`;
+            const resp = await ec2.send(
+              new RunInstancesCommand({
+                ImageId: "ami-00000000",
+                InstanceType: "t2.micro",
+                MinCount: 1,
+                MaxCount: 1,
+                Placement: { AvailabilityZone: zone },
+              }),
+            );
+            assert.ok(
+              resp.Instances?.length,
+              "RunInstances: no instances returned",
+            );
+            const instanceId = resp.Instances[0].InstanceId;
+            assert.ok(instanceId, "RunInstances: missing InstanceId");
+            (ctx as Record<string, unknown>)["_azInstanceId"] = instanceId;
+            assert.strictEqual(
+              resp.Instances[0].Placement?.AvailabilityZone,
+              zone,
+              "RunInstances: Placement.AvailabilityZone does not match the request",
+            );
+
+            const desc = await ec2.send(
+              new DescribeInstancesCommand({ InstanceIds: [instanceId] }),
+            );
+            const described = desc.Reservations?.[0]?.Instances?.[0];
+            assert.ok(
+              described,
+              `DescribeInstances: instance ${instanceId} not returned`,
+            );
+            assert.strictEqual(
+              described.Placement?.AvailabilityZone,
+              zone,
+              "DescribeInstances: Placement.AvailabilityZone does not match the request",
+            );
+          },
+        },
+        {
           name: "DescribeInstances",
           fn: async (ctx) => {
             const { ec2 } = makeClients(ctx);
@@ -215,10 +261,10 @@ export function makeEC2Groups(suite: string): TestGroup[] {
       ],
       teardown: async (ctx) => {
         const { ec2 } = makeClients(ctx);
-        const instanceId = (ctx as Record<string, unknown>)[
-          "_instanceId"
-        ] as string;
-        if (instanceId) {
+        const bag = ctx as Record<string, unknown>;
+        for (const key of ["_instanceId", "_azInstanceId"]) {
+          const instanceId = bag[key] as string;
+          if (!instanceId) continue;
           try {
             await ec2.send(
               new TerminateInstancesCommand({ InstanceIds: [instanceId] }),

@@ -1834,6 +1834,14 @@
       "suite": "python-sdk",
       "service": "ec2",
       "group": "ec2-instances",
+      "test": "RunInstancesHonoursPlacementAvailabilityZone",
+      "op": "RunInstances",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-instances",
       "test": "StartInstances",
       "status": "pass"
     },

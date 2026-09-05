@@ -1864,6 +1864,14 @@
       "suite": "node-js-sdk",
       "service": "ec2",
       "group": "ec2-instances",
+      "test": "RunInstancesHonoursPlacementAvailabilityZone",
+      "op": "RunInstances",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "ec2",
+      "group": "ec2-instances",
       "test": "StartInstances",
       "status": "pass"
     },
