@@ -303,7 +303,7 @@ func (h *Handler) CreateQueue(w http.ResponseWriter, r *http.Request) {
 
 	// Validate FIFO naming rules: FifoQueue=true requires .fifo suffix and vice versa.
 	if req.Attributes["FifoQueue"] == "true" && !strings.HasSuffix(req.QueueName, ".fifo") {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
+		writeJSONError(w, r, &protocol.AWSError{
 			Code:       "InvalidParameterValue",
 			Message:    "The queue name must end in .fifo for FIFO queues.",
 			HTTPStatus: http.StatusBadRequest,
@@ -316,7 +316,7 @@ func (h *Handler) CreateQueue(w http.ResponseWriter, r *http.Request) {
 	if existing != nil {
 		for k, v := range req.Attributes {
 			if existing.Attributes[k] != v {
-				protocol.WriteJSONError(w, r, errQueueNameExists(k))
+				writeJSONError(w, r, errQueueNameExists(k))
 				return
 			}
 		}
@@ -340,17 +340,17 @@ func (h *Handler) CreateQueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if aerr := validateCreateQueueAttributes(req.Attributes); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 	if aerr := validateQueueAttributes(attrs); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
 	// Validate RedrivePolicy if provided.
 	if aerr := h.validateRedrivePolicy(r, attrs); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -364,7 +364,7 @@ func (h *Handler) CreateQueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if aerr := h.store.putQueue(r.Context(), q); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -390,7 +390,7 @@ func (h *Handler) GetQueueURL(w http.ResponseWriter, r *http.Request) {
 
 	q, aerr := h.store.getQueue(r.Context(), req.QueueName)
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -406,7 +406,7 @@ func (h *Handler) GetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 	queueName := queueNameFromURL(req.QueueUrl)
 	q, aerr := h.store.getQueue(r.Context(), queueName)
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -440,7 +440,7 @@ func (h *Handler) SetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 	queueName := queueNameFromURL(req.QueueUrl)
 	q, aerr := h.store.getQueue(r.Context(), queueName)
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -453,23 +453,23 @@ func (h *Handler) SetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if aerr := validateSetQueueAttributes(req.Attributes); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 	if aerr := validateQueueAttributes(attrs); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
 	// Validate RedrivePolicy if updated.
 	if aerr := h.validateRedrivePolicy(r, attrs); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 	q.Attributes = attrs
 
 	if aerr := h.store.putQueue(r.Context(), q); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -484,7 +484,7 @@ func (h *Handler) DeleteQueue(w http.ResponseWriter, r *http.Request) {
 
 	queueName := queueNameFromURL(req.QueueUrl)
 	if aerr := h.store.deleteQueue(r.Context(), queueName); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -508,7 +508,7 @@ func (h *Handler) ListQueues(w http.ResponseWriter, r *http.Request) {
 
 	queues, aerr := h.store.listQueues(r.Context(), req.QueueNamePrefix)
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -531,7 +531,7 @@ func (h *Handler) PurgeQueue(w http.ResponseWriter, r *http.Request) {
 
 	queueName := queueNameFromURL(req.QueueUrl)
 	if aerr := h.purgeQueue(r.Context(), queueName); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -627,7 +627,7 @@ func (h *Handler) TagQueue(w http.ResponseWriter, r *http.Request) {
 	queueName := queueNameFromURL(req.QueueUrl)
 	q, aerr := h.store.getQueue(r.Context(), queueName)
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -641,7 +641,7 @@ func (h *Handler) TagQueue(w http.ResponseWriter, r *http.Request) {
 	q.SetTags(tags)
 
 	if aerr := h.store.putQueue(r.Context(), q); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -659,7 +659,7 @@ func (h *Handler) UntagQueue(w http.ResponseWriter, r *http.Request) {
 	queueName := queueNameFromURL(req.QueueUrl)
 	q, aerr := h.store.getQueue(r.Context(), queueName)
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -670,7 +670,7 @@ func (h *Handler) UntagQueue(w http.ResponseWriter, r *http.Request) {
 	q.SetTags(tags)
 
 	if aerr := h.store.putQueue(r.Context(), q); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -688,7 +688,7 @@ func (h *Handler) ListQueueTags(w http.ResponseWriter, r *http.Request) {
 	queueName := queueNameFromURL(req.QueueUrl)
 	q, aerr := h.store.getQueue(r.Context(), queueName)
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 

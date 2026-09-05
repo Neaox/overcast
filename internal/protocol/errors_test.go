@@ -98,6 +98,71 @@ func TestWriteJSONError_structuredResponse(t *testing.T) {
 	}
 }
 
+// TestWriteJSONError_queryErrorCodeHeader is the writer-level counterpart of
+// #1810: WriteJSONError renders x-amzn-query-error only when AWSError.
+// QueryErrorCode is set (the field every service but SQS leaves empty), and
+// picks "Sender" vs "Receiver" from HTTPStatus the way the
+// aws.protocols#awsQueryCompatible protocol does.
+func TestWriteJSONError_queryErrorCodeHeader(t *testing.T) {
+	cases := []struct {
+		name string
+		aerr *protocol.AWSError
+		want string // "" means the header must be absent entirely
+	}{
+		{
+			name: "unset QueryErrorCode omits the header",
+			aerr: &protocol.AWSError{Code: "InternalError", Message: "boom", HTTPStatus: http.StatusInternalServerError},
+			want: "",
+		},
+		{
+			name: "4xx is Sender",
+			aerr: &protocol.AWSError{Code: "X", Message: "boom", HTTPStatus: http.StatusBadRequest, QueryErrorCode: "AWS.SimpleQueueService.NonExistentQueue"},
+			want: "AWS.SimpleQueueService.NonExistentQueue;Sender",
+		},
+		{
+			name: "5xx is Receiver",
+			aerr: &protocol.AWSError{Code: "InternalError", Message: "boom", HTTPStatus: http.StatusInternalServerError, QueryErrorCode: "InternalError"},
+			want: "InternalError;Receiver",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/", nil)
+			protocol.WriteJSONError(w, req, tc.aerr)
+
+			got := w.Result().Header.Get("x-amzn-query-error")
+			if tc.want == "" {
+				if got != "" {
+					t.Errorf("x-amzn-query-error = %q, want absent", got)
+				}
+				return
+			}
+			if got != tc.want {
+				t.Errorf("x-amzn-query-error = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestWrap_preservesQueryErrorCode confirms Wrap carries QueryErrorCode from
+// its template like every other field, so a wrapped SQS sentinel keeps
+// rendering the header.
+func TestWrap_preservesQueryErrorCode(t *testing.T) {
+	template := &protocol.AWSError{
+		Code:           "AWS.SimpleQueueService.NonExistentQueue",
+		Message:        "boom",
+		HTTPStatus:     http.StatusBadRequest,
+		QueryErrorCode: "AWS.SimpleQueueService.NonExistentQueue",
+	}
+	wrapped := protocol.Wrap(template, errors.New("cause"))
+
+	if wrapped.QueryErrorCode != template.QueryErrorCode {
+		t.Errorf("QueryErrorCode = %q, want %q", wrapped.QueryErrorCode, template.QueryErrorCode)
+	}
+}
+
 // TestNotImplemented_setsUnsupportedHeader verifies the 501 sentinel header.
 func TestNotImplemented_setsUnsupportedHeader(t *testing.T) {
 	// Given: a handler that returns NotImplemented

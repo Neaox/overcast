@@ -762,7 +762,7 @@ func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(req.MessageBody) > maxMessageBodyBytes {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
+		writeJSONError(w, r, &protocol.AWSError{
 			Code:       "InvalidParameterValue",
 			Message:    "Value for parameter MessageBody is invalid. Reason: Message body must be no larger than 1048576 bytes.",
 			HTTPStatus: http.StatusBadRequest,
@@ -770,7 +770,7 @@ func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.DelaySeconds < 0 || req.DelaySeconds > 900 {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
+		writeJSONError(w, r, &protocol.AWSError{
 			Code:       "InvalidParameterValue",
 			Message:    "Value for parameter DelaySeconds is invalid. Reason: DelaySeconds must be between 0 and 900, inclusive.",
 			HTTPStatus: http.StatusBadRequest,
@@ -781,7 +781,7 @@ func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	queueName := queueNameFromURL(req.QueueUrl)
 	q, aerr := h.store.getQueue(r.Context(), queueName)
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -789,7 +789,7 @@ func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 
 	// FIFO validation: MessageGroupId is required.
 	if fifo && req.MessageGroupId == "" {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
+		writeJSONError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "The request must contain the parameter MessageGroupId.",
 			HTTPStatus: http.StatusBadRequest,
@@ -797,7 +797,7 @@ func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if fifo && req.DelaySeconds > 0 {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
+		writeJSONError(w, r, &protocol.AWSError{
 			Code:       "InvalidParameterValue",
 			Message:    "Value for parameter DelaySeconds is invalid. Reason: DelaySeconds cannot be set on FIFO queues.",
 			HTTPStatus: http.StatusBadRequest,
@@ -814,7 +814,7 @@ func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 			dedupID = md5Hex([]byte(req.MessageBody))
 		}
 		if dedupID == "" {
-			protocol.WriteJSONError(w, r, &protocol.AWSError{
+			writeJSONError(w, r, &protocol.AWSError{
 				Code:       "InvalidParameterValue",
 				Message:    "The queue should either have ContentBasedDeduplication enabled or MessageDeduplicationId provided explicitly.",
 				HTTPStatus: http.StatusBadRequest,
@@ -874,7 +874,7 @@ func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if aerr := h.store.putMessage(r.Context(), queueName, msg); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -905,29 +905,29 @@ func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
 
 	queueName := queueNameFromURL(req.QueueUrl)
 	if _, aerr := h.store.getQueue(storeCtx, queueName); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
 	maxMessages, aerr := receiveMaxNumberOfMessages(req.MaxNumberOfMessages)
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
 	// Load queue once for defaults, DLQ checks, and FIFO detection.
 	q, aerr := h.store.getQueue(storeCtx, queueName)
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 	waitTimeSeconds, aerr := receiveWaitTimeSeconds(req.WaitTimeSeconds, q)
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 	if aerr := validateReceiveRequestAttemptID(req.ReceiveRequestAttemptId); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -941,7 +941,7 @@ func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
 		visibilityTimeout = serviceutil.ParseIntDefault(q.Attributes["VisibilityTimeout"], 30)
 	} else {
 		if aerr := validateVisibilityTimeout("VisibilityTimeout", *req.VisibilityTimeout); aerr != nil {
-			protocol.WriteJSONError(w, r, aerr)
+			writeJSONError(w, r, aerr)
 			return
 		}
 		visibilityTimeout = *req.VisibilityTimeout
@@ -951,7 +951,7 @@ func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
 	if fifo && req.ReceiveRequestAttemptId != "" {
 		received, aerr := h.replayReceiveAttempt(storeCtx, queueName, req.ReceiveRequestAttemptId, visibilityTimeout, systemAttrNames, req.MessageAttributeNames)
 		if aerr != nil {
-			protocol.WriteJSONError(w, r, aerr)
+			writeJSONError(w, r, aerr)
 			return
 		}
 		if received != nil {
@@ -966,7 +966,7 @@ func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
 		if waitTimeSeconds > 0 && isLongPollContextDone(aerr) {
 			received = []receivedMessage{}
 		} else {
-			protocol.WriteJSONError(w, r, aerr)
+			writeJSONError(w, r, aerr)
 			return
 		}
 	}
@@ -996,7 +996,7 @@ func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
 			if isLongPollContextDone(aerr) {
 				received = []receivedMessage{}
 			} else {
-				protocol.WriteJSONError(w, r, aerr)
+				writeJSONError(w, r, aerr)
 				return
 			}
 		}
@@ -1007,7 +1007,7 @@ func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	if fifo && req.ReceiveRequestAttemptId != "" && len(received) > 0 {
 		if aerr := h.store.putReceiveAttempt(storeCtx, queueName, req.ReceiveRequestAttemptId, newReceiveAttempt(h.clk.Now(), received)); aerr != nil {
-			protocol.WriteJSONError(w, r, aerr)
+			writeJSONError(w, r, aerr)
 			return
 		}
 	}
@@ -1273,7 +1273,7 @@ func (h *Handler) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 	// Decode the opaque receipt handle to obtain the queue name and message ID.
 	_, messageID, err := decodeReceiptHandle(req.ReceiptHandle)
 	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
+		writeJSONError(w, r, &protocol.AWSError{
 			Code:       "ReceiptHandleIsInvalid",
 			Message:    "The receipt handle is invalid.",
 			HTTPStatus: http.StatusBadRequest,
@@ -1287,11 +1287,11 @@ func (h *Handler) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 	// This rejects stale handles that were superseded by a later ReceiveMessage.
 	msg, aerr := h.store.getMessage(r.Context(), queueName, messageID)
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 	if msg.ReceiptHandle != req.ReceiptHandle {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
+		writeJSONError(w, r, &protocol.AWSError{
 			Code:       "ReceiptHandleIsInvalid",
 			Message:    "The receipt handle has expired or been superseded.",
 			HTTPStatus: http.StatusBadRequest,
@@ -1300,7 +1300,7 @@ func (h *Handler) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if aerr := h.store.deleteMessage(r.Context(), queueName, messageID); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -1328,7 +1328,7 @@ func (h *Handler) SendMessageBatch(w http.ResponseWriter, r *http.Request) {
 
 	queueName := queueNameFromURL(req.QueueUrl)
 	if _, aerr := h.store.getQueue(r.Context(), queueName); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
@@ -1553,7 +1553,7 @@ type PeekedMessage struct {
 func (h *Handler) PeekMessages(w http.ResponseWriter, r *http.Request) {
 	result, aerr := h.peekQueue(r.Context(), chi.URLParam(r, "queueName"))
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Messages": result})
