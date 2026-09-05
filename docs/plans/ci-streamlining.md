@@ -280,8 +280,8 @@ is deliberately short — editing a published doc also regenerates
 not matched, so a docs change that touches the index still runs the suites.
 
 **`test.yml` is gated rather than filtered**, and the difference is the whole
-design. A `paths-ignore:` would stop those nine required checks reporting at
-all. The obvious repair — a twin workflow declaring the same job names on the
+design. A `paths-ignore:` would stop the required checks (nine then, fourteen
+now) reporting at all. The obvious repair — a twin workflow declaring the same job names on the
 inverse filter — is broken for the mixed case: GitHub skips on `paths-ignore`
 only when *every* changed file matches but runs on `paths` when *any* one does,
 so a pull request touching a doc and a handler satisfies both and two runs
@@ -414,9 +414,10 @@ rather than their symptoms re-run.
 
 The one thing that was left — adding `Test suite (-tags slim,dev)` to the
 required set — has since been made. As of 2026-08-21 the `Protect Main`
-ruleset requires it (the required set has also since gained `Script tests` and
-`Lambda invoke (native host binary)`, and classic branch protection separately
-requires `Aggregate Compatibility Results`). As predicted, the E gate needed no
+ruleset requires it (the required set has also since gained `Script tests`,
+`Lambda invoke (native host binary)` and `Docs and capability registry`, and
+classic branch protection separately requires `Aggregate Compatibility
+Results`; as read on 2026-09-05 it does not list `VERSION guard`). As predicted, the E gate needed no
 corresponding change: the job always runs, so the required name always reports.
 
 The estimate this document opened with — 56 → 40 runner-minutes — was built on

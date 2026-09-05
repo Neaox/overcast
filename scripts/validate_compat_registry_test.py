@@ -195,7 +195,7 @@ class MainIntegrationTest(unittest.TestCase):
     dependencies on purpose -- the script tests are meant to stay cheap. The
     lints themselves are pure Python and their unit tests above run
     unconditionally; end-to-end coverage of main() against the real registry
-    is what the compat-registry job already does, with jsonschema installed.
+    is what the `Script tests` job already does, with jsonschema installed.
     """
 
     def test_main_still_passes_on_the_real_registry(self):

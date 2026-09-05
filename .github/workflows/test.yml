@@ -52,29 +52,72 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Every job below carries a `timeout-minutes` bar one, which cannot — see the
+# end of this note. GitHub's default is 360, so a hung `docker build`,
+# `pnpm install` or `docker pull` — none of which the Go suites' own
+# `-timeout=1200s` covers, because none of them is `go test` — sits on a runner
+# slot for six hours, and on a required check it sits on the pull request with
+# it.
+#
+# Each value is roughly two to three times what that job measured across three
+# green runs (33946645470, 33944965566, 33945978965), rounded up, with a
+# five-minute floor. These are ceilings for catching a hang, not budgets to run
+# against; a job that starts failing on one has grown, and the number should be
+# re-derived rather than nudged.
+#
+# Three sit above that band on purpose. `Lambda invoke (native host binary)`
+# ran 91 s, but its worst legitimate path — three image pulls with backoff, a
+# 30 s health wait and a 120 s wait for Active — is several times its median.
+# `Docker build (…)` ran 136 s, but on a release candidate it also builds two
+# platforms and pushes them, which none of the sampled runs did.
+# `Release candidate summary` was skipped in all three, so it has no
+# measurement at all.
+#
+# `Cross-build` has none and cannot: it calls a reusable workflow, where
+# `timeout-minutes` is not a permitted key — "only following keys are allowed:
+# name, uses, with, secrets, needs, if, and permissions" (actionlint
+# syntax-check). Its ceiling belongs in build-binaries.yml.
 jobs:
   # Does this pull request need the expensive jobs at all?
   #
-  # Nine jobs below are in the branch ruleset's required set, and a required
-  # check that never reports leaves the pull request waiting on it forever. So
-  # this cannot be a `paths-ignore:` on the workflow, and it cannot be a twin
-  # "skip" workflow either — GitHub skips on paths-ignore only when *every*
-  # changed file matches but runs on `paths` when *any* one does, so a pull
-  # request touching a doc and a handler satisfies both and two runs report
-  # under the same check name.
+  # Fourteen of the branch ruleset's required check names are produced below —
+  # Vet, Lint, Actionlint, Web UI, the three Test suite (-tags …) legs, Full
+  # test suite with coverage, both Docker build (…) legs, Script tests, Lambda
+  # invoke (native host binary), Changelog fragments and Docs and capability
+  # registry. VERSION guard is not in the set as read on 2026-09-05, whatever
+  # its own comment below says. (The
+  # rest of the required set is reported by other workflows: Breaking-change
+  # hold, Changelog entry, Lockfile freshness and Aggregate Compatibility
+  # Results. The `Protect Main` ruleset is where the list is maintained;
+  # docs/plans/ci-streamlining.md § Tier 3 records it as last read, and is the
+  # place to update if it changes.) A required check that never reports leaves
+  # the pull request waiting on it forever. So this cannot be a `paths-ignore:`
+  # on the workflow, and it cannot be a twin "skip" workflow either — GitHub
+  # skips on paths-ignore only when *every* changed file matches but runs on
+  # `paths` when *any* one does, so a pull request touching a doc and a handler
+  # satisfies both and two runs report under the same check name.
   #
   # Instead every job keeps its name and still runs; only the expensive steps
   # are conditional. A prose-only pull request gets the same green checks in
   # seconds. scripts/ci-scope.py holds the rule and scripts/ci_scope_test.py
   # pins it — including that anything unrecognised counts as code.
-  # Every other job now waits on this one, so it is kept to a shallow checkout
-  # and one API call. Diffing locally would mean `fetch-depth: 0` — a full
-  # history clone — to gain nothing the API does not already know.
+  # Every other job now waits on this one, so it is kept to a shallow checkout,
+  # one API call and one `git ls-remote`. Diffing locally would mean
+  # `fetch-depth: 0` — a full history clone — to gain nothing the API does not
+  # already know.
+  #
+  # It answers the release-candidate question too, which used to be a job of
+  # its own. That job was a checkout and six seconds of `git ls-remote`, and
+  # everything that needed the answer already needed this job's, so it cost a
+  # runner slot and a second round of queueing to say something this job was
+  # positioned to say.
   changes:
     name: Changed-path scope
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       code: ${{ steps.scope.outputs.code }}
+      rc: ${{ steps.rc.outputs.rc }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: scope
@@ -111,6 +154,25 @@ jobs:
             echo "Prose only — the Go, SPA and image jobs have nothing to exercise."
           fi
 
+      # Decided once, here, and read by `web`, `cross-build`, `docker` and
+      # `rc-comment`: a same-repo PR whose checked-out VERSION has no
+      # v<VERSION> tag yet. That covers the PR that bumps VERSION and — where a
+      # release/* branch-name test would go blind — a follow-up PR after a
+      # failed release workflow, when the unreleased version already sits on
+      # main. The script never fails (errors degrade to rc=false with a
+      # warning), so the jobs that hang off this output cannot be
+      # skip-cascaded by an infrastructure hiccup.
+      - id: rc
+        env:
+          IS_SAME_REPO_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          rc=false
+          if [ "$IS_SAME_REPO_PR" = "true" ]; then
+            rc=$(bash scripts/release-candidate-check.sh)
+          fi
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          echo "release candidate: $rc"
+
   # No `needs: web`. An untagged Go build embeds `all:web/dist`, and the
   # committed `web/dist/.gitkeep` is what keeps that pattern resolving without
   # a built SPA — a binary without one serves the API normally and answers 503
@@ -127,6 +189,7 @@ jobs:
     name: Vet
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -154,6 +217,20 @@ jobs:
           go mod download
           go vet ./...
 
+      # Folded in from the job that used to own it, which opened with the same
+      # `go vet ./...` this job had already run and then tested one package.
+      # Vet 109 s + SQS 163 s in run 33946645470 is ~250 s once the duplicated
+      # checkout, setup-go, module download and vet are paid once — well inside
+      # the 689 s `coverage` sets as the critical path, for one runner slot
+      # instead of two.
+      #
+      # OVERCAST_PROTOCOL_DISPATCH turns on the Smithy-aligned typed dispatcher
+      # (internal/router/service.go), a passthrough in every other job here, so
+      # this is the SQS suite over a routing path nothing else in CI takes.
+      - name: SQS integration tests (protocol dispatch)
+        if: needs.changes.outputs.code == 'true'
+        run: OVERCAST_PROTOCOL_DISPATCH=1 go test -race -count=1 -timeout=300s ./tests/integration/sqs/...
+
   # The longest job in the workflow, and it used to start 187 s late waiting on
   # the SPA it never read — see the note on `vet`. It sets the critical path,
   # so this is where dropping the dependency is worth the most.
@@ -161,32 +238,96 @@ jobs:
     name: Full test suite with coverage
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.changes.outputs.code == 'true'
 
+      # A cache scope of its own, rather than setup-go's shared one.
+      #
+      # setup-go's `cache: true` keys on runner OS/arch, Go version and
+      # hash(go.sum) and nothing else, so every root-module job in a run
+      # computes the *same* key. Only one of them ever saves it — the first to
+      # miss — and the rest log "Cache hit occurred on the primary key …, not
+      # saving cache". In run 33924023153 the one that saved was
+      # `Docs and capability registry`, 29 s into a 23 s `make docs-check`;
+      # this job, all three `Test suite (-tags …)` legs, Vet, Lint,
+      # `Lambda invoke`, the SQS job and all ten Cross-build legs then restored
+      # what it had compiled and declined to save. The size of main's cache for
+      # a given go.sum says the same thing from the other side: 35.9 MB for the
+      # current generation of the key against 231 MB and 261 MB for two
+      # earlier ones. Which job wins the race decides what everyone restores.
+      #
+      # So the heavy jobs opt out and keep their own. `-race` in the key is not
+      # decoration: a race-instrumented build cache shares no object with a
+      # plain one, and this job compiles the whole module and every test binary
+      # in it that way. The restore-keys prefix means a go.sum bump degrades to
+      # the previous run's cache rather than to nothing, and — unlike the
+      # shared key — a prefix-only restore still saves at the end of the job,
+      # so the cache tracks this job's own output from then on.
+      #
+      # The short jobs stay on setup-go's default. They are the ones the shared
+      # cache was already good enough for.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: needs.changes.outputs.code == 'true'
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: needs.changes.outputs.code == 'true'
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-race-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-race-
 
       - name: Install dependencies
         if: needs.changes.outputs.code == 'true'
         run: go mod download
 
       # The Docker-gated Lambda tests need the in-container init embedded in the
-      # binary under test; it is build output, not a committed file.
-      - name: Build the Lambda init
+      # binary under test; it is build output, not a committed file. The
+      # composite restores it from a content-addressed cache and rebuilds only
+      # when its inputs moved (see .github/actions/lambda-init).
+      - uses: ./.github/actions/lambda-init
         if: needs.changes.outputs.code == 'true'
-        run: make lambda-init
 
       # The suite pulls images (registry:2, alpine, postgres, redis, …) for the
       # Docker-backed services. Mirror them so the pulls do not compete for the
       # shared anonymous Docker Hub limit on GitHub's egress IPs.
       - uses: ./.github/actions/docker-hub-mirror
         if: needs.changes.outputs.code == 'true'
+
+      # Start the Lambda base-image pulls now, detached, so they overlap the Go
+      # build instead of landing inside a test's own deadline. A function has
+      # 2 minutes to reach Active (waitForFunctionActive in
+      # tests/integration/lambda/lambda_test.go), and a cold pull of a runtime
+      # image inside that window is what times out.
+      #
+      # The mirror above does not cover these. It points the daemon at
+      # mirror.gcr.io, which is a Docker Hub pull-through cache; these images
+      # live on public.ecr.aws, which it never sees.
+      #
+      # Detached and unchecked on purpose. `nohup … &` outlives the step — the
+      # runner does not reap it, which is how the Lambda invoke job below
+      # backgrounds a whole server — so this step neither waits nor fails. If a
+      # pull is slow or fails outright the test pulls the image itself, exactly
+      # as it does today; this can only make that pull already done.
+      #
+      # Only what the Docker-gated tests actually create: nodejs20.x dominates
+      # and python3.11 is the rest (the layer, hot-reload and deleted-layer
+      # cases). Tags from internal/services/lambda/runtime_catalog.go, which is
+      # where the emulator resolves a runtime ID to an image.
+      - name: Warm the Lambda runtime images in the background
+        if: needs.changes.outputs.code == 'true'
+        run: |
+          for image in public.ecr.aws/lambda/nodejs:20 public.ecr.aws/lambda/python:3.11; do
+            nohup docker pull "$image" >/dev/null 2>&1 &
+          done
 
       - name: Full test suite with coverage
         if: needs.changes.outputs.code == 'true'
@@ -198,6 +339,7 @@ jobs:
     name: Test suite (-tags ${{ matrix.tags }})
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     # Deliberately no `needs: web` and no download-artifact: dropping the
     # embedded SPA is the whole point of the slim build (embed_slim.go), so this
@@ -213,17 +355,43 @@ jobs:
         # `slim,dev` compiles in the per-service capabilities_dev.go inventories
         # and their //go:build dev cross-check tests (capabilities vs initOps
         # dispatch); without it that drift is invisible to CI.
-        tags: [slim, "slim,nosqlite", "slim,dev"]
+        #
+        # `include:` rather than the bare list this was, so each leg can name a
+        # cache scope below: actions/cache rejects a key containing a comma
+        # ("Key Validation Error: … cannot contain commas"), and the job name
+        # has to keep rendering `matrix.tags` verbatim because all three names
+        # are required checks.
+        include:
+          - tags: slim
+            cache-scope: slim
+          - tags: slim,nosqlite
+            cache-scope: slim-nosqlite
+          - tags: slim,dev
+            cache-scope: slim-dev
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.changes.outputs.code == 'true'
 
+      # A cache scope of its own, per tag set — see the long note on
+      # `coverage`. The same argument applies here and one more with it: each
+      # tag set produces its own objects, so three legs sharing one key would
+      # thrash it even if they were the only jobs using it.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: needs.changes.outputs.code == 'true'
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: needs.changes.outputs.code == 'true'
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-tags-${{ matrix.cache-scope }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-tags-${{ matrix.cache-scope }}-
 
       - name: Install dependencies
         if: needs.changes.outputs.code == 'true'
@@ -234,12 +402,20 @@ jobs:
         run: go vet -tags ${{ matrix.tags }} ./...
 
       # -tags slim does not drop the Lambda init: slim images run Lambda.
-      - name: Build the Lambda init
+      - uses: ./.github/actions/lambda-init
         if: needs.changes.outputs.code == 'true'
-        run: make lambda-init
 
       - uses: ./.github/actions/docker-hub-mirror
         if: needs.changes.outputs.code == 'true'
+
+      # Same detached pre-pull as `coverage`, for the same reason; the note there
+      # has the full rationale. Same image list, on purpose: keep the two in step.
+      - name: Warm the Lambda runtime images in the background
+        if: needs.changes.outputs.code == 'true'
+        run: |
+          for image in public.ecr.aws/lambda/nodejs:20 public.ecr.aws/lambda/python:3.11; do
+            nohup docker pull "$image" >/dev/null 2>&1 &
+          done
 
       # No -race: these tags change which routes register, which assets embed,
       # and whether SQLite is compiled in — not concurrency. The untagged
@@ -248,33 +424,6 @@ jobs:
       - name: Test suite
         if: needs.changes.outputs.code == 'true'
         run: go test -count=1 -timeout=1200s -tags ${{ matrix.tags }} ./...
-
-  sqs-protocol-dispatch:
-    name: SQS integration tests (protocol dispatch)
-    needs: changes
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: needs.changes.outputs.code == 'true'
-
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: needs.changes.outputs.code == 'true'
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Install dependencies
-        if: needs.changes.outputs.code == 'true'
-        run: go mod download
-
-      - name: Vet
-        if: needs.changes.outputs.code == 'true'
-        run: go vet ./...
-
-      - name: SQS integration tests (protocol dispatch)
-        if: needs.changes.outputs.code == 'true'
-        run: OVERCAST_PROTOCOL_DISPATCH=1 go test -race -count=1 -timeout=300s ./tests/integration/sqs/...
 
   # Can a Lambda container reach the Runtime API of an Overcast that is NOT
   # itself a container?
@@ -309,6 +458,7 @@ jobs:
     name: Lambda invoke (native host binary)
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -320,15 +470,18 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # The init first, from cache where its inputs have not moved: the binary
+      # below embeds it, and this job exists to invoke a function that needs it.
+      - uses: ./.github/actions/lambda-init
+        if: needs.changes.outputs.code == 'true'
+
       # Built here rather than in a container, and with the tags the released
       # overcastd binary carries, so this is the artifact a user runs.
       - name: Build the binary natively
         if: needs.changes.outputs.code == 'true'
         env:
           CGO_ENABLED: "0"
-        run: |
-          make lambda-init
-          go build -tags slim,nosqlite -o bin/overcast ./cmd/overcast
+        run: go build -tags slim,nosqlite -o bin/overcast ./cmd/overcast
 
       - uses: ./.github/actions/docker-hub-mirror
         if: needs.changes.outputs.code == 'true'
@@ -486,6 +639,7 @@ jobs:
     name: Lint
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.changes.outputs.code == 'true'
@@ -504,6 +658,7 @@ jobs:
   actionlint:
     name: Actionlint
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
@@ -516,6 +671,7 @@ jobs:
     name: Installers (${{ matrix.os }})
     needs: changes
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -557,6 +713,7 @@ jobs:
   script-tests:
     name: Script tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -583,6 +740,18 @@ jobs:
       # anchoring is this gate.
       - name: Comment marker lint
         run: python3 scripts/check_todos.py
+
+      # Folded in from the Compat registry schema job. Both jobs were a
+      # checkout, the same setup-python, and a few seconds of Python over files
+      # on disk — no emulator, no Docker, no network — and both are ungated, so
+      # the conditions carry over unchanged. jsonschema is the only thing the
+      # folded job had that this one did not.
+      - name: Install jsonschema
+        run: pip install --quiet jsonschema
+      - name: Validate compat registry against its schema
+        run: python3 scripts/validate-compat-registry.py
+      - name: Compat suite name hygiene
+        run: python3 scripts/compat-name-hygiene.py
 
   # The compat suites carry unit tests, and until this job nothing ran them.
   #
@@ -621,6 +790,7 @@ jobs:
     name: Compat suite unit tests
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -638,12 +808,18 @@ jobs:
           cache: true
           cache-dependency-path: compat/suites/go-sdk/go.sum
 
+      # Two lockfiles: the node-js-sdk suite's, and compat/ui's for the steps
+      # folded in at the end of this job. setup-node hashes every path it is
+      # given into one npm cache key, so a change to either invalidates it —
+      # which is the behaviour that keeps both installs honest.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         if: needs.changes.outputs.code == 'true'
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: compat/suites/node-js-sdk/package-lock.json
+          cache-dependency-path: |
+            compat/suites/node-js-sdk/package-lock.json
+            compat/ui/package-lock.json
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         if: needs.changes.outputs.code == 'true'
@@ -694,48 +870,37 @@ jobs:
         working-directory: compat/suites/cli
         run: go test -count=1 ./...
 
-  # compat/ui (the compat dashboard) is a separate Vite/React app from web/
-  # (see compat/AGENTS.md § Separation boundary) and had no CI coverage at
-  # all until this job — a broken tsc, Vite build, or vitest run could reach
-  # main undetected (issue #1185). Gated the same way as
-  # compat-suite-unit-tests: on whether *some* code changed, not scoped to
-  # compat/ui specifically — ci-scope.py is a prose-vs-code classifier, not a
-  # per-directory path filter (see its docstring), so this mirrors every
-  # other job in this workflow rather than inventing a narrower gate nothing
-  # else uses.
-  compat-ui:
-    name: Compat UI
-    needs: changes
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: needs.changes.outputs.code == 'true'
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        if: needs.changes.outputs.code == 'true'
-        with:
-          node-version-file: .node-version
-          cache: npm
-          cache-dependency-path: compat/ui/package-lock.json
-
-      - run: npm ci
+      # compat/ui (the compat dashboard) is a separate Vite/React app from web/
+      # (see compat/AGENTS.md § Separation boundary) and had no CI coverage at
+      # all until it got a job of its own — a broken tsc, Vite build, or vitest
+      # run could reach main undetected (issue #1185). Folded in here because
+      # that job's whole cost beyond the work was a second checkout and a
+      # second Node install, and this job already installs Node with an npm
+      # cache; 26 s of checks did not need a runner slot of their own.
+      #
+      # Its gate was identical to this job's — on whether *some* code changed,
+      # not scoped to compat/ui specifically, because ci-scope.py is a
+      # prose-vs-code classifier and not a per-directory path filter (see its
+      # docstring) — so the steps carry the same condition as everything else
+      # here rather than a narrower one nothing else uses.
+      - name: compat/ui install
         if: needs.changes.outputs.code == 'true'
         working-directory: compat/ui
+        run: npm ci
 
       # Attributable failure before `build` (which also typechecks via
       # `tsc -b`) would otherwise surface it inside the build step instead.
-      - name: Type check
+      - name: compat/ui type check
         if: needs.changes.outputs.code == 'true'
         working-directory: compat/ui
         run: npm run typecheck
 
-      - name: Unit tests
+      - name: compat/ui unit tests
         if: needs.changes.outputs.code == 'true'
         working-directory: compat/ui
         run: npm run test
 
-      - name: Build
+      - name: compat/ui build
         if: needs.changes.outputs.code == 'true'
         working-directory: compat/ui
         run: npm run build
@@ -747,47 +912,44 @@ jobs:
   changelog-check:
     name: Changelog fragments
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Lint fragments and enforce empty [Unreleased]
         run: python3 scripts/changelog.py check
 
+  # Two jobs in one: this was "Docs and capability registry" (make docs-check,
+  # 23 s) and "AWS operation coverage" (make aws-models-check-ci since #1780,
+  # 88 s), and each was a checkout, a setup-go and one `make` target over the
+  # same module. The
+  # second was paying a runner start and a module download for its 88 s of
+  # work. The job keeps the first name because the `Protect Main` ruleset
+  # requires it (read 2026-09-05); the second survives as a step name, which is
+  # where a failure is read from anyway.
+  #
+  # Gated, where neither of them was. Both compile Go, and ci-scope.py counts
+  # docs/ as code — deliberately, because embed.go compiles the published docs
+  # into the binary — so anything either check can react to already sets
+  # `code`. A prose-only pull request was spending ~110 s and two slots on two
+  # checks with nothing to read.
   docs-check:
     name: Docs and capability registry
+    needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.code == 'true'
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: needs.changes.outputs.code == 'true'
         with:
           go-version-file: go.mod
           cache: true
-      - run: make docs-check
-
-  compat-registry:
-    name: Compat registry schema
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.14"
-      - name: Install jsonschema
-        run: pip install --quiet jsonschema
-      - name: Validate compat registry against its schema
-        run: python3 scripts/validate-compat-registry.py
-      - name: Compat suite name hygiene
-        run: python3 scripts/compat-name-hygiene.py
-
-  aws-operation-coverage:
-    name: AWS operation coverage
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Validate generated operation ownership
+      - name: Docs and capability registry
+        if: needs.changes.outputs.code == 'true'
+        run: make docs-check
+      - name: AWS operation coverage
+        if: needs.changes.outputs.code == 'true'
         run: make aws-models-check-ci
       - name: Validate the generated compat model
         run: make compat-model-check
@@ -813,13 +975,14 @@ jobs:
   # #1257/#1258 lockfile: `--frozen-lockfile --lockfile-only` exits 0 on it).
   web:
     name: Web UI
-    needs: [changes, release-gate]
+    needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Same two reasons to run as `docker`: a release candidate needs the SPA
     # built whatever the changed paths say, because cross-build consumes this
     # job's artifact.
     env:
-      RUN_BUILD: ${{ needs.changes.outputs.code == 'true' || needs.release-gate.outputs.rc == 'true' }}
+      RUN_BUILD: ${{ needs.changes.outputs.code == 'true' || needs.changes.outputs.rc == 'true' }}
     defaults:
       run:
         working-directory: web
@@ -897,6 +1060,7 @@ jobs:
   version-guard:
     name: VERSION guard
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     env:
       RELEASE_BOT: overcast-release[bot]
     steps:
@@ -930,31 +1094,6 @@ jobs:
           echo "::error::VERSION may only be changed by @$RELEASE_BOT (release PRs) or a VERSION code owner in .github/CODEOWNERS. Author of this PR: @$AUTHOR. Code owners of VERSION: $(printf '%s' "$owners" | tr '\n' ' ')" >&2
           exit 1
 
-  # release-gate decides, once, whether this build is a release candidate:
-  # a same-repo PR whose checked-out VERSION has no v<VERSION> tag yet. That
-  # covers the PR that bumps VERSION and — where a release/* branch-name test
-  # would go blind — a follow-up PR after a failed release workflow, when the
-  # unreleased version already sits on main. The script never fails (errors
-  # degrade to rc=false with a warning), so the jobs that hang off this output
-  # cannot be skip-cascaded by an infrastructure hiccup.
-  release-gate:
-    name: Release candidate gate
-    runs-on: ubuntu-latest
-    outputs:
-      rc: ${{ steps.check.outputs.rc }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - id: check
-        env:
-          IS_SAME_REPO_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
-        run: |
-          rc=false
-          if [ "$IS_SAME_REPO_PR" = "true" ]; then
-            rc=$(bash scripts/release-candidate-check.sh)
-          fi
-          echo "rc=$rc" >> "$GITHUB_OUTPUT"
-          echo "release candidate: $rc"
-
   # The binary set is defined once in build-binaries.yml and shared with
   # release.yml, so the PR check builds exactly what a release would ship.
   # On a release-candidate build the binaries are also uploaded as artifacts;
@@ -967,18 +1106,19 @@ jobs:
   # `web` job does not upload.
   cross-build:
     name: Cross-build
-    needs: [changes, web, release-gate]
-    if: needs.changes.outputs.code == 'true' || needs.release-gate.outputs.rc == 'true'
+    needs: [changes, web]
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.rc == 'true'
     uses: ./.github/workflows/build-binaries.yml
     with:
       version: ci
-      upload-artifacts: ${{ needs.release-gate.outputs.rc == 'true' }}
+      upload-artifacts: ${{ needs.changes.outputs.rc == 'true' }}
       retention-days: 14
 
   docker:
     name: Docker build (${{ matrix.image }})
-    needs: [changes, release-gate]
+    needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # One condition, named once, because this job has two reasons to build and
     # six later steps that assume a checkout happened.
     #
@@ -988,7 +1128,7 @@ jobs:
     # changed VERSION. Gating on paths alone would leave those steps running
     # against an empty workspace.
     env:
-      RUN_BUILD: ${{ needs.changes.outputs.code == 'true' || needs.release-gate.outputs.rc == 'true' }}
+      RUN_BUILD: ${{ needs.changes.outputs.code == 'true' || needs.changes.outputs.rc == 'true' }}
     # contents: read restates the default that adding a job-level block would
     # otherwise drop; packages: write is exercised only on same-repo release
     # PRs, where the freshly built image is pushed as a release candidate.
@@ -1010,21 +1150,50 @@ jobs:
         if: env.RUN_BUILD == 'true'
       # The test jobs already pull through the mirror; this one did not, and it
       # is the job that pulls the most — every base layer of a two-stage build,
-      # twice over the matrix. It builds with the classic builder, so the
-      # daemon-level mirror this configures is the one that applies.
+      # twice over the matrix. This configures the daemon, which is what the
+      # smoke tests' `docker run` and `docker pull` go through; the build
+      # itself now runs in BuildKit, which needs the same mirror stated again
+      # in its own configuration — see the next step.
       - uses: ./.github/actions/docker-hub-mirror
         if: env.RUN_BUILD == 'true'
+
+      # buildx, so the build can read and write a layer cache. The pull-request
+      # build used the classic builder and rebuilt from scratch every time
+      # (107 s per flavour when this was measured; 116-136 s in runs
+      # 33946645470, 33944965566 and 33945978965), while the release-candidate
+      # push below has had `cache-from: type=gha` all along. Same scope string
+      # as that push, so the two share one cache: the candidate build reuses
+      # what the pull-request build just produced instead of starting over.
+      #
+      # buildkitd-config-inline restates the registry mirror. The
+      # docker-container driver runs BuildKit in a container of its own, which
+      # does not read /etc/docker/daemon.json, so without this the step above
+      # would stop applying to base-layer pulls — the exact gap that turned a
+      # Docker Hub timeout into a red main (docs/plans/ci-streamlining.md,
+      # finding 5). The `docker` driver would inherit the daemon's mirror but
+      # cannot export a cache, which is the whole point here.
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        if: env.RUN_BUILD == 'true'
+        with:
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+
+      # `load: true` puts the image in the local daemon under the same tag the
+      # classic build used, which is what the smoke tests and the
+      # Testcontainers Go module below run against. Single-platform, so it can
+      # be loaded — the multi-arch candidate below cannot be, which is why that
+      # one builds and pushes in a single step.
       - name: Build image
         if: env.RUN_BUILD == 'true'
-        env:
-          TAG: ${{ matrix.tag }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          args=(-t "$TAG")
-          if [[ -n "$TARGET" ]]; then
-            args+=(--target "$TARGET")
-          fi
-          docker build "${args[@]}" .
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          load: true
+          target: ${{ matrix.target }}
+          tags: ${{ matrix.tag }}
+          cache-from: type=gha,scope=overcast-${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=overcast-${{ matrix.image }}
       # Liveness, plus the two surfaces that tell a slim image apart from a
       # console one at runtime. The Dockerfile already asserts the same thing
       # statically against the compiled binary; this checks the assembled
@@ -1148,10 +1317,13 @@ jobs:
       # this builds and pushes in one step instead of tagging the local image.
       # The native build above still runs, and is what the slim smoke test
       # exercises; the amd64 half of this build reuses its layers from cache.
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-        if: needs.release-gate.outputs.rc == 'true'
+      #
+      # No setup-buildx step of its own any more. RUN_BUILD is
+      # `code || rc`, so the builder the pull-request build sets up is always
+      # already there by the time rc is true — and it carries the registry
+      # mirror, which the second setup never did.
       - name: Log in to GHCR
-        if: needs.release-gate.outputs.rc == 'true'
+        if: needs.changes.outputs.rc == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -1169,7 +1341,7 @@ jobs:
       # registry "have these exact bits been built?" without keeping state.
       - name: Name the release candidate
         id: rc-name
-        if: needs.release-gate.outputs.rc == 'true'
+        if: needs.changes.outputs.rc == 'true'
         env:
           IMAGE_SUFFIX: ${{ matrix.image == 'slim' && '-slim' || '' }}
           RUN_NUMBER: ${{ github.run_number }}
@@ -1226,7 +1398,7 @@ jobs:
       # lookup. A prose-only push to a release branch takes this path.
       - name: Reuse an identical candidate when one exists
         id: rc-reuse
-        if: needs.release-gate.outputs.rc == 'true'
+        if: needs.changes.outputs.rc == 'true'
         env:
           RC_IMAGE: ${{ steps.rc-name.outputs.image }}
           CONTEXT_IMAGE: ${{ steps.rc-name.outputs.context }}
@@ -1243,7 +1415,7 @@ jobs:
 
       - name: Push release-candidate image
         id: rc-push
-        if: needs.release-gate.outputs.rc == 'true' && steps.rc-reuse.outputs.reused == 'false'
+        if: needs.changes.outputs.rc == 'true' && steps.rc-reuse.outputs.reused == 'false'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
@@ -1259,7 +1431,7 @@ jobs:
       # manifest actually tagged whether it was just built or retagged.
       - name: Record release-candidate image reference
         id: rc-record
-        if: needs.release-gate.outputs.rc == 'true'
+        if: needs.changes.outputs.rc == 'true'
         env:
           RC_IMAGE: ${{ steps.rc-name.outputs.image }}
           REUSED: ${{ steps.rc-reuse.outputs.reused }}
@@ -1286,9 +1458,10 @@ jobs:
   # comment is updated in place on every build rather than posted again.
   rc-comment:
     name: Release candidate summary
-    needs: [release-gate, cross-build, docker]
-    if: needs.release-gate.outputs.rc == 'true'
+    needs: [changes, cross-build, docker]
+    if: needs.changes.outputs.rc == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       pull-requests: write
       actions: read
