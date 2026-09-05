@@ -33,7 +33,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "CreateBucket".to_string(),
+            "s3-crud:CreateBucket".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -68,7 +68,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutObject".to_string(),
+            "s3-crud:PutObject".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -101,7 +101,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "HeadObject".to_string(),
+            "s3-crud:HeadObject".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -125,7 +125,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetObject".to_string(),
+            "s3-crud:GetObject".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -150,7 +150,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ListObjectsV2".to_string(),
+            "s3-crud:ListObjectsV2".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -177,7 +177,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutObjectMultipleKeys".to_string(),
+            "s3-crud:PutObjectMultipleKeys".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -221,7 +221,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ListObjectsV2Delimiter".to_string(),
+            "s3-crud:ListObjectsV2Delimiter".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -254,7 +254,7 @@ impl ServiceGroup for S3Group {
         // that sets this one explicitly reaches the case.
         let clients = self.clients.clone();
         impls.insert(
-            "PutObjectFormContentType".to_string(),
+            "s3-crud:PutObjectFormContentType".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -319,7 +319,7 @@ impl ServiceGroup for S3Group {
         // raw path without decoding stores the literal "%2B" in the key.
         let clients = self.clients.clone();
         impls.insert(
-            "PutObjectPlusInKey".to_string(),
+            "s3-crud:PutObjectPlusInKey".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -388,7 +388,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DeleteObject".to_string(),
+            "s3-crud:DeleteObject".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -423,7 +423,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DeleteObjects".to_string(),
+            "s3-crud:DeleteObjects".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -490,7 +490,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DeleteBucket".to_string(),
+            "s3-crud:DeleteBucket".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -528,7 +528,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "CreateSourceBucket".to_string(),
+            "s3-copy:CreateSourceBucket".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -553,7 +553,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutSourceObject".to_string(),
+            "s3-copy:PutSourceObject".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -567,7 +567,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "CopyObject".to_string(),
+            "s3-copy:CopyObject".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -587,7 +587,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "CreateMultipartUpload".to_string(),
+            "s3-multipart:CreateMultipartUpload".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -607,7 +607,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "UploadPart".to_string(),
+            "s3-multipart:UploadPart".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -631,7 +631,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "CompleteMultipartUpload".to_string(),
+            "s3-multipart:CompleteMultipartUpload".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -655,7 +655,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "AbortMultipartUpload".to_string(),
+            "s3-multipart:AbortMultipartUpload".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -681,7 +681,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutBucketVersioning".to_string(),
+            "s3-versioning:PutBucketVersioning".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -704,7 +704,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetBucketVersioning".to_string(),
+            "s3-versioning:GetBucketVersioning".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -720,7 +720,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutObjectTagging".to_string(),
+            "s3-tagging:PutObjectTagging".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -744,7 +744,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetObjectTagging".to_string(),
+            "s3-tagging:GetObjectTagging".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -761,7 +761,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutBucketTagging".to_string(),
+            "s3-tagging:PutBucketTagging".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -783,7 +783,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetBucketTagging".to_string(),
+            "s3-tagging:GetBucketTagging".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -799,7 +799,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutBucketWebsite".to_string(),
+            "s3-website:PutBucketWebsite".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -823,7 +823,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetBucketWebsite".to_string(),
+            "s3-website:GetBucketWebsite".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -839,7 +839,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutBucketCors".to_string(),
+            "s3-cors:PutBucketCors".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -868,7 +868,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetBucketCors".to_string(),
+            "s3-cors:GetBucketCors".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -883,7 +883,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutBucketLifecycleConfiguration".to_string(),
+            "s3-lifecycle:PutBucketLifecycleConfiguration".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -933,7 +933,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetBucketLifecycleConfiguration".to_string(),
+            "s3-lifecycle:GetBucketLifecycleConfiguration".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -967,7 +967,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DeleteBucketLifecycle".to_string(),
+            "s3-lifecycle:DeleteBucketLifecycle".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -988,7 +988,7 @@ impl ServiceGroup for S3Group {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetBucketLifecycleConfigurationAfterDelete".to_string(),
+            "s3-lifecycle:GetBucketLifecycleConfigurationAfterDelete".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {

@@ -24,7 +24,7 @@ impl ServiceGroup for StsGroup {
         let mut impls: HashMap<String, TestFn> = HashMap::new();
         let clients = self.clients.clone();
         impls.insert(
-            "GetCallerIdentity".to_string(),
+            "sts-identity:GetCallerIdentity".to_string(),
             Arc::new(move |_ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -50,7 +50,7 @@ impl ServiceGroup for StsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetSessionToken".to_string(),
+            "sts-identity:GetSessionToken".to_string(),
             Arc::new(move |_ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -73,7 +73,7 @@ impl ServiceGroup for StsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetFederationToken".to_string(),
+            "sts-identity:GetFederationToken".to_string(),
             Arc::new(move |_ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -97,7 +97,7 @@ impl ServiceGroup for StsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "AssumeRole".to_string(),
+            "sts-assume:AssumeRole".to_string(),
             Arc::new(move |_ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -122,7 +122,7 @@ impl ServiceGroup for StsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "AssumeRoleWithWebIdentity".to_string(),
+            "sts-assume:AssumeRoleWithWebIdentity".to_string(),
             Arc::new(move |_ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {

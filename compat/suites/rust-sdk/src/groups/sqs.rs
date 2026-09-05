@@ -31,7 +31,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "CreateQueue".to_string(),
+            "sqs-queues:CreateQueue".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -72,7 +72,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetQueueUrl".to_string(),
+            "sqs-queues:GetQueueUrl".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -102,7 +102,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ListQueues".to_string(),
+            "sqs-queues:ListQueues".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -132,7 +132,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "SetQueueAttributes".to_string(),
+            "sqs-queues:SetQueueAttributes".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -154,7 +154,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetQueueAttributes".to_string(),
+            "sqs-queues:GetQueueAttributes".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -185,7 +185,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "TagQueue".to_string(),
+            "sqs-queues:TagQueue".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -224,7 +224,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "UntagQueue".to_string(),
+            "sqs-queues:UntagQueue".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -258,7 +258,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DeleteQueue".to_string(),
+            "sqs-queues:DeleteQueue".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -304,7 +304,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "SendMessage".to_string(),
+            "sqs-messages:SendMessage".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -331,7 +331,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "SendMessageBatch".to_string(),
+            "sqs-messages:SendMessageBatch".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -367,7 +367,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ReceiveMessage".to_string(),
+            "sqs-messages:ReceiveMessage".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -395,7 +395,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DeleteMessage".to_string(),
+            "sqs-messages:DeleteMessage".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -441,7 +441,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ChangeMessageVisibility".to_string(),
+            "sqs-messages:ChangeMessageVisibility".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -499,7 +499,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DeleteMessageBatch".to_string(),
+            "sqs-messages:DeleteMessageBatch".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -566,7 +566,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PurgeQueue".to_string(),
+            "sqs-messages:PurgeQueue".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -606,7 +606,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "CreateDLQ".to_string(),
+            "sqs-dlq:CreateDLQ".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -647,7 +647,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "SetRedrivePolicy".to_string(),
+            "sqs-dlq:SetRedrivePolicy".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -690,7 +690,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetRedrivePolicy".to_string(),
+            "sqs-dlq:GetRedrivePolicy".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -722,7 +722,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "CreateFifoQueue".to_string(),
+            "sqs-fifo:CreateFifoQueue".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -755,7 +755,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "SendFifoMessage".to_string(),
+            "sqs-fifo:SendFifoMessage".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -783,7 +783,7 @@ impl ServiceGroup for SqsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ReceiveFifoMessage".to_string(),
+            "sqs-fifo:ReceiveFifoMessage".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {

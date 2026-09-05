@@ -34,7 +34,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "CreateTable".to_string(),
+            "dynamodb-tables:CreateTable".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -89,7 +89,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DescribeTable".to_string(),
+            "dynamodb-tables:DescribeTable".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -119,7 +119,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ListTables".to_string(),
+            "dynamodb-tables:ListTables".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -143,7 +143,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "UpdateTable".to_string(),
+            "dynamodb-tables:UpdateTable".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -192,7 +192,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DeleteTable".to_string(),
+            "dynamodb-tables:DeleteTable".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -228,7 +228,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutItem".to_string(),
+            "dynamodb-items:PutItem".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -277,7 +277,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetItem".to_string(),
+            "dynamodb-items:GetItem".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -313,7 +313,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "UpdateItem".to_string(),
+            "dynamodb-items:UpdateItem".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -361,7 +361,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutItemConditionFail".to_string(),
+            "dynamodb-items:PutItemConditionFail".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -405,7 +405,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DeleteItem".to_string(),
+            "dynamodb-items:DeleteItem".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -443,7 +443,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "Query".to_string(),
+            "dynamodb-query:Query".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -480,7 +480,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "QueryWithFilterExpression".to_string(),
+            "dynamodb-query:QueryWithFilterExpression".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -513,7 +513,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "QueryWithLimit".to_string(),
+            "dynamodb-query:QueryWithLimit".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -550,7 +550,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "QueryPagination".to_string(),
+            "dynamodb-query:QueryPagination".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -603,7 +603,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "Scan".to_string(),
+            "dynamodb-query:Scan".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -630,7 +630,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ScanWithFilter".to_string(),
+            "dynamodb-query:ScanWithFilter".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -670,7 +670,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "BatchWriteItem".to_string(),
+            "dynamodb-batch:BatchWriteItem".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -713,7 +713,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "BatchGetItem".to_string(),
+            "dynamodb-batch:BatchGetItem".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -756,7 +756,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "TransactWriteItems".to_string(),
+            "dynamodb-txn:TransactWriteItems".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -815,7 +815,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "TransactGetItems".to_string(),
+            "dynamodb-txn:TransactGetItems".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -855,7 +855,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "TransactWriteConditionFail".to_string(),
+            "dynamodb-txn:TransactWriteConditionFail".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -906,7 +906,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "UpdateTimeToLive".to_string(),
+            "dynamodb-ttl:UpdateTimeToLive".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -945,7 +945,7 @@ impl ServiceGroup for DynamoDbGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DescribeTimeToLive".to_string(),
+            "dynamodb-ttl:DescribeTimeToLive".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {

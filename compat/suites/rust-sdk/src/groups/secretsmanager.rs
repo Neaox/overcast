@@ -42,7 +42,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "CreateSecret".to_string(),
+            "secretsmanager-crud:CreateSecret".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -73,7 +73,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetSecretValue".to_string(),
+            "secretsmanager-crud:GetSecretValue".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -102,7 +102,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DescribeSecret".to_string(),
+            "secretsmanager-crud:DescribeSecret".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -126,7 +126,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutSecretValue".to_string(),
+            "secretsmanager-crud:PutSecretValue".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -151,7 +151,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ListSecretVersionIds".to_string(),
+            "secretsmanager-crud:ListSecretVersionIds".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -174,7 +174,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "UpdateSecret".to_string(),
+            "secretsmanager-crud:UpdateSecret".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -291,7 +291,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetRandomPassword".to_string(),
+            "secretsmanager-crud:GetRandomPassword".to_string(),
             Arc::new(move |_ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -317,7 +317,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "BatchGetSecretValue".to_string(),
+            "secretsmanager-crud:BatchGetSecretValue".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -347,7 +347,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ListSecrets".to_string(),
+            "secretsmanager-crud:ListSecrets".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -377,7 +377,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DeleteSecret".to_string(),
+            "secretsmanager-crud:DeleteSecret".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -414,7 +414,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "RotateSecretWithoutLambda".to_string(),
+            "secretsmanager-rotate:RotateSecretWithoutLambda".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -455,7 +455,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "RotateSecret".to_string(),
+            "secretsmanager-rotate:RotateSecret".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -507,7 +507,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutSecretValuePending".to_string(),
+            "secretsmanager-rotate:PutSecretValuePending".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -562,7 +562,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetSecretValueByStage".to_string(),
+            "secretsmanager-rotate:GetSecretValueByStage".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -587,7 +587,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "UpdateSecretVersionStage".to_string(),
+            "secretsmanager-rotate:UpdateSecretVersionStage".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -665,7 +665,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "CancelRotateSecret".to_string(),
+            "secretsmanager-rotate:CancelRotateSecret".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -717,7 +717,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ValidateResourcePolicy".to_string(),
+            "secretsmanager-policy:ValidateResourcePolicy".to_string(),
             Arc::new(move |_ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -760,7 +760,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutResourcePolicy".to_string(),
+            "secretsmanager-policy:PutResourcePolicy".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -793,7 +793,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetResourcePolicy".to_string(),
+            "secretsmanager-policy:GetResourcePolicy".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -822,7 +822,7 @@ impl ServiceGroup for SecretsManagerGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DeleteResourcePolicy".to_string(),
+            "secretsmanager-policy:DeleteResourcePolicy".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {

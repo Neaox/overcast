@@ -29,7 +29,7 @@ impl ServiceGroup for SsmGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutParameter".to_string(),
+            "ssm-parameters:PutParameter".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -65,7 +65,7 @@ impl ServiceGroup for SsmGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetParameter".to_string(),
+            "ssm-parameters:GetParameter".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -96,7 +96,7 @@ impl ServiceGroup for SsmGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutParameterOverwrite".to_string(),
+            "ssm-parameters:PutParameterOverwrite".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -137,7 +137,7 @@ impl ServiceGroup for SsmGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetParameterHistory".to_string(),
+            "ssm-parameters:GetParameterHistory".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -165,7 +165,7 @@ impl ServiceGroup for SsmGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutMultipleParameters".to_string(),
+            "ssm-parameters:PutMultipleParameters".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -213,7 +213,7 @@ impl ServiceGroup for SsmGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetParameters".to_string(),
+            "ssm-parameters:GetParameters".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -245,7 +245,7 @@ impl ServiceGroup for SsmGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DescribeParameters".to_string(),
+            "ssm-parameters:DescribeParameters".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -272,7 +272,7 @@ impl ServiceGroup for SsmGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "TagParameter".to_string(),
+            "ssm-parameters:TagParameter".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -306,7 +306,7 @@ impl ServiceGroup for SsmGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ListSSMTagsForResource".to_string(),
+            "ssm-parameters:ListSSMTagsForResource".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -330,7 +330,7 @@ impl ServiceGroup for SsmGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DeleteParameters".to_string(),
+            "ssm-parameters:DeleteParameters".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -379,7 +379,7 @@ impl ServiceGroup for SsmGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PutSecureStringParameter".to_string(),
+            "ssm-secure:PutSecureStringParameter".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -416,7 +416,7 @@ impl ServiceGroup for SsmGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetSecureStringParameter".to_string(),
+            "ssm-secure:GetSecureStringParameter".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -448,7 +448,7 @@ impl ServiceGroup for SsmGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetSecureStringWithoutDecryption".to_string(),
+            "ssm-secure:GetSecureStringWithoutDecryption".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -484,7 +484,7 @@ impl ServiceGroup for SsmGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetParametersByPath".to_string(),
+            "ssm-path:GetParametersByPath".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -508,7 +508,7 @@ impl ServiceGroup for SsmGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetParametersByPathRecursive".to_string(),
+            "ssm-path:GetParametersByPathRecursive".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -537,7 +537,7 @@ impl ServiceGroup for SsmGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetParametersByPathPaginated".to_string(),
+            "ssm-path:GetParametersByPathPaginated".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {

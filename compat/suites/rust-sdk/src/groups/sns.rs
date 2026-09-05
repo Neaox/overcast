@@ -30,7 +30,7 @@ impl ServiceGroup for SnsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "CreateTopic".to_string(),
+            "sns-topics:CreateTopic".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -58,7 +58,7 @@ impl ServiceGroup for SnsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ListTopics".to_string(),
+            "sns-topics:ListTopics".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -87,7 +87,7 @@ impl ServiceGroup for SnsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetTopicAttributes".to_string(),
+            "sns-topics:GetTopicAttributes".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -115,7 +115,7 @@ impl ServiceGroup for SnsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "SetTopicAttributes".to_string(),
+            "sns-topics:SetTopicAttributes".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -155,7 +155,7 @@ impl ServiceGroup for SnsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "DeleteTopic".to_string(),
+            "sns-topics:DeleteTopic".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -191,7 +191,7 @@ impl ServiceGroup for SnsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "Publish".to_string(),
+            "sns-publish:Publish".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -219,7 +219,7 @@ impl ServiceGroup for SnsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PublishWithAttributes".to_string(),
+            "sns-publish:PublishWithAttributes".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -266,7 +266,7 @@ impl ServiceGroup for SnsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PublishBatch".to_string(),
+            "sns-publish:PublishBatch".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -305,7 +305,7 @@ impl ServiceGroup for SnsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "SubscribeSQS".to_string(),
+            "sns-subscriptions:SubscribeSQS".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -353,7 +353,7 @@ impl ServiceGroup for SnsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "ListSubscriptionsByTopic".to_string(),
+            "sns-subscriptions:ListSubscriptionsByTopic".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -378,7 +378,7 @@ impl ServiceGroup for SnsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "GetSubscriptionAttributes".to_string(),
+            "sns-subscriptions:GetSubscriptionAttributes".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -408,7 +408,7 @@ impl ServiceGroup for SnsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "PublishDeliveredToSQS".to_string(),
+            "sns-subscriptions:PublishDeliveredToSQS".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -448,7 +448,7 @@ impl ServiceGroup for SnsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "SetSubscriptionAttributes".to_string(),
+            "sns-subscriptions:SetSubscriptionAttributes".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
@@ -487,7 +487,7 @@ impl ServiceGroup for SnsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
-            "Unsubscribe".to_string(),
+            "sns-subscriptions:Unsubscribe".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
                 Box::pin(async move {
