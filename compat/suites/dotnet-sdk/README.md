@@ -1,32 +1,183 @@
-# compat/suites/dotnet-sdk — .NET (AWS SDK .NET v3)
+# dotnet-sdk suite
 
-> **Status: planned.** This suite does not run yet. See the parent
-> [compat/README.md](../../README.md) for the roadmap.
+Runs the Overcast AWS compatibility matrix using the **AWS SDK for .NET v4**
+(.NET 8, C# 12, published as a self-contained console app).
 
-Explicitly listed in the Overcast project goals: *"Works with all official AWS
-SDK clients (Go, JS/TS, Python, Java, **.NET**) without changes."*
+> **Status: implemented.** See [AGENTS.md](AGENTS.md) for code conventions.
 
-## What this suite will cover
+Explicitly listed in the Overcast project goals: *"Works with all official
+AWS SDK clients (Go, JS/TS, Python, Java, **.NET**) without changes."*
 
-- All services already tested by `node-js-sdk`, cross-validated with the .NET SDK
-- .NET-specific patterns (async/await, pagination with `AmazonS3Client.PaginateListObjectsV2`, etc.)
+Tests cover every AWS service the registry declares — including ones not yet
+implemented in Overcast. Failures on unimplemented services are expected and
+are the coverage metric, not a problem to fix.
+
+---
+
+## What it covers
+
+Every operation the suite's service groups register, cross-validated with the
+AWS SDK for .NET v4's async clients: S3, SQS, DynamoDB, SNS, Lambda, STS, KMS,
+Secrets Manager, SSM, IAM and EventBridge — see `ServiceGroups.All()` for the
+authoritative, registration-order list. This is a smaller service set than
+`java-sdk` or `go-sdk` cover today; a group this suite has not implemented
+yet is recorded as parity debt (see
+[compat/AGENTS.md § Uniformity](../../AGENTS.md#2-uniformity--the-registry-is-the-contract)),
+not silently skipped.
+
+The suite also loads [compat/suites/registry.generated.json](../registry.generated.json):
+a group marked there for `dotnet-sdk` is executed through a `ScenarioBackend`
+rather than a hand-written method. No backend is wired in yet, so a generated
+group scoped to this suite currently fails loudly (naming the group) instead
+of silently skipping — see [AGENTS.md § Generated groups](AGENTS.md#generated-groups-and-the-scenariobackend-hook).
 
 ## Prerequisites
 
-- .NET 8+ SDK (`dotnet`)
-- Overcast running on `http://localhost:4566`
+- .NET 8 SDK (`dotnet`) — verified here against SDK `8.0.424`
+- Docker, only for the "via Docker" and "via the Go CLI" paths
+- Overcast running somewhere reachable — see [compat/AGENTS.md § Running a session](../../AGENTS.md#running-a-session--ports-are-chosen-never-assumed)
+  for why `4566`/`4567` are off-limits for a test instance you start yourself
+
+---
+
+## Running the suite
+
+### Locally (.NET 8 SDK required)
+
+```bash
+cd compat/suites/dotnet-sdk
+dotnet build OvercastCompat.csproj -c Release
+
+# Start Overcast first (separate terminal), e.g.:
+#   go run ./cmd/overcast -- serve
+
+OVERCAST_ENDPOINT=http://localhost:4566 dotnet bin/Release/net8.0/OvercastCompat.dll
+```
+
+PowerShell:
+
+```powershell
+cd compat/suites/dotnet-sdk
+dotnet build OvercastCompat.csproj -c Release
+
+$env:OVERCAST_ENDPOINT = "http://localhost:4566"
+dotnet bin/Release/net8.0/OvercastCompat.dll
+```
+
+`Tests/OvercastCompat.Tests.csproj` is a separate xunit project (added in
+[#1697](https://github.com/overcast-sh/overcast/pull/1697)) holding the
+registry-loader registration tests — it never talks to a live Overcast
+instance:
+
+```bash
+dotnet test Tests/OvercastCompat.Tests.csproj -c Release
+```
+
+### Via Docker (no local .NET SDK required)
+
+This suite ships its own image. The **build context is `compat/suites/`**,
+not this directory, because the image also copies in the shared
+`compat/suites/registry.json` (see [compat/AGENTS.md § Running suites](../../AGENTS.md#running-suites-docker--ci)):
+
+```bash
+docker build -f compat/suites/dotnet-sdk/Dockerfile -t oc-dotnet-sdk-compat compat/suites
+docker run --rm --network host \
+  -e OVERCAST_ENDPOINT=http://localhost:4566 \
+  oc-dotnet-sdk-compat
+```
+
+On Docker Desktop (verified here on Windows; macOS runs the same
+Linux-VM architecture and is expected to behave the same way),
+`--network host` does not share the host's network stack the way it does on
+native Linux, so a container cannot reach an Overcast process listening on
+the host's `localhost` this way — point it at `host.docker.internal` instead:
+
+```bash
+docker run --rm \
+  -e OVERCAST_ENDPOINT=http://host.docker.internal:4566 \
+  oc-dotnet-sdk-compat
+```
+
+`run.sh` (used by the paths below) already picks the right network mode when
+it runs *inside* a container itself; this distinction only matters when you
+invoke Docker by hand from a Windows or macOS shell.
+
+### Via the Go CLI (recommended — runs all suites, or just this one)
+
+```bash
+# Starts its own Overcast instance on a free port and stops it afterwards:
+go run ./cmd/compat
+# or just this suite:
+go run ./cmd/compat --suite dotnet-sdk
+# or against an instance you are already running:
+go run ./cmd/compat --endpoint http://localhost:4566 --suite dotnet-sdk
+```
+
+This is what CI runs. `cmd/compat` invokes `sh run.sh` for this suite (see
+[compat/AGENTS.md § Running suites](../../AGENTS.md#running-suites-docker--ci)),
+which builds the image above — tagged by a content hash of the sources so it
+rebuilds only when they change — and runs it, choosing the network mode for
+you.
+
+---
 
 ## Environment variables
 
-| Variable                  | Default                    | Description          |
-| ------------------------- | -------------------------- | -------------------- |
-| `OVERCAST_ENDPOINT`       | `http://localhost:4566`    | Emulator endpoint    |
-| `AWS_ACCESS_KEY_ID`       | `test`                     | Fake credentials     |
-| `AWS_SECRET_ACCESS_KEY`   | `test`                     | Fake credentials     |
-| `AWS_DEFAULT_REGION`      | `us-east-1`                | AWS region           |
+| Variable                        | Default                 | Description                                                                     |
+| -------------------------------- | ------------------------ | -------------------------------------------------------------------------------- |
+| `OVERCAST_ENDPOINT`              | `http://localhost:4566` | Overcast base URL                                                                |
+| `OVERCAST_DEFAULT_REGION`        | `us-east-1`              | AWS region advertised to the SDK                                                 |
+| `OVERCAST_REGISTRY_PATH`         | `../registry.json`\*    | Override path to `registry.json`. The Docker image sets this to `/registry.json` |
+| `OVERCAST_COMPAT_RUN_ID`         | `local`                  | Prefix for resource names, so concurrent runs and the orphan sweep don't collide |
+| `OVERCAST_COMPAT_SKIP_DOCKER`    | unset                    | Set to `1` to drop the `docker` capability, skipping every test the registry marks `requires: [docker]` |
+| `OVERCAST_COMPAT_SERVICE`        | unset (all)              | Single AWS service name to run, e.g. `s3`                                       |
+| `OVERCAST_COMPAT_GROUPS`         | unset (all)              | Comma-separated group names to run                                              |
+| `OVERCAST_COMPAT_TESTS`          | unset (all)              | Comma-separated test names to run within those groups                           |
+| `OVERCAST_COMPAT_TEST_PAIRS`     | unset (all)              | Comma-separated `group:test` pairs to run — the exact-pair filter `java-sdk` does not have |
+| `OVERCAST_COMPAT_PARALLEL_SLOTS` | `8`                      | Max groups run concurrently                                                     |
+| `OVERCAST_COMPAT_INTERACTIVE`    | unset                    | Set to `1` to run the interactive command protocol instead of one batch run      |
 
-## Wire format
+\* `Program.cs` resolves `registry.json` relative to the process working
+directory unless `OVERCAST_REGISTRY_PATH` is set; running from
+`compat/suites/dotnet-sdk/` finds it at `../registry.json`.
 
-This suite must emit NDJSON to stdout matching the format documented in
-[compat/README.md](../../README.md#wire-format-ndjson). See the `node-js-sdk`
-suite for a reference implementation.
+---
+
+## Architecture
+
+```
+dotnet-sdk/
+  Dockerfile               ← .NET SDK build stage (also runs the Tests/ project) + runtime stage
+  run.sh                   ← builds/runs the Dockerfile; what cmd/compat invokes in CI
+  OvercastCompat.csproj    ← AWSSDK.* NuGet references; OutputType=Exe
+  Program.cs               ← top-level statement entry point: wires clients, merges impls, runs
+  README.md                ← you are here
+
+  Harness/
+    TestContext.cs         ← per-group state bag (endpoint, region, runId, log)
+    TestTypes.cs            ← TestFn/SetupFn delegates, TestCase/TestGroup records
+    Runner.cs               ← runs groups (bounded concurrency), emits NDJSON to stdout
+    InteractiveRunner.cs    ← the OVERCAST_COMPAT_INTERACTIVE command protocol
+    Assertions.cs           ← assertion helpers that throw InvalidOperationException with context
+
+  Clients/
+    AwsClients.cs           ← lazily-initialised, per-service AWS SDK client factory
+
+  Registry/
+    RegistryLoader.cs       ← loads registry.json + registry.generated.json, builds TestGroups;
+                               also declares the ScenarioBackend delegate
+
+  Groups/
+    IServiceGroup.cs        ← the interface every group class implements
+    ServiceGroups.cs        ← ServiceGroups.All(clients) — every group, in registration order
+    S3Group.cs, SqsGroup.cs, DynamoDbGroup.cs, …  ← one class per AWS service
+
+  Tests/
+    OvercastCompat.Tests.csproj ← separate xunit project (added in #1697)
+    RegistrationTests.cs        ← this suite's own registrations vs. real registry.json
+    GeneratedRegistryTests.cs   ← registry.generated.json loading + ScenarioBackend resolution
+```
+
+**One file per AWS service.** Never split a service across multiple group
+files or merge two services into one file. See [AGENTS.md](AGENTS.md) for the
+exact shape and how to add one.

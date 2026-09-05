@@ -610,12 +610,12 @@ Current suite AGENTS.md files (implemented suites):
 - [suites/cli/AGENTS.md](suites/cli/AGENTS.md)
 - [suites/go-sdk/AGENTS.md](suites/go-sdk/AGENTS.md)
 - [suites/python-sdk/AGENTS.md](suites/python-sdk/AGENTS.md)
+- [suites/java-sdk/AGENTS.md](suites/java-sdk/AGENTS.md)
+- [suites/dotnet-sdk/AGENTS.md](suites/dotnet-sdk/AGENTS.md)
 
 Planned suite AGENTS.md files (implementation guide for agents building each suite):
 
 - [suites/cdk/AGENTS.md](suites/cdk/AGENTS.md)
-- [suites/dotnet-sdk/AGENTS.md](suites/dotnet-sdk/AGENTS.md)
-- [suites/java-sdk/AGENTS.md](suites/java-sdk/AGENTS.md)
 - [suites/pulumi/AGENTS.md](suites/pulumi/AGENTS.md)
 - [suites/rust-sdk/AGENTS.md](suites/rust-sdk/AGENTS.md)
 - [suites/terraform/AGENTS.md](suites/terraform/AGENTS.md)
