@@ -93,12 +93,12 @@ tags:
 
 ### Dynamic references
 
-| Operation                    | Status         | Notes                                                                   | AWS Docs                                                                                                                         |
-| ---------------------------- | -------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `{{resolve:secretsmanager}}` | ✅ Supported   | Secret by name or ARN; JSON key, version stage and version ID selectors | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-secretsmanager) |
-| `{{resolve:ssm}}`            | ✅ Supported   | Plaintext parameter; an explicit version resolves to the current value  | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-ssm)            |
-| `{{resolve:ssm-secure}}`     | ✅ Supported   | Read with decryption; an explicit version resolves to the current value | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-ssm-secure)     |
-| `{{resolve:s3}}`             | ❌ Unsupported | Not resolved; fails the resource that uses it                           | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html)                                   |
+| Operation                    | Status         | Notes                                                                                                          | AWS Docs                                                                                                                         |
+| ---------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `{{resolve:secretsmanager}}` | ✅ Supported   | Secret by name or ARN; JSON key, version stage and version ID selectors                                        | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-secretsmanager) |
+| `{{resolve:ssm}}`            | ✅ Supported   | Plaintext parameter; an explicit version resolves to the current value                                         | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-ssm)            |
+| `{{resolve:ssm-secure}}`     | ✅ Supported   | Read with decryption, in the properties AWS enumerates only; an explicit version resolves to the current value | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-ssm-secure)     |
+| `{{resolve:s3}}`             | ❌ Unsupported | Not resolved; fails the resource that uses it                                                                  | [docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html)                                   |
 
 ### Resource types
 

@@ -108,26 +108,49 @@ func splitRefFields(payload string) []string {
 
 // ── Expansion ──────────────────────────────────────────────────────────────
 
-// expandDynamicRefs walks an already-resolved value and replaces every dynamic
-// reference in every string it holds. References that cannot be resolved are
-// left in place and recorded on the context; the provisioner turns that into a
-// resource failure rather than letting the literal text be persisted.
-func expandDynamicRefs(v any, ctx *resolveContext) any {
+// propertyPathDepth is the property nesting the path buffer covers without
+// growing. Nothing CDK emits comes close: the deepest AWS property type here
+// is an ECS container definition's log configuration, at four.
+const propertyPathDepth = 8
+
+// expandDynamicRefs walks resType's already-resolved properties and replaces
+// every dynamic reference in every string they hold. References that cannot be
+// resolved are left in place and recorded on the context; the provisioner turns
+// that into a resource failure rather than letting the literal text be
+// persisted.
+//
+// The walk carries the property path it is at, because {{resolve:ssm-secure}}
+// is allowed only in the properties AWS enumerates and the enumeration is by
+// path (see dynamic_refs_ssm_secure.go). The path costs one slice append per
+// map key — the buffer is stack-allocated here and reused down the whole walk —
+// and is rendered into a string only for a reference that is actually refused,
+// which matters because every property of every resource of every template
+// comes through this function.
+func expandDynamicRefs(resType string, v any, ctx *resolveContext) any {
+	var buf [propertyPathDepth]string
+	return expandDynamicRefsAt(resType, buf[:0], v, ctx)
+}
+
+// expandDynamicRefsAt is expandDynamicRefs at one point in the property tree.
+func expandDynamicRefsAt(resType string, path []string, v any, ctx *resolveContext) any {
 	switch val := v.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(val))
 		for k, item := range val {
-			out[k] = expandDynamicRefs(item, ctx)
+			out[k] = expandDynamicRefsAt(resType, append(path, k), item, ctx)
 		}
 		return out
 	case []any:
 		out := make([]any, len(val))
 		for i, item := range val {
-			out[i] = expandDynamicRefs(item, ctx)
+			// A list index is not part of the path: every element of a list
+			// property is the same property, and AWS reports the path without
+			// indices too.
+			out[i] = expandDynamicRefsAt(resType, path, item, ctx)
 		}
 		return out
 	case string:
-		return ctx.expandDynamicRefsInString(val)
+		return ctx.expandDynamicRefsInString(resType, path, val)
 	default:
 		return v
 	}
@@ -135,7 +158,8 @@ func expandDynamicRefs(v any, ctx *resolveContext) any {
 
 // expandDynamicRefsInString substitutes every dynamic reference in one string.
 // A reference may be embedded in surrounding text and a string may hold several.
-func (c *resolveContext) expandDynamicRefsInString(s string) string {
+// resType and path say where the string sits, for the ssm-secure restriction.
+func (c *resolveContext) expandDynamicRefsInString(resType string, path []string, s string) string {
 	if c == nil || !strings.Contains(s, "{{resolve:") {
 		return s
 	}
@@ -143,6 +167,12 @@ func (c *resolveContext) expandDynamicRefsInString(s string) string {
 		ref, ok := parseDynamicRef(raw)
 		if !ok {
 			c.recordDynamicRefErr(fmt.Errorf("malformed dynamic reference %s", raw))
+			return raw
+		}
+		// Checked before the resolver is asked, so a refused reference never
+		// decrypts the secure string it names.
+		if ref.Service == "ssm-secure" && !ssmSecureAllowedAt(resType, path) {
+			c.recordDynamicRefErr(ssmSecureNotSupportedErr(ref, resType, path))
 			return raw
 		}
 		if c.DynamicRef == nil {
@@ -222,11 +252,17 @@ func rejectSecureCustomResourceRefs(props map[string]any) error {
 // Used for both ResourceProperties and OldResourceProperties so an update
 // whose properties did not change produces the same value on both sides of
 // the payload — see customResourceHandler.Update.
+//
+// The resource type is not passed on to the expansion, and does not need to
+// be: the only thing it decides there is where ssm-secure is allowed, and
+// rejectSecureCustomResourceRefs has already refused every ssm-secure
+// reference in the tree. An empty type allows none, so a reference that
+// somehow reached the walk would be refused rather than resolved.
 func expandCustomResourceProperties(recorded map[string]any, rCtx *resolveContext) (map[string]any, error) {
 	if err := rejectSecureCustomResourceRefs(recorded); err != nil {
 		return recorded, err
 	}
-	return expandRecordedProperties(recorded, rCtx)
+	return expandRecordedProperties("", recorded, rCtx)
 }
 
 // expandResourceProperties resolves the dynamic references in a resource's
@@ -237,7 +273,7 @@ func expandResourceProperties(resType string, recorded map[string]any, rCtx *res
 	if isCustomResourceType(resType) {
 		return expandCustomResourceProperties(recorded, rCtx)
 	}
-	return expandRecordedProperties(recorded, rCtx)
+	return expandRecordedProperties(resType, recorded, rCtx)
 }
 
 // recordDynamicRefErr keeps the first failure. The first one is the one worth

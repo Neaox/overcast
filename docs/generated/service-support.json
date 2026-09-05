@@ -5289,7 +5289,7 @@
           "operation": "{{resolve:ssm-secure}}",
           "category": "Dynamic references",
           "status": "✅ Supported",
-          "notes": "Read with decryption; an explicit version resolves to the current value",
+          "notes": "Read with decryption, in the properties AWS enumerates only; an explicit version resolves to the current value",
           "docs_url": "[docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-ssm-secure)",
           "doc_only": true
         },

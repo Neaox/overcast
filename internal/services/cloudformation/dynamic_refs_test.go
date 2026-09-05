@@ -154,7 +154,7 @@ func TestExpandDynamicRefs_replacesReferencesThroughoutAPropertiesTree(t *testin
 		"Description": "database {{resolve:ssm:/db/name}} for {{resolve:ssm:/db/engine}}",
 	}
 
-	got, ok := expandDynamicRefs(props, ctx).(map[string]any)
+	got, ok := expandDynamicRefs("AWS::RDS::DBInstance", props, ctx).(map[string]any)
 	if !ok {
 		t.Fatal("expandDynamicRefs did not return a map")
 	}
@@ -190,7 +190,7 @@ func TestExpandDynamicRefs_resolvedValueIsNotRescanned(t *testing.T) {
 		"{{resolve:ssm:/outer}}": "{{resolve:ssm:/inner}}",
 	})
 
-	got := expandDynamicRefs("{{resolve:ssm:/outer}}", ctx)
+	got := expandDynamicRefs("AWS::RDS::DBInstance", "{{resolve:ssm:/outer}}", ctx)
 
 	if got != "{{resolve:ssm:/inner}}" {
 		t.Errorf("expandDynamicRefs = %v, want the resolved value left alone", got)
@@ -206,7 +206,7 @@ func TestExpandDynamicRefs_resolvedValueIsNotRescanned(t *testing.T) {
 func TestExpandDynamicRefs_unresolvableReferenceIsRecorded(t *testing.T) {
 	ctx := stubRefCtx(nil)
 
-	got := expandDynamicRefs(map[string]any{"MasterUsername": arnRef}, ctx).(map[string]any)
+	got := expandDynamicRefs("AWS::RDS::DBInstance", map[string]any{"MasterUsername": arnRef}, ctx).(map[string]any)
 
 	if got["MasterUsername"] != arnRef {
 		t.Errorf("MasterUsername = %v, want the reference left in place for the failed resource", got["MasterUsername"])
@@ -233,7 +233,7 @@ func TestExpandDynamicRefs_firstFailureIsTheOneReported(t *testing.T) {
 		},
 	}
 
-	expandDynamicRefs([]any{"{{resolve:ssm:/first}}", "{{resolve:ssm:/second}}"}, ctx)
+	expandDynamicRefs("AWS::RDS::DBInstance", []any{"{{resolve:ssm:/first}}", "{{resolve:ssm:/second}}"}, ctx)
 
 	err := ctx.takeDynamicRefErr()
 	if err == nil || !strings.Contains(err.Error(), "/first") {
@@ -246,7 +246,7 @@ func TestExpandDynamicRefs_firstFailureIsTheOneReported(t *testing.T) {
 func TestExpandDynamicRefs_missingResolverIsAnError(t *testing.T) {
 	ctx := &resolveContext{}
 
-	got := expandDynamicRefs("{{resolve:ssm:/app/tier}}", ctx)
+	got := expandDynamicRefs("AWS::RDS::DBInstance", "{{resolve:ssm:/app/tier}}", ctx)
 
 	if got != "{{resolve:ssm:/app/tier}}" {
 		t.Errorf("expandDynamicRefs = %v, want the reference unchanged", got)
@@ -261,7 +261,7 @@ func TestExpandDynamicRefs_missingResolverIsAnError(t *testing.T) {
 func TestExpandDynamicRefs_leavesOrdinaryStringsAlone(t *testing.T) {
 	ctx := stubRefCtx(nil)
 	for _, s := range []string{"", "admin", "{{notresolve}}", "arn:aws:s3:::bucket"} {
-		if got := expandDynamicRefs(s, ctx); got != s {
+		if got := expandDynamicRefs("AWS::RDS::DBInstance", s, ctx); got != s {
 			t.Errorf("expandDynamicRefs(%q) = %v, want it unchanged", s, got)
 		}
 	}
@@ -297,7 +297,7 @@ func TestResolveAllProperties_leavesDynamicReferencesForTheSeparateExpansionPass
 			recorded["MasterUsername"], ref)
 	}
 
-	expanded, _ := expandDynamicRefs(recorded, ctx).(map[string]any)
+	expanded, _ := expandDynamicRefs("AWS::RDS::DBInstance", recorded, ctx).(map[string]any)
 	if err := ctx.takeDynamicRefErr(); err != nil {
 		t.Fatalf("unexpected expansion failure: %v", err)
 	}
@@ -457,4 +457,164 @@ func TestExpandResourceProperties_routesByResourceType(t *testing.T) {
 			t.Errorf("Password = %v, want the resolved secret", got["Password"])
 		}
 	})
+}
+
+// ── ssm-secure property allowlist (issue #605) ────────────────────────────
+//
+// AWS: "Secure strings can only be used for resource properties that support
+// the ssm-secure dynamic reference pattern."
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references-ssm-secure-strings.html
+
+func TestPropertyPathIs(t *testing.T) {
+	for _, tc := range []struct {
+		path []string
+		want string
+		ok   bool
+	}{
+		{[]string{"MasterUserPassword"}, "MasterUserPassword", true},
+		{[]string{"LoginProfile", "Password"}, "LoginProfile/Password", true},
+		{[]string{"RdsDbInstances", "DbPassword"}, "RdsDbInstances/DbPassword", true},
+		// A prefix of a segment is not the segment.
+		{[]string{"MasterUserPasswordX"}, "MasterUserPassword", false},
+		{[]string{"MasterUser"}, "MasterUserPassword", false},
+		// Depth has to match in both directions.
+		{[]string{"LoginProfile"}, "LoginProfile/Password", false},
+		{[]string{"LoginProfile", "Password", "Extra"}, "LoginProfile/Password", false},
+		{[]string{"Password"}, "LoginProfile/Password", false},
+		// A value that is not inside any property matches nothing.
+		{nil, "Password", false},
+	} {
+		if got := propertyPathIs(tc.path, tc.want); got != tc.ok {
+			t.Errorf("propertyPathIs(%q, %q) = %v, want %v", tc.path, tc.want, got, tc.ok)
+		}
+	}
+}
+
+func TestExpandDynamicRefs_ssmSecureIsRefusedOutsideTheAllowlist(t *testing.T) {
+	// Given: a resolver that fails the test if it is asked for anything — a
+	// refused reference must not decrypt the parameter it names.
+	ctx := &resolveContext{
+		DynamicRef: func(ref dynamicRef) (string, error) {
+			t.Fatalf("resolver invoked for %s — a refused reference must not be read", ref.Raw)
+			return "", nil
+		},
+	}
+	const ref = "{{resolve:ssm-secure:/app/queue-name}}"
+
+	// When: the reference sits in a property AWS does not allow it in.
+	got := expandDynamicRefs("AWS::SQS::Queue", map[string]any{"QueueName": ref}, ctx).(map[string]any)
+
+	// Then: the reference is left in place and the failure names it, the
+	// property path, and AWS's own wording.
+	if got["QueueName"] != ref {
+		t.Errorf("QueueName = %v, want the reference left in place for the failed resource", got["QueueName"])
+	}
+	err := ctx.takeDynamicRefErr()
+	if err == nil {
+		t.Fatal("no error recorded for an ssm-secure reference outside the allowlist")
+	}
+	for _, want := range []string{ref, "SSM Secure reference is not supported in: [AWS::SQS::Queue/Properties/QueueName]"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want it to contain %q", err, want)
+		}
+	}
+}
+
+// Every row of AWS's table, at the exact path it names.
+func TestExpandDynamicRefs_ssmSecureResolvesInEveryAllowedProperty(t *testing.T) {
+	const ref = "{{resolve:ssm-secure:/app/secret}}"
+	for _, tc := range []struct {
+		resType string
+		props   map[string]any
+		at      []string
+	}{
+		{"AWS::DirectoryService::MicrosoftAD", map[string]any{"Password": ref}, []string{"Password"}},
+		{"AWS::DirectoryService::SimpleAD", map[string]any{"Password": ref}, []string{"Password"}},
+		{"AWS::ElastiCache::ReplicationGroup", map[string]any{"AuthToken": ref}, []string{"AuthToken"}},
+		{"AWS::IAM::User", map[string]any{"LoginProfile": map[string]any{"Password": ref}}, []string{"LoginProfile", "Password"}},
+		{"AWS::KinesisFirehose::DeliveryStream",
+			map[string]any{"RedshiftDestinationConfiguration": map[string]any{"Password": ref}},
+			[]string{"RedshiftDestinationConfiguration", "Password"}},
+		{"AWS::OpsWorks::App", map[string]any{"Source": map[string]any{"Password": ref}}, []string{"Source", "Password"}},
+		{"AWS::OpsWorks::Stack",
+			map[string]any{"CustomCookbooksSource": map[string]any{"Password": ref}},
+			[]string{"CustomCookbooksSource", "Password"}},
+		// A list property: every element is the same property, so the index is
+		// not part of the path.
+		{"AWS::OpsWorks::Stack",
+			map[string]any{"RdsDbInstances": []any{
+				map[string]any{"DbUser": "appuser"},
+				map[string]any{"DbPassword": ref},
+			}},
+			[]string{"RdsDbInstances", "DbPassword"}},
+		{"AWS::RDS::DBCluster", map[string]any{"MasterUserPassword": ref}, []string{"MasterUserPassword"}},
+		{"AWS::RDS::DBInstance", map[string]any{"MasterUserPassword": ref}, []string{"MasterUserPassword"}},
+		{"AWS::Redshift::Cluster", map[string]any{"MasterUserPassword": ref}, []string{"MasterUserPassword"}},
+	} {
+		t.Run(tc.resType+"/"+strings.Join(tc.at, "/"), func(t *testing.T) {
+			if !ssmSecureAllowedAt(tc.resType, tc.at) {
+				t.Fatalf("%s is not allowed at %q", tc.resType, tc.at)
+			}
+			ctx := stubRefCtx(map[string]string{ref: "s3cr3t"})
+			expandDynamicRefs(tc.resType, tc.props, ctx)
+			if err := ctx.takeDynamicRefErr(); err != nil {
+				t.Errorf("unexpected failure for an allowed property: %v", err)
+			}
+		})
+	}
+}
+
+// The same property name on the wrong resource type, and the right name at the
+// wrong depth, are both outside the allowlist.
+func TestExpandDynamicRefs_ssmSecureAllowlistIsKeyedByTypeAndPath(t *testing.T) {
+	const ref = "{{resolve:ssm-secure:/app/secret}}"
+	for _, tc := range []struct {
+		name    string
+		resType string
+		props   map[string]any
+	}{
+		{"allowed property name, wrong resource type", "AWS::SQS::Queue",
+			map[string]any{"MasterUserPassword": ref}},
+		{"allowed nested name, but at the top level", "AWS::IAM::User",
+			map[string]any{"Password": ref}},
+		{"allowed nested name, but under the wrong property", "AWS::IAM::User",
+			map[string]any{"Tags": []any{map[string]any{"Password": ref}}}},
+		{"unregistered resource type", "AWS::Unknown::Thing",
+			map[string]any{"Password": ref}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := stubRefCtx(map[string]string{ref: "s3cr3t"})
+			expandDynamicRefs(tc.resType, tc.props, ctx)
+			if err := ctx.takeDynamicRefErr(); err == nil {
+				t.Error("no error recorded for an ssm-secure reference outside the allowlist")
+			}
+		})
+	}
+}
+
+// The restriction is ssm-secure's alone. AWS: "The secretsmanager dynamic
+// reference can be used in all resource properties", and a plain ssm parameter
+// is plaintext.
+func TestExpandDynamicRefs_otherSchemesStayUnrestricted(t *testing.T) {
+	const (
+		secretRef = "{{resolve:secretsmanager:queue-name-secret}}"
+		ssmRef    = "{{resolve:ssm:/app/queue-name}}"
+	)
+	ctx := stubRefCtx(map[string]string{secretRef: "from-secret", ssmRef: "from-parameter"})
+
+	// The same property an ssm-secure reference is refused in.
+	got := expandDynamicRefs("AWS::SQS::Queue", map[string]any{
+		"QueueName": secretRef,
+		"Tags":      []any{map[string]any{"Key": "name", "Value": ssmRef}},
+	}, ctx).(map[string]any)
+
+	if err := ctx.takeDynamicRefErr(); err != nil {
+		t.Fatalf("unexpected failure: %v", err)
+	}
+	if got["QueueName"] != "from-secret" {
+		t.Errorf("QueueName = %v, want the resolved secret", got["QueueName"])
+	}
+	if tag := got["Tags"].([]any)[0].(map[string]any); tag["Value"] != "from-parameter" {
+		t.Errorf("Tags[0].Value = %v, want the resolved parameter", tag["Value"])
+	}
 }

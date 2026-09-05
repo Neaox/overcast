@@ -1351,11 +1351,14 @@ func (p *provisioner) resolveProperties(res TemplateResource, rCtx *resolveConte
 // CloudFormation has selected the containing resource for creation or update.
 // No-op stack updates therefore avoid both expansion work and secret reads.
 //
+// resType is the resource type the properties belong to, which decides where
+// an ssm-secure reference is allowed to appear; "" allows none.
+//
 // Callers that know they may be handling a custom resource should go through
 // expandResourceProperties instead, which routes a secure reference to a
 // rejection rather than resolving it.
-func expandRecordedProperties(recorded map[string]any, rCtx *resolveContext) (expanded map[string]any, err error) {
-	expanded, _ = expandDynamicRefs(recorded, rCtx).(map[string]any)
+func expandRecordedProperties(resType string, recorded map[string]any, rCtx *resolveContext) (expanded map[string]any, err error) {
+	expanded, _ = expandDynamicRefs(resType, recorded, rCtx).(map[string]any)
 	if expanded == nil {
 		expanded = recorded
 	}
