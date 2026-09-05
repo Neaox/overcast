@@ -667,8 +667,13 @@ public sealed class DynamoDbGroup(AwsClients clients) : IServiceGroup
             TableName = tableName,
         });
         Assertions.NotNull(desc.TimeToLiveDescription, "UpdateTimeToLive: TimeToLiveDescription");
-        Assertions.Equal(TimeToLiveStatus.ENABLED, desc.TimeToLiveDescription.TimeToLiveStatus,
-            $"UpdateTimeToLive: expected ENABLED but was {desc.TimeToLiveDescription.TimeToLiveStatus} (runId={context.RunId})");
+        // The change is asynchronous on AWS, so the read straight after it
+        // lands on ENABLING; whether it has settled by now is not something
+        // the API promises either way.
+        Assertions.True(
+            desc.TimeToLiveDescription.TimeToLiveStatus == TimeToLiveStatus.ENABLED
+            || desc.TimeToLiveDescription.TimeToLiveStatus == TimeToLiveStatus.ENABLING,
+            $"UpdateTimeToLive: expected ENABLED or ENABLING but was {desc.TimeToLiveDescription.TimeToLiveStatus} (runId={context.RunId})");
         Assertions.Equal("ttl", desc.TimeToLiveDescription.AttributeName,
             $"UpdateTimeToLive: expected ttl attribute but was {desc.TimeToLiveDescription.AttributeName} (runId={context.RunId})");
     }

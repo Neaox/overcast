@@ -45,6 +45,7 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 | Billing modes | An omitted `BillingMode` defaults to `PROVISIONED`, which requires `ProvisionedThroughput` on the table and every GSI; `PAY_PER_REQUEST` rejects it |
 | Data types | Every attribute type; items are stored in DynamoDB's JSON wire format, so nothing is lost to a round trip |
 | Streams | `StreamSpecification` on create and update — see [DynamoDB Streams](./dynamodbstreams.md) |
+| TTL | `UpdateTimeToLive` and `DescribeTimeToLive`, with the asynchronous `ENABLING` → `ENABLED` and `DISABLING` → `DISABLED` lifecycle; a second update inside the transition window is rejected as AWS rejects it |
 | Metrics | `SuccessfulRequestLatency`, `ConsumedRead`/`WriteCapacityUnits` and `UserErrors`/`SystemErrors` are recorded to CloudWatch, transactional operations at AWS's 2× weighting |
 | Protocols | AWS JSON 1.0 (`X-Amz-Target: DynamoDB_20120810.<Operation>`) and Smithy RPC v2 CBOR |
 
@@ -54,7 +55,8 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 | ---------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | GSI consistency                                                              | Eventually consistent                                                | Immediately consistent — an item is visible to a GSI query the instant it is written |
 | `ConsistentRead=true` with an `IndexName`                                    | Rejected                                                             | Rejected, exactly as AWS rejects it                                                  |
-| TTL                                                                          | Expired items are hidden on read                                     | Deleted by an hourly sweeper instead, so an expired item can still be returned       |
+| TTL expiry                                                                   | Expired items are hidden on read                                     | Deleted by an hourly sweeper instead, so an expired item can still be returned       |
+| TTL status changes                                                           | Take up to one hour to leave `ENABLING`/`DISABLING`                  | Settle after 30 seconds — long enough to be observed, short enough not to block      |
 | PartiQL                                                                      | `ExecuteStatement`, `ExecuteTransaction` and `BatchExecuteStatement` | Out of scope                                                                         |
 | Global tables                                                                | Replicate a table across regions                                     | Overcast emulates one region per request; the global-table operations answer `501`   |
 | Backups, exports, imports, restores, resource policies, contributor insights | Full API                                                             | Answer `501`                                                                         |
@@ -74,6 +76,16 @@ UnknownOperationException`.
 > entirely separate items, index entries and streams. The region comes from the
 > request: the SigV4 credential scope, a regional endpoint hostname, or
 > `OVERCAST_DEFAULT_REGION` when the request names none.
+
+`UpdateTimeToLive` is asynchronous and not idempotent, exactly as on AWS. The
+call returns while `DescribeTimeToLive` still reports `ENABLING` or
+`DISABLING`, and items only start expiring once the status reaches `ENABLED`.
+A second `UpdateTimeToLive` for the same table inside the transition window is
+a `ValidationException` ("Time to live has been modified multiple times within
+a fixed interval"), and so is re-enabling an already-`ENABLED` table — which is
+why the TTL attribute name can only be changed by disabling TTL first and
+enabling it again afterwards. AWS's window is up to an hour; Overcast's is 30
+seconds, so the lifecycle is observable without a poll loop taking one.
 
 <!-- BEGIN overcast:capabilities -->
 

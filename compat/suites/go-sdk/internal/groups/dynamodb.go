@@ -665,10 +665,19 @@ func (g *ddbGroup) UpdateTimeToLive(ctx context.Context, t *harness.TestContext)
 	if err != nil {
 		return fmt.Errorf("UpdateTimeToLive: DescribeTimeToLive verify failed: %w", err)
 	}
-	if resp.TimeToLiveDescription == nil || resp.TimeToLiveDescription.TimeToLiveStatus != ddbtypes.TimeToLiveStatusEnabled {
-		return fmt.Errorf("UpdateTimeToLive: expected status ENABLED")
+	// The change is asynchronous on AWS, so the read straight after it lands
+	// on ENABLING; whether it has settled by now is not something the API
+	// promises either way.
+	if resp.TimeToLiveDescription == nil || !ddbTTLEnabledOrEnabling(resp.TimeToLiveDescription.TimeToLiveStatus) {
+		return fmt.Errorf("UpdateTimeToLive: expected status ENABLED or ENABLING, got %q", resp.TimeToLiveDescription.TimeToLiveStatus)
 	}
 	return nil
+}
+
+// ddbTTLEnabledOrEnabling reports whether a TimeToLiveStatus says TTL is on or
+// on its way on.
+func ddbTTLEnabledOrEnabling(status ddbtypes.TimeToLiveStatus) bool {
+	return status == ddbtypes.TimeToLiveStatusEnabled || status == ddbtypes.TimeToLiveStatusEnabling
 }
 
 func (g *ddbGroup) DescribeTimeToLive(ctx context.Context, t *harness.TestContext) error {
@@ -682,8 +691,8 @@ func (g *ddbGroup) DescribeTimeToLive(ctx context.Context, t *harness.TestContex
 	if resp.TimeToLiveDescription == nil {
 		return fmt.Errorf("DescribeTimeToLive: nil description")
 	}
-	if resp.TimeToLiveDescription.TimeToLiveStatus != ddbtypes.TimeToLiveStatusEnabled {
-		return fmt.Errorf("DescribeTimeToLive: expected ENABLED, got %q", resp.TimeToLiveDescription.TimeToLiveStatus)
+	if !ddbTTLEnabledOrEnabling(resp.TimeToLiveDescription.TimeToLiveStatus) {
+		return fmt.Errorf("DescribeTimeToLive: expected ENABLED or ENABLING, got %q", resp.TimeToLiveDescription.TimeToLiveStatus)
 	}
 	return nil
 }

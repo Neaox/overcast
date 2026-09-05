@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/overcast-sh/overcast/tests/helpers"
 )
@@ -172,7 +173,7 @@ func dynamodbTableLSITemplate(tableName, localIndexes string) string {
 
 func TestCreateStack_DynamoDBTableTimeToLive(t *testing.T) {
 	// Given: a stack template that enables a DynamoDB table TTL attribute
-	srv := helpers.NewTestServer(t)
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 	const stackName = "dynamodb-ttl-stack"
 	const tableName = "cfn-ttl-table"
 	const template = `{
@@ -199,13 +200,19 @@ func TestCreateStack_DynamoDBTableTimeToLive(t *testing.T) {
 	helpers.AssertStatus(t, createResp, http.StatusOK)
 	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
 
-	// Then: the underlying DynamoDB table has the declared TTL configuration
+	// Then: the TTL change is under way. CloudFormation does not wait for it
+	// to finish, exactly as AWS does not — which is why a second deployment
+	// inside the window is refused.
+	assertDynamoDBTTL(t, srv, tableName, "ENABLING", "expiresAt")
+
+	// And: it settles to ENABLED on its own
+	srv.Clock.Add(ttlTransitionSettleWindow)
 	assertDynamoDBTTL(t, srv, tableName, "ENABLED", "expiresAt")
 }
 
 func TestUpdateStack_DynamoDBTableTimeToLive(t *testing.T) {
-	// Given: a stack with TTL enabled on its DynamoDB table
-	srv := helpers.NewTestServer(t)
+	// Given: a stack whose DynamoDB table has TTL enabled and settled
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 	const stackName = "dynamodb-ttl-update-stack"
 	const tableName = "cfn-ttl-update-table"
 	createResp := cfnQuery(t, srv, "CreateStack", url.Values{
@@ -217,19 +224,10 @@ func TestUpdateStack_DynamoDBTableTimeToLive(t *testing.T) {
 	defer createResp.Body.Close()
 	helpers.AssertStatus(t, createResp, http.StatusOK)
 	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+	srv.Clock.Add(ttlTransitionSettleWindow)
+	assertDynamoDBTTL(t, srv, tableName, "ENABLED", "expiresAt")
 
-	// When: the TTL attribute changes, then the property is removed
-	updateResp := cfnQuery(t, srv, "UpdateStack", url.Values{
-		"StackName": {stackName},
-		"TemplateBody": {dynamodbTableTTLTemplate(
-			tableName, `"TimeToLiveSpecification": {"Enabled": true, "AttributeName": "expiresAtV2"},`,
-		)},
-	})
-	defer updateResp.Body.Close()
-	helpers.AssertStatus(t, updateResp, http.StatusOK)
-	waitForStackStatus(t, srv, stackName, "UPDATE_COMPLETE")
-	assertDynamoDBTTL(t, srv, tableName, "ENABLED", "expiresAtV2")
-
+	// When: the TimeToLiveSpecification property is removed
 	removeResp := cfnQuery(t, srv, "UpdateStack", url.Values{
 		"StackName":    {stackName},
 		"TemplateBody": {dynamodbTableTTLTemplate(tableName, "")},
@@ -238,8 +236,45 @@ func TestUpdateStack_DynamoDBTableTimeToLive(t *testing.T) {
 	helpers.AssertStatus(t, removeResp, http.StatusOK)
 	waitForStackStatus(t, srv, stackName, "UPDATE_COMPLETE")
 
-	// Then: CloudFormation has reconciled the DynamoDB TTL configuration
+	// Then: DynamoDB is disabling TTL, and settles to DISABLED
+	assertDynamoDBTTL(t, srv, tableName, "DISABLING", "expiresAt")
+	srv.Clock.Add(ttlTransitionSettleWindow)
 	assertDynamoDBTTL(t, srv, tableName, "DISABLED", "")
+}
+
+// TestUpdateStack_DynamoDBTableTimeToLiveAttributeChange pins AWS's refusal to
+// rename the TTL attribute in place: the AWS::DynamoDB::Table provider rejects
+// the template rather than issuing the disable/enable pair DynamoDB would
+// refuse as a second UpdateTimeToLive inside the transition window.
+func TestUpdateStack_DynamoDBTableTimeToLiveAttributeChange(t *testing.T) {
+	// Given: a stack whose DynamoDB table has TTL enabled and settled
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+	const stackName = "dynamodb-ttl-rename-stack"
+	const tableName = "cfn-ttl-rename-table"
+	createResp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName": {stackName},
+		"TemplateBody": {dynamodbTableTTLTemplate(
+			tableName, `"TimeToLiveSpecification": {"Enabled": true, "AttributeName": "expiresAt"},`,
+		)},
+	})
+	defer createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+	srv.Clock.Add(ttlTransitionSettleWindow)
+
+	// When: the template renames the TTL attribute
+	updateResp := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName": {stackName},
+		"TemplateBody": {dynamodbTableTTLTemplate(
+			tableName, `"TimeToLiveSpecification": {"Enabled": true, "AttributeName": "expiresAtV2"},`,
+		)},
+	})
+	defer updateResp.Body.Close()
+	helpers.AssertStatus(t, updateResp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_ROLLBACK_COMPLETE")
+
+	// Then: the table keeps its original TTL configuration
+	assertDynamoDBTTL(t, srv, tableName, "ENABLED", "expiresAt")
 }
 
 func dynamodbTableTTLTemplate(tableName, ttlProperty string) string {
@@ -259,6 +294,11 @@ func dynamodbTableTTLTemplate(tableName, ttlProperty string) string {
   }
 }`
 }
+
+// ttlTransitionSettleWindow is comfortably past DynamoDB's ENABLING/DISABLING
+// window (internal/services/dynamodb's ttlTransitionDuration), so advancing
+// the mock clock by it always settles a pending TTL change.
+const ttlTransitionSettleWindow = 30 * time.Second
 
 func assertDynamoDBTTL(t *testing.T, srv *helpers.TestServer, tableName, wantStatus, wantAttribute string) {
 	t.Helper()

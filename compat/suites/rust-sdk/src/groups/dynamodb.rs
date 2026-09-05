@@ -962,17 +962,16 @@ impl ServiceGroup for DynamoDbGroup {
                     let desc = response
                         .time_to_live_description()
                         .ok_or_else(|| "DescribeTimeToLive: description missing".to_string())?;
-                    if desc
+                    // The change is asynchronous on AWS, so a read taken
+                    // shortly after it lands on ENABLING; whether it has
+                    // settled is not something the API promises either way.
+                    let status = desc
                         .time_to_live_status()
                         .map(|s| s.as_str())
-                        .unwrap_or_default()
-                        != "ENABLED"
-                    {
+                        .unwrap_or_default();
+                    if status != "ENABLED" && status != "ENABLING" {
                         return Err(format!(
-                            "DescribeTimeToLive: expected ENABLED, got {}",
-                            desc.time_to_live_status()
-                                .map(|s| s.as_str())
-                                .unwrap_or_default()
+                            "DescribeTimeToLive: expected ENABLED or ENABLING, got {status}"
                         ));
                     }
                     if desc.attribute_name().unwrap_or("") != "expires_at" {

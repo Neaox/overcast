@@ -199,11 +199,9 @@ func TestDynamoDBTableCreate_TimeToLiveAttributeLengthValidation(t *testing.T) {
 	}
 }
 
-func TestDynamoDBTableUpdate_TimeToLiveAttributeFailureRestoresPreviousConfiguration(t *testing.T) {
-	// Given: changing the TTL attribute fails after the old attribute is disabled
-	router := &dynamodbTTLRouter{statusByCall: map[string]map[int]int{
-		dynamodbUpdateTimeToLiveTarget: {2: http.StatusBadRequest},
-	}}
+func TestDynamoDBTableUpdate_TimeToLiveAttributeChangeIsRefused(t *testing.T) {
+	// Given: a template that renames the TTL attribute while TTL is enabled
+	router := &dynamodbTTLRouter{}
 	oldProps := dynamodbTTLProperties("expiresAt")
 	newProps := dynamodbTTLProperties("expiresAtV2")
 
@@ -212,19 +210,19 @@ func TestDynamoDBTableUpdate_TimeToLiveAttributeFailureRestoresPreviousConfigura
 		context.Background(), router, nil, "test-table", newProps, oldProps, &resolveContext{Region: "us-east-1"},
 	)
 
-	// Then: the update is terminal and the old setting has been restored
+	// Then: the update fails terminally with AWS's own refusal — a rename has
+	// to go through a disable first, and DynamoDB refuses a second
+	// UpdateTimeToLive inside the transition window either way
 	var updateErr updateFailure
 	if !errors.As(err, &updateErr) {
 		t.Fatalf("Update error = %v, want terminal update failure", err)
 	}
-	assertDynamoDBTTLTargets(t, router.requests, []string{
-		dynamodbUpdateTimeToLiveTarget,
-		dynamodbUpdateTimeToLiveTarget,
-		dynamodbUpdateTimeToLiveTarget,
-	})
-	assertDynamoDBTTLRequest(t, router.requests[0], false, "expiresAt")
-	assertDynamoDBTTLRequest(t, router.requests[1], true, "expiresAtV2")
-	assertDynamoDBTTLRequest(t, router.requests[2], true, "expiresAt")
+	if !strings.Contains(err.Error(), "Cannot change time-to-live attribute name") {
+		t.Errorf("Update error = %v, want AWS's attribute-name refusal", err)
+	}
+
+	// And: nothing was sent to DynamoDB, so the table is untouched
+	assertDynamoDBTTLTargets(t, router.requests, nil)
 }
 
 func TestDynamoDBTableUpdate_UpdateTableFailureRestoresTimeToLive(t *testing.T) {
@@ -232,8 +230,8 @@ func TestDynamoDBTableUpdate_UpdateTableFailureRestoresTimeToLive(t *testing.T) 
 	router := &dynamodbTTLRouter{statusByCall: map[string]map[int]int{
 		dynamodbUpdateTableTarget: {1: http.StatusBadRequest},
 	}}
-	oldProps := dynamodbTTLProperties("expiresAt")
-	newProps := dynamodbTTLProperties("expiresAtV2")
+	oldProps := map[string]any{"TableName": "test-table"}
+	newProps := dynamodbTTLProperties("expiresAt")
 	newProps["BillingMode"] = "PAY_PER_REQUEST"
 
 	// When: CloudFormation updates TTL and the table settings
@@ -248,13 +246,11 @@ func TestDynamoDBTableUpdate_UpdateTableFailureRestoresTimeToLive(t *testing.T) 
 	}
 	assertDynamoDBTTLTargets(t, router.requests, []string{
 		dynamodbUpdateTimeToLiveTarget,
-		dynamodbUpdateTimeToLiveTarget,
 		dynamodbUpdateTableTarget,
 		dynamodbUpdateTimeToLiveTarget,
-		dynamodbUpdateTimeToLiveTarget,
 	})
-	assertDynamoDBTTLRequest(t, router.requests[3], false, "expiresAtV2")
-	assertDynamoDBTTLRequest(t, router.requests[4], true, "expiresAt")
+	assertDynamoDBTTLRequest(t, router.requests[0], true, "expiresAt")
+	assertDynamoDBTTLRequest(t, router.requests[2], false, "expiresAt")
 }
 
 func TestDynamoDBTableUpdate_DisableTimeToLiveWithoutAttributeUsesPreviousAttribute(t *testing.T) {

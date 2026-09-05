@@ -286,11 +286,13 @@ func (s *Service) InitMetrics(m metricsRecorder) {
 // Name returns the service identifier.
 func (s *Service) Name() string { return serviceName }
 
-// Stop cancels the TTL sweeper goroutine.
-func (s *Service) Stop(_ context.Context) {
+// Stop cancels the TTL sweeper goroutine and drains any TTL status transition
+// still in flight.
+func (s *Service) Stop(ctx context.Context) {
 	if s.ttlCancel != nil {
 		s.ttlCancel()
 	}
+	s.handler.ttlSched.Stop(ctx)
 }
 
 // DynamoDBInvoker returns an events.DynamoDBInvoker that dispatches operations
