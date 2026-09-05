@@ -157,6 +157,11 @@ tasks:
     cmds:
       - go run ./cmd/tsgen --check
 
+  generate-ddb-reserved-words:
+    desc: Refresh internal/services/dynamodb/reserved_words.txt from the AWS DynamoDB Developer Guide (needs network)
+    cmds:
+      - go run ./scripts/dynamodb-reserved-words.go
+
   generate-aws-operations:
     desc: Regenerate the AWS operation manifest (requires AWS_MODELS_DIR and AWS_MODELS_REVISION)
     cmds:

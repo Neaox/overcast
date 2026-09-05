@@ -1,6 +1,7 @@
 package dynamodb
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -9,20 +10,20 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestParsePath_simpleAttribute(t *testing.T) {
-	tokens, _ := tokenise("name")
+	tokens, _ := tokenise("nickname")
 	s := newTokStream(tokens)
 	path, err := parsePath(s, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path.String() != "name" {
-		t.Errorf("expected 'name', got %q", path.String())
+	if path.String() != "nickname" {
+		t.Errorf("expected 'nickname', got %q", path.String())
 	}
 	if !path.isSimple() {
 		t.Error("expected simple path")
 	}
-	if path.topLevel() != "name" {
-		t.Errorf("expected topLevel 'name', got %q", path.topLevel())
+	if path.topLevel() != "nickname" {
+		t.Errorf("expected topLevel 'nickname', got %q", path.topLevel())
 	}
 }
 
@@ -45,31 +46,31 @@ func TestParsePath_nestedDot(t *testing.T) {
 }
 
 func TestParsePath_listIndex(t *testing.T) {
-	tokens, _ := tokenise("items[0]")
+	tokens, _ := tokenise("entries[0]")
 	s := newTokStream(tokens)
 	path, err := parsePath(s, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path.String() != "items[0]" {
-		t.Errorf("expected 'items[0]', got %q", path.String())
+	if path.String() != "entries[0]" {
+		t.Errorf("expected 'entries[0]', got %q", path.String())
 	}
 }
 
 func TestParsePath_complexPath(t *testing.T) {
-	tokens, _ := tokenise("data[2].nested.list[0].val")
+	tokens, _ := tokenise("payload[2].nested.entries[0].val")
 	s := newTokStream(tokens)
 	path, err := parsePath(s, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path.String() != "data[2].nested.list[0].val" {
-		t.Errorf("expected 'data[2].nested.list[0].val', got %q", path.String())
+	if path.String() != "payload[2].nested.entries[0].val" {
+		t.Errorf("expected 'payload[2].nested.entries[0].val', got %q", path.String())
 	}
 }
 
 func TestParsePath_alias(t *testing.T) {
-	tokens, _ := tokenise("#attr.name")
+	tokens, _ := tokenise("#attr.nickname")
 	s := newTokStream(tokens)
 	names := map[string]string{"#attr": "myattr"}
 	path, err := parsePath(s, names)
@@ -82,15 +83,38 @@ func TestParsePath_alias(t *testing.T) {
 }
 
 func TestParsePath_keywordAsName(t *testing.T) {
-	// DynamoDB allows reserved words as attribute names
+	// Given: a clause keyword in an attribute-name position. SET is on the
+	// reserved-word list, so DynamoDB refuses it as a bare attribute name.
 	tokens, _ := tokenise("SET")
 	s := newTokStream(tokens)
-	path, err := parsePath(s, nil)
+
+	// When: it is parsed as a path
+	_, err := parsePath(s, nil)
+
+	// Then: it is rejected as a reserved word
+	var rw *reservedWordError
+	if !errors.As(err, &rw) {
+		t.Fatalf("expected a reservedWordError, got %v", err)
+	}
+	if rw.word != "SET" {
+		t.Errorf("keyword = %q, want \"SET\"", rw.word)
+	}
+}
+
+func TestParsePath_reservedWordViaAlias(t *testing.T) {
+	// Given: a reserved word reached through an ExpressionAttributeNames alias
+	tokens, _ := tokenise("#s")
+	s := newTokStream(tokens)
+
+	// When: it is parsed as a path
+	path, err := parsePath(s, map[string]string{"#s": "size"})
+
+	// Then: it resolves — the alias is the documented escape hatch
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path.topLevel() != "SET" {
-		t.Errorf("expected topLevel 'SET', got %q", path.topLevel())
+	if path.topLevel() != "size" {
+		t.Errorf("expected topLevel 'size', got %q", path.topLevel())
 	}
 }
 
@@ -100,9 +124,9 @@ func TestParsePath_keywordAsName(t *testing.T) {
 
 func TestGetByPath_topLevel(t *testing.T) {
 	item := Item{
-		"name": attrValue{"S": "Alice"},
+		"nickname": attrValue{"S": "Alice"},
 	}
-	tokens, _ := tokenise("name")
+	tokens, _ := tokenise("nickname")
 	s := newTokStream(tokens)
 	path, _ := parsePath(s, nil)
 
@@ -158,7 +182,7 @@ func TestGetByPath_listIndex(t *testing.T) {
 
 func TestGetByPath_notFound(t *testing.T) {
 	item := Item{
-		"name": attrValue{"S": "Alice"},
+		"nickname": attrValue{"S": "Alice"},
 	}
 	tokens, _ := tokenise("age")
 	s := newTokStream(tokens)
@@ -192,7 +216,7 @@ func TestGetByPath_indexOutOfBounds(t *testing.T) {
 
 func TestSetByPath_topLevel(t *testing.T) {
 	item := Item{}
-	tokens, _ := tokenise("name")
+	tokens, _ := tokenise("nickname")
 	s := newTokStream(tokens)
 	path, _ := parsePath(s, nil)
 
@@ -200,15 +224,15 @@ func TestSetByPath_topLevel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if extractScalar(item["name"]) != "Alice" {
-		t.Errorf("expected 'Alice', got %q", extractScalar(item["name"]))
+	if extractScalar(item["nickname"]) != "Alice" {
+		t.Errorf("expected 'Alice', got %q", extractScalar(item["nickname"]))
 	}
 }
 
 func TestSetByPath_nested(t *testing.T) {
 	item := Item{
 		"info": attrValue{"M": map[string]any{
-			"name": map[string]any{"S": "Alice"},
+			"nickname": map[string]any{"S": "Alice"},
 		}},
 	}
 	tokens, _ := tokenise("info.age")
@@ -261,18 +285,18 @@ func TestSetByPath_listIndex(t *testing.T) {
 
 func TestRemoveByPath_topLevel(t *testing.T) {
 	item := Item{
-		"name": attrValue{"S": "Alice"},
-		"age":  attrValue{"N": "30"},
+		"nickname": attrValue{"S": "Alice"},
+		"age":      attrValue{"N": "30"},
 	}
-	tokens, _ := tokenise("name")
+	tokens, _ := tokenise("nickname")
 	s := newTokStream(tokens)
 	path, _ := parsePath(s, nil)
 
 	if !removeByPath(item, path) {
 		t.Error("expected remove to succeed")
 	}
-	if _, ok := item["name"]; ok {
-		t.Error("expected 'name' to be removed")
+	if _, ok := item["nickname"]; ok {
+		t.Error("expected 'nickname' to be removed")
 	}
 	if _, ok := item["age"]; !ok {
 		t.Error("expected 'age' to remain")
@@ -281,12 +305,12 @@ func TestRemoveByPath_topLevel(t *testing.T) {
 
 func TestRemoveByPath_notFound(t *testing.T) {
 	item := Item{}
-	tokens, _ := tokenise("missing")
+	tokens, _ := tokenise("absent")
 	s := newTokStream(tokens)
 	path, _ := parsePath(s, nil)
 
 	if removeByPath(item, path) {
-		t.Error("expected remove to return false for missing path")
+		t.Error("expected remove to return false for a path the item lacks")
 	}
 }
 

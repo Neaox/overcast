@@ -87,6 +87,18 @@ func compileKeyCondition(
 	names map[string]string,
 	values map[string]attrValue,
 ) (*keyCond, error) {
+	kc, err := parseKeyCondition(expr, names, values)
+	if err != nil {
+		return nil, exprValidationError(exprKeyCondition, err)
+	}
+	return kc, nil
+}
+
+func parseKeyCondition(
+	expr string,
+	names map[string]string,
+	values map[string]attrValue,
+) (*keyCond, error) {
 	tokens, err := tokenise(expr)
 	if err != nil {
 		return nil, err

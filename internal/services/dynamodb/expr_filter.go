@@ -30,8 +30,42 @@ type filterExpr interface {
 	eval(item Item) (bool, error)
 }
 
-// compileFilter parses and compiles a DynamoDB filter/condition expression.
+// compileFilter parses and compiles a ConditionExpression — the parameter
+// PutItem, DeleteItem, UpdateItem and the Transact* conditions all supply.
+// Scan and Query pass their FilterExpression to compileFilterExpression
+// instead. The two are one grammar; they differ only in the parameter name
+// AWS quotes in a ValidationException.
 func compileFilter(
+	expr string,
+	attrNames map[string]string,
+	attrValues map[string]attrValue,
+) (filterExpr, error) {
+	return compileBoolExpr(exprCondition, expr, attrNames, attrValues)
+}
+
+// compileFilterExpression parses and compiles a Scan/Query FilterExpression.
+func compileFilterExpression(
+	expr string,
+	attrNames map[string]string,
+	attrValues map[string]attrValue,
+) (filterExpr, error) {
+	return compileBoolExpr(exprFilter, expr, attrNames, attrValues)
+}
+
+func compileBoolExpr(
+	kind exprKind,
+	expr string,
+	attrNames map[string]string,
+	attrValues map[string]attrValue,
+) (filterExpr, error) {
+	f, err := parseBoolExpr(expr, attrNames, attrValues)
+	if err != nil {
+		return nil, exprValidationError(kind, err)
+	}
+	return f, nil
+}
+
+func parseBoolExpr(
 	expr string,
 	attrNames map[string]string,
 	attrValues map[string]attrValue,

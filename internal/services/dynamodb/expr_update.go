@@ -42,6 +42,14 @@ func applyUpdateExpression(item Item, expr string,
 
 // compileUpdate parses an UpdateExpression into a sequence of actions.
 func compileUpdate(expr string, names map[string]string, values map[string]attrValue) ([]updateAction, error) {
+	actions, err := parseUpdate(expr, names, values)
+	if err != nil {
+		return nil, exprValidationError(exprUpdate, err)
+	}
+	return actions, nil
+}
+
+func parseUpdate(expr string, names map[string]string, values map[string]attrValue) ([]updateAction, error) {
 	tokens, err := tokenise(expr)
 	if err != nil {
 		return nil, err

@@ -21,6 +21,14 @@ type projection struct {
 
 // compileProjection parses a ProjectionExpression string.
 func compileProjection(expr string, names map[string]string) (*projection, error) {
+	proj, err := parseProjection(expr, names)
+	if err != nil {
+		return nil, exprValidationError(exprProjection, err)
+	}
+	return proj, nil
+}
+
+func parseProjection(expr string, names map[string]string) (*projection, error) {
 	if expr == "" {
 		return nil, nil
 	}

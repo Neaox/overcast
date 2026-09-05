@@ -24,6 +24,7 @@ scripts/*.ps1 text eol=crlf
 web/src/types/api.gen.ts linguist-generated=true
 internal/capabilities/all.gen.go linguist-generated=true
 web/src/routeTree.gen.ts linguist-generated=true
+internal/services/dynamodb/reserved_words.txt linguist-generated=true
 
 # The public installers (install/README.md). install.sh must stay LF: a CRLF
 # copy from a Windows checkout is a script sh cannot run. install.ps1 follows

@@ -207,7 +207,8 @@ func TestQuery_RecordsConsumedReadCapacityWithGSIDimension(t *testing.T) {
 	_, aerr = svc.handler.queryTyped(context.Background(), &queryRequest{
 		TableName:                 "orders",
 		IndexName:                 "status-index",
-		KeyConditionExpression:    "status = :s",
+		KeyConditionExpression:    "#st = :s",
+		ExpressionAttributeNames:  map[string]string{"#st": "status"},
 		ExpressionAttributeValues: map[string]attrValue{":s": {"S": "placed"}},
 	})
 	if aerr != nil {

@@ -573,8 +573,9 @@ func TestScan_filterExpression_equality(t *testing.T) {
 	}
 
 	resp := ddbCall(t, srv, "Scan", map[string]any{
-		"TableName":        "products",
-		"FilterExpression": "status = :s",
+		"TableName":                "products",
+		"FilterExpression":         "#st = :s",
+		"ExpressionAttributeNames": map[string]any{"#st": "status"},
 		"ExpressionAttributeValues": map[string]any{
 			":s": map[string]string{"S": "active"},
 		},
@@ -633,8 +634,9 @@ func TestScan_filterExpression_compoundAnd(t *testing.T) {
 	}
 
 	resp := ddbCall(t, srv, "Scan", map[string]any{
-		"TableName":        "widgets",
-		"FilterExpression": "color = :c AND size = :s",
+		"TableName":                "widgets",
+		"FilterExpression":         "color = :c AND #sz = :s",
+		"ExpressionAttributeNames": map[string]any{"#sz": "size"},
 		"ExpressionAttributeValues": map[string]any{
 			":c": map[string]string{"S": "red"},
 			":s": map[string]string{"S": "large"},
@@ -743,9 +745,10 @@ func TestQuery_withFilterExpression(t *testing.T) {
 	}
 
 	resp := ddbCall(t, srv, "Query", map[string]any{
-		"TableName":              "log",
-		"KeyConditionExpression": "userId = :uid",
-		"FilterExpression":       "level = :lvl",
+		"TableName":                "log",
+		"KeyConditionExpression":   "userId = :uid",
+		"FilterExpression":         "#lv = :lvl",
+		"ExpressionAttributeNames": map[string]any{"#lv": "level"},
 		"ExpressionAttributeValues": map[string]any{
 			":uid": map[string]string{"S": "u1"},
 			":lvl": map[string]string{"S": "error"},
@@ -3537,8 +3540,9 @@ func TestScan_filterExpression_not(t *testing.T) {
 
 	// When: scan with NOT filter
 	resp := ddbCall(t, srv, "Scan", map[string]any{
-		"TableName":        "expr-not",
-		"FilterExpression": "NOT status = :s",
+		"TableName":                "expr-not",
+		"FilterExpression":         "NOT #st = :s",
+		"ExpressionAttributeNames": map[string]any{"#st": "status"},
 		"ExpressionAttributeValues": map[string]any{
 			":s": map[string]any{"S": "active"},
 		},
@@ -3671,8 +3675,9 @@ func TestScan_filterExpression_beginsWith(t *testing.T) {
 
 	// When: scan for names beginning with "al"
 	resp := ddbCall(t, srv, "Scan", map[string]any{
-		"TableName":        "expr-bw",
-		"FilterExpression": "begins_with(name, :p)",
+		"TableName":                "expr-bw",
+		"FilterExpression":         "begins_with(#n, :p)",
+		"ExpressionAttributeNames": map[string]any{"#n": "name"},
 		"ExpressionAttributeValues": map[string]any{
 			":p": map[string]any{"S": "al"},
 		},
@@ -3704,8 +3709,9 @@ func TestScan_filterExpression_contains(t *testing.T) {
 	})
 
 	resp := ddbCall(t, srv, "Scan", map[string]any{
-		"TableName":        "expr-cont",
-		"FilterExpression": "contains(desc, :s)",
+		"TableName":                "expr-cont",
+		"FilterExpression":         "contains(#d, :s)",
+		"ExpressionAttributeNames": map[string]any{"#d": "desc"},
 		"ExpressionAttributeValues": map[string]any{
 			":s": map[string]any{"S": "world"},
 		},
@@ -3738,8 +3744,9 @@ func TestScan_filterExpression_size(t *testing.T) {
 
 	// When: scan for names with size > 5
 	resp := ddbCall(t, srv, "Scan", map[string]any{
-		"TableName":        "expr-size",
-		"FilterExpression": "size(name) > :s",
+		"TableName":                "expr-size",
+		"FilterExpression":         "size(#n) > :s",
+		"ExpressionAttributeNames": map[string]any{"#n": "name"},
 		"ExpressionAttributeValues": map[string]any{
 			":s": map[string]any{"N": "5"},
 		},
@@ -3780,8 +3787,9 @@ func TestScan_filterExpression_parentheses(t *testing.T) {
 	// (color = red OR color = blue) AND status = active
 	// Should match items 1 and 2
 	resp := ddbCall(t, srv, "Scan", map[string]any{
-		"TableName":        "expr-paren",
-		"FilterExpression": "(color = :red OR color = :blue) AND status = :active",
+		"TableName":                "expr-paren",
+		"FilterExpression":         "(color = :red OR color = :blue) AND #st = :active",
+		"ExpressionAttributeNames": map[string]any{"#st": "status"},
 		"ExpressionAttributeValues": map[string]any{
 			":red":    map[string]any{"S": "red"},
 			":blue":   map[string]any{"S": "blue"},
@@ -3819,7 +3827,8 @@ func TestGetItem_projectionExpression(t *testing.T) {
 		"Key": map[string]any{
 			"id": map[string]any{"S": "1"},
 		},
-		"ProjectionExpression": "name, age",
+		"ProjectionExpression":     "#n, age",
+		"ExpressionAttributeNames": map[string]any{"#n": "name"},
 	})
 	defer resp.Body.Close()
 
@@ -3889,8 +3898,9 @@ func TestScan_projectionExpression(t *testing.T) {
 	})
 
 	resp := ddbCall(t, srv, "Scan", map[string]any{
-		"TableName":            "scan-proj",
-		"ProjectionExpression": "name",
+		"TableName":                "scan-proj",
+		"ProjectionExpression":     "#n",
+		"ExpressionAttributeNames": map[string]any{"#n": "name"},
 	})
 	defer resp.Body.Close()
 
@@ -4064,7 +4074,8 @@ func TestQuery_projectionExpression(t *testing.T) {
 		"ExpressionAttributeValues": map[string]any{
 			":pk": map[string]any{"S": "user#1"},
 		},
-		"ProjectionExpression": "name",
+		"ProjectionExpression":     "#n",
+		"ExpressionAttributeNames": map[string]any{"#n": "name"},
 	})
 	defer resp.Body.Close()
 
@@ -4355,9 +4366,10 @@ func TestUpdateItem_conditionCheckFails(t *testing.T) {
 			"id": map[string]any{"S": "1"},
 		},
 		"UpdateExpression":    "SET #n = :v",
-		"ConditionExpression": "status = :active",
+		"ConditionExpression": "#st = :active",
 		"ExpressionAttributeNames": map[string]any{
-			"#n": "name",
+			"#n":  "name",
+			"#st": "status",
 		},
 		"ExpressionAttributeValues": map[string]any{
 			":v":      map[string]any{"S": "Alice"},
@@ -4386,9 +4398,10 @@ func TestUpdateItem_conditionCheckPasses(t *testing.T) {
 			"id": map[string]any{"S": "1"},
 		},
 		"UpdateExpression":    "SET #n = :v",
-		"ConditionExpression": "status = :active",
+		"ConditionExpression": "#st = :active",
 		"ExpressionAttributeNames": map[string]any{
-			"#n": "name",
+			"#n":  "name",
+			"#st": "status",
 		},
 		"ExpressionAttributeValues": map[string]any{
 			":v":      map[string]any{"S": "Alice"},

@@ -469,6 +469,7 @@ These generated sources are **committed** and must be regenerated through their 
 | `web/src/routeTree.gen.ts` | `pnpm dev` / `pnpm build` (the TanStack Router vite plugin writes it) |
 | `internal/awsapi/manifest.gen.go` | `make generate-aws-operations` |
 | `docs/README.md` service index, `docs/services/<key>/operations.md`, `docs/generated/service-support.json` | `make docs` |
+| `internal/services/dynamodb/reserved_words.txt` | `make generate-ddb-reserved-words` (needs network; no CI gate on its freshness) |
 
 There is **no docs index to regenerate**. `web/src/docs-nav.gen.ts` and
 `internal/docssearch/index.gen.jsonl` used to be here; both were sorted

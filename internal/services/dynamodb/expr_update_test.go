@@ -18,32 +18,32 @@ func TestUpdate_setSimple(t *testing.T) {
 	}
 	err := applyUpdateExpression(item,
 		"SET #n = :v",
-		map[string]string{"#n": "name"},
+		map[string]string{"#n": "nickname"},
 		map[string]attrValue{":v": {"S": "Alice"}},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if extractScalar(item["name"]) != "Alice" {
-		t.Errorf("expected 'Alice', got %q", extractScalar(item["name"]))
+	if extractScalar(item["nickname"]) != "Alice" {
+		t.Errorf("expected 'Alice', got %q", extractScalar(item["nickname"]))
 	}
 }
 
 func TestUpdate_setOverwrite(t *testing.T) {
 	item := Item{
-		"id":   attrValue{"S": "1"},
-		"name": attrValue{"S": "Old"},
+		"id":       attrValue{"S": "1"},
+		"nickname": attrValue{"S": "Old"},
 	}
 	err := applyUpdateExpression(item,
-		"SET name = :v",
+		"SET nickname = :v",
 		nil,
 		map[string]attrValue{":v": {"S": "New"}},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if extractScalar(item["name"]) != "New" {
-		t.Errorf("expected 'New', got %q", extractScalar(item["name"]))
+	if extractScalar(item["nickname"]) != "New" {
+		t.Errorf("expected 'New', got %q", extractScalar(item["nickname"]))
 	}
 }
 
@@ -73,36 +73,36 @@ func TestUpdate_setMultiple(t *testing.T) {
 func TestUpdate_setArithmeticAdd(t *testing.T) {
 	item := Item{
 		"id":    attrValue{"S": "1"},
-		"count": attrValue{"N": "10"},
+		"tally": attrValue{"N": "10"},
 	}
 	err := applyUpdateExpression(item,
-		"SET count = count + :inc",
+		"SET tally = tally + :inc",
 		nil,
 		map[string]attrValue{":inc": {"N": "5"}},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if extractScalar(item["count"]) != "15" {
-		t.Errorf("expected '15', got %q", extractScalar(item["count"]))
+	if extractScalar(item["tally"]) != "15" {
+		t.Errorf("expected '15', got %q", extractScalar(item["tally"]))
 	}
 }
 
 func TestUpdate_setArithmeticSubtract(t *testing.T) {
 	item := Item{
 		"id":    attrValue{"S": "1"},
-		"count": attrValue{"N": "10"},
+		"tally": attrValue{"N": "10"},
 	}
 	err := applyUpdateExpression(item,
-		"SET count = count - :dec",
+		"SET tally = tally - :dec",
 		nil,
 		map[string]attrValue{":dec": {"N": "3"}},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if extractScalar(item["count"]) != "7" {
-		t.Errorf("expected '7', got %q", extractScalar(item["count"]))
+	if extractScalar(item["tally"]) != "7" {
+		t.Errorf("expected '7', got %q", extractScalar(item["tally"]))
 	}
 }
 
@@ -171,7 +171,7 @@ func TestUpdate_setNestedPath(t *testing.T) {
 	item := Item{
 		"id": attrValue{"S": "1"},
 		"info": attrValue{"M": map[string]any{
-			"name": map[string]any{"S": "Alice"},
+			"nickname": map[string]any{"S": "Alice"},
 		}},
 	}
 	err := applyUpdateExpression(item,
@@ -198,9 +198,9 @@ func TestUpdate_setNestedPath(t *testing.T) {
 
 func TestUpdate_remove(t *testing.T) {
 	item := Item{
-		"id":   attrValue{"S": "1"},
-		"name": attrValue{"S": "Alice"},
-		"age":  attrValue{"N": "30"},
+		"id":       attrValue{"S": "1"},
+		"nickname": attrValue{"S": "Alice"},
+		"age":      attrValue{"N": "30"},
 	}
 	err := applyUpdateExpression(item, "REMOVE age", nil, nil)
 	if err != nil {
@@ -209,8 +209,8 @@ func TestUpdate_remove(t *testing.T) {
 	if _, ok := item["age"]; ok {
 		t.Error("expected 'age' to be removed")
 	}
-	if _, ok := item["name"]; !ok {
-		t.Error("expected 'name' to remain")
+	if _, ok := item["nickname"]; !ok {
+		t.Error("expected 'nickname' to remain")
 	}
 }
 
@@ -241,7 +241,7 @@ func TestUpdate_removeNonExistent(t *testing.T) {
 		"id": attrValue{"S": "1"},
 	}
 	// REMOVE of non-existent attribute is a no-op
-	err := applyUpdateExpression(item, "REMOVE missing", nil, nil)
+	err := applyUpdateExpression(item, "REMOVE absent", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,18 +254,18 @@ func TestUpdate_removeNonExistent(t *testing.T) {
 func TestUpdate_addNumber(t *testing.T) {
 	item := Item{
 		"id":    attrValue{"S": "1"},
-		"count": attrValue{"N": "10"},
+		"tally": attrValue{"N": "10"},
 	}
 	err := applyUpdateExpression(item,
-		"ADD count :inc",
+		"ADD tally :inc",
 		nil,
 		map[string]attrValue{":inc": {"N": "5"}},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if extractScalar(item["count"]) != "15" {
-		t.Errorf("expected '15', got %q", extractScalar(item["count"]))
+	if extractScalar(item["tally"]) != "15" {
+		t.Errorf("expected '15', got %q", extractScalar(item["tally"]))
 	}
 }
 
@@ -274,15 +274,15 @@ func TestUpdate_addNumberNewAttribute(t *testing.T) {
 		"id": attrValue{"S": "1"},
 	}
 	err := applyUpdateExpression(item,
-		"ADD count :v",
+		"ADD tally :v",
 		nil,
 		map[string]attrValue{":v": {"N": "7"}},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if extractScalar(item["count"]) != "7" {
-		t.Errorf("expected '7', got %q", extractScalar(item["count"]))
+	if extractScalar(item["tally"]) != "7" {
+		t.Errorf("expected '7', got %q", extractScalar(item["tally"]))
 	}
 }
 
@@ -394,34 +394,34 @@ func TestUpdate_deleteFromNonExistent(t *testing.T) {
 
 func TestUpdate_mixedSetRemove(t *testing.T) {
 	item := Item{
-		"id":   attrValue{"S": "1"},
-		"name": attrValue{"S": "Alice"},
-		"old":  attrValue{"S": "legacy"},
+		"id":       attrValue{"S": "1"},
+		"nickname": attrValue{"S": "Alice"},
+		"legacy":   attrValue{"S": "superseded"},
 	}
 	err := applyUpdateExpression(item,
-		"SET name = :n REMOVE old",
+		"SET nickname = :n REMOVE legacy",
 		nil,
 		map[string]attrValue{":n": {"S": "Bob"}},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if extractScalar(item["name"]) != "Bob" {
-		t.Errorf("expected 'Bob', got %q", extractScalar(item["name"]))
+	if extractScalar(item["nickname"]) != "Bob" {
+		t.Errorf("expected 'Bob', got %q", extractScalar(item["nickname"]))
 	}
-	if _, ok := item["old"]; ok {
-		t.Error("expected 'old' to be removed")
+	if _, ok := item["legacy"]; ok {
+		t.Error("expected 'legacy' to be removed")
 	}
 }
 
 func TestUpdate_mixedSetAddDelete(t *testing.T) {
 	item := Item{
 		"id":    attrValue{"S": "1"},
-		"count": attrValue{"N": "10"},
+		"tally": attrValue{"N": "10"},
 		"tags":  attrValue{"SS": []any{"a", "b"}},
 	}
 	err := applyUpdateExpression(item,
-		"SET count = count + :inc ADD tags :new DELETE tags :rem",
+		"SET tally = tally + :inc ADD tags :new DELETE tags :rem",
 		nil,
 		map[string]attrValue{
 			":inc": {"N": "5"},
@@ -432,8 +432,8 @@ func TestUpdate_mixedSetAddDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if extractScalar(item["count"]) != "15" {
-		t.Errorf("expected count '15', got %q", extractScalar(item["count"]))
+	if extractScalar(item["tally"]) != "15" {
+		t.Errorf("expected tally '15', got %q", extractScalar(item["tally"]))
 	}
 }
 
