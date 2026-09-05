@@ -1,0 +1,480 @@
+package scenario
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/overcast-sh/overcast-compat-cli/internal/awscli"
+	"github.com/overcast-sh/overcast-compat-cli/internal/harness"
+	"github.com/overcast-sh/overcast-compat-cli/internal/registry"
+)
+
+// runner is the one seam between the interpreter and the `aws` binary. The
+// production implementation is a thin adapter over internal/awscli, which is
+// the only place in this suite that spawns a process — endpoint, region,
+// output format and credential handling all come from there, unchanged, so a
+// generated call is shaped exactly like a hand-written one. The unit tests
+// substitute an in-memory fake and never touch the network.
+type runner interface {
+	run(ctx context.Context, t *harness.TestContext, args []string) (map[string]any, error)
+}
+
+type awscliRunner struct{}
+
+// run uses the context-aware variant so an `aws` that never answers dies with
+// the group's five-minute timeout or with a dashboard cancellation, instead of
+// holding a parallel slot open until the whole suite is killed. A generated
+// group makes far more calls than a hand-written one, so it is likelier to be
+// the group sitting on a hung process.
+func (awscliRunner) run(ctx context.Context, t *harness.TestContext, args []string) (map[string]any, error) {
+	return awscli.RunOutputContext(ctx, t.Endpoint, t.Region, args...)
+}
+
+// bagKey is where a group's context bag lives on the harness TestContext. The
+// harness creates one TestContext per group run and hands the same one to
+// setup, every test and teardown, so the bag has exactly the lifetime the IR
+// gives a group's context.
+const bagKey = "scenario_context"
+
+func bagFor(t *harness.TestContext) *contextBag {
+	if v, ok := t.Get(bagKey); ok {
+		if c, ok := v.(*contextBag); ok {
+			return c
+		}
+	}
+	c := newContextBag()
+	t.Set(bagKey, c)
+	return c
+}
+
+// Resolve implements registry.ScenarioBackend: it claims a test the scenario
+// file its group names declares.
+//
+// "Not mine" (ok false) covers a group with no scenario and a group or test the
+// file does not declare — the loader then applies its own rule, which for a
+// generated group is a loud failure naming the missing backend. A scenario file
+// that cannot be read is different: the group *is* ours, so the test fails with
+// the load error rather than with a message blaming a backend that exists.
+func (b *Backend) Resolve(rg registry.RegistryGroup, rt registry.RegistryTest) (harness.TestFn, bool) {
+	if rg.Scenario == "" {
+		return nil, false
+	}
+	f, err := b.load(rg.Scenario)
+	if err != nil {
+		return func(context.Context, *harness.TestContext) error { return err }, true
+	}
+	g, ok := f.group(rg.Name)
+	if !ok {
+		return nil, false
+	}
+	tc, ok := g.test(rt.Name)
+	if !ok {
+		return nil, false
+	}
+	return func(ctx context.Context, t *harness.TestContext) error {
+		return b.newExecution(t, f, g, tc.Name).runTest(ctx, tc)
+	}, true
+}
+
+// Setup returns the group's setup function, or false when the group has no
+// setup steps — a probe group carries neither setup nor teardown, and must not
+// be given one.
+//
+// A setup failure is reported to the harness as an error. harness.RunGroup then
+// reports every test in the group as skip with "setup failed: <message>" and
+// still runs the group's teardown, which is the IR's rule
+// (compat/model/README.md § The scenario file) and matters most here: a setup
+// that failed on its third step has already created what its first two made,
+// and no test will run to delete it.
+func (b *Backend) Setup(rg registry.RegistryGroup) (func(context.Context, *harness.TestContext) error, bool) {
+	f, g, claimed, err := b.groupOf(rg)
+	if !claimed {
+		return nil, false
+	}
+	if err != nil {
+		return func(context.Context, *harness.TestContext) error { return err }, true
+	}
+	if len(g.Setup) == 0 {
+		return nil, false
+	}
+	return func(ctx context.Context, t *harness.TestContext) error {
+		e := b.newExecution(t, f, g, "setup")
+		for i := range g.Setup {
+			if _, err := e.invoke(ctx, &g.Setup[i], fmt.Sprintf("setup[%d]", i)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}, true
+}
+
+// Teardown returns the group's teardown function, or false when it has none.
+//
+// Every step is wrapped individually: an error, or an unresolvable $ref, skips
+// that step and the rest still run. Each skip is logged to stderr — which the
+// Go runner multiplexes into its own log — and none of them fails the group,
+// which is the suite's existing teardown convention (internal/groups ignores
+// teardown errors outright) and compat/AGENTS.md's "teardown must not throw".
+//
+// Returning an error instead would emit group_teardown_error on every clean
+// run of a lifecycle group: the delete test has already removed the resource
+// the teardown step names, so a "not found" there is the expected outcome, not
+// a leak. Proof that nothing leaked is the orphan sweep — a {runId} search
+// after the run — not the teardown's own exit status.
+func (b *Backend) Teardown(rg registry.RegistryGroup) (func(context.Context, *harness.TestContext) error, bool) {
+	f, g, claimed, err := b.groupOf(rg)
+	if !claimed {
+		return nil, false
+	}
+	if err != nil {
+		return func(context.Context, *harness.TestContext) error { return err }, true
+	}
+	if len(g.Teardown) == 0 {
+		return nil, false
+	}
+	return func(ctx context.Context, t *harness.TestContext) error {
+		e := b.newExecution(t, f, g, "teardown")
+		for i := range g.Teardown {
+			step := fmt.Sprintf("teardown[%d]", i)
+			if _, err := e.invoke(ctx, &g.Teardown[i], step); err != nil {
+				t.Log(fmt.Sprintf("%s: skipped %s: %v", g.Name, step, err))
+			}
+		}
+		return nil
+	}, true
+}
+
+// groupOf resolves a registry group to its scenario group. claimed is false for
+// a group this backend does not own; err is non-nil when it owns the group but
+// could not read the file.
+func (b *Backend) groupOf(rg registry.RegistryGroup) (f *File, g *Group, claimed bool, err error) {
+	if rg.Scenario == "" {
+		return nil, nil, false, nil
+	}
+	f, err = b.load(rg.Scenario)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	g, ok := f.group(rg.Name)
+	if !ok {
+		return nil, nil, false, nil
+	}
+	return f, g, true, nil
+}
+
+// execution is one group-scoped run of one test, setup or teardown.
+type execution struct {
+	b     *Backend
+	tc    *harness.TestContext
+	file  *File
+	group *Group
+	eval  *evaluator
+	// test is failure-message field 1's second half: the test name, or
+	// "setup"/"teardown" for a group hook.
+	test string
+}
+
+func (b *Backend) newExecution(t *harness.TestContext, f *File, g *Group, test string) *execution {
+	return &execution{
+		b:     b,
+		tc:    t,
+		file:  f,
+		group: g,
+		eval:  &evaluator{runID: t.RunID, group: g.Name, bag: bagFor(t)},
+		test:  test,
+	}
+}
+
+// runTest runs one test: the primary call, then every clause in order.
+func (e *execution) runTest(ctx context.Context, t *Test) error {
+	wantErr := errorCodeClause(t.Assert)
+
+	obs, cliErr, err := e.callRaw(ctx, &t.Call, "call")
+	if err != nil {
+		return err
+	}
+	switch {
+	case wantErr != nil:
+		// A test carrying an errorCode clause expects its primary call to
+		// fail; the generator refuses such a test any clause that would read
+		// the primary response, so every other clause makes a call of its own.
+		if cliErr == nil {
+			return e.fail(obs, "call", kindErrorCode, "", acceptedCodes(wantErr), "<no error>")
+		}
+		if !matchesError(cliErr, wantErr) {
+			return e.fail(obs, "call", kindErrorCode, "", acceptedCodes(wantErr), quote(cliErr.Error()))
+		}
+	case cliErr != nil:
+		return e.failedCall(obs, "call", cliErr)
+	default:
+		if err := e.applyExports(&t.Call, obs, "call"); err != nil {
+			return err
+		}
+	}
+
+	for i := range t.Assert {
+		a := &t.Assert[i]
+		if a.Kind == kindErrorCode {
+			continue // already checked against the primary call
+		}
+		if err := e.assert(ctx, a, obs, fmt.Sprintf("assert[%d]", i)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// callRaw evaluates a call's params and runs it through the AWS CLI, keeping
+// the CLI's own error separate from the interpreter's.
+//
+// cliErr is the `aws` invocation's error, unwrapped, for the two clauses that
+// must inspect it (errorCode, and absent's error form). err is everything the
+// interpreter can attribute to the scenario before anything was sent — an
+// unresolvable $ref, params that will not encode — and is already a *failure.
+//
+// The returned observed carries the exact params JSON sent, so every failure
+// downstream of it quotes what went on the wire.
+func (e *execution) callRaw(ctx context.Context, c *Call, step string) (obs observed, cliErr, err error) {
+	obs = observed{op: c.Op}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return obs, nil, fmt.Errorf("%s/%s: %s: %w", e.group.Name, e.test, c.Op, ctxErr)
+	}
+
+	params, evalErr := e.eval.evalParams(c.Params)
+	if evalErr != nil {
+		// Nothing was sent, so field 3 shows the params as the scenario file
+		// writes them rather than a JSON document that never existed. It is
+		// rendered inside the error branches that use it: every call the run
+		// makes takes the successful path, and encoding the unevaluated params
+		// there would be work no message ever prints.
+		obs.params = rawParams(c)
+		var ref *refError
+		if errors.As(evalErr, &ref) {
+			return obs, nil, e.fail(obs, step, "params", ref.path, "the context path to be set", "<unset>")
+		}
+		return obs, nil, e.fail(obs, step, "params", "", "every value expression to evaluate", quote(evalErr.Error()))
+	}
+
+	sent, encErr := canonicalJSON(params)
+	if encErr != nil {
+		obs.params = rawParams(c)
+		return obs, nil, e.fail(obs, step, "params", "", "params that encode as JSON", quote(encErr.Error()))
+	}
+	obs.params = sent
+
+	body, runErr := e.b.run.run(ctx, e.tc, []string{e.file.Client.EndpointPrefix, kebabOp(c.Op), "--cli-input-json", sent})
+	if runErr != nil {
+		return obs, runErr, nil
+	}
+	obs.body, obs.ok = body, true
+	return obs, nil, nil
+}
+
+// rawParams renders a call's params as the scenario file writes them — value
+// expressions unevaluated — for a failure raised before anything was sent.
+func rawParams(c *Call) string {
+	s, err := canonicalJSON(c.Params)
+	if err != nil {
+		return fmt.Sprintf("%v", c.Params)
+	}
+	return s
+}
+
+// call is callRaw with the CLI's error turned into a failure — what every
+// clause that simply needs the call to succeed wants.
+func (e *execution) call(ctx context.Context, c *Call, step string) (observed, error) {
+	obs, cliErr, err := e.callRaw(ctx, c, step)
+	if err != nil {
+		return obs, err
+	}
+	if cliErr != nil {
+		return obs, e.failedCall(obs, step, cliErr)
+	}
+	return obs, nil
+}
+
+// failedCall reports a call that should have succeeded. The CLI's error text is
+// quoted verbatim as the actual value, so the reader sees what the CLI said.
+//
+// Classification is decided here rather than left to the message: this is the
+// one place holding the *raw* CLI error, and a composed failure message is not
+// something harness.LooksUnimplemented may be pointed at — it embeds the params
+// JSON, where a run id or a port number puts a "501" that means nothing. So a
+// 501 is stated by wrapping harness.ErrUnimplemented, and every other failure
+// carries no sentinel and is a plain fail.
+func (e *execution) failedCall(obs observed, step string, cliErr error) error {
+	f := e.fail(obs, step, "call", "", "the call to succeed", quote(cliErr.Error()))
+	if harness.LooksUnimplemented(cliErr.Error()) {
+		return unimplementedFailure{f}
+	}
+	return f
+}
+
+// unimplementedFailure is a failure the emulator answered with 501. It reads as
+// the failure it wraps and unwraps to both it and the sentinel, so the message
+// in the NDJSON `error` field is unchanged and harness.IsUnimplemented still
+// classifies the test as unimplemented.
+type unimplementedFailure struct{ err error }
+
+func (u unimplementedFailure) Error() string { return u.err.Error() }
+
+func (u unimplementedFailure) Unwrap() []error { return []error{u.err, harness.ErrUnimplemented} }
+
+// invoke is call plus its exports, for a setup or teardown step, whose whole
+// purpose is the context values it leaves behind.
+func (e *execution) invoke(ctx context.Context, c *Call, step string) (observed, error) {
+	obs, err := e.call(ctx, c, step)
+	if err != nil {
+		return obs, err
+	}
+	return obs, e.applyExports(c, obs, step)
+}
+
+// applyExports writes a call's response paths into the context bag. An export
+// path that does not resolve is an error for the step that carries it: the
+// value a later step will $ref is not there, and failing here names the path
+// instead of failing later with an unresolvable reference.
+func (e *execution) applyExports(c *Call, obs observed, step string) error {
+	for path, respPath := range c.Export {
+		v, ok, err := resolvePath(obs.body, respPath)
+		if err != nil {
+			return e.fail(obs, step, "export", respPath, "a well-formed response path", quote(err.Error()))
+		}
+		if !ok {
+			return e.fail(obs, step, "export", respPath, fmt.Sprintf("a value to export into %q", path), missingValue)
+		}
+		e.eval.bag.set(path, v)
+	}
+	return nil
+}
+
+// wait sleeps between eventually attempts for exactly the delay the IR asks
+// for — no more, because the cli suite spawns a process per call and every
+// added second is paid on every attempt of every retried clause.
+func wait(ctx context.Context, delayMs int) error {
+	if delayMs <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(time.Duration(delayMs) * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// matchesError reports whether a failed call carries the error an `error`
+// clause names.
+//
+// The clause carries both the modeled shape and the wire code, because SDKs
+// disagree about which of the two they surface — for SQS's not-found,
+// QueueDoesNotExist and AWS.SimpleQueueService.NonExistentQueue — so either is
+// accepted, but by **equality** against a code parsed out of the CLI's output,
+// never by containment over the whole message. Containment cannot tell a code
+// from a code that ends with it: an `absent` clause naming NotFoundException
+// would be satisfied by a ResourceNotFoundException, which is a different error
+// from a different branch of the service, and by a NotFoundException named
+// anywhere else in the CLI's prose.
+//
+// errorCodes below reads the two places a code can appear. Only when neither is
+// present — the CLI failed before it reached the wire, or printed something
+// this parser does not know — does the match fall back to containment, which is
+// what every hand-written group in this suite does (internal/groups/util.go)
+// and is better than reporting no match at all.
+func matchesError(err error, want *ErrorClause) bool {
+	if err == nil || want == nil {
+		return false
+	}
+	msg := err.Error()
+	if codes := errorCodes(msg); len(codes) > 0 {
+		for _, got := range codes {
+			if (want.Shape != "" && got == want.Shape) || (want.Code != "" && got == want.Code) {
+				return true
+			}
+		}
+		return false
+	}
+	return (want.Shape != "" && strings.Contains(msg, want.Shape)) ||
+		(want.Code != "" && strings.Contains(msg, want.Code))
+}
+
+// errorCodes returns every error code the CLI's output states, in the order
+// they were found, or nil when it states none.
+//
+// Two surfaces, because the CLI has two. Its own rendering of a modeled error
+// is the banner `An error occurred (<Code>) when calling the <Op> operation:`.
+// When it cannot model the response it prints the body instead, and a JSON
+// error body carries the code in `__type` (the AWS JSON protocols) or `Code`
+// (a query-protocol error the CLI printed as JSON) — which is also how an
+// Overcast fallback error arrives.
+func errorCodes(msg string) []string {
+	var codes []string
+	for _, m := range cliErrorBannerRe.FindAllStringSubmatch(msg, -1) {
+		codes = append(codes, normaliseErrorCode(m[1]))
+	}
+	for _, m := range jsonErrorCodeRe.FindAllStringSubmatch(msg, -1) {
+		codes = append(codes, normaliseErrorCode(m[1]))
+	}
+	return codes
+}
+
+// normaliseErrorCode strips the namespace an AWS JSON `__type` carries:
+// `com.amazonaws.sqs#QueueDoesNotExist` states the same code as
+// `QueueDoesNotExist`, and the IR only ever names the bare form.
+func normaliseErrorCode(code string) string {
+	if _, after, found := strings.Cut(code, "#"); found {
+		return after
+	}
+	return code
+}
+
+var (
+	// cliErrorBannerRe matches the AWS CLI's own error line. The fixture in
+	// executor_test.go writes it the same way the CLI does.
+	cliErrorBannerRe = regexp.MustCompile(`An error occurred \(([^()]+)\) when calling the `)
+	// jsonErrorCodeRe matches the code member of a JSON error body the CLI
+	// echoed rather than modeled.
+	jsonErrorCodeRe = regexp.MustCompile(`"(?:__type|Code)"\s*:\s*"([^"]+)"`)
+)
+
+// acceptedCodes renders both halves of an error clause for a failure message.
+func acceptedCodes(want *ErrorClause) string {
+	if want.Shape == want.Code {
+		return fmt.Sprintf("error %q", want.Shape)
+	}
+	return fmt.Sprintf("error %q or %q", want.Shape, want.Code)
+}
+
+// kebabOp derives the `aws` subcommand from an operation name.
+//
+// This is botocore's xform_name with a "-" separator, which is exactly how the
+// AWS CLI names its own subcommands (awscli/clidriver.py builds them from
+// xform_name(operation.name, '-')), so it is a derivation rather than a table:
+// ListAWSServiceAccessForOrganization becomes
+// list-aws-service-access-for-organization the same way the CLI does. Every
+// operation in the pilot corpus is covered by TestKebabOpMatchesTheCLI.
+func kebabOp(op string) string {
+	if strings.Contains(op, "-") {
+		return op
+	}
+	if m := trailingAcronymPluralRe.FindString(op); m != "" {
+		op = op[:len(op)-len(m)] + "-" + strings.ToLower(m)
+	}
+	s := firstCapRe.ReplaceAllString(op, "${1}-${2}")
+	s = numberCapRe.ReplaceAllString(s, "${1}-${2}")
+	s = endCapRe.ReplaceAllString(s, "${1}-${2}")
+	return strings.ToLower(s)
+}
+
+var (
+	trailingAcronymPluralRe = regexp.MustCompile(`[A-Z]{2,}s$`)
+	firstCapRe              = regexp.MustCompile(`(.)([A-Z][a-z]+)`)
+	endCapRe                = regexp.MustCompile(`([a-z0-9])([A-Z])`)
+	numberCapRe             = regexp.MustCompile(`([a-z])([0-9]+)`)
+)

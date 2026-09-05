@@ -398,8 +398,11 @@ cid=$(MSYS_NO_PATHCONV=1 docker run -d --rm \
     "$IMAGE")
 
 echo "container: $cid"
-echo "API endpoint: http://localhost:$api_port"
-echo "Web UI:       http://localhost:$ui_port"
+# 127.0.0.1, not localhost: the port is published on 127.0.0.1 only (see
+# above), and on a dual-stack host "localhost" resolves to ::1 first, adding
+# a ~2s IPv6-then-IPv4 fallback to every connection this printed URL feeds.
+echo "API endpoint: http://127.0.0.1:$api_port"
+echo "Web UI:       http://127.0.0.1:$ui_port"
 echo "stop with:    docker stop $(echo "$cid" | cut -c1-12)"
 if [ "$FOLLOW_LOGS" -eq 0 ]; then
     exit 0

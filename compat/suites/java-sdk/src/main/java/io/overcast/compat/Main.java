@@ -19,7 +19,7 @@ import java.util.*;
  *
  * <h2>Environment variables</h2>
  * <table>
- *   <tr><td>{@code OVERCAST_ENDPOINT}</td>         <td>Overcast base URL (default: http://localhost:4566)</td></tr>
+ *   <tr><td>{@code OVERCAST_ENDPOINT}</td>         <td>Overcast base URL (default: http://127.0.0.1:4566)</td></tr>
  *   <tr><td>{@code OVERCAST_DEFAULT_REGION}</td>            <td>AWS region (default: us-east-1)</td></tr>
  *   <tr><td>{@code OVERCAST_COMPAT_RUN_ID}</td>     <td>Unique run ID; all resources must be prefixed
  *                                                   with this value so the orphan sweep can find them</td></tr>
@@ -37,7 +37,10 @@ public final class Main {
     public static void main(String[] args) {
         // Kinesis uses CBOR by default in the Java SDK v2; Overcast only supports JSON.
         System.setProperty("aws.cborEnabled", "false");
-        String endpoint   = env("OVERCAST_ENDPOINT",  "http://localhost:4566");
+        // 127.0.0.1, not localhost: on a dual-stack host "localhost" resolves
+        // to ::1 first while the container publishes IPv4 only, so every new
+        // connection pays a ~2s IPv6-then-IPv4 fallback.
+        String endpoint   = env("OVERCAST_ENDPOINT",  "http://127.0.0.1:4566");
         boolean skipDocker = "1".equals(System.getenv("OVERCAST_COMPAT_SKIP_DOCKER"));
 
         AwsClients clients = new AwsClients(endpoint, env("OVERCAST_DEFAULT_REGION", "us-east-1"));

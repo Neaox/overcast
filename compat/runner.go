@@ -58,7 +58,10 @@ type SuiteConfig struct {
 
 // RunConfig controls how the runner executes suites.
 type RunConfig struct {
-	// Endpoint is the Overcast base URL, e.g. "http://localhost:4566".
+	// Endpoint is the Overcast base URL, e.g. "http://127.0.0.1:4566" — not
+	// "localhost": a dual-stack host resolves "localhost" to ::1 first, and
+	// the container publishes IPv4 only, so every new connection pays a ~2s
+	// IPv6-then-IPv4 fallback.
 	Endpoint string
 	// Region is the AWS region to advertise to suite clients.
 	Region string

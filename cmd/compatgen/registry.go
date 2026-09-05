@@ -21,7 +21,7 @@ import (
 
 // scenarioBackends lists the suites that can execute scenario IR, sorted.
 // Add a suite here in the PR that lands its interpreter or source emitter.
-var scenarioBackends = []string{"node-js-sdk", "python-sdk"}
+var scenarioBackends = []string{"cli", "node-js-sdk", "python-sdk"}
 
 const (
 	generatedRegistryVersion = 1

@@ -101,11 +101,14 @@ var (
 	// Environment management — see launch.go.
 	dev               = flag.Bool("dev", false, "One-command dev loop: manage Overcast, serve the dashboard with a hot-reloading UI, open a browser")
 	startOvercastMode = flag.String("start-overcast", envOr("OVERCAST_COMPAT_START", startOvercastAuto), "Manage a throwaway Overcast instance: auto|always|never")
-	overcastHost      = flag.String("overcast-host", envOr("OVERCAST_COMPAT_HOST", "localhost"), "Hostname the suites address the managed instance by (e.g. localhost.overcast.sh for virtual-host-style S3)")
-	overcastBin       = flag.String("overcast-bin", envOr("OVERCAST_COMPAT_BIN", ""), "Run this overcast binary; naming one is honoured or the run fails (unset: bin/overcast, then PATH, then a container)")
-	overcastImage     = flag.String("overcast-image", envOr("OVERCAST_COMPAT_IMAGE", defaultOvercastImage), "Run this container image; naming one selects the container even when a local binary exists. Unset, it is only the fallback for when no binary is found")
-	overcastUI        = flag.Bool("overcast-ui", false, "Also expose the managed instance's own web UI on a free port")
-	overcastTimeout   = flag.Int("overcast-timeout", 60, "Seconds to wait for the managed instance to become healthy")
+	// Default is 127.0.0.1, not "localhost": on a dual-stack host "localhost"
+	// resolves ::1 first and the container publishes IPv4 only, so every new
+	// connection pays a ~2s IPv6-then-IPv4 fallback.
+	overcastHost    = flag.String("overcast-host", envOr("OVERCAST_COMPAT_HOST", "127.0.0.1"), "Hostname the suites address the managed instance by (e.g. localhost.overcast.sh for virtual-host-style S3)")
+	overcastBin     = flag.String("overcast-bin", envOr("OVERCAST_COMPAT_BIN", ""), "Run this overcast binary; naming one is honoured or the run fails (unset: bin/overcast, then PATH, then a container)")
+	overcastImage   = flag.String("overcast-image", envOr("OVERCAST_COMPAT_IMAGE", defaultOvercastImage), "Run this container image; naming one selects the container even when a local binary exists. Unset, it is only the fallback for when no binary is found")
+	overcastUI      = flag.Bool("overcast-ui", false, "Also expose the managed instance's own web UI on a free port")
+	overcastTimeout = flag.Int("overcast-timeout", 60, "Seconds to wait for the managed instance to become healthy")
 	// On by default because a compat run without it cannot invoke a Lambda,
 	// and a flag defaulting off would have to be remembered by everyone
 	// testing a release candidate. It is a flag at all — rather than
@@ -443,7 +446,9 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "compat: %v\n", err)
 		return 2
 	}
-	compatURL := "http://localhost" + addr
+	// 127.0.0.1, not localhost: a dual-stack host resolves "localhost" to ::1
+	// first, adding a ~2s IPv6-then-IPv4 fallback to the dashboard's own URL.
+	compatURL := "http://127.0.0.1" + addr
 
 	// Resolve the endpoint. Unless the caller pinned one, compat starts and
 	// owns a throwaway instance on a free port — AGENTS.md reserves 4566/4567
@@ -484,7 +489,10 @@ func run() int {
 	if endpointURL == "" {
 		// --start-overcast=never with no endpoint: target the developer's own
 		// instance on the default port, which is what 4566 is reserved for.
-		endpointURL = fmt.Sprintf("http://localhost:%d", reservedAPIPort)
+		// 127.0.0.1, not localhost: a dual-stack host resolves "localhost" to
+		// ::1 first, adding a ~2s IPv6-then-IPv4 fallback to every connection
+		// the container (IPv4-only) never answers on.
+		endpointURL = fmt.Sprintf("http://127.0.0.1:%d", reservedAPIPort)
 	}
 	if !managed {
 		warnUnusedArtifactFlags(endpointURL)

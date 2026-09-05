@@ -57,8 +57,8 @@ func TestReport_listsCoverageRefusalsAndSamples(t *testing.T) {
 	writeReport(&out, gen, 2)
 	report := out.String()
 	for _, want := range []string{
-		"21 of 31 modeled operations",
-		"| RotateWidget | widgets-gen-probe | `unbound-required-member:Angle` |",
+		"21 of 34 modeled operations",
+		"| RotateWidget | widgets-gen-probe | `never-probe` |",
 		"| SetWidgetSize | widgets-gen-probe | `update-without-mutable` |",
 		"### Automatic name-match bindings",
 		"None — every bound member",

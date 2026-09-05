@@ -17,7 +17,10 @@ use registry::build_groups;
 #[tokio::main]
 async fn main() {
     let suite = "rust-sdk";
-    let endpoint = env_or("OVERCAST_ENDPOINT", "http://localhost:4566");
+    // 127.0.0.1, not localhost: on a dual-stack host "localhost" resolves to
+    // ::1 first while the container publishes IPv4 only, so every new
+    // connection pays a ~2s IPv6-then-IPv4 fallback.
+    let endpoint = env_or("OVERCAST_ENDPOINT", "http://127.0.0.1:4566");
     let region = env_or("OVERCAST_DEFAULT_REGION", "us-east-1");
     let skip_docker = std::env::var("OVERCAST_COMPAT_SKIP_DOCKER").ok().as_deref() == Some("1");
 

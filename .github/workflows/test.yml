@@ -953,6 +953,7 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         run: make aws-models-check-ci
       - name: Validate the generated compat model
+        if: needs.changes.outputs.code == 'true'
         run: make compat-model-check
 
   # Gated like the Go jobs from `Lint` down, with one extra consequence: this
