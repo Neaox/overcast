@@ -5,7 +5,7 @@
 >
 > For compat-wide conventions (wire format, isolation rules, Docker/CI) see
 > [compat/AGENTS.md](../../AGENTS.md).
-> For the root project conventions see [AGENTS.md](../../../../AGENTS.md).
+> For the root project conventions see [AGENTS.md](../../../AGENTS.md).
 >
 > **Separation boundary:** this suite uses **AWS SDK v3 without modification**
 > — the only difference from talking to real AWS is `endpoint: ctx.endpoint`
@@ -28,13 +28,23 @@ No Overcast-specific headers, no special client wrappers, no test modes.
 
 ---
 
+## Status
+
+**Implemented**, and the reference suite: `makeAllGroups()` composes 28 service
+files, and this file is the canonical example of what a suite `AGENTS.md`
+covers ([compat/AGENTS.md § Suite-specific conventions](../../AGENTS.md#suite-specific-conventions)).
+It runs in the compat CI matrix (`.github/workflows/compat.yml`) alongside
+every other suite.
+
+---
+
 ## Runtime
 
-| Item       | Value                                                 |
-| ---------- | ----------------------------------------------------- |
-| Runtime    | Node.js 22.18+/23.6+ (type stripping; no build step)  |
-| SDK        | `@aws-sdk/client-*` v3, pinned to `^3.1020.0`         |
-| CI image   | `node:24-alpine`                                      |
+| Item     | Value                                                                                                                                              |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime  | Node.js 22.18+/23.6+ (type stripping; no build step)                                                                                                |
+| SDK      | `@aws-sdk/client-*` v3, pinned in `package.json`                                                                                                    |
+| CI image | None of its own — GitHub Actions installs Node from `.node-version` and runs `npm ci` here; the compose path uses `.devcontainer/Dockerfile`, which already carries Node |
 
 > SDK version pinning policy: see [compat/AGENTS.md § SDK version pinning](../../AGENTS.md#sdk-version-pinning--upgrade-strategy).
 

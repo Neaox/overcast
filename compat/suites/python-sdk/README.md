@@ -1,7 +1,7 @@
 # python-sdk suite
 
-Runs the full Overcast AWS compatibility matrix using **boto3** (AWS SDK for
-Python v3, Python 3.11).
+Runs the full Overcast AWS compatibility matrix using **boto3** (the AWS SDK
+for Python).
 
 > **Status: implemented.** See [AGENTS.md](AGENTS.md) for code conventions.
 
@@ -21,39 +21,58 @@ vs SDK error shapes, paginator patterns).
 
 ## Prerequisites
 
-- Python 3.11+ (or any 3.9+ in a pinch)
+- Python 3.11 or newer (CI runs 3.14; verified here against 3.14)
 - `pip install -r requirements.txt` (boto3, botocore)
-- Overcast running on `http://localhost:4566`
+- Docker, for the tests the registry marks `requires: [docker]` (Lambda
+  invocation, event-source-mapping delivery). Without a daemon, set
+  `OVERCAST_COMPAT_SKIP_DOCKER=1` and they are skipped rather than failed.
+- Overcast running somewhere reachable — see
+  [compat/AGENTS.md § Running a session](../../AGENTS.md#running-a-session--ports-are-chosen-never-assumed)
+  for why `4566`/`4567` are off-limits for a test instance you start yourself.
+
+No AWS credentials are needed: the clients are built with fixed placeholder
+values, which the emulator accepts without validating.
 
 ---
 
 ## Running the suite
 
-### Locally (Python 3.11+ required)
+### Locally (Python required)
 
 ```bash
 cd compat/suites/python-sdk
 pip install -r requirements.txt
+python -m unittest discover -s tests   # registry unit tests; no emulator needed
 
 # Start Overcast first (separate terminal):
-#   go run ./cmd/overcast -- serve
-#   — or —
-#   docker run -p 4566:4566 ghcr.io/your-org/overcast
+#   go run ./cmd/overcast serve
 
+python runner.py
+```
+
+PowerShell:
+
+```powershell
+cd compat/suites/python-sdk
+pip install -r requirements.txt
+python -m unittest discover -s tests
+
+$env:OVERCAST_ENDPOINT = "http://localhost:4566"
 python runner.py
 ```
 
 ### Via Docker (no local Python required)
 
-```bash
-# Build the suite image
-docker build -t overcast-compat-python-sdk compat/suites/python-sdk
+This suite ships no image of its own. It runs as a subprocess of the compat
+runner container, which already carries Python. From the repo root:
 
-# Run against a local Overcast instance
-docker run --rm --network host \
-  -e OVERCAST_ENDPOINT=http://localhost:4566 \
-  overcast-compat-python-sdk
+```bash
+OVERCAST_COMPAT_SUITE=python-sdk docker compose -f compat/docker-compose.yml run --rm compat
 ```
+
+Arguments after the compose service name reach the container entrypoint rather
+than the runner, which is why the suite selection is an environment variable —
+see [compat/AGENTS.md § Running suites](../../AGENTS.md#running-suites-docker--ci).
 
 ### Via the Go CLI (recommended — runs all suites)
 
@@ -70,11 +89,20 @@ go run ./cmd/compat --endpoint http://localhost:4566 --suite python-sdk
 
 ## Environment variables
 
-| Variable                  | Default                 | Description                        |
-| ------------------------- | ----------------------- | ---------------------------------- |
-| `OVERCAST_ENDPOINT`       | `http://localhost:4566` | Overcast base URL                  |
-| `OVERCAST_DEFAULT_REGION` | `us-east-1`             | AWS region advertised to the SDK   |
-| `OVERCAST_COMPAT_GROUPS`  | unset (all)             | Comma-separated group names to run |
+| Variable                         | Default                 | Description                                                                                            |
+| -------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------ |
+| `OVERCAST_ENDPOINT`              | `http://localhost:4566` | Overcast base URL                                                                                      |
+| `OVERCAST_DEFAULT_REGION`        | `us-east-1`             | AWS region advertised to the SDK                                                                       |
+| `OVERCAST_COMPAT_RUN_ID`         | auto-generated          | Prefix for resource names, so concurrent runs and the orphan sweep do not collide                      |
+| `OVERCAST_COMPAT_SKIP_DOCKER`    | unset                   | Set to `1` to drop the `docker` capability, skipping every test the registry marks `requires: [docker]` |
+| `OVERCAST_COMPAT_SERVICE`        | unset (all)             | Comma-separated AWS service names to run, e.g. `s3,sqs`                                                |
+| `OVERCAST_COMPAT_GROUPS`         | unset (all)             | Comma-separated group names to run                                                                     |
+| `OVERCAST_COMPAT_TESTS`          | unset (all)             | Comma-separated test names to run within those groups                                                  |
+| `OVERCAST_COMPAT_PARALLEL_SLOTS` | `8`                     | Max groups run concurrently                                                                            |
+| `OVERCAST_COMPAT_INTERACTIVE`    | unset                   | Set to `1` to serve the interactive command protocol instead of one batch run                          |
+
+`registry.json` is located relative to `lib/registry.py`, not through an
+environment variable — this suite has no `OVERCAST_REGISTRY_PATH` override.
 
 ---
 
@@ -82,14 +110,16 @@ go run ./cmd/compat --endpoint http://localhost:4566 --suite python-sdk
 
 ```
 python-sdk/
-  Dockerfile          ← self-contained CI image (python:3.11-alpine)
   requirements.txt    ← boto3, botocore
-  runner.py           ← entry point; imports all group modules; NDJSON output
+  runner.py           ← entry point; imports all group modules; applies the env
+                        filters; runs once or serves the interactive command loop
   README.md           ← you are here
 
   lib/
     harness.py        ← TestContext, run_suite(), run_group(), is_unimplemented()
     clients.py        ← make_clients(endpoint, region) → named tuple of clients
+    registry.py       ← loads registry.json + registry.generated.json, merges and
+                        validates impl keys, builds the groups
 
   groups/             ← one file per AWS service
     s3.py
@@ -97,7 +127,15 @@ python-sdk/
     dynamodb.py
     sns.py
     …
+
+  tests/
+    test_registry.py  ← impl-key resolution tests; run with
+                        `python -m unittest discover -s tests`
 ```
+
+This suite ships no `Dockerfile`: the compat runner container already carries
+Python, so it runs there as a plain subprocess (see `defaultSuites` in
+[compat/runner.go](../../runner.go)).
 
 ### Key types (`lib/harness.py`)
 

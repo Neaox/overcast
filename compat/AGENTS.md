@@ -604,7 +604,8 @@ canonical reference. At minimum, every suite `AGENTS.md` must document:
 | **Adding a new group**      | Step-by-step checklist: create file → implement group → register in runner → verify wire output.                                                                                                |
 | **What agents must NOT do** | Hard prohibitions specific to this suite (e.g. "never construct SDK clients inside test functions", "never call sys.exit", "no require() in Node.js").                                          |
 
-Current suite AGENTS.md files (implemented suites):
+Current suite AGENTS.md files (implemented suites — the eight in
+`defaultSuites` and in the CI matrix):
 
 - [suites/node-js-sdk/AGENTS.md](suites/node-js-sdk/AGENTS.md)
 - [suites/cli/AGENTS.md](suites/cli/AGENTS.md)
@@ -612,14 +613,20 @@ Current suite AGENTS.md files (implemented suites):
 - [suites/python-sdk/AGENTS.md](suites/python-sdk/AGENTS.md)
 - [suites/java-sdk/AGENTS.md](suites/java-sdk/AGENTS.md)
 - [suites/dotnet-sdk/AGENTS.md](suites/dotnet-sdk/AGENTS.md)
-
-Planned suite AGENTS.md files (implementation guide for agents building each suite):
-
 - [suites/cdk/AGENTS.md](suites/cdk/AGENTS.md)
-- [suites/pulumi/AGENTS.md](suites/pulumi/AGENTS.md)
 - [suites/rust-sdk/AGENTS.md](suites/rust-sdk/AGENTS.md)
+
+Planned suite AGENTS.md files (implementation guide for agents building each
+suite — none of these appears in `defaultSuites`, the CI matrix or
+`registry.json`, and `--suite <name>` rejects all three as unknown):
+
+- [suites/pulumi/AGENTS.md](suites/pulumi/AGENTS.md)
 - [suites/terraform/AGENTS.md](suites/terraform/AGENTS.md)
 - [suites/tofu/AGENTS.md](suites/tofu/AGENTS.md)
+
+The two lists restate `defaultSuites` in [runner.go](./runner.go) and
+`all_suites` in [.github/workflows/compat.yml](../.github/workflows/compat.yml),
+so move a suite between them in the same change that registers it there.
 
 When adding a new suite, create **both** `AGENTS.md` and `README.md` before writing any group code.
 

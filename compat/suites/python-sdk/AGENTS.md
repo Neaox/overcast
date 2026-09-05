@@ -16,13 +16,24 @@ unimplemented services are correct and expected.
 
 ---
 
+## Status
+
+**Implemented.** `runner.py` imports 28 service modules covering S3, SQS,
+DynamoDB, SNS, Lambda, CloudWatch Logs, SES, IAM, STS, Secrets Manager, KMS,
+SSM, Kinesis, EventBridge, CloudFormation, EC2, ECS, Cognito, AppSync, API
+Gateway, CloudFront, ElastiCache, RDS, Step Functions, EventBridge Pipes,
+WAFv2, Shield and EFS. It runs in the compat CI matrix
+(`.github/workflows/compat.yml`) alongside every other suite.
+
+---
+
 ## Runtime
 
-| Item       | Value                |
-| ---------- | -------------------- |
-| Language   | Python 3.11          |
-| AWS client | `boto3>=1.34.0` / `botocore>=1.34.0` (pinned)                   |
-| CI image   | `python:3.11-alpine`                                              |
+| Item       | Value                                                                                                                                             |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Language   | Python 3.11+ (CI runs 3.14)                                                                                                                       |
+| AWS client | `boto3` / `botocore`, floors in `requirements.txt`                                                                                                |
+| CI image   | None of its own — GitHub Actions installs Python and runs `pip install -r requirements.txt`; the compose path uses `.devcontainer/Dockerfile`, which already carries Python |
 
 > SDK upgrade policy: [compat/AGENTS.md § SDK version pinning](../../AGENTS.md#sdk-version-pinning--upgrade-strategy).
 
@@ -33,16 +44,21 @@ unimplemented services are correct and expected.
 ```
 compat/suites/python-sdk/
   AGENTS.md          ← you are here
-  README.md          ← quick-start
+  README.md          ← quick-start, prerequisites, env vars, architecture
   runner.py          ← entry point; imports all group modules; NDJSON output
   requirements.txt
   lib/
-    harness.py       ← TestContext, run_suite()
+    harness.py       ← TestContext, run_suite(), run_group(), is_unimplemented()
     clients.py       ← make_clients(endpoint, region) → named tuple of clients
+    registry.py      ← loads registry.json + registry.generated.json, merges and
+                       validates impl keys, builds the groups
   groups/            ← one file per AWS service
     s3.py
     sqs.py
     ...
+  tests/
+    test_registry.py ← impl-key resolution tests, run with
+                       `python -m unittest discover -s tests`
 ```
 
 **One file per AWS service.** Never split a service across files.
@@ -54,9 +70,22 @@ compat/suites/python-sdk/
 Each service file must export these module-level dicts:
 
 ```python
-IMPLS: dict[str, Callable[[TestContext], None]]
-SETUP: dict[str, Callable[[TestContext], None]]   # keyed by group name
-TEARDOWN: dict[str, Callable[[TestContext], None]] # keyed by group name
+IMPLS: dict[str, Callable[[TestContext], None]]     # keyed "group:Test"
+SETUP: dict[str, Callable[[TestContext], None]]     # keyed by group name
+TEARDOWN: dict[str, Callable[[TestContext], None]]  # keyed by group name
+```
+
+`runner.py` imports each module and merges these three dicts, so a new service
+file has to be added to that import list as well.
+
+```python
+# groups/sts.py
+IMPLS = {
+    "sts-identity:GetCallerIdentity": GetCallerIdentity,
+    "sts-assume:AssumeRole": AssumeRole,
+}
+SETUP = {}
+TEARDOWN = {}
 ```
 
 Individual test functions raise `AssertionError` to fail; return normally to
@@ -68,14 +97,33 @@ Context state is stored and read via `ctx["key"]` / `ctx.get("key")`.
 
 ## Naming conventions
 
-| Element         | Convention                                                      |
-| --------------- | --------------------------------------------------------------- |
-| Group name      | `<service>-<feature>` (kebab-case), e.g. `s3-crud`, `iam-roles` |
-| Resource prefix | `{ctx.run_id}-<short>` (e.g. `{ctx.run_id}-s3-crud`)            |
-| Context key     | snake_case string, e.g. `"s3_bucket"`, `"kms_key_id"`           |
-| Setup function  | `setup_<group_name>` (underscores), e.g. `setup_s3_crud`        |
-| Teardown fn     | `teardown_<group_name>`, e.g. `teardown_s3_crud`                |
-| Service file    | Lowercase service name: `s3.py`, `cloudwatch_logs.py`           |
+| Element         | Convention                                                                                                                                                                 |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Impl dict key   | `<group>:<Test>` — **always group-qualified**, never bare (see [compat/AGENTS.md § Implementation keys](../../AGENTS.md#implementation-keys--grouptest-and-a-bad-key-aborts-the-run)) |
+| Group name      | `<service>-<feature>` (kebab-case), e.g. `s3-crud`, `iam-roles`                                                                                                              |
+| Test name       | PascalCase AWS operation name, e.g. `CreateBucket`, `AssumeRole`                                                                                                            |
+| Resource prefix | `{ctx.run_id}-<short>` (e.g. `{ctx.run_id}-s3-crud`)                                                                                                                        |
+| Context key     | snake_case string, e.g. `"s3_bucket"`, `"kms_key_id"`                                                                                                                       |
+| Setup function  | `setup_<group_name>` (underscores), e.g. `setup_s3_crud`                                                                                                                    |
+| Teardown fn     | `teardown_<group_name>`, e.g. `teardown_s3_crud`                                                                                                                            |
+| Service file    | Lowercase service name: `s3.py`, `cloudwatch_logs.py`                                                                                                                       |
+
+---
+
+## Registration tests
+
+`tests/test_registry.py` covers the loader on synthetic registries **and**
+resolves this suite's own real registrations against the real `registry.json`.
+Together they pin the two rules that stop a run from reporting a result for a
+test that never executed: a key resolving to nothing aborts rather than
+warning, and a bare key for a name several groups declare is refused rather
+than binding whichever group registered last.
+
+```bash
+python -m unittest discover -s tests
+```
+
+No emulator, and no boto3 call, is involved.
 
 ---
 

@@ -3,24 +3,45 @@
 Runs the full Overcast AWS compatibility matrix using **AWS SDK v3 for
 JavaScript** (TypeScript, run directly by Node — no build step).
 
+> **Status: implemented.** See [AGENTS.md](AGENTS.md) for code conventions.
+
 Tests cover all services — including ones not yet implemented in Overcast.
 Failures on unimplemented services are expected and are the coverage metric,
 not a problem to fix.
 
 ---
 
+## Prerequisites
+
+- Node.js 22.18+ on the 22.x line, or 23.6+ — the suite has no build step;
+  Node runs its TypeScript sources directly using built-in type stripping,
+  which earlier releases do not have. `node run.js` says so plainly if yours
+  is too old.
+- `npm ci` in this directory.
+- Docker, for the tests the registry marks `requires: [docker]` (Lambda
+  invocation, event-source-mapping delivery). Without a daemon, set
+  `OVERCAST_COMPAT_SKIP_DOCKER=1` and they are skipped rather than failed.
+- Overcast running somewhere reachable — see
+  [compat/AGENTS.md § Running a session](../../AGENTS.md#running-a-session--ports-are-chosen-never-assumed)
+  for why `4566`/`4567` are off-limits for a test instance you start yourself.
+
+No AWS credentials are needed: the clients are built with the fixed pair
+`overcast`/`overcast`, which the emulator accepts without validating.
+
+---
+
 ## Quick start
 
-### Locally (Node.js 22.18+ or 23.6+ required)
+### Locally (Node.js required)
 
 ```bash
 cd compat/suites/node-js-sdk
-npm install
+npm ci
+npm run typecheck    # tsc --noEmit: "Node can run this"
+npm run test:unit    # registry unit tests; no emulator needed
 
 # Start Overcast first (separate terminal):
-#   go run ./cmd/overcast -- serve
-#   — or —
-#   docker run -p 4566:4566 ghcr.io/your-org/overcast
+#   go run ./cmd/overcast serve
 
 npm test
 ```

@@ -111,7 +111,7 @@ caches, the suites' `node_modules`, and the UI build all live in named volumes
 rather than in your working tree. `docker compose -f compat/docker-compose.yml
 down -v` discards those caches and returns you to a cold start.
 
-All eight suites run in the containerised dashboard, including the four that
+All eight suites run in the containerised dashboard, including the three that
 build and run their own images (`java-sdk`, `dotnet-sdk`, `rust-sdk`) and the
 Lambda tests. Both the emulator and the runner mount the host Docker socket, so
 those images are **siblings on the host daemon** rather than a nested daemon;
@@ -249,7 +249,7 @@ Build locally once, then run against Overcast without Docker overhead:
 cd compat/suites/rust-sdk && cargo build
 
 # Run many times — cargo detects no changes, instant startup
-OVERCAST_ENDPOINT=http://localhost:4566 ./target/debug/rust_sdk_compat
+OVERCAST_ENDPOINT=http://localhost:4566 ./target/debug/rust-sdk-compat
 ```
 
 **Performance comparison:**
@@ -273,51 +273,54 @@ This breaks the edit-compile-test loop for test harnesses: **edit once, test man
 
 ## Suites
 
-### SDK Tests
+Eight suites run. `defaultSuites` in [runner.go](./runner.go) and `all_suites`
+in [.github/workflows/compat.yml](../.github/workflows/compat.yml) are the two
+places that decide it, and they agree.
 
-| Suite         | Language   | SDK / Tool      | Status     |
-| ------------- | ---------- | --------------- | ---------- |
-| `node-js-sdk` | TypeScript | AWS SDK JS v3   | ✅ active  |
-| `python-sdk`  | Python 3   | boto3           | ✅ active  |
-| `go-sdk`      | Go 1.24    | AWS SDK Go v2   | ✅ active  |
-| `java-sdk`    | Java 17    | AWS SDK Java v2 | 🔜 planned |
-| `dotnet-sdk`  | C#         | AWS SDK .NET v3 | ✅ active  |
-| `rust-sdk`    | Rust       | AWS SDK Rust    | ✅ active  |
-| `cli`         | Bash       | AWS CLI v2      | ✅ active  |
+### SDK and CLI
+
+| Suite         | Language   | SDK / Tool      | Status    |
+| ------------- | ---------- | --------------- | --------- |
+| `node-js-sdk` | TypeScript | AWS SDK JS v3   | ✅ active |
+| `python-sdk`  | Python     | boto3           | ✅ active |
+| `go-sdk`      | Go         | AWS SDK Go v2   | ✅ active |
+| `java-sdk`    | Java 17    | AWS SDK Java v2 | ✅ active |
+| `dotnet-sdk`  | C#         | AWS SDK .NET v3 | ✅ active |
+| `rust-sdk`    | Rust       | AWS SDK Rust    | ✅ active |
+| `cli`         | Go         | AWS CLI v2      | ✅ active |
 
 ### Infrastructure as Code
 
 | Suite       | Tool                        | Status     |
 | ----------- | --------------------------- | ---------- |
-| `cdk`       | AWS CDK v2 (TypeScript)     | 🔜 planned |
+| `cdk`       | AWS CDK v2 (TypeScript)     | ✅ active  |
 | `tofu`      | OpenTofu + AWS provider     | 🔜 planned |
 | `terraform` | Terraform + AWS provider v6 | 🔜 planned |
 | `pulumi`    | Pulumi AWS provider         | 🔜 planned |
+
+A 🔜 suite is a directory holding a `README.md` and an `AGENTS.md` and nothing
+else — no configuration, no runner, no entry in either list above, so
+`--suite <name>` rejects it as unknown. Each one's `AGENTS.md` carries the
+implementation checklist for building it.
 
 ---
 
 ## What to test
 
-Every suite should cover all services implemented in Overcast at a minimum.
-The table below shows what each suite currently covers. ✅ = tests exist
-(may include expected failures for unimplemented ops), 🔜 = planned, — = out of scope.
+Every SDK and CLI suite covers the same operations: they are all measured
+against one shared matrix, [suites/registry.json](./suites/registry.json),
+which is the single source of truth for which groups and tests exist. A test a
+suite has not implemented is reported as a `skip` rather than being absent, so
+per-suite coverage is what a run prints and what the dashboard's comparison
+view shows — not something to restate here.
 
-| Service         | node-js-sdk | python | go  | java | rust | cli | cdk | tofu | terraform |
-| --------------- | ----------- | ------ | --- | ---- | ---- | --- | --- | ---- | --------- |
-| S3              | ✅          | ✅     | ✅  | 🔜   | 🔜   | ✅  | 🔜  | 🔜   | 🔜        |
-| SQS             | ✅          | ✅     | ✅  | 🔜   | 🔜   | ✅  | 🔜  | 🔜   | 🔜        |
-| DynamoDB        | ✅          | ✅     | ✅  | 🔜   | 🔜   | ✅  | 🔜  | 🔜   | 🔜        |
-| SNS             | ✅          | ✅     | ✅  | 🔜   | 🔜   | ✅  | 🔜  | 🔜   | 🔜        |
-| Lambda          | ✅          | ✅     | ✅  | 🔜   | 🔜   | ✅  | 🔜  | —    | —         |
-| CloudWatch Logs | ✅          | ✅     | ✅  | 🔜   | —    | ✅  | —   | —    | —         |
-| SES             | ✅          | ✅     | ✅  | 🔜   | —    | ✅  | —   | —    | —         |
-| Secrets Manager | ✅          | ✅     | ✅  | 🔜   | 🔜   | ✅  | 🔜  | 🔜   | 🔜        |
-| IAM             | ✅          | ✅     | ✅  | 🔜   | —    | ✅  | 🔜  | 🔜   | 🔜        |
-| STS             | ✅          | ✅     | ✅  | 🔜   | 🔜   | ✅  | —   | —    | —         |
-| KMS             | ✅          | ✅     | ✅  | 🔜   | 🔜   | ✅  | —   | 🔜   | 🔜        |
-| SSM             | ✅          | ✅     | ✅  | 🔜   | 🔜   | ✅  | —   | 🔜   | 🔜        |
-| EventBridge     | ✅          | ✅     | ✅  | 🔜   | —    | ✅  | 🔜  | —    | —         |
-| Kinesis         | ✅          | ✅     | ✅  | 🔜   | —    | ✅  | —   | —    | —         |
+`go run ./cmd/compat --check-parity` is what enforces it: a test added to one
+SDK/CLI suite and not the others fails the build unless the gap is recorded in
+[parity-debt.json](./parity-debt.json).
+
+Two suites are deliberately narrower, and say so in their own READMEs:
+`rust-sdk` covers ten services rather than aiming at parity, and `cdk` runs one
+deployment-lifecycle group scoped to itself in the registry.
 
 ---
 
@@ -354,17 +357,18 @@ compat/
   server.go          ← HTTP server: GET /events (SSE), GET /results, GET /
 
   suites/
+    registry.json    ← the shared test matrix every SDK/CLI suite is built from
     node-js-sdk/     ← TypeScript / AWS SDK JS v3 (active)
-    python-sdk/      ← Python 3 / boto3 (planned)
-    go-sdk/          ← Go / AWS SDK Go v2 (planned)
-    java-sdk/        ← Java 17 / AWS SDK Java v2 (planned)
-    dotnet-sdk/      ← C# / AWS SDK .NET v3 (planned)
-    rust-sdk/        ← Rust / AWS SDK Rust (planned)
-    cli/             ← Bash / AWS CLI v2 (planned)
-    cdk/             ← TypeScript / AWS CDK v2 (planned)
-    tofu/            ← HCL / OpenTofu (planned)
-    terraform/       ← HCL / Terraform (planned)
-    pulumi/          ← TypeScript / Pulumi AWS provider (planned)
+    python-sdk/      ← Python / boto3 (active)
+    go-sdk/          ← Go / AWS SDK Go v2 (active)
+    java-sdk/        ← Java 17 / AWS SDK Java v2 (active, own image)
+    dotnet-sdk/      ← C# / AWS SDK .NET v3 (active, own image)
+    rust-sdk/        ← Rust / AWS SDK Rust (active, own image)
+    cli/             ← Go / AWS CLI v2 (active)
+    cdk/             ← TypeScript / AWS CDK v2 (active)
+    tofu/            ← HCL / OpenTofu (planned — docs only)
+    terraform/       ← HCL / Terraform (planned — docs only)
+    pulumi/          ← TypeScript / Pulumi AWS provider (planned — docs only)
 
   ui/                ← Vite + React dashboard
     package.json
@@ -416,11 +420,14 @@ must not fail the process for expected test failures).
 
 ## Adding a new suite
 
-1. Create `compat/suites/<name>/` — see the stub README in each planned suite
-   directory for language-specific setup notes.
+1. Create `compat/suites/<name>/` with **both** a `README.md` and an
+   `AGENTS.md` before any group code — a planned suite's `AGENTS.md` already
+   carries an implementation checklist for its language.
 2. Emit the NDJSON wire format above to stdout.
-3. Register the suite in `compat/runner.go`.
-4. Update the Suites table above from 🔜 to ✅.
+3. Register the suite in `compat/runner.go` and in `all_suites` in
+   `.github/workflows/compat.yml`.
+4. In the same change, move it to ✅ in the Suites table above and to the
+   implemented list in [AGENTS.md § Suite-specific conventions](./AGENTS.md#suite-specific-conventions).
 
 ---
 
