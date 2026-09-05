@@ -10,7 +10,8 @@
       "scenario": "compat/model/scenarios/organizations.json",
       "state": "candidate",
       "suites": [
-        "node-js-sdk"
+        "node-js-sdk",
+        "python-sdk"
       ],
       "tests": [
         {
@@ -25,7 +26,8 @@
       "scenario": "compat/model/scenarios/organizations.json",
       "state": "candidate",
       "suites": [
-        "node-js-sdk"
+        "node-js-sdk",
+        "python-sdk"
       ],
       "tests": [
         {
@@ -82,7 +84,8 @@
       "scenario": "compat/model/scenarios/organizations.json",
       "state": "candidate",
       "suites": [
-        "node-js-sdk"
+        "node-js-sdk",
+        "python-sdk"
       ],
       "tests": [
         {
@@ -169,7 +172,8 @@
       "scenario": "compat/model/scenarios/sqs.json",
       "state": "candidate",
       "suites": [
-        "node-js-sdk"
+        "node-js-sdk",
+        "python-sdk"
       ],
       "tests": [
         {
@@ -203,7 +207,8 @@
       "scenario": "compat/model/scenarios/sqs.json",
       "state": "candidate",
       "suites": [
-        "node-js-sdk"
+        "node-js-sdk",
+        "python-sdk"
       ],
       "tests": [
         {
@@ -237,7 +242,8 @@
       "scenario": "compat/model/scenarios/sqs.json",
       "state": "candidate",
       "suites": [
-        "node-js-sdk"
+        "node-js-sdk",
+        "python-sdk"
       ],
       "tests": [
         {
@@ -255,7 +261,8 @@
       "scenario": "compat/model/scenarios/sqs.json",
       "state": "candidate",
       "suites": [
-        "node-js-sdk"
+        "node-js-sdk",
+        "python-sdk"
       ],
       "tests": [
         {
