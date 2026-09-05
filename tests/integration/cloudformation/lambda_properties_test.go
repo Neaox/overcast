@@ -85,25 +85,34 @@ func TestUpdateStack_LambdaDeltaOnlyUpdatesPreserveArnGetAtt(t *testing.T) {
 }
 
 func TestUpdateStack_LambdaEmptyCodeDelegatesPackageSpecificValidation(t *testing.T) {
+	// The reason is pinned as a prefix rather than in full because the two
+	// values that close it — the service call's Request ID and the stack
+	// operation's RequestToken — are minted per run. Everything the assertion
+	// is actually about (that Lambda's own message and error code reach the
+	// event unedited, under CloudFormation's reason shape) is in the prefix.
 	tests := []struct {
 		name        string
 		stackName   string
 		function    string
 		template    string
 		codeLiteral string
-		wantReason  string
+		wantPrefix  string
 	}{
 		{
 			name: "zip", stackName: "lambda-empty-code-zip", function: "cfn-lambda-delta-arn",
 			template:    lambdaDeltaOnlyArnTemplate,
 			codeLiteral: `"Code": {"ZipFile": "def handler(event, context): return 'before'"}`,
-			wantReason:  `lambda UpdateFunctionCode: HTTP 400: {"__type":"InvalidParameterValueException","message":"Please provide a source for function code."}`,
+			wantPrefix: `lambda UpdateFunctionCode: Resource handler returned message: ` +
+				`"Please provide a source for function code. (Service: Lambda, Status Code: 400, ` +
+				`Error Code: InvalidParameterValueException, Request ID: `,
 		},
 		{
 			name: "image", stackName: "lambda-empty-code-image", function: "cfn-lambda-image",
 			template:    lambdaImagePropertiesTemplate,
 			codeLiteral: `"Code": {"ImageUri": "000000000000.dkr.ecr.us-east-1.amazonaws.com/function:latest"}`,
-			wantReason:  `lambda UpdateFunctionCode: HTTP 400: {"__type":"InvalidParameterValueException","message":"Please provide ImageUri when PackageType is Image."}`,
+			wantPrefix: `lambda UpdateFunctionCode: Resource handler returned message: ` +
+				`"Please provide ImageUri when PackageType is Image. (Service: Lambda, Status Code: 400, ` +
+				`Error Code: InvalidParameterValueException, Request ID: `,
 		},
 	}
 	for _, tc := range tests {
@@ -124,8 +133,12 @@ func TestUpdateStack_LambdaEmptyCodeDelegatesPackageSpecificValidation(t *testin
 			waitForStackStatus(t, srv, tc.stackName, "UPDATE_ROLLBACK_COMPLETE")
 
 			reasons := describeStackEventReasons(t, srv, tc.stackName)
-			if !slices.Contains(reasons, tc.wantReason) {
-				t.Fatalf("stack event reasons = %#v, want exact delegated reason %q", reasons, tc.wantReason)
+			if !slices.ContainsFunc(reasons, func(reason string) bool {
+				return strings.HasPrefix(reason, tc.wantPrefix) &&
+					strings.HasSuffix(reason, ", HandlerErrorCode: InvalidRequest)")
+			}) {
+				t.Fatalf("stack event reasons = %#v, want the delegated reason %q… ending in the InvalidRequest handler code",
+					reasons, tc.wantPrefix)
 			}
 			after := getLambdaRevision(t, srv, tc.function)
 			if after != before {

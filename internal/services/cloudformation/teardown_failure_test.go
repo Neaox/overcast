@@ -119,12 +119,13 @@ func TestTeardownError_EC2DependencyViolation(t *testing.T) {
 		`</Error></Errors><RequestID>req-1</RequestID></Response>`
 
 	// The err argument mirrors what internalQuery actually hands teardownError
-	// for a non-2xx response: statusError(rec), which folds the response body
-	// into the error text. A bare placeholder error would let the classifier
-	// pass while telling the operator nothing AWS actually said.
+	// for a non-2xx response: statusError, which reads EC2's code and message
+	// out of the body and renders them as CloudFormation's reason. A bare
+	// placeholder error would let the classifier pass while telling the
+	// operator nothing AWS actually said.
 	t.Run("DependencyViolation blocks the stack and carries EC2's message", func(t *testing.T) {
 		rec := newTeardownRec(http.StatusBadRequest, dependencyViolationBody)
-		err := teardownError("DeleteInternetGateway", rec, statusError(rec))
+		err := teardownError("DeleteInternetGateway", rec, statusError(context.Background(), "ec2", rec))
 		if !errors.Is(err, errDeletionBlocked) {
 			t.Fatalf("got %v, want it to wrap errDeletionBlocked", err)
 		}
@@ -138,7 +139,7 @@ func TestTeardownError_EC2DependencyViolation(t *testing.T) {
 	t.Run("the same refusal blocks DeleteRouteTable and DeleteVpnGateway too", func(t *testing.T) {
 		for _, op := range []string{"DeleteRouteTable", "DeleteVpnGateway"} {
 			rec := newTeardownRec(http.StatusBadRequest, dependencyViolationBody)
-			err := teardownError(op, rec, statusError(rec))
+			err := teardownError(op, rec, statusError(context.Background(), "ec2", rec))
 			if !errors.Is(err, errDeletionBlocked) {
 				t.Errorf("%s: got %v, want it to wrap errDeletionBlocked", op, err)
 			}
@@ -149,7 +150,7 @@ func TestTeardownError_EC2DependencyViolation(t *testing.T) {
 		rec := newTeardownRec(http.StatusBadRequest,
 			`<Response><Errors><Error><Code>InvalidParameterValue</Code>`+
 				`<Message>not a dependency problem</Message></Error></Errors></Response>`)
-		err := teardownError("DeleteSubnet", rec, statusError(rec))
+		err := teardownError("DeleteSubnet", rec, statusError(context.Background(), "ec2", rec))
 		if err == nil {
 			t.Fatal("got nil, want the refusal reported")
 		}

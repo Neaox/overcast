@@ -352,7 +352,10 @@ func TestS3BucketProperties_validationErrorsComeFromS3(t *testing.T) {
 	events := cfnQuery(t, srv, "DescribeStackEvents", url.Values{"StackName": {"cfn-s3-validation-owner"}})
 	defer events.Body.Close()
 	body := string(readBody(t, events))
-	for _, fragment := range []string{"s3 PutBucketVersioning", "HTTP 400", "MalformedXML", "did not validate against our published schema"} {
+	for _, fragment := range []string{
+		"s3 PutBucketVersioning", "Status Code: 400", "MalformedXML",
+		"did not validate against our published schema",
+	} {
 		if !strings.Contains(body, fragment) {
 			t.Errorf("stack events %q do not contain S3 validation fragment %q", body, fragment)
 		}
