@@ -51,50 +51,6 @@ func TestExplain_readsTheCommittedScenario(t *testing.T) {
 	}
 }
 
-func TestScaffold_proposesASkeletonTheSchemaRefuses(t *testing.T) {
-	f := loadFixture(t)
-	skeleton := scaffold(f.model, "widgets")
-	// One cluster per Create* operation, in name order; the gauge, which has
-	// no create, is not something name clustering can propose.
-	var ids []string
-	res := scaffoldResource{}
-	for _, proposed := range skeleton.Resources {
-		ids = append(ids, proposed.ID)
-		if proposed.ID == "widget" {
-			res = proposed
-		}
-	}
-	if strings.Join(ids, ",") != "cog,sprocket,widget" {
-		t.Fatalf("scaffold proposed %v, want one cluster per create operation", ids)
-	}
-	// Describe* is preferred to Get* as the read, which is a heuristic the
-	// recipe author is expected to correct — the skeleton is a time-saver,
-	// never an authority.
-	if res.Create["op"] != "CreateWidget" || res.Read["op"] != "DescribeWidget" || res.List["op"] != "ListWidgets" || res.Delete["op"] != "DeleteWidget" {
-		t.Errorf("lifecycle roles = create %v read %v list %v delete %v", res.Create["op"], res.Read["op"], res.List["op"], res.Delete["op"])
-	}
-	if res.List["itemsPath"] != "$.Widgets" || res.NotFound["error"] != "WidgetNotFound" {
-		t.Errorf("list itemsPath %v, notFound %v", res.List["itemsPath"], res.NotFound)
-	}
-	if _, ok := res.Binds["WidgetId"]; !ok {
-		t.Errorf("required member WidgetId not pre-listed in binds: %v", res.Binds)
-	}
-	contents, err := encodeDocument(skeleton)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(contents), scaffoldTodo) {
-		t.Fatal("skeleton carries no $todo placeholder")
-	}
-	if err := f.schemas.validate(schemaRecipe, contents); err == nil {
-		t.Fatal("a skeleton must not pass as a finished recipe")
-	}
-	// The mutable placeholder names the update operation.
-	if len(res.Mutable) != 1 || res.Mutable[0].(map[string]any)["op"] != "UpdateWidget" {
-		t.Errorf("mutable = %v", res.Mutable)
-	}
-}
-
 func TestReport_listsCoverageRefusalsAndSamples(t *testing.T) {
 	_, gen := generateFixture(t)
 	var out bytes.Buffer

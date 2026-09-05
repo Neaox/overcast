@@ -332,6 +332,50 @@ tag/list/untag, authored operations, list, delete. An operation gets at most
 one derived test per group; a read or list whose operation already has one
 is folded and noted in the review report.
 
+### Scaffolding
+
+`go run -tags dev ./cmd/compatgen -scaffold <service>` proposes a skeleton of
+the above: one resource per `Create`/`Get`|`Describe`/`List`/`Update`|`Set`/
+`Delete` name cluster, with a `Get*`/`Set*`/`Tag*` on a noun *under* the noun
+the create names folded into that cluster — `GetQueueAttributes` and
+`SetQueueAttributes` are the queue's read and its mutation, not a resource
+called `queueattributes`. A Smithy `resource` shape is used where the model
+has one; at the pinned revision no service in scope declares any.
+
+The skeleton is a time-saver, never an authority, so it is written to show
+which of its own values you can lean on. Three markers do that, and
+`recipe.schema.json` refuses all three — a skeleton cannot become a recipe by
+deleting the comment at the top:
+
+| Marker | Means |
+| --- | --- |
+| `$comment` | a derived value, and the trait or rule that produced it: `itemsPath from @paginated.items`, `identity path from the identity-member rule over the CreateQueue response: QueueUrl`, `from the read's modeled errors: QueueDoesNotExist`. Check it — otherwise a wrong derivation looks exactly like a right one |
+| `$todo` | a value only you can supply, with a one-line hint. Every field of the vocabulary above that the model cannot propose carries one, including the ones this service turns out not to need, so you decide rather than never seeing the question |
+| `$review` | the lifecycle's create or delete is not read-only-safe by the verb rule, and the proposal needs confirming against real AWS before it is kept |
+
+The `$todo` vocabulary is the whole curated half: `requires`, `derived`,
+every `binds` target, `mutable.member`/`from`/`to`/`readPath`, `tags`, `async`
+and `operations`. `tags` names the Tag/Untag/List\*Tags operations name
+clustering found, and leaves the member names and the read-back path to you:
+`aws.api#taggable` hangs off a resource shape, so no service in scope carries
+it.
+
+A path the identity-member rule lands on that turns out to be a structure,
+list or map is *not* proposed as an identity. `$.Organization` and
+`$.CreateAccountStatus` are envelopes, and which member inside identifies the
+resource is a choice only you can make, so those come back as a `$todo`
+listing what the envelope holds.
+
+`$review` follows the default-deny reasoning the probe rule uses. `Create*`
+and `Delete*` are never read-only-safe against a live account, so a lifecycle
+earns an unmarked proposal only where the model shows the run undoing its own
+create: a delete operation, **and** a modeled not-found error proving the
+delete took effect. Organizations is the worked example — `CreateAccount` and
+`CreateGovCloudAccount` have no delete at all, because an AWS account cannot
+be deleted, and `DeleteOrganization` has no not-found error to verify it
+with, so all three are marked; `organizationalunit` and `policy`, which have
+both, are not.
+
 ## Refusals
 
 `gaps.json` lists every operation the generator did not produce, keyed by
