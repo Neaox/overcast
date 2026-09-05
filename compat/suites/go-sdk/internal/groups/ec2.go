@@ -21,32 +21,33 @@ func EC2(c *clients.Clients) ServiceGroup {
 			"ec2-instances:DescribeInstanceTypes":     g.DescribeInstanceTypes,
 			// ECR models a DescribeImages of its own, so the bare key is
 			// ambiguous and the loader refuses it.
-			"ec2-instances:DescribeImages":                           g.DescribeImages,
-			"ec2-instances:RunInstances":                             g.RunInstances,
-			"ec2-instances:StopInstances":                            g.StopInstances,
-			"ec2-instances:StartInstances":                           g.StartInstances,
-			"ec2-instances:TerminateInstances":                       g.TerminateInstances,
-			"ec2-vpc:CreateVpc":                                      g.CreateVpc,
-			"ec2-vpc:DescribeVpcs":                                   g.DescribeVpcs,
-			"ec2-vpc:CreateVpnGateway":                               g.CreateVpnGateway,
-			"ec2-vpc:AttachVpnGateway":                               g.AttachVpnGateway,
-			"ec2-vpc:DescribeVpnGateways":                            g.DescribeVpnGateways,
-			"ec2-vpc:CreateSubnet":                                   g.CreateSubnet,
-			"ec2-vpc:DescribeSubnets":                                g.DescribeSubnets,
-			"ec2-vpc:CreateSecurityGroup":                            g.CreateSecurityGroup,
-			"ec2-vpc:DeleteSecurityGroup":                            g.DeleteSecurityGroup,
-			"ec2-vpc:CreateInternetGateway":                          g.CreateInternetGateway,
-			"ec2-vpc:AttachInternetGateway":                          g.AttachInternetGateway,
-			"ec2-vpc:DetachVpnGateway":                               g.DetachVpnGateway,
-			"ec2-vpc:DeleteVpnGateway":                               g.DeleteVpnGateway,
-			"ec2-vpc:DeleteSubnet":                                   g.DeleteSubnet,
-			"ec2-vpc:DeleteVpc":                                      g.DeleteVpc,
-			"ec2-security-group-rules:AuthorizeSecurityGroupIngress": g.AuthorizeSecurityGroupIngress,
-			"ec2-security-group-rules:DescribeSecurityGroups":        g.DescribeSecurityGroups,
-			"ec2-security-group-rules:RevokeSecurityGroupIngress":    g.RevokeSecurityGroupIngress,
-			"ec2-keypairs:CreateKeyPair":                             g.CreateKeyPair,
-			"ec2-keypairs:DescribeKeyPairs":                          g.DescribeKeyPairs,
-			"ec2-keypairs:DeleteKeyPair":                             g.DeleteKeyPair,
+			"ec2-instances:DescribeImages":                               g.DescribeImages,
+			"ec2-instances:RunInstances":                                 g.RunInstances,
+			"ec2-instances:RunInstancesHonoursPlacementAvailabilityZone": g.RunInstancesHonoursPlacementAvailabilityZone,
+			"ec2-instances:StopInstances":                                g.StopInstances,
+			"ec2-instances:StartInstances":                               g.StartInstances,
+			"ec2-instances:TerminateInstances":                           g.TerminateInstances,
+			"ec2-vpc:CreateVpc":                                          g.CreateVpc,
+			"ec2-vpc:DescribeVpcs":                                       g.DescribeVpcs,
+			"ec2-vpc:CreateVpnGateway":                                   g.CreateVpnGateway,
+			"ec2-vpc:AttachVpnGateway":                                   g.AttachVpnGateway,
+			"ec2-vpc:DescribeVpnGateways":                                g.DescribeVpnGateways,
+			"ec2-vpc:CreateSubnet":                                       g.CreateSubnet,
+			"ec2-vpc:DescribeSubnets":                                    g.DescribeSubnets,
+			"ec2-vpc:CreateSecurityGroup":                                g.CreateSecurityGroup,
+			"ec2-vpc:DeleteSecurityGroup":                                g.DeleteSecurityGroup,
+			"ec2-vpc:CreateInternetGateway":                              g.CreateInternetGateway,
+			"ec2-vpc:AttachInternetGateway":                              g.AttachInternetGateway,
+			"ec2-vpc:DetachVpnGateway":                                   g.DetachVpnGateway,
+			"ec2-vpc:DeleteVpnGateway":                                   g.DeleteVpnGateway,
+			"ec2-vpc:DeleteSubnet":                                       g.DeleteSubnet,
+			"ec2-vpc:DeleteVpc":                                          g.DeleteVpc,
+			"ec2-security-group-rules:AuthorizeSecurityGroupIngress":     g.AuthorizeSecurityGroupIngress,
+			"ec2-security-group-rules:DescribeSecurityGroups":            g.DescribeSecurityGroups,
+			"ec2-security-group-rules:RevokeSecurityGroupIngress":        g.RevokeSecurityGroupIngress,
+			"ec2-keypairs:CreateKeyPair":                                 g.CreateKeyPair,
+			"ec2-keypairs:DescribeKeyPairs":                              g.DescribeKeyPairs,
+			"ec2-keypairs:DeleteKeyPair":                                 g.DeleteKeyPair,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"ec2-instances":            g.setupInstances,
@@ -73,6 +74,9 @@ func (g *ec2Group) setupNoop(_ context.Context, _ *harness.TestContext) error   
 
 func (g *ec2Group) teardownInstances(ctx context.Context, t *harness.TestContext) error {
 	if instanceID := t.GetString("ec2_instance_id"); instanceID != "" {
+		g.cl().TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: []string{instanceID}}) //nolint:errcheck
+	}
+	if instanceID := t.GetString("ec2_az_instance_id"); instanceID != "" {
 		g.cl().TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: []string{instanceID}}) //nolint:errcheck
 	}
 	return nil
@@ -261,6 +265,59 @@ func (g *ec2Group) RunInstances(ctx context.Context, t *harness.TestContext) err
 	}
 	t.Set("ec2_instance_id", *resp.Instances[0].InstanceId)
 	return nil
+}
+
+// RunInstancesHonoursPlacementAvailabilityZone launches into a zone that is
+// deliberately not the region's first one, so that a server which ignores
+// Placement.AvailabilityZone and reports its own default is caught. Both the
+// RunInstances response and a follow-up DescribeInstances must report the
+// requested zone.
+func (g *ec2Group) RunInstancesHonoursPlacementAvailabilityZone(ctx context.Context, t *harness.TestContext) error {
+	zone := t.Region + "c"
+	resp, err := g.cl().RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId:      aws.String("ami-00000000"),
+		InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount:     aws.Int32(1),
+		MaxCount:     aws.Int32(1),
+		Placement:    &ec2types.Placement{AvailabilityZone: aws.String(zone)},
+	})
+	if err != nil {
+		return err
+	}
+	if len(resp.Instances) == 0 {
+		return fmt.Errorf("RunInstances: no instances returned")
+	}
+	instanceID := aws.ToString(resp.Instances[0].InstanceId)
+	if instanceID == "" {
+		return fmt.Errorf("RunInstances: missing InstanceId")
+	}
+	t.Set("ec2_az_instance_id", instanceID)
+	if got := placementZone(resp.Instances[0].Placement); got != zone {
+		return fmt.Errorf("RunInstances: Placement.AvailabilityZone = %q, want %q", got, zone)
+	}
+
+	desc, err := g.cl().DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		InstanceIds: []string{instanceID},
+	})
+	if err != nil {
+		return err
+	}
+	if len(desc.Reservations) == 0 || len(desc.Reservations[0].Instances) == 0 {
+		return fmt.Errorf("DescribeInstances: instance %s not returned", instanceID)
+	}
+	if got := placementZone(desc.Reservations[0].Instances[0].Placement); got != zone {
+		return fmt.Errorf("DescribeInstances: Placement.AvailabilityZone = %q, want %q", got, zone)
+	}
+	return nil
+}
+
+// placementZone reads an instance's availability zone, tolerating a missing
+// Placement so a bad response is reported as a zone mismatch rather than a panic.
+func placementZone(p *ec2types.Placement) string {
+	if p == nil {
+		return ""
+	}
+	return aws.ToString(p.AvailabilityZone)
 }
 
 func (g *ec2Group) StopInstances(ctx context.Context, t *harness.TestContext) error {
