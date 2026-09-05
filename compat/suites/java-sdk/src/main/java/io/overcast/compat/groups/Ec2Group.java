@@ -7,6 +7,7 @@ import io.overcast.compat.harness.TestFn;
 import software.amazon.awssdk.services.ec2.Ec2Client;
 import software.amazon.awssdk.services.ec2.model.*;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -34,6 +35,7 @@ public final class Ec2Group implements ServiceGroup {
                 // ambiguous and the loader refuses it.
                 Map.entry("ec2-instances:DescribeImages",                           this::describeImages),
                 Map.entry("ec2-instances:RunInstances",                             this::runInstances),
+                Map.entry("ec2-instances:RunInstancesHonoursPlacementAvailabilityZone", this::runInstancesHonoursPlacementAvailabilityZone),
                 Map.entry("ec2-instances:DescribeInstances",                        this::describeInstances),
                 Map.entry("ec2-instances:StopInstances",                            this::stopInstances),
                 Map.entry("ec2-instances:StartInstances",                           this::startInstances),
@@ -91,8 +93,9 @@ public final class Ec2Group implements ServiceGroup {
     private void setupNoop(TestContext ctx) {}
 
     private void teardownInstances(TestContext ctx) {
-        String instanceId = ctx.getString("ec2InstanceId");
-        if (instanceId != null) {
+        for (String key : List.of("ec2InstanceId", "ec2AzInstanceId")) {
+            String instanceId = ctx.getString(key);
+            if (instanceId == null) continue;
             try { ec2().terminateInstances(r -> r.instanceIds(instanceId)); } catch (Exception ignored) {}
         }
     }
@@ -111,6 +114,45 @@ public final class Ec2Group implements ServiceGroup {
                 .maxCount(1));
         Assertions.assertNotEmpty(resp.instances(), "RunInstances: no instances returned");
         ctx.set("ec2InstanceId", resp.instances().get(0).instanceId());
+    }
+
+    /**
+     * Launches into a zone that is deliberately not the region's first one, so
+     * that a server which ignores {@code Placement.AvailabilityZone} and
+     * reports its own default is caught. Both the RunInstances response and a
+     * follow-up DescribeInstances must report the requested zone.
+     */
+    private void runInstancesHonoursPlacementAvailabilityZone(TestContext ctx) throws Exception {
+        String ami = ctx.getString("ec2AmiId");
+        String zone = ctx.region() + "c";
+        var resp = ec2().runInstances(r -> r
+                .imageId(ami)
+                .instanceType(InstanceType.T2_MICRO)
+                .minCount(1)
+                .maxCount(1)
+                .placement(p -> p.availabilityZone(zone)));
+        Assertions.assertNotEmpty(resp.instances(), "RunInstances: no instances returned");
+        Instance instance = resp.instances().get(0);
+        Assertions.assertNotBlank(instance.instanceId(), "RunInstances: InstanceId");
+        ctx.set("ec2AzInstanceId", instance.instanceId());
+        Assertions.assertEquals(zone, placementZone(instance),
+                "RunInstances: Placement.AvailabilityZone does not match the request");
+
+        var desc = ec2().describeInstances(r -> r.instanceIds(instance.instanceId()));
+        Assertions.assertNotEmpty(desc.reservations(), "DescribeInstances: no reservations returned");
+        Assertions.assertNotEmpty(desc.reservations().get(0).instances(),
+                "DescribeInstances: no instances in reservation");
+        Assertions.assertEquals(zone, placementZone(desc.reservations().get(0).instances().get(0)),
+                "DescribeInstances: Placement.AvailabilityZone does not match the request");
+    }
+
+    /**
+     * Reads an instance's availability zone, yielding {@code null} when the
+     * placement is absent so a bad response is reported as a zone mismatch
+     * rather than a NullPointerException.
+     */
+    private static String placementZone(Instance instance) {
+        return instance.placement() == null ? null : instance.placement().availabilityZone();
     }
 
     private void describeInstances(TestContext ctx) throws Exception {
