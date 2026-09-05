@@ -51,6 +51,11 @@ const (
 )
 
 // Cluster represents the EKS cluster metadata returned by controller APIs.
+//
+// Logging, AccessConfig and EncryptionConfig are recorded and echoed the way
+// AWS's DescribeCluster returns them; nothing enforces any of the three
+// against the k3s control plane, which has no cluster-logging pipeline and no
+// EKS access-entry authorizer.
 type Cluster struct {
 	Name                    string            `json:"name"`
 	Arn                     string            `json:"arn"`
@@ -65,6 +70,7 @@ type Cluster struct {
 	KubernetesNetworkConfig map[string]any    `json:"kubernetesNetworkConfig,omitempty"`
 	EncryptionConfig        []map[string]any  `json:"encryptionConfig,omitempty"`
 	Logging                 map[string]any    `json:"logging,omitempty"`
+	AccessConfig            map[string]any    `json:"accessConfig,omitempty"`
 	Tags                    map[string]string `json:"tags,omitempty"`
 }
 

@@ -44,6 +44,7 @@ AI agents using this repo should also read [AGENTS.md](./AGENTS.md) for agent-sp
   - [Design patterns](#design-patterns)
   - [CloudFormation integration](#cloudformation-integration)
     - [How it works](#how-it-works)
+    - [Forwarding properties — the allow-list is data, and its leftovers are reported](#forwarding-properties--the-allow-list-is-data-and-its-leftovers-are-reported)
     - [Rules](#rules)
   - [Testing](#testing)
   - [Versioning and changelog](#versioning-and-changelog)
@@ -1080,6 +1081,51 @@ appropriate for request dispatch, property-copy boilerplate, physical-ID splitti
 small response attribute builders. Keep resource-specific property mappings, `Ref`/`GetAtt`
 semantics, replacement rules, and intentional emulation gaps explicit near the handler so
 they remain easy to review against AWS CloudFormation docs.
+
+### Forwarding properties — the allow-list is data, and its leftovers are reported
+
+A resource type has more properties than any handler forwards. For years every
+handler named the ones it wanted one `if` at a time, so a property nobody
+thought of was dropped in silence and the stack still went green.
+[#540](https://github.com/overcast-sh/overcast/issues/540) found that in
+twenty-odd services — three of them where the dropped property chose a Docker
+image, so the emulator started the wrong engine and looked like it had
+succeeded.
+
+The answer is **not** a blind pass-through of the whole property map, even
+though CloudFront's `DistributionConfig` survives intact by being one. That
+works there because the template's shape and the API's input shape coincide,
+and usually they do not: `Tags` is a `[{Key,Value}]` list in most resource types
+and an object in a few (`AWS::EKS::*`, `AWS::MSK::Cluster`); property names are
+PascalCase against lowerCamel members; some properties have no API member at
+all. An allow-list is the honest description of what a handler can do — it just
+must not be invisible. So `provisioner_properties.go` gives handlers two
+things:
+
+- **`forwardProperties(props, body, names...)`** — the allow-list as a list of
+  names. It converts each name, and any nested object's keys, from the
+  template's PascalCase to the member spelling. Use **`forwardPropertiesAs`**
+  for values whose keys must *not* be converted, which is any map of the user's
+  own keys — a nodegroup's `Labels`, for instance, where converting would
+  rewrite the data rather than the member name.
+- **`noteUnconsumedProperties(ctx, resType, props, consumed...)`** — everything
+  the handler did not claim becomes an emulation limitation on the resource,
+  which CloudFormation already surfaces as `ResourceStatusReason` (see
+  `limitation.go` and `internal/protocol/limitation.go`). A dropped property now
+  appears in `cdk deploy` output beside the resource it was dropped from. Call
+  it from `Create` only: on `Update`, a property that is legitimately not
+  re-applied is not a gap.
+- **`cfnTagMap(props["Tags"])`** reads either tag shape into the `{key: value}`
+  map most APIs model; merge it with `mergeStackTags(rCtx.StackTags, …)` so
+  stack tags propagate. A type that forwards `Tags` must also join
+  `stackTagPropagationResourceTypes` or `stackTagPropagationExclusions` —
+  `TestStackTagPropagationCoverage` fails otherwise.
+
+A handler that uses both cannot drop a property silently: it is either
+forwarded or reported. **Adopt them when you touch a handler.** The
+per-property judgement — what the service accepts, what it would reject, what
+needs a shape translation because the two models genuinely differ — stays next
+to the handler where a reviewer can check it against the AWS docs.
 
 ### Rules
 

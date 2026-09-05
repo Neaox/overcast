@@ -8166,7 +8166,7 @@
           "operation": "CreateCluster",
           "category": "Clusters",
           "status": "✅ Supported",
-          "notes": "Stores cluster metadata including roleArn, version, resourcesVpcConfig, kubernetesNetworkConfig, and encryptionConfig; describe returns inline tags"
+          "notes": "Stores cluster metadata including roleArn, version, resourcesVpcConfig, kubernetesNetworkConfig, encryptionConfig, logging and accessConfig; describe returns inline tags. logging, accessConfig and encryptionConfig are recorded and echoed only — the k3s control plane enforces none of them"
         },
         {
           "operation": "DescribeCluster",
@@ -8597,7 +8597,7 @@
           "operation": "CreateCluster",
           "category": "Clusters",
           "status": "✅ Supported",
-          "notes": "Docker-backed (Redpanda); async CREATING→ACTIVE once the broker answers `ApiVersions`; a broker that never answers ends in `FAILED` with `stateInfo`; port auto-alloc from MSK_PORT_BASE; a cluster name already in use in the region is a `ConflictException`"
+          "notes": "Docker-backed (Redpanda); async CREATING→ACTIVE once the broker answers `ApiVersions`; a broker that never answers ends in `FAILED` with `stateInfo`; port auto-alloc from MSK_PORT_BASE; a cluster name already in use in the region is a `ConflictException`. `clientAuthentication`, `encryptionInfo`, `configurationInfo`, `loggingInfo`, `enhancedMonitoring`, `openMonitoring` and `storageMode` are stored and echoed by describe but not enforced — the broker listens in plaintext, and a request setting the first two is answered with an emulation-limitation header saying so"
         },
         {
           "operation": "DescribeCluster",
@@ -8627,7 +8627,7 @@
           "operation": "CreateClusterV2",
           "category": "Clusters",
           "status": "✅ Supported",
-          "notes": "PROVISIONED: same Docker/Redpanda lifecycle as v1; SERVERLESS: metadata-only, immediately ACTIVE; rejects a request naming both or neither; shares one cluster-name namespace with `CreateCluster`, so a name already in use is a `ConflictException`"
+          "notes": "PROVISIONED: same Docker/Redpanda lifecycle as v1, and the same stored-but-unenforced `provisioned` members as `CreateCluster`; SERVERLESS: metadata-only, immediately ACTIVE; rejects a request naming both or neither; shares one cluster-name namespace with `CreateCluster`, so a name already in use is a `ConflictException`"
         },
         {
           "operation": "DescribeClusterV2",

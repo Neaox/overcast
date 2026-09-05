@@ -6,7 +6,7 @@ import "github.com/overcast-sh/overcast/internal/capabilities"
 
 func init() {
 	capabilities.Default.Register(
-		capabilities.Capability{Service: "eks", Operation: "CreateCluster", Category: "Clusters", Status: capabilities.StatusSupported, Notes: "Stores cluster metadata including roleArn, version, resourcesVpcConfig, kubernetesNetworkConfig, and encryptionConfig; describe returns inline tags"},
+		capabilities.Capability{Service: "eks", Operation: "CreateCluster", Category: "Clusters", Status: capabilities.StatusSupported, Notes: "Stores cluster metadata including roleArn, version, resourcesVpcConfig, kubernetesNetworkConfig, encryptionConfig, logging and accessConfig; describe returns inline tags. logging, accessConfig and encryptionConfig are recorded and echoed only — the k3s control plane enforces none of them"},
 		capabilities.Capability{Service: "eks", Operation: "DescribeCluster", Category: "Clusters", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "eks", Operation: "DescribeClusterVersions", Category: "Clusters", Status: capabilities.StatusSupported, Notes: "Returns synthetic supported Kubernetes version catalog"},
 		capabilities.Capability{Service: "eks", Operation: "ListClusters", Category: "Clusters", Status: capabilities.StatusSupported},

@@ -23,6 +23,8 @@ func (s *Service) createCluster(w http.ResponseWriter, r *http.Request) {
 		ResourcesVPCConfig      map[string]any    `json:"resourcesVpcConfig"`
 		KubernetesNetworkConfig map[string]any    `json:"kubernetesNetworkConfig"`
 		EncryptionConfig        []map[string]any  `json:"encryptionConfig"`
+		Logging                 map[string]any    `json:"logging"`
+		AccessConfig            map[string]any    `json:"accessConfig"`
 		Tags                    map[string]string `json:"tags"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
@@ -59,6 +61,8 @@ func (s *Service) createCluster(w http.ResponseWriter, r *http.Request) {
 		ResourcesVPCConfig:      req.ResourcesVPCConfig,
 		KubernetesNetworkConfig: req.KubernetesNetworkConfig,
 		EncryptionConfig:        req.EncryptionConfig,
+		Logging:                 req.Logging,
+		AccessConfig:            req.AccessConfig,
 	}
 	if s.liveModeEnabled() {
 		if !s.dockerReady.Load() {

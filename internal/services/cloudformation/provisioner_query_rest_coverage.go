@@ -1129,6 +1129,58 @@ func eksClusterNameFromPhysicalID(physicalID string) string {
 	return physicalID
 }
 
+// eksClusterCreateProperties is everything AWS::EKS::Cluster's Create acts on.
+// The resource type has more (OutpostConfig, UpgradePolicy, ZonalShiftConfig,
+// BootstrapSelfManagedAddons, ComputeConfig, RemoteNetworkConfig,
+// StorageConfig, Force), and those reach the user as the resource's
+// ResourceStatusReason rather than being dropped in silence — see
+// noteUnconsumedProperties in provisioner_properties.go and #540.
+var eksClusterCreateProperties = []string{
+	"Name", "RoleArn", "Version", "ResourcesVpcConfig", "KubernetesNetworkConfig",
+	"AccessConfig", "EncryptionConfig", "Logging", "Tags",
+}
+
+// eksClusterLogging translates AWS::EKS::Cluster's Logging property into
+// CreateCluster's `logging` member, one of the few places a handler has to
+// translate rather than forward: the template nests
+// `{ClusterLogging: {EnabledTypes: [{Type: "api"}]}}` while the API models
+// `{clusterLogging: [{types: ["api"], enabled: true}]}`.
+//
+// Only the enabled types are sent. AWS also accepts a second LogSetup with
+// `enabled: false` naming the rest, but that carries no information the first
+// does not — a type absent from EnabledTypes is off — and CreateCluster treats
+// an unnamed type as disabled either way.
+func eksClusterLogging(raw any) map[string]any {
+	logging, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	clusterLogging, ok := logging["ClusterLogging"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	enabledTypes, ok := clusterLogging["EnabledTypes"].([]any)
+	if !ok {
+		return nil
+	}
+	types := make([]any, 0, len(enabledTypes))
+	for _, item := range enabledTypes {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if logType, ok := entry["Type"].(string); ok && logType != "" {
+			types = append(types, logType)
+		}
+	}
+	if len(types) == 0 {
+		return nil
+	}
+	return map[string]any{
+		"clusterLogging": []any{map[string]any{"types": types, "enabled": true}},
+	}
+}
+
 func (h *eksClusterHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["Name"].(string)
 	if name == "" {
@@ -1138,15 +1190,25 @@ func (h *eksClusterHandler) Create(ctx context.Context, router http.Handler, cfg
 	body := map[string]any{
 		"name": name,
 	}
-	if v, ok := props["RoleArn"].(string); ok && v != "" {
-		body["roleArn"] = v
+	// ResourcesVpcConfig is forwarded with its nested keys converted, not
+	// verbatim: the runtime reads `resourcesVpcConfig.subnetIds` to decide
+	// which VPC an EKS control plane's k3s container joins
+	// (clusterSubnetIDs, internal/services/eks/live_runtime.go). Handing it
+	// the template's `SubnetIds` left every CDK-provisioned cluster on the
+	// default network plane while VPC-placed resources in the same stack
+	// landed on the VPC's.
+	forwardProperties(props, body, "RoleArn", "Version", "ResourcesVpcConfig",
+		"KubernetesNetworkConfig", "AccessConfig", "EncryptionConfig")
+	if logging := eksClusterLogging(props["Logging"]); logging != nil {
+		body["logging"] = logging
 	}
-	if v, ok := props["Version"].(string); ok && v != "" {
-		body["version"] = v
+	// AWS::EKS::Cluster models Tags as an object, not the usual
+	// [{Key,Value}] list, and CreateCluster takes the same object — see
+	// cfnTagMap. Stack tags merge in the way every propagating type's do.
+	if tags := mergeStackTags(rCtx.StackTags, cfnTagMap(props["Tags"])); len(tags) > 0 {
+		body["tags"] = tags
 	}
-	if v, ok := props["ResourcesVpcConfig"].(map[string]any); ok && v != nil {
-		body["resourcesVpcConfig"] = v
-	}
+	noteUnconsumedProperties(ctx, "AWS::EKS::Cluster", props, eksClusterCreateProperties...)
 
 	rec, err := eksJSON(ctx, router, rCtx.Region, http.MethodPost, "/clusters", body)
 	if err != nil {
@@ -1261,10 +1323,18 @@ func (h *eksClusterHandler) Update(ctx context.Context, router http.Handler, _ *
 		}
 	}
 
-	if v, ok := props["ResourcesVpcConfig"].(map[string]any); ok && v != nil {
-		body := map[string]any{"resourcesVpcConfig": v}
+	// UpdateClusterConfig takes resourcesVpcConfig, kubernetesNetworkConfig
+	// and logging, so all three go in one call — Create applies the same
+	// three, which is what keeps the first deploy and a re-deploy converging
+	// on the same cluster (#540 pattern 2).
+	clusterConfig := map[string]any{}
+	forwardProperties(props, clusterConfig, "ResourcesVpcConfig", "KubernetesNetworkConfig")
+	if logging := eksClusterLogging(props["Logging"]); logging != nil {
+		clusterConfig["logging"] = logging
+	}
+	if len(clusterConfig) > 0 {
 		if _, err := eksJSON(ctx, router, rCtx.Region, http.MethodPost,
-			"/clusters/"+url.PathEscape(oldName)+"/update-config", body); err != nil {
+			"/clusters/"+url.PathEscape(oldName)+"/update-config", clusterConfig); err != nil {
 			return "", nil, fmt.Errorf("UpdateClusterConfig: %w", err)
 		}
 	}
@@ -1287,6 +1357,16 @@ func (h *eksClusterHandler) Update(ctx context.Context, router http.Handler, _ *
 
 type eksNodegroupHandler struct{}
 
+// eksNodegroupCreateProperties is everything AWS::EKS::Nodegroup's Create acts
+// on. RemoteAccess, NodeRepairConfig and ForceUpdateEnabled are the remainder,
+// and they surface as the resource's ResourceStatusReason rather than being
+// dropped in silence — see noteUnconsumedProperties and #540.
+var eksNodegroupCreateProperties = []string{
+	"ClusterName", "NodegroupName", "NodeRole", "Subnets", "ScalingConfig",
+	"InstanceTypes", "AmiType", "CapacityType", "DiskSize", "Labels", "Taints",
+	"LaunchTemplate", "UpdateConfig", "Version", "ReleaseVersion", "Tags",
+}
+
 func (h *eksNodegroupHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	clusterName, _ := props["ClusterName"].(string)
 	nodegroupName, _ := props["NodegroupName"].(string)
@@ -1299,15 +1379,17 @@ func (h *eksNodegroupHandler) Create(ctx context.Context, router http.Handler, c
 	body := map[string]any{
 		"nodegroupName": nodegroupName,
 	}
-	if v, ok := props["NodeRole"].(string); ok && v != "" {
-		body["nodeRole"] = v
+	forwardProperties(props, body, "NodeRole", "Subnets", "ScalingConfig",
+		"InstanceTypes", "AmiType", "CapacityType", "DiskSize", "Taints",
+		"LaunchTemplate", "UpdateConfig", "Version", "ReleaseVersion")
+	// Labels is a map of the user's own keys, so it is forwarded verbatim:
+	// the nested-key conversion the members above need would lower-case the
+	// first letter of every label the template set.
+	forwardPropertiesAs(props, body, map[string]string{"Labels": "labels"})
+	if tags := mergeStackTags(rCtx.StackTags, cfnTagMap(props["Tags"])); len(tags) > 0 {
+		body["tags"] = tags
 	}
-	if v, ok := props["Subnets"].([]any); ok {
-		body["subnets"] = v
-	}
-	if v, ok := props["ScalingConfig"].(map[string]any); ok && v != nil {
-		body["scalingConfig"] = v
-	}
+	noteUnconsumedProperties(ctx, "AWS::EKS::Nodegroup", props, eksNodegroupCreateProperties...)
 
 	rec, err := eksJSON(ctx, router, rCtx.Region, http.MethodPost,
 		"/clusters/"+url.PathEscape(clusterName)+"/node-groups", body)
@@ -1365,10 +1447,19 @@ func (h *eksNodegroupHandler) Update(ctx context.Context, router http.Handler, _
 		}
 	}
 
-	if v, ok := props["ScalingConfig"].(map[string]any); ok && v != nil {
-		body := map[string]any{"scalingConfig": v}
+	// UpdateNodegroupConfig takes scalingConfig and updateConfig as the same
+	// shapes Create sends, so both are applied here. Labels and Taints are
+	// not: AWS models them on this operation as add/remove payloads
+	// (UpdateLabelsPayload, UpdateTaintsPayload) rather than the plain
+	// map and list Create takes, and inventing that translation over a
+	// service that models neither would put AWS semantics in the handler.
+	// They are applied at Create, and a change to them on a live nodegroup
+	// is a gap #540's tail tracks.
+	nodegroupConfig := map[string]any{}
+	forwardProperties(props, nodegroupConfig, "ScalingConfig", "UpdateConfig")
+	if len(nodegroupConfig) > 0 {
 		path := "/clusters/" + url.PathEscape(parts[0]) + "/node-groups/" + url.PathEscape(parts[1]) + "/update-config"
-		if _, err := eksJSON(ctx, router, rCtx.Region, http.MethodPost, path, body); err != nil {
+		if _, err := eksJSON(ctx, router, rCtx.Region, http.MethodPost, path, nodegroupConfig); err != nil {
 			return "", nil, fmt.Errorf("UpdateNodegroupConfig: %w", err)
 		}
 	}
@@ -1683,6 +1774,17 @@ func (h *eksPodIdentityAssociationHandler) Update(ctx context.Context, router ht
 
 type mskClusterHandler struct{}
 
+// mskClusterCreateProperties is everything AWS::MSK::Cluster's Create acts on,
+// which since #540 is every property the resource type has. CurrentVersion is
+// in the list because it is an update-only property with no CreateCluster
+// member — naming it here says Create considered it, rather than leaving it to
+// surface as an ignored property on every stack that sets it.
+var mskClusterCreateProperties = []string{
+	"ClusterName", "KafkaVersion", "NumberOfBrokerNodes", "BrokerNodeGroupInfo",
+	"ClientAuthentication", "EncryptionInfo", "ConfigurationInfo", "LoggingInfo",
+	"EnhancedMonitoring", "OpenMonitoring", "StorageMode", "Tags", "CurrentVersion",
+}
+
 func (h *mskClusterHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	clusterName, _ := props["ClusterName"].(string)
 	if clusterName == "" {
@@ -1702,9 +1804,15 @@ func (h *mskClusterHandler) Create(ctx context.Context, router http.Handler, cfg
 	} else {
 		body["numberOfBrokerNodes"] = 3
 	}
-	if v, ok := props["BrokerNodeGroupInfo"].(map[string]any); ok && v != nil {
-		body["brokerNodeGroupInfo"] = v
+	forwardProperties(props, body, "BrokerNodeGroupInfo", "ClientAuthentication",
+		"EncryptionInfo", "ConfigurationInfo", "LoggingInfo", "EnhancedMonitoring",
+		"OpenMonitoring", "StorageMode")
+	// AWS::MSK::Cluster models Tags as an object rather than the usual
+	// [{Key,Value}] list, and CreateCluster takes the same object.
+	if tags := mergeStackTags(rCtx.StackTags, cfnTagMap(props["Tags"])); len(tags) > 0 {
+		body["tags"] = tags
 	}
+	noteUnconsumedProperties(ctx, "AWS::MSK::Cluster", props, mskClusterCreateProperties...)
 
 	// MSK is restJson1 throughout: these four calls used an X-Amz-Target
 	// namespace ("Kafka.") that no client sends and that Overcast no longer

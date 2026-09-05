@@ -76,6 +76,9 @@ var stackTagPropagationExclusions = map[string]string{
 	"AWS::ElastiCache::CacheCluster":              "Create forwards tags with no stack-tag merge; out of #1310's scope",
 	"AWS::ElastiCache::ServerlessCache":           "Create forwards tags with no stack-tag merge; out of #1310's scope",
 	"AWS::KMS::Key":                               "Create and Update already reconcile resource-level Tags with no stack-tag merge; out of #1310's scope",
+	"AWS::EKS::Cluster":                           "Create merges stack tags (#540), but neither UpdateClusterConfig nor UpdateClusterVersion carries tags and the handler dispatches no Tag/Untag call, so joining the propagation set would mark the cluster changed on a stack-tag-only edit and then apply nothing. Reconciling EKS tags on update is its own change",
+	"AWS::EKS::Nodegroup":                         "see AWS::EKS::Cluster — UpdateNodegroupConfig carries no tags either",
+	"AWS::MSK::Cluster":                           "Create merges stack tags (#540). Joining the propagation set would be actively destructive here: mskClusterHandler.Update returns errReplacementRequired unconditionally, so a stack-tag-only edit would replace a Docker-backed Kafka cluster. MSK's own UpdateSecurity/UpdateMonitoring are 501 stubs; tag reconciliation waits on a real update path",
 }
 
 func TestStackTagPropagationCoverage(t *testing.T) {

@@ -65,6 +65,29 @@ type Cluster struct {
 	// AWS models it for. Set alongside State = FAILED; cleared on the way back
 	// to ACTIVE.
 	StateInfo *StateInfo `json:"stateInfo,omitempty"`
+
+	// The rest of what CreateCluster accepts. Redpanda is started with a
+	// single plaintext listener and no log shipping, so none of this changes
+	// how the broker behaves — it is stored and echoed because AWS's
+	// ClusterInfo carries every one of these members, and a DescribeCluster
+	// that omitted them would report a cluster configured differently from
+	// the one the caller asked for. A create that sets the two
+	// security-shaped members says so on the response, through
+	// protocol.MarkLimitation, so CloudFormation shows it beside the
+	// resource. See #540.
+	ClientAuthentication map[string]any `json:"clientAuthentication,omitempty"`
+	EncryptionInfo       map[string]any `json:"encryptionInfo,omitempty"`
+	LoggingInfo          map[string]any `json:"loggingInfo,omitempty"`
+	OpenMonitoring       map[string]any `json:"openMonitoring,omitempty"`
+	EnhancedMonitoring   string         `json:"enhancedMonitoring,omitempty"`
+	StorageMode          string         `json:"storageMode,omitempty"`
+	// ConfigurationArn and ConfigurationRevision are where a request's
+	// configurationInfo lands. AWS binds no configurationInfo member on
+	// ClusterInfo: the configuration a cluster is running is read back from
+	// currentBrokerSoftwareInfo, beside the Kafka version, so that is where
+	// both views put them.
+	ConfigurationArn      string `json:"configurationArn,omitempty"`
+	ConfigurationRevision int64  `json:"configurationRevision,omitempty"`
 	// Internal — not in API responses.
 	DockerContainerID string `json:"_dockerContainerID,omitempty"`
 	HostPort          int    `json:"_hostPort,omitempty"`
