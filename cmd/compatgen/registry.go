@@ -4,6 +4,8 @@ package main
 
 import (
 	"sort"
+
+	compatmodel "github.com/overcast-sh/overcast/compat/model"
 )
 
 // The generated registry sibling, compat/suites/registry.generated.json.
@@ -25,7 +27,6 @@ const (
 	generatedRegistryVersion = 1
 	generatedStateCandidate  = "candidate"
 	generatedStateGated      = "gated"
-	promotionsVersion        = 1
 	registryPath             = "compat/suites/registry.generated.json"
 	promotionsPath           = "compat/model/promotions.json"
 	scenarioDir              = "compat/model/scenarios"
@@ -75,7 +76,7 @@ func scenarioPath(service string) string { return scenarioDir + "/" + service + 
 // compat/model/promotions.json is where it comes from. See promotions.go for
 // why the state is an input rather than something a second tool edits into this
 // file.
-func buildRegistry(scenarios []*scenario, backends []string, promotions *promotionsFile) generatedRegistry {
+func buildRegistry(scenarios []*scenario, backends []string, promotions *compatmodel.Promotions) generatedRegistry {
 	reg := generatedRegistry{
 		Schema:  "./registry.generated.schema.json",
 		Version: generatedRegistryVersion,
@@ -94,7 +95,7 @@ func buildRegistry(scenarios []*scenario, backends []string, promotions *promoti
 				Name:      g.Name,
 				Generated: true,
 				Scenario:  scenarioPath(s.Service),
-				State:     promotions.stateOf(g.Name),
+				State:     promotionStateOf(promotions, g.Name),
 				Suites:    suites,
 			}
 			for _, t := range g.Tests {

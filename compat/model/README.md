@@ -18,6 +18,7 @@ Generator: [cmd/compatgen/README.md](../../cmd/compatgen/README.md).
 | `recipes/<service>.json` | a human | one recipe per service — the curated layer (`recipe.schema.json`) |
 | `values.json` | a human | curated literals for required members no recipe binds (`values.schema.json`) |
 | `promotions.json` | `cmd/compat --promote-generated` | the candidate → gated soak ledger, read by the generator to emit each group's `state` (`promotions.schema.json`) |
+| `promotions.go` | a human | package `compatmodel`: the Go shape of `promotions.json`, its version and its strict reader, shared by the one command that writes the ledger and the one that reads it |
 | `scenarios/<service>.json` | `cmd/compatgen` | the scenario IR, one file per service (`scenario.schema.json`) |
 | `gaps.json` | `cmd/compatgen` | every operation the generator refused, with a reason (`gaps.schema.json`) |
 | `../suites/registry.generated.json` | `cmd/compatgen` | the generated registry sibling every loader concatenates |

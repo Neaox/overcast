@@ -32,6 +32,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	compatmodel "github.com/overcast-sh/overcast/compat/model"
 )
 
 func main() {
@@ -111,7 +113,7 @@ type corpus struct {
 	// promotions is the soak ledger: the one generated-registry field that
 	// comes from an input file rather than from the scenario. See
 	// promotions.go.
-	promotions *promotionsFile
+	promotions *compatmodel.Promotions
 }
 
 func loadCorpus(root string) (*corpus, error) {

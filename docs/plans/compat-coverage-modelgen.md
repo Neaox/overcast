@@ -661,7 +661,7 @@ gated by default until someone gets a label.
 | --- | --- | --- |
 | Candidate | Runs everywhere, reports everywhere, gates nothing | `state` in the generated registry |
 | Soak | The existing nightly 3× flake-detection job includes candidates | [compat-flake-detection.yml](../../.github/workflows/compat-flake-detection.yml) |
-| Promotion | A group whose every (suite, test) answered identically across 3 consecutive nightly runs with **zero** `fail` flips to `gated`, via a bot PR on `automation/promote-generated` | `--promote-generated` in `cmd/compat`, writing `compat/model/promotions.json`, which `cmd/compatgen` reads to emit each group's `state` |
+| Promotion | A group whose every (suite, test) answered identically across 3 consecutive nightly runs with **no `fail` and no `skip`** flips to `gated`, via a bot PR on `automation/promote-generated`. `unimplemented` promotes: a Tier 0 probe group is exactly that case, and a stable 501 is the operation answering as modelled | `--promote-generated` in `cmd/compat`, writing `compat/model/promotions.json`, which `cmd/compatgen` reads to emit each group's `state` |
 | Stuck | Inconsistent groups stay candidate; `--promote-generated` names the offending `(suite, test)`s and reports a candidate older than 30 days as overdue (a `::warning` on the nightly). The flipping tests themselves raise the usual per-(suite, group) issue, since candidate groups run in the same nightly the flake detector reads | `--promote-generated`; [scripts/compat-flake-issue.py](../../scripts/compat-flake-issue.py) |
 
 Promotion is mechanical, so it needs no reviewer label — the reviewer decision
@@ -674,6 +674,10 @@ an assertion and never by adding it to `flaky.json`.
 `state`, `firstSeen`, `promotedAt`, the run ids that agreed) and `cmd/compatgen`
 reads it when emitting each group's `state`, so no second tool ever writes
 `registry.generated.json` and `-check` stays byte-identical across a promotion.
+The ledger's Go shape, its version and its strict reader are shared by both
+commands from `compat/model` (package `compatmodel`), because two copies of one
+schema in two `main` packages is how the writer came to decode leniently and
+then rewrite the file from what it had understood.
 
 #### Volume: baseline, parity, CI runtime, dashboard
 
