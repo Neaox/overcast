@@ -160,11 +160,11 @@ def StopExecution(ctx: TestContext) -> None:
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
-    "CreateStateMachine": CreateStateMachine,
-    "DescribeStateMachine": DescribeStateMachine,
-    "ListStateMachines": ListStateMachines,
+    "sfn-statemachines:CreateStateMachine": CreateStateMachine,
+    "sfn-statemachines:DescribeStateMachine": DescribeStateMachine,
+    "sfn-statemachines:ListStateMachines": ListStateMachines,
     "sfn-statemachines:StartExecution": StartExecution,
-    "DeleteStateMachine": DeleteStateMachine,
+    "sfn-statemachines:DeleteStateMachine": DeleteStateMachine,
     # sfn-executions — group-qualified so StartExecution does not collide with
     # the sfn-statemachines test of the same name.
     "sfn-executions:StartExecution": ExecStartExecution,

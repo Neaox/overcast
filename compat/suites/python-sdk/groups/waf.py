@@ -68,10 +68,10 @@ def DeleteWebACL(ctx: TestContext) -> None:
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
-    "CreateWebACL": CreateWebACL,
-    "GetWebACL": GetWebACL,
-    "ListWebACLs": ListWebACLs,
-    "DeleteWebACL": DeleteWebACL,
+    "waf-webacls:CreateWebACL": CreateWebACL,
+    "waf-webacls:GetWebACL": GetWebACL,
+    "waf-webacls:ListWebACLs": ListWebACLs,
+    "waf-webacls:DeleteWebACL": DeleteWebACL,
 }
 
 SETUP = {}

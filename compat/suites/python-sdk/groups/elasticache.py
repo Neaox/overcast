@@ -310,18 +310,18 @@ def DeleteCacheParameterGroup(ctx: TestContext) -> None:
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
-    "CreateCacheCluster": CreateCacheCluster,
-    "DescribeCacheClusters": DescribeCacheClusters,
-    "DeleteCacheCluster": DeleteCacheCluster,
-    "ModifyCacheCluster": ModifyCacheCluster,
-    "ModifyReplicationGroup": ModifyReplicationGroup,
-    "CreateReplicationGroup": CreateReplicationGroup,
-    "DescribeReplicationGroups": DescribeReplicationGroups,
-    "CreateCacheSubnetGroup": CreateCacheSubnetGroup,
-    "DescribeCacheSubnetGroups": DescribeCacheSubnetGroups,
-    "CreateCacheParameterGroup": CreateCacheParameterGroup,
-    "DescribeCacheParameterGroups": DescribeCacheParameterGroups,
-    "DeleteCacheParameterGroup": DeleteCacheParameterGroup,
+    "elasticache-clusters:CreateCacheCluster": CreateCacheCluster,
+    "elasticache-clusters:DescribeCacheClusters": DescribeCacheClusters,
+    "elasticache-clusters:DeleteCacheCluster": DeleteCacheCluster,
+    "elasticache-modify:ModifyCacheCluster": ModifyCacheCluster,
+    "elasticache-modify:ModifyReplicationGroup": ModifyReplicationGroup,
+    "elasticache-replication-groups:CreateReplicationGroup": CreateReplicationGroup,
+    "elasticache-replication-groups:DescribeReplicationGroups": DescribeReplicationGroups,
+    "elasticache-subnet-groups:CreateCacheSubnetGroup": CreateCacheSubnetGroup,
+    "elasticache-subnet-groups:DescribeCacheSubnetGroups": DescribeCacheSubnetGroups,
+    "elasticache-parameter-groups:CreateCacheParameterGroup": CreateCacheParameterGroup,
+    "elasticache-parameter-groups:DescribeCacheParameterGroups": DescribeCacheParameterGroups,
+    "elasticache-parameter-groups:DeleteCacheParameterGroup": DeleteCacheParameterGroup,
 }
 
 SETUP = {}

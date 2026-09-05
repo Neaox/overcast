@@ -258,20 +258,20 @@ def Unsubscribe(ctx: TestContext) -> None:
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
-    "CreateTopic": CreateTopic,
-    "ListTopics": ListTopics,
-    "GetTopicAttributes": GetTopicAttributes,
-    "SetTopicAttributes": SetTopicAttributes,
-    "DeleteTopic": DeleteTopic,
-    "Publish": Publish,
-    "PublishWithAttributes": PublishWithAttributes,
-    "PublishBatch": PublishBatch,
-    "SubscribeSQS": SubscribeSQS,
-    "ListSubscriptionsByTopic": ListSubscriptionsByTopic,
-    "GetSubscriptionAttributes": GetSubscriptionAttributes,
-    "PublishDeliveredToSQS": PublishDeliveredToSQS,
-    "SetSubscriptionAttributes": SetSubscriptionAttributes,
-    "Unsubscribe": Unsubscribe,
+    "sns-topics:CreateTopic": CreateTopic,
+    "sns-topics:ListTopics": ListTopics,
+    "sns-topics:GetTopicAttributes": GetTopicAttributes,
+    "sns-topics:SetTopicAttributes": SetTopicAttributes,
+    "sns-topics:DeleteTopic": DeleteTopic,
+    "sns-publish:Publish": Publish,
+    "sns-publish:PublishWithAttributes": PublishWithAttributes,
+    "sns-publish:PublishBatch": PublishBatch,
+    "sns-subscriptions:SubscribeSQS": SubscribeSQS,
+    "sns-subscriptions:ListSubscriptionsByTopic": ListSubscriptionsByTopic,
+    "sns-subscriptions:GetSubscriptionAttributes": GetSubscriptionAttributes,
+    "sns-subscriptions:PublishDeliveredToSQS": PublishDeliveredToSQS,
+    "sns-subscriptions:SetSubscriptionAttributes": SetSubscriptionAttributes,
+    "sns-subscriptions:Unsubscribe": Unsubscribe,
 }
 
 SETUP = {
