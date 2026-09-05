@@ -56,7 +56,9 @@ func TestCreatePolicy_DerivesTheModeledIdentifierAndARN(t *testing.T) {
 	if !strings.HasPrefix(id, "p-") || len(id) < 10 {
 		t.Fatalf("Id = %q, want a p- prefixed identifier matching the modeled pattern", id)
 	}
-	wantARN := "arn:aws:organizations::000000000000:policy/o-overcast/service_control_policy/" + id
+	// organizationID is derived deterministically from the account ID
+	// (000000000000 here, per newTestService) — see inert_policy.go.
+	wantARN := "arn:aws:organizations::000000000000:policy/" + organizationID("000000000000") + "/service_control_policy/" + id
 	if got, _ := summary["Arn"].(string); got != wantARN {
 		t.Fatalf("Arn = %q, want %q", got, wantARN)
 	}

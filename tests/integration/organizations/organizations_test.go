@@ -4,10 +4,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"testing"
 
 	"github.com/overcast-sh/overcast/tests/helpers"
 )
+
+// organizationIDPattern mirrors OrganizationId's pattern in
+// models/aws/shapes/organizations.json (see also
+// internal/services/organizations/aws_id_pattern_test.go, which pins every
+// identifier this service mints against the model). The emulator's
+// organization ID is derived deterministically from the account ID rather
+// than fixed, so this test asserts shape, not a literal value.
+var organizationIDPattern = regexp.MustCompile(`^o-[a-z0-9]{10,32}$`)
 
 func orgsCall(t *testing.T, method, url string, body any) *http.Response {
 	t.Helper()
@@ -55,8 +64,9 @@ func TestDescribeOrganization(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Organization object, got %#v", body)
 	}
-	if org["Id"] != "o-overcast" {
-		t.Fatalf("unexpected org id: %v", org["Id"])
+	id, _ := org["Id"].(string)
+	if !organizationIDPattern.MatchString(id) {
+		t.Fatalf("org id %q does not match the modeled OrganizationId pattern %s", id, organizationIDPattern.String())
 	}
 	if org["MasterAccountId"] != "000000000000" {
 		t.Fatalf("unexpected master account id: %v", org["MasterAccountId"])

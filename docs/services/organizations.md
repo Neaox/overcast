@@ -38,8 +38,8 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 | ---------------------- | ------------------------------------------------------------------------------------ |
 | Policies               | Full CRUD: `CreatePolicy`, `DescribePolicy`, `UpdatePolicy`, `DeletePolicy`, `ListPolicies` |
 | Tags                   | `TagResource`, `UntagResource`, `ListTagsForResource` — policy IDs only               |
-| `DescribeOrganization` | A fixed organization (`o-overcast`, master account `000000000000`), so CDK bootstrap gets past it |
-| Stable IDs             | A policy's ID derives from its name, so it survives restarts and a state export/import |
+| `DescribeOrganization` | A single organization per account, with an AWS-shaped ID (`o-` plus ten characters, derived deterministically from the account ID) so CDK bootstrap gets past it |
+| Stable IDs             | A policy's ID derives from its name and the organization ID from the account ID, so both survive restarts and a state export/import |
 
 ## Differences from AWS
 

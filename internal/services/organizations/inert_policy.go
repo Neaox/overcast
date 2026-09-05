@@ -43,10 +43,38 @@ const (
 	nsTags     = "organizations:tags"
 )
 
-// organizationID is the emulator's single organization, shared with
-// DescribeOrganization's hand-written response so a policy ARN names the org
-// the caller was told it is in.
-const organizationID = "o-overcast"
+// organizationID derives the emulator's single organization identifier from
+// the account ID, shared with DescribeOrganization's hand-written response so
+// a policy ARN names the org the caller was told it is in.
+//
+// AWS mints an opaque ten-character organization ID; the modeled
+// OrganizationId shape's pattern (`^o-[a-z0-9]{10,32}$`) is the lower
+// bound that #1736 found the old `o-overcast` constant violating — eight
+// characters is not a valid AWS organization ID, and every Organizations ARN
+// this service mints is rooted at this value, so real AWS SDK/CLI clients
+// that validate ARN shape (or the #1113 G2 pilot's own DescribeOrganization
+// assertion) reject it outright.
+//
+// It must also be stable for the lifetime of the store rather than
+// regenerated per process — it is the root of every ARN, so a value that
+// moved on restart would move every ARN derived from it too. This service
+// does not otherwise persist organization metadata, so rather than add a
+// dedicated record for a single fixed value, the ID is derived
+// deterministically from the account ID: a SHA-256 digest of the account ID,
+// hex-encoded (lowercase, alphanumeric — exactly what the pattern requires)
+// and truncated to ten characters. Two services constructed against the same
+// account ID — including the same service restarted — always agree on the
+// same organization ID without persisting anything extra.
+func organizationID(accountID string) string {
+	sum := sha256.Sum256([]byte(accountID))
+	return "o-" + hex.EncodeToString(sum[:5])
+}
+
+// organizationID resolves the service's own organization identifier from its
+// configured account ID (see the package-level organizationID above).
+func (s *Service) organizationID() string {
+	return organizationID(s.accountID())
+}
 
 // ---- modeled errors (§3.3) -------------------------------------------------
 //
@@ -274,7 +302,7 @@ func policyID(name string) string {
 // where the type segment is lowercase.
 func (s *Service) policyARN(rec *policyRecord) string {
 	return fmt.Sprintf("arn:aws:organizations::%s:policy/%s/%s/%s",
-		s.accountID(), organizationID, strings.ToLower(rec.Type), rec.Id)
+		s.accountID(), s.organizationID(), strings.ToLower(rec.Type), rec.Id)
 }
 
 func (rec *policyRecord) summary() policySummary {

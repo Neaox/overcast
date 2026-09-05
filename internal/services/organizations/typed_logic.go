@@ -30,8 +30,8 @@ type availablePolicyTypeItem struct {
 func (s *Service) describeOrganizationTyped(_ context.Context, _ *describeOrganizationRequest) (*describeOrganizationResponse, *protocol.AWSError) {
 	return &describeOrganizationResponse{
 		Organization: organizationDetails{
-			Id:                 organizationID,
-			Arn:                "arn:aws:organizations::000000000000:organization/" + organizationID,
+			Id:                 s.organizationID(),
+			Arn:                "arn:aws:organizations::" + s.accountID() + ":organization/" + s.organizationID(),
 			MasterAccountId:    s.accountID(),
 			MasterAccountArn:   s.masterAccountARN(),
 			MasterAccountEmail: "admin@overcast.local",
