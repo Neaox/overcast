@@ -1119,21 +1119,50 @@ jobs:
         if: env.RUN_BUILD == 'true'
       # The test jobs already pull through the mirror; this one did not, and it
       # is the job that pulls the most — every base layer of a two-stage build,
-      # twice over the matrix. It builds with the classic builder, so the
-      # daemon-level mirror this configures is the one that applies.
+      # twice over the matrix. This configures the daemon, which is what the
+      # smoke tests' `docker run` and `docker pull` go through; the build
+      # itself now runs in BuildKit, which needs the same mirror stated again
+      # in its own configuration — see the next step.
       - uses: ./.github/actions/docker-hub-mirror
         if: env.RUN_BUILD == 'true'
+
+      # buildx, so the build can read and write a layer cache. The pull-request
+      # build used the classic builder and rebuilt from scratch every time
+      # (107 s per flavour when this was measured; 116-136 s in runs
+      # 33946645470, 33944965566 and 33945978965), while the release-candidate
+      # push below has had `cache-from: type=gha` all along. Same scope string
+      # as that push, so the two share one cache: the candidate build reuses
+      # what the pull-request build just produced instead of starting over.
+      #
+      # buildkitd-config-inline restates the registry mirror. The
+      # docker-container driver runs BuildKit in a container of its own, which
+      # does not read /etc/docker/daemon.json, so without this the step above
+      # would stop applying to base-layer pulls — the exact gap that turned a
+      # Docker Hub timeout into a red main (docs/plans/ci-streamlining.md,
+      # finding 5). The `docker` driver would inherit the daemon's mirror but
+      # cannot export a cache, which is the whole point here.
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        if: env.RUN_BUILD == 'true'
+        with:
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+
+      # `load: true` puts the image in the local daemon under the same tag the
+      # classic build used, which is what the smoke tests and the
+      # Testcontainers Go module below run against. Single-platform, so it can
+      # be loaded — the multi-arch candidate below cannot be, which is why that
+      # one builds and pushes in a single step.
       - name: Build image
         if: env.RUN_BUILD == 'true'
-        env:
-          TAG: ${{ matrix.tag }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          args=(-t "$TAG")
-          if [[ -n "$TARGET" ]]; then
-            args+=(--target "$TARGET")
-          fi
-          docker build "${args[@]}" .
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          load: true
+          target: ${{ matrix.target }}
+          tags: ${{ matrix.tag }}
+          cache-from: type=gha,scope=overcast-${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=overcast-${{ matrix.image }}
       # Liveness, plus the two surfaces that tell a slim image apart from a
       # console one at runtime. The Dockerfile already asserts the same thing
       # statically against the compiled binary; this checks the assembled
@@ -1257,8 +1286,11 @@ jobs:
       # this builds and pushes in one step instead of tagging the local image.
       # The native build above still runs, and is what the slim smoke test
       # exercises; the amd64 half of this build reuses its layers from cache.
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-        if: needs.changes.outputs.rc == 'true'
+      #
+      # No setup-buildx step of its own any more. RUN_BUILD is
+      # `code || rc`, so the builder the pull-request build sets up is always
+      # already there by the time rc is true — and it carries the registry
+      # mirror, which the second setup never did.
       - name: Log in to GHCR
         if: needs.changes.outputs.rc == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
