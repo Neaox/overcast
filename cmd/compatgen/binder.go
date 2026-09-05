@@ -57,6 +57,7 @@ const (
 	reasonProbeBindsLiveResource = "probe-binds-live-resource"
 	reasonNeverProbe             = "never-probe"
 	reasonNoOutputToAssert       = "no-output-to-assert"
+	reasonAmbiguousListPage      = "ambiguous-list-page"
 	reasonSetupRefused           = "setup-refused"
 	reasonUnsupportedTagShape    = "unsupported-tag-shape"
 )

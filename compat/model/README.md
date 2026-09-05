@@ -293,13 +293,36 @@ against the real AWS API.
 | `binds` | input member name → context path, for every operation the resource takes part in — binding rule 1 |
 | `read` | the read-back: `identityPath` must equal the export `identity` names (or, without `identity`, match the model's pattern). `consuming: true` marks a read that changes state (`ReceiveMessage`); it is emitted once, as its own test, and never used as a read-back. `exports` take values from the read response |
 | `reads` | further reads, each its own test |
-| `list` | the list-membership check: an item at `itemsPath` whose `identityPath` equals the `identity` export. Its own test runs last before delete; `exports` taken from that response are therefore the freshest values the delete can carry (SQS wants a delete to quote the most recent receipt handle) |
+| `list` | the list-membership check: an item at `itemsPath` whose `identityPath` equals the `identity` export. `itemsPath` is optional — see [What the generator derives](#what-the-generator-derives). Its own test runs last before delete; `exports` taken from that response are therefore the freshest values the delete can carry (SQS wants a delete to quote the most recent receipt handle) |
 | `mutable` | one entry per update: `member` (dotted input path) is set to `to`, then `read` must show `readPath == to`. `from` is merged into the create params, so the update is a real change and the create's read-back asserts the initial value |
 | `tags` | tag/untag/list operations; the generator reads whether the service carries tags as a string map or a list of `{Key, Value}` from the model and emits tag → list → untag tests with the literal `compat=scenario` |
 | `delete` | the delete call; absence is proven by `notFound` (the read must fail with that error) or, failing that, by `list` non-membership |
-| `notFound` | the modeled error shape the read raises after delete |
+| `notFound` | the modeled error shape the read raises after delete. Optional — see [What the generator derives](#what-the-generator-derives) |
 | `async` | declares the resource eventually consistent: every clause that verifies by calling the service again is wrapped in `eventually` — the derived read-back, list-membership and absence clauses, and authored clauses too. A clause that only reads the test's own response is left alone (retrying it would re-read one fixed response), and so is an authored `eventually`, whose budget its author already chose |
 | `operations` | authored coverage for operations outside the lifecycle vocabulary, written in the IR's own assertion vocabulary; `name` gives a variant test name when the operation already has a test. An update-family operation (`Update*`, `Set*`, `Put*`, `Tag*`, `Untag*`) needs at least one clause that calls the service again, exactly as the derived path needs a `mutable` entry, or it is refused (`update-without-readback`) |
+
+### What the generator derives
+
+Two of those fields the model already settles, so a recipe that leaves them
+out gets them for free. Both remain writable, and a written value is used as
+written: the derivation covers the common shape, not every service.
+
+| Field | Derived from | When it is not derived |
+| --- | --- | --- |
+| `notFound.error` | the `read` operation's own modeled errors, when exactly one is not-found-shaped — a shape name ending in `NotFound`, `NotFoundException`, `DoesNotExist` or `NonExistent` | the read is `consuming`, the resource has no `delete`, or the read declares no such error or more than one (SQS's `ReceiveMessage` declares both `QueueDoesNotExist` and `KmsNotFound`) |
+| `list.itemsPath` | the list operation's output: the member `@paginated` names as its `items`, else the sole top-level list member | two lists and no trait to choose between them, or no list at all — the `list` is refused (`ambiguous-list-page`) rather than guessed at |
+
+The match on the error name is on the **suffix**, not anywhere in the name.
+Under-deriving costs a recipe line; over-deriving would have a delete assert
+the wrong error, so a service that spells one of those words in the middle of
+a longer name is left to the recipe.
+
+`notFound` is the one field where an override may not simply disagree. If the
+recipe names one shape and the read declares exactly one candidate that is a
+different shape, one of the two is wrong — quietly preferring either hides it
+— so generation stops with an error naming both. `list.itemsPath` has no such
+rule: a page can legally sit deeper in the response than a top-level member,
+and the derivation only ever looks at the top level.
 
 One field sits outside the resource list. **`neverProbe`** maps an operation
 the generator may never place in the probe group to the curated reason why,
@@ -347,6 +370,7 @@ service and operation, with a stable reason:
 | `probe-of-implemented-op` | an implemented operation the recipe gives no role — it may not be probed, so it needs a role |
 | `probe-binds-live-resource:<Member>` | a probe would have bound that member to a value exported from a resource the run owns. Add a curated literal to `values.json` — deliberately nonexistent, so the call misses — or leave the operation refused |
 | `never-probe` | the recipe's `neverProbe` list forbids probing the operation; the detail is the curated reason |
+| `ambiguous-list-page` | a `list` with no `itemsPath`, whose operation's output holds two lists with no `@paginated` `items` trait to choose between them, or no list at all. Give the resource an explicit `list.itemsPath` |
 | `no-output-to-assert` | a probe of an operation that returns nothing a probe can assert: no output at all, or no identity member and no single list to check the shape of. Reading back the resource it names would assert something that was already true before the call, so there is nothing honest to assert |
 | `setup-refused:<resource>` | a required resource could not be bound |
 | `unsupported-tag-shape:<Shape>` | the tag member is neither a string map nor a list of `{Key, Value}`. `<Shape>` is the bare shape name; the qualified Smithy id is in the detail |

@@ -49,7 +49,6 @@
       "list": {
         "op": "ListPolicies",
         "params": { "Filter": "SERVICE_CONTROL_POLICY" },
-        "itemsPath": "$.Policies",
         "identityPath": "$.Id",
         "identity": "id"
       },
@@ -67,8 +66,7 @@
         "untag": { "op": "UntagResource", "member": "TagKeys" },
         "list": { "op": "ListTagsForResource", "path": "$.Tags" }
       },
-      "delete": { "op": "DeletePolicy" },
-      "notFound": { "error": "PolicyNotFoundException" }
+      "delete": { "op": "DeletePolicy" }
     },
     {
       "$comment": "Pre-existing: an organization is never created or deleted by a test, so its read is the whole of its group. It deliberately exports only the organization's own id and ARN. The management account id used to be exported here and bound to AccountId, which is precisely what would have let the probe group aim CloseAccount, RemoveAccountFromOrganization and MoveAccount at the caller's real management account.",

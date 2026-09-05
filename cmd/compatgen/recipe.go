@@ -101,12 +101,16 @@ type readSpec struct {
 }
 
 type listSpec struct {
-	Comment      string         `json:"$comment,omitempty"`
-	Op           string         `json:"op"`
-	Params       map[string]any `json:"params,omitempty"`
-	ItemsPath    string         `json:"itemsPath"`
-	IdentityPath string         `json:"identityPath"`
-	Identity     string         `json:"identity"`
+	Comment string         `json:"$comment,omitempty"`
+	Op      string         `json:"op"`
+	Params  map[string]any `json:"params,omitempty"`
+	// ItemsPath is an override. Left out, the generator takes the page from
+	// the list operation's own output — the member @paginated names as its
+	// `items`, else the sole top-level list — and refuses the list
+	// (ambiguous-list-page) where the model does not settle it.
+	ItemsPath    string `json:"itemsPath,omitempty"`
+	IdentityPath string `json:"identityPath"`
+	Identity     string `json:"identity"`
 	// Exports are taken from the list test's own response. The list test is
 	// the last thing to run before delete, so a handle it re-reads is the
 	// freshest one the delete can use (SQS asks a delete to carry the most
@@ -140,6 +144,9 @@ type tagList struct {
 	Path   string         `json:"path"`
 }
 
+// notFoundSpec is an override. Left out, the generator derives the error from
+// the read operation's own modeled errors when exactly one of them is
+// not-found-shaped; a value that contradicts such a derivation is an error.
 type notFoundSpec struct {
 	Error string `json:"error"`
 }
@@ -320,8 +327,13 @@ func (res resource) validate() error {
 		if err := validateValue(res.List.Params, "list.params"); err != nil {
 			return err
 		}
-		if _, err := parsePath(res.List.ItemsPath); err != nil {
-			return fmt.Errorf("list: %w", err)
+		// itemsPath is optional: an omitted one is derived from the list
+		// operation's own output, which needs the model and so happens in
+		// the generator.
+		if res.List.ItemsPath != "" {
+			if _, err := parsePath(res.List.ItemsPath); err != nil {
+				return fmt.Errorf("list: %w", err)
+			}
 		}
 		if _, err := parsePath(res.List.IdentityPath); err != nil {
 			return fmt.Errorf("list: %w", err)
