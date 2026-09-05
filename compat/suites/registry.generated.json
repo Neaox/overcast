@@ -10,6 +10,7 @@
       "scenario": "compat/model/scenarios/organizations.json",
       "state": "candidate",
       "suites": [
+        "cli",
         "node-js-sdk",
         "python-sdk"
       ],
@@ -26,6 +27,7 @@
       "scenario": "compat/model/scenarios/organizations.json",
       "state": "candidate",
       "suites": [
+        "cli",
         "node-js-sdk",
         "python-sdk"
       ],
@@ -84,6 +86,7 @@
       "scenario": "compat/model/scenarios/organizations.json",
       "state": "candidate",
       "suites": [
+        "cli",
         "node-js-sdk",
         "python-sdk"
       ],
@@ -172,6 +175,7 @@
       "scenario": "compat/model/scenarios/sqs.json",
       "state": "candidate",
       "suites": [
+        "cli",
         "node-js-sdk",
         "python-sdk"
       ],
@@ -207,6 +211,7 @@
       "scenario": "compat/model/scenarios/sqs.json",
       "state": "candidate",
       "suites": [
+        "cli",
         "node-js-sdk",
         "python-sdk"
       ],
@@ -242,6 +247,7 @@
       "scenario": "compat/model/scenarios/sqs.json",
       "state": "candidate",
       "suites": [
+        "cli",
         "node-js-sdk",
         "python-sdk"
       ],
@@ -261,6 +267,7 @@
       "scenario": "compat/model/scenarios/sqs.json",
       "state": "candidate",
       "suites": [
+        "cli",
         "node-js-sdk",
         "python-sdk"
       ],
