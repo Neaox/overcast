@@ -93,6 +93,17 @@ describe("checks", () => {
     );
   });
 
+  it("matches turns a pattern JS cannot compile into a mismatch, not a throw", () => {
+    // Legal RE2 (and PCRE) named-group syntax; JS spells it (?<name>…) instead
+    // and throws a SyntaxError from `new RegExp` on this one.
+    const pattern = "(?P<name>foo)";
+    const mismatch = evaluateChecks({ Id: "foo" }, { "$.Id": { matches: pattern } }, ctx);
+    assert.ok(mismatch !== null);
+    assert.equal(mismatch.path, "$.Id");
+    assert.equal(mismatch.expected, `pattern ${pattern}`);
+    assert.match(mismatch.actual, /^unsupported pattern: /);
+  });
+
   it("missing holds when any segment is absent and fails when it resolves", () => {
     assert.equal(
       evaluateChecks({ Tags: {} }, { "$.Tags.compat": { missing: true } }, ctx),

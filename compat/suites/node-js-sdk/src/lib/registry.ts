@@ -197,8 +197,8 @@ export type ImplMap = Record<string, TestFn>;
  * Resolves an implementation for a generated group's test that has no
  * registered impl. Given the group name, test name, and the group's
  * `scenario` path (undefined if absent), it may return a TestFn to run, or
- * undefined to say it cannot handle this test either. Nothing in this suite
- * provides one yet — the G2 node-js-sdk interpreter will (#1393, #1113 phase G2).
+ * undefined to say it cannot handle this test either. `src/lib/scenario`
+ * provides one (#1393, #1113 phase G2), and `runner.ts` wires it in.
  */
 export type ScenarioBackend = (
   group: string,
@@ -223,7 +223,8 @@ export interface BuildOptions {
   /**
    * Optional resolver consulted for a test with no registered impl, before
    * falling back to the not-implemented sentinel (hand-written groups) or the
-   * interim fail rule (generated groups). Nothing provides one yet (#1393).
+   * interim fail rule (generated groups). `src/lib/scenario` provides one,
+   * and `runner.ts` wires it in (#1393).
    */
   scenarioBackend?: ScenarioBackend;
 }

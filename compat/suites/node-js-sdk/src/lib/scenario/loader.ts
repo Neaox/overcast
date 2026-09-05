@@ -244,9 +244,17 @@ function parseListOrError(
   fail: Fail,
 ): Assertion {
   if (kind === "absent" && o["error"] !== undefined) {
+    const call = parseCall(o["call"], `${at}/call`, fail);
+    if (call.export !== undefined) {
+      fail(
+        `${at}/call/export`,
+        "an absent clause's error-form call is expected to fail, so it has " +
+          "no response to export from",
+      );
+    }
     return {
       kind,
-      call: parseCall(o["call"], `${at}/call`, fail),
+      call,
       error: parseErrorSpec(o["error"], `${at}/error`, fail),
     };
   }

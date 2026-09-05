@@ -79,20 +79,22 @@ export function makeScenarioSupport(
     }
     if (!group) continue;
 
-    // A probe group has no setup and no teardown, and must not acquire one:
-    // there is nothing to set up and nothing to clean up (plan § 4.4).
-    if (group.setup.length > 0) {
-      const calls = group.setup;
-      setup[rg.name] = async (ctx) => {
-        await runSetup(envFor(ctx, rg.name, scenarioFile), calls);
-      };
-    }
-    if (group.teardown.length > 0) {
-      const calls = group.teardown;
-      teardown[rg.name] = async (ctx) => {
-        await runTeardown(envFor(ctx, rg.name, scenarioFile), calls);
-      };
-    }
+    // Register the hook for every generated group, unconditionally, and let
+    // an empty calls list make it a no-op. A probe group carries no setup and
+    // no teardown steps — there is nothing to set up and nothing to clean up
+    // — but that is a property of the scenario file's calls list, not a
+    // reason to withhold the hook itself; withholding it was a distinction
+    // without a difference that this backend used to make on its own. The
+    // python interpreter always registers the hooks, and this is the rule
+    // the README will pin.
+    const setupCalls = group.setup;
+    setup[rg.name] = async (ctx) => {
+      await runSetup(envFor(ctx, rg.name, scenarioFile), setupCalls);
+    };
+    const teardownCalls = group.teardown;
+    teardown[rg.name] = async (ctx) => {
+      await runTeardown(envFor(ctx, rg.name, scenarioFile), teardownCalls);
+    };
   }
 
   return { backend: makeScenarioBackend(opts), setup, teardown };

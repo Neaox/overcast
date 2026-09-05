@@ -223,7 +223,7 @@ SDK-specific. Each backend derives what it needs:
 | Backend | Client | Operation |
 | --- | --- | --- |
 | python-sdk | `boto3.client(<endpointPrefix>)` — botocore's service name is the endpoint prefix for both pilot services | `getattr(client, xform_name(op))(**params)` |
-| node-js-sdk | `@aws-sdk/client-<kebab(sdkId)>`, class `<PascalCase(sdkId)>Client` | `new <Op>Command(params)` |
+| node-js-sdk | `@aws-sdk/client-<lower(sdkId), whitespace/underscore to "-">` (so DynamoDB → dynamodb, not dynamo-db), class `<sdkId's alphanumerics>Client` | `new <Op>Command(params)` |
 | cli | `aws <endpointPrefix> <kebab(op)> --cli-input-json '<params>'` | same |
 | go-sdk | `github.com/aws/aws-sdk-go-v2/service/<lower(sdkId, spaces removed)>` | `client.<Op>(ctx, &<Op>Input{…})` |
 | java-sdk | `<PascalCase(sdkId)>Client` | `client.<lowerFirst(op)>(<Op>Request.builder()…)` |
