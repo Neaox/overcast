@@ -1110,6 +1110,48 @@
     {
       "suite": "cli",
       "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "CreateStackWithEksRefs",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "DeleteStackWithEksRefs",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "DescribeStackResourcesPhysicalIds",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "GetAttClusterArn",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "RefAddonIsClusterPipeAddon",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "RefNodegroupIsClusterSlashName",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudformation",
       "group": "cloudformation-stacks",
       "test": "CreateStack",
       "status": "pass"

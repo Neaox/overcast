@@ -1355,6 +1355,48 @@
     {
       "suite": "java-sdk",
       "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "CreateStackWithEksRefs",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "DeleteStackWithEksRefs",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "DescribeStackResourcesPhysicalIds",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "GetAttClusterArn",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "RefAddonIsClusterPipeAddon",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "RefNodegroupIsClusterSlashName",
+      "status": "pass"
+    },
+    {
+      "suite": "java-sdk",
+      "service": "cloudformation",
       "group": "cloudformation-stacks",
       "test": "CreateStack",
       "status": "pass"

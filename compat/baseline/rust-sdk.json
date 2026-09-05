@@ -1355,6 +1355,48 @@
     {
       "suite": "rust-sdk",
       "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "CreateStackWithEksRefs",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "DeleteStackWithEksRefs",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "DescribeStackResourcesPhysicalIds",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "GetAttClusterArn",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "RefAddonIsClusterPipeAddon",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "RefNodegroupIsClusterSlashName",
+      "status": "skip"
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "cloudformation",
       "group": "cloudformation-stacks",
       "test": "CreateStack",
       "status": "skip"
