@@ -27,19 +27,19 @@ public final class CloudWatchLogsGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("CreateLogGroup",       this::createLogGroup),
-                Map.entry("DescribeLogGroups",    this::describeLogGroups),
-                Map.entry("CreateLogStream",      this::createLogStream),
-                Map.entry("DescribeLogStreams",   this::describeLogStreams),
-                Map.entry("TagLogGroup",          this::tagLogGroup),
-                Map.entry("DeleteLogGroup",       this::deleteLogGroup),
-                Map.entry("PutLogEvents",         this::putLogEvents),
-                Map.entry("GetLogEvents",         this::getLogEvents),
-                Map.entry("FilterLogEvents",      this::filterLogEvents),
-                Map.entry("PutRetentionPolicy",   this::putRetentionPolicy),
-                Map.entry("VerifyRetentionPolicy",this::verifyRetentionPolicy),
-                Map.entry("DeleteRetentionPolicy",this::deleteRetentionPolicy),
-                Map.entry("DeleteLogStream",      this::deleteLogStream)
+                Map.entry("logs-groups:CreateLogGroup",        this::createLogGroup),
+                Map.entry("logs-groups:DescribeLogGroups",     this::describeLogGroups),
+                Map.entry("logs-groups:CreateLogStream",       this::createLogStream),
+                Map.entry("logs-events:DescribeLogStreams",    this::describeLogStreams),
+                Map.entry("logs-groups:TagLogGroup",           this::tagLogGroup),
+                Map.entry("logs-groups:DeleteLogGroup",        this::deleteLogGroup),
+                Map.entry("logs-events:PutLogEvents",          this::putLogEvents),
+                Map.entry("logs-events:GetLogEvents",          this::getLogEvents),
+                Map.entry("logs-events:FilterLogEvents",       this::filterLogEvents),
+                Map.entry("logs-groups:PutRetentionPolicy",    this::putRetentionPolicy),
+                Map.entry("logs-groups:VerifyRetentionPolicy", this::verifyRetentionPolicy),
+                Map.entry("logs-groups:DeleteRetentionPolicy", this::deleteRetentionPolicy),
+                Map.entry("logs-events:DeleteLogStream",       this::deleteLogStream)
         );
     }
 

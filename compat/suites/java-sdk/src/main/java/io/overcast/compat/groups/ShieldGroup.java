@@ -27,11 +27,11 @@ public final class ShieldGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("CreateProtection",  this::createProtection),
-                Map.entry("DescribeProtection",this::describeProtection),
-                Map.entry("DescribeSubscription",this::describeSubscription),
-                Map.entry("ListProtections",   this::listProtections),
-                Map.entry("DeleteProtection",  this::deleteProtection)
+                Map.entry("shield-protections:CreateProtection",     this::createProtection),
+                Map.entry("shield-protections:DescribeProtection",   this::describeProtection),
+                Map.entry("shield-protections:DescribeSubscription", this::describeSubscription),
+                Map.entry("shield-protections:ListProtections",      this::listProtections),
+                Map.entry("shield-protections:DeleteProtection",     this::deleteProtection)
         );
     }
 

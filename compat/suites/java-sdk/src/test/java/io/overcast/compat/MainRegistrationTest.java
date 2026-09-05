@@ -9,6 +9,9 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeSet;
+
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The suite's own registrations must resolve against the real registry.json.
@@ -39,6 +42,22 @@ class MainRegistrationTest {
     @Test
     void registeredImplsHaveNoDuplicateKeys() {
         mergeAll(); // throws IllegalStateException naming every duplicated key
+    }
+
+    /**
+     * Every impl-map key must be group-qualified ({@code "group:test"}), never
+     * a bare test name (#1700). A bare key that happens to be unambiguous today
+     * silently becomes ambiguous — and is refused at runtime — the moment a new
+     * group declares the same test name, so the rule is enforced here rather
+     * than left to be rediscovered by a future collision.
+     */
+    @Test
+    void registeredImplKeysAreAllQualified() {
+        TreeSet<String> bare = new TreeSet<>();
+        for (String key : mergeAll().keySet()) {
+            if (!key.contains(Registry.KEY_SEPARATOR)) bare.add(key);
+        }
+        assertTrue(bare.isEmpty(), "bare (unqualified) impl keys found, want \"group:test\": " + bare);
     }
 
     /**

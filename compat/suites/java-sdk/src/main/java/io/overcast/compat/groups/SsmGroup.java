@@ -28,22 +28,22 @@ public final class SsmGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("PutParameter",                    this::putParameter),
-                Map.entry("GetParameter",                    this::getParameter),
-                Map.entry("PutParameterOverwrite",           this::putParameterOverwrite),
-                Map.entry("GetParameterHistory",             this::getParameterHistory),
-                Map.entry("PutMultipleParameters",           this::putMultipleParameters),
-                Map.entry("GetParameters",                   this::getParameters),
-                Map.entry("DescribeParameters",              this::describeParameters),
-                Map.entry("TagParameter",                    this::tagParameter),
-                Map.entry("ListSSMTagsForResource",          this::listSsmTagsForResource),
-                Map.entry("DeleteParameters",                this::deleteParameters),
-                Map.entry("PutSecureStringParameter",        this::putSecureStringParameter),
-                Map.entry("GetSecureStringParameter",        this::getSecureStringParameter),
-                Map.entry("GetSecureStringWithoutDecryption",this::getSecureStringWithoutDecryption),
-                Map.entry("GetParametersByPath",             this::getParametersByPath),
-                Map.entry("GetParametersByPathRecursive",    this::getParametersByPathRecursive),
-                Map.entry("GetParametersByPathPaginated",    this::getParametersByPathPaginated)
+                Map.entry("ssm-parameters:PutParameter",                 this::putParameter),
+                Map.entry("ssm-parameters:GetParameter",                 this::getParameter),
+                Map.entry("ssm-parameters:PutParameterOverwrite",        this::putParameterOverwrite),
+                Map.entry("ssm-parameters:GetParameterHistory",          this::getParameterHistory),
+                Map.entry("ssm-parameters:PutMultipleParameters",        this::putMultipleParameters),
+                Map.entry("ssm-parameters:GetParameters",                this::getParameters),
+                Map.entry("ssm-parameters:DescribeParameters",           this::describeParameters),
+                Map.entry("ssm-parameters:TagParameter",                 this::tagParameter),
+                Map.entry("ssm-parameters:ListSSMTagsForResource",       this::listSsmTagsForResource),
+                Map.entry("ssm-parameters:DeleteParameters",             this::deleteParameters),
+                Map.entry("ssm-secure:PutSecureStringParameter",         this::putSecureStringParameter),
+                Map.entry("ssm-secure:GetSecureStringParameter",         this::getSecureStringParameter),
+                Map.entry("ssm-secure:GetSecureStringWithoutDecryption", this::getSecureStringWithoutDecryption),
+                Map.entry("ssm-path:GetParametersByPath",                this::getParametersByPath),
+                Map.entry("ssm-path:GetParametersByPathRecursive",       this::getParametersByPathRecursive),
+                Map.entry("ssm-path:GetParametersByPathPaginated",       this::getParametersByPathPaginated)
         );
     }
 

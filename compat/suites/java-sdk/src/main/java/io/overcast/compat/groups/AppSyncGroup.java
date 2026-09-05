@@ -31,25 +31,25 @@ public final class AppSyncGroup implements ServiceGroup {
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
                 // appsync-apis
-                Map.entry("CreateGraphqlApi",  this::createGraphqlApi),
-                Map.entry("GetGraphqlApi",     this::getGraphqlApi),
-                Map.entry("UpdateGraphqlApi",  this::updateGraphqlApi),
-                Map.entry("ListGraphqlApis",   this::listGraphqlApis),
-                Map.entry("DeleteGraphqlApi",  this::deleteGraphqlApi),
+                Map.entry("appsync-apis:CreateGraphqlApi", this::createGraphqlApi),
+                Map.entry("appsync-apis:GetGraphqlApi",    this::getGraphqlApi),
+                Map.entry("appsync-apis:UpdateGraphqlApi", this::updateGraphqlApi),
+                Map.entry("appsync-apis:ListGraphqlApis",  this::listGraphqlApis),
+                Map.entry("appsync-apis:DeleteGraphqlApi", this::deleteGraphqlApi),
                 // appsync-schemas
-                Map.entry("StartSchemaCreation",     this::startSchemaCreation),
-                Map.entry("GetSchemaCreationStatus", this::getSchemaCreationStatus),
+                Map.entry("appsync-schemas:StartSchemaCreation",     this::startSchemaCreation),
+                Map.entry("appsync-schemas:GetSchemaCreationStatus", this::getSchemaCreationStatus),
                 // appsync-api-keys
                 Map.entry("appsync-api-keys:CreateApiKey", this::createApiKey),
-                Map.entry("ListApiKeys",  this::listApiKeys),
-                Map.entry("UpdateApiKey", this::updateApiKey),
-                Map.entry("DeleteApiKey", this::deleteApiKey),
+                Map.entry("appsync-api-keys:ListApiKeys",  this::listApiKeys),
+                Map.entry("appsync-api-keys:UpdateApiKey", this::updateApiKey),
+                Map.entry("appsync-api-keys:DeleteApiKey", this::deleteApiKey),
                 // appsync-datasources
-                Map.entry("CreateDataSource", this::createDataSource),
-                Map.entry("GetDataSource",    this::getDataSource),
-                Map.entry("UpdateDataSource", this::updateDataSource),
-                Map.entry("ListDataSources",  this::listDataSources),
-                Map.entry("DeleteDataSource", this::deleteDataSource),
+                Map.entry("appsync-datasources:CreateDataSource", this::createDataSource),
+                Map.entry("appsync-datasources:GetDataSource",    this::getDataSource),
+                Map.entry("appsync-datasources:UpdateDataSource", this::updateDataSource),
+                Map.entry("appsync-datasources:ListDataSources",  this::listDataSources),
+                Map.entry("appsync-datasources:DeleteDataSource", this::deleteDataSource),
                 // appsync-functions — group-qualified to avoid colliding with Lambda
                 Map.entry("appsync-functions:CreateFunction", this::createFunction),
                 Map.entry("appsync-functions:GetFunction",    this::getFunction),
@@ -57,42 +57,42 @@ public final class AppSyncGroup implements ServiceGroup {
                 Map.entry("appsync-functions:ListFunctions",  this::listFunctions),
                 Map.entry("appsync-functions:DeleteFunction", this::deleteFunction),
                 // appsync-resolvers
-                Map.entry("CreateResolver",          this::createResolver),
-                Map.entry("GetResolver",             this::getResolver),
-                Map.entry("UpdateResolver",          this::updateResolver),
-                Map.entry("ListResolvers",           this::listResolvers),
-                Map.entry("ListResolversByFunction", this::listResolversByFunction),
-                Map.entry("DeleteResolver",          this::deleteResolver),
+                Map.entry("appsync-resolvers:CreateResolver",          this::createResolver),
+                Map.entry("appsync-resolvers:GetResolver",             this::getResolver),
+                Map.entry("appsync-resolvers:UpdateResolver",          this::updateResolver),
+                Map.entry("appsync-resolvers:ListResolvers",           this::listResolvers),
+                Map.entry("appsync-resolvers:ListResolversByFunction", this::listResolversByFunction),
+                Map.entry("appsync-resolvers:DeleteResolver",          this::deleteResolver),
                 // appsync-types
-                Map.entry("CreateType", this::createType),
-                Map.entry("GetType",    this::getType),
-                Map.entry("UpdateType", this::updateType),
-                Map.entry("ListTypes",  this::listTypes),
-                Map.entry("DeleteType", this::deleteType),
+                Map.entry("appsync-types:CreateType", this::createType),
+                Map.entry("appsync-types:GetType",    this::getType),
+                Map.entry("appsync-types:UpdateType", this::updateType),
+                Map.entry("appsync-types:ListTypes",  this::listTypes),
+                Map.entry("appsync-types:DeleteType", this::deleteType),
                 // appsync-tags — group-qualified to avoid colliding with SecretsManager
                 Map.entry("appsync-tags:TagResource",         this::tagResource),
                 Map.entry("appsync-tags:ListTagsForResource", this::listTagsForResource),
                 Map.entry("appsync-tags:UntagResource",       this::untagResource),
                 // appsync-env-vars
-                Map.entry("PutGraphqlApiEnvironmentVariables", this::putEnvVars),
-                Map.entry("GetGraphqlApiEnvironmentVariables", this::getEnvVars),
+                Map.entry("appsync-env-vars:PutGraphqlApiEnvironmentVariables", this::putEnvVars),
+                Map.entry("appsync-env-vars:GetGraphqlApiEnvironmentVariables", this::getEnvVars),
                 // appsync-domains
-                Map.entry("CreateDomainName",  this::createDomainName),
-                Map.entry("GetDomainName",     this::getDomainName),
-                Map.entry("UpdateDomainName",  this::updateDomainName),
+                Map.entry("appsync-domains:CreateDomainName", this::createDomainName),
+                Map.entry("appsync-domains:GetDomainName",    this::getDomainName),
+                Map.entry("appsync-domains:UpdateDomainName", this::updateDomainName),
                 // Group-qualified: opensearch-domains declares a ListDomainNames
                 // too, and a bare key cannot say which group it implements.
-                Map.entry("appsync-domains:ListDomainNames", this::listDomainNames),
-                Map.entry("AssociateApi",      this::associateApi),
-                Map.entry("GetApiAssociation", this::getApiAssociation),
-                Map.entry("DisassociateApi",   this::disassociateApi),
-                Map.entry("DeleteDomainName",  this::deleteDomainName),
+                Map.entry("appsync-domains:ListDomainNames",   this::listDomainNames),
+                Map.entry("appsync-domains:AssociateApi",      this::associateApi),
+                Map.entry("appsync-domains:GetApiAssociation", this::getApiAssociation),
+                Map.entry("appsync-domains:DisassociateApi",   this::disassociateApi),
+                Map.entry("appsync-domains:DeleteDomainName",  this::deleteDomainName),
                 // appsync-cache
-                Map.entry("CreateApiCache", this::createApiCache),
-                Map.entry("GetApiCache",    this::getApiCache),
-                Map.entry("UpdateApiCache", this::updateApiCache),
-                Map.entry("FlushApiCache",  this::flushApiCache),
-                Map.entry("DeleteApiCache", this::deleteApiCache)
+                Map.entry("appsync-cache:CreateApiCache", this::createApiCache),
+                Map.entry("appsync-cache:GetApiCache",    this::getApiCache),
+                Map.entry("appsync-cache:UpdateApiCache", this::updateApiCache),
+                Map.entry("appsync-cache:FlushApiCache",  this::flushApiCache),
+                Map.entry("appsync-cache:DeleteApiCache", this::deleteApiCache)
         );
     }
 

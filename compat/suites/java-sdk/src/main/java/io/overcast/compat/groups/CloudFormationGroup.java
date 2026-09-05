@@ -42,12 +42,12 @@ public final class CloudFormationGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("CreateStack",      this::createStack),
-                Map.entry("DescribeStacks",   this::describeStacks),
-                Map.entry("ListStacks",       this::listStacks),
-                Map.entry("UpdateStack",      this::updateStack),
-                Map.entry("ValidateTemplate", this::validateTemplate),
-                Map.entry("DeleteStack",      this::deleteStack)
+                Map.entry("cloudformation-stacks:CreateStack",      this::createStack),
+                Map.entry("cloudformation-stacks:DescribeStacks",   this::describeStacks),
+                Map.entry("cloudformation-stacks:ListStacks",       this::listStacks),
+                Map.entry("cloudformation-stacks:UpdateStack",      this::updateStack),
+                Map.entry("cloudformation-stacks:ValidateTemplate", this::validateTemplate),
+                Map.entry("cloudformation-stacks:DeleteStack",      this::deleteStack)
         );
     }
 

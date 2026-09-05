@@ -27,19 +27,19 @@ public final class CognitoGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("CreateUserPool",       this::createUserPool),
-                Map.entry("DescribeUserPool",     this::describeUserPool),
-                Map.entry("ListUserPools",        this::listUserPools),
-                Map.entry("CreateUserPoolClient", this::createUserPoolClient),
-                Map.entry("ListUserPoolClients",  this::listUserPoolClients),
-                Map.entry("AdminCreateUser",      this::adminCreateUser),
-                Map.entry("cognito-userpools:ListUsers", this::listUsers),
-                Map.entry("AdminDeleteUser",      this::adminDeleteUser),
-                Map.entry("DeleteUserPool",       this::deleteUserPool),
-                Map.entry("CreateUserPoolClientWithTokenValidity", this::createClientTokenValidity),
-                Map.entry("DescribeUserPoolClientTokenValidity",  this::describeClientTokenValidity),
-                Map.entry("UpdateUserPoolClientTokenValidity",    this::updateClientTokenValidity),
-                Map.entry("DeleteUserPoolClient", this::deleteUserPoolClient)
+                Map.entry("cognito-userpools:CreateUserPool",                             this::createUserPool),
+                Map.entry("cognito-userpools:DescribeUserPool",                           this::describeUserPool),
+                Map.entry("cognito-userpools:ListUserPools",                              this::listUserPools),
+                Map.entry("cognito-userpools:CreateUserPoolClient",                       this::createUserPoolClient),
+                Map.entry("cognito-userpools:ListUserPoolClients",                        this::listUserPoolClients),
+                Map.entry("cognito-userpools:AdminCreateUser",                            this::adminCreateUser),
+                Map.entry("cognito-userpools:ListUsers",                                  this::listUsers),
+                Map.entry("cognito-userpools:AdminDeleteUser",                            this::adminDeleteUser),
+                Map.entry("cognito-userpools:DeleteUserPool",                             this::deleteUserPool),
+                Map.entry("cognito-token-validity:CreateUserPoolClientWithTokenValidity", this::createClientTokenValidity),
+                Map.entry("cognito-token-validity:DescribeUserPoolClientTokenValidity",   this::describeClientTokenValidity),
+                Map.entry("cognito-token-validity:UpdateUserPoolClientTokenValidity",     this::updateClientTokenValidity),
+                Map.entry("cognito-token-validity:DeleteUserPoolClient",                  this::deleteUserPoolClient)
         );
     }
 
