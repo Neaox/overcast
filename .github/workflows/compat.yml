@@ -513,6 +513,27 @@ jobs:
         env:
           OVERCAST_ENDPOINT: http://localhost:4566
           OVERCAST_COMPAT_RESULTS_FILE: compat-results-${{ matrix.suite }}.json
+          # A tuning knob, for the `cli` suite only.
+          #
+          # `cli` is the one suite that does not hold a client library open: it
+          # spawns a fresh `aws` process per API call — at least 1149 static
+          # call sites under compat/suites/cli/internal/groups/, dispatched
+          # through awscli.go — so a slot spends most of its life blocked on
+          # process start and Python import, not on the emulator. Eight slots
+          # on a 4-vCPU runner therefore under-subscribes badly: `go-sdk` runs
+          # the same registry in 61 s where `cli` takes 348 s. Sixteen lets
+          # twice as many of those waits overlap without asking anything more
+          # of Overcast, which is answering the same requests either way.
+          #
+          # Unset for every other suite, so each keeps the runner's own
+          # `max(8, 2×CPU)` budget.
+          #
+          # RE-CHECK THIS AGAINST compat-flake-detection.yml after a week. More
+          # concurrency is the classic way to turn a latent ordering bug into
+          # an intermittent one, and the nightly N-runs-per-suite job is what
+          # would see it first. If `cli` starts appearing in flake findings,
+          # this is the first thing to put back.
+          OVERCAST_COMPAT_PARALLEL_SLOTS: ${{ matrix.suite == 'cli' && '16' || '' }}
         run: |
           ./bin/compat \
             --endpoint http://localhost:4566 \
