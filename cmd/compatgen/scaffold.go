@@ -71,6 +71,10 @@ func scaffold(model *serviceModel, service string) scaffoldRecipe {
 	out := scaffoldRecipe{
 		Comment: "Scaffolded by `go run -tags dev ./cmd/compatgen -scaffold " + model.Service + "`. Replace every $todo with a value expression, fill exports/binds/identity paths, delete what does not apply, then remove this comment. See compat/model/README.md.",
 		Service: service,
+		// A service the clustering finds nothing in still scaffolds to a
+		// recipe-shaped document: `"resources": []` is an empty list to fill
+		// in, where `null` reads as a bug in the scaffolder.
+		Resources: []scaffoldResource{},
 	}
 	if service != model.Service {
 		out.Model = model.Service

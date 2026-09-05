@@ -21,10 +21,24 @@ import (
 // compat/model/recipe.schema.json and the README documents every field.
 
 type recipe struct {
-	Comment   string     `json:"$comment,omitempty"`
-	Service   string     `json:"service"`
-	Model     string     `json:"model,omitempty"`
-	Resources []resource `json:"resources"`
+	Comment string `json:"$comment,omitempty"`
+	Service string `json:"service"`
+	Model   string `json:"model,omitempty"`
+	// NeverProbe maps an operation the generator must never probe to the
+	// curated reason why, which is what gaps.json then reports. It is the
+	// second half of the probe-safety rule: the binder refuses a probe that
+	// would point at a resource the run owns, and this refuses one whose
+	// effect is irreversible even with a stranger's identifiers, or with no
+	// identifier at all (EnableAllFeatures, DeleteOrganization,
+	// CreateOrganization take nothing that could miss).
+	NeverProbe map[string]string `json:"neverProbe,omitempty"`
+	Resources  []resource        `json:"resources"`
+}
+
+// neverProbe reports whether the recipe forbids probing op, and why.
+func (r recipe) neverProbe(op string) (string, bool) {
+	reason, forbidden := r.NeverProbe[op]
+	return reason, forbidden
 }
 
 // modelService is the shape-snapshot key: the model service name when it
@@ -87,11 +101,17 @@ type readSpec struct {
 }
 
 type listSpec struct {
+	Comment      string         `json:"$comment,omitempty"`
 	Op           string         `json:"op"`
 	Params       map[string]any `json:"params,omitempty"`
 	ItemsPath    string         `json:"itemsPath"`
 	IdentityPath string         `json:"identityPath"`
 	Identity     string         `json:"identity"`
+	// Exports are taken from the list test's own response. The list test is
+	// the last thing to run before delete, so a handle it re-reads is the
+	// freshest one the delete can use (SQS asks a delete to carry the most
+	// recent receipt handle).
+	Exports map[string]string `json:"exports,omitempty"`
 }
 
 type mutation struct {
@@ -206,6 +226,11 @@ func decodeStrict(contents []byte, into any) error {
 // value grammar, and path syntax. Model-dependent checks happen in the
 // generator, where the model is to hand.
 func (r recipe) validate() error {
+	for _, op := range sortedStringKeys(r.NeverProbe) {
+		if strings.TrimSpace(r.NeverProbe[op]) == "" {
+			return fmt.Errorf("neverProbe.%s: say why the operation may never be probed; the reason is what gaps.json reports", op)
+		}
+	}
 	ids := make(map[string]int, len(r.Resources))
 	for i, res := range r.Resources {
 		if _, dup := ids[res.ID]; dup {
@@ -303,6 +328,11 @@ func (res resource) validate() error {
 		}
 		if !res.exportsName(res.List.Identity) {
 			return fmt.Errorf("list: identity %q is not an export of this resource", res.List.Identity)
+		}
+		for name, path := range res.List.Exports {
+			if _, err := parsePath(path); err != nil {
+				return fmt.Errorf("list exports.%s: %w", name, err)
+			}
 		}
 	}
 	for i, m := range res.Mutable {
@@ -403,6 +433,11 @@ func (res resource) exportsName(name string) bool {
 	}
 	for _, rd := range res.allReads() {
 		if _, ok := rd.Exports[name]; ok {
+			return true
+		}
+	}
+	if res.List != nil {
+		if _, ok := res.List.Exports[name]; ok {
 			return true
 		}
 	}

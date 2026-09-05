@@ -47,7 +47,6 @@ type generation struct {
 	noTeardown []string
 	caps       capabilityTable
 	model      *serviceModel
-	recipe     recipe
 }
 
 type generator struct {
@@ -74,7 +73,6 @@ func generate(model *serviceModel, r recipe, values *valuesTable, caps capabilit
 			covered:  make(map[string][]string),
 			caps:     caps,
 			model:    model,
-			recipe:   r,
 		},
 	}
 	if err := g.checkRecipeAgainstModel(); err != nil {
@@ -156,6 +154,11 @@ func (g *generator) checkRecipeAgainstModel() error {
 			return fmt.Errorf("resource %q: notFound error %q is not an error shape in the model", res.ID, res.NotFound.Error)
 		}
 	}
+	for _, op := range sortedStringKeys(g.recipe.NeverProbe) {
+		if !g.model.HasOperation(op) {
+			return fmt.Errorf("neverProbe names operation %q, which %s does not model", op, g.recipe.modelService())
+		}
+	}
 	return nil
 }
 
@@ -196,8 +199,9 @@ func (g *generator) newGroupBuilder(name, kind string, scope []resource) *groupB
 }
 
 func (gb *groupBuilder) bindScope() bindScope {
+	probe := gb.group.Kind == groupProbe
 	if gb.owner == nil {
-		return bindScope{resources: gb.scope, exports: gb.exports}
+		return bindScope{resources: gb.scope, exports: gb.exports, probe: probe}
 	}
 	resources := []resource{*gb.owner}
 	for _, res := range gb.scope {
@@ -205,7 +209,7 @@ func (gb *groupBuilder) bindScope() bindScope {
 			resources = append(resources, res)
 		}
 	}
-	return bindScope{resources: resources, exports: gb.exports}
+	return bindScope{resources: resources, exports: gb.exports, probe: probe}
 }
 
 // forResource makes res the owner of the calls bound next.
@@ -408,6 +412,44 @@ func wrap(a assertion, res resource) assertion {
 		return a
 	}
 	return eventually(a, *res.Async)
+}
+
+// wrapAuthored applies the resource's async retry to a clause a human wrote.
+// Only a clause that makes a call of its own can be retried usefully — a
+// responseField, or a call-less listContains, re-reads the one response the
+// primary call already produced — and an author who wrote their own
+// `eventually` has already chosen the budget.
+func wrapAuthored(a assertion, res resource) assertion {
+	if a.Kind == assertEventually || !makesOwnCall(a) {
+		return a
+	}
+	return wrap(a, res)
+}
+
+// makesOwnCall reports whether a clause verifies by calling the service again
+// rather than by reading the test's own response. It is what counts as a
+// read-back path: a clause that only inspects the response the primary call
+// returned cannot show that the call changed anything.
+func makesOwnCall(a assertion) bool {
+	switch a.Kind {
+	case assertReadback:
+		return a.Call != nil
+	case assertListContains, assertAbsent:
+		return a.Call != nil
+	case assertEventually:
+		return a.Assert != nil && makesOwnCall(*a.Assert)
+	}
+	return false
+}
+
+// anyMakesOwnCall reports whether any clause verifies with a call of its own.
+func anyMakesOwnCall(clauses []assertion) bool {
+	for _, a := range clauses {
+		if makesOwnCall(a) {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------
@@ -667,6 +709,9 @@ func (gb *groupBuilder) createTest(res resource) error {
 		return err
 	}
 	var clauses []assertion
+	// readbacks counts the clauses that call the service again; only those
+	// can show the create happened.
+	readbacks := 0
 	if len(res.Exports) > 0 {
 		fields := make(map[string]check, len(res.Exports))
 		for _, path := range sortedStringValues(res.Exports) {
@@ -687,11 +732,11 @@ func (gb *groupBuilder) createTest(res resource) error {
 			return err
 		}
 		clauses = append(clauses, wrap(readback(dc, checks(d.Path, gb.shapeCheck(gb.g.model.OutputShape(d.Op), d.Path))), res))
+		readbacks++
 	}
 	// An authored create assertion takes full responsibility for verifying
 	// the create; the derived read-back and list-membership clauses are for
 	// resources whose read and list can simply be replayed.
-	readbacks := 0
 	if len(res.Create.Assert) == 0 {
 		ref, err := gb.derivedCreateClauses(res, op, &clauses, &readbacks)
 		if err != nil {
@@ -712,12 +757,18 @@ func (gb *groupBuilder) createTest(res resource) error {
 			gb.g.refuseOp(gb.group.Name, op, ref)
 			return nil
 		}
-		clauses = append(clauses, a)
-		readbacks++
+		if makesOwnCall(a) {
+			readbacks++
+		}
+		clauses = append(clauses, wrapAuthored(a, res))
 	}
-	if readbacks == 0 && len(res.Derived) == 0 {
+	// Only a clause that calls the service again proves the create happened.
+	// An authored create.assert holding nothing but a responseField restates
+	// what the create response already said, which is the vacuous-test shape
+	// §3.5 exists to make unrepresentable.
+	if readbacks == 0 {
 		gb.g.refuseOp(gb.group.Name, op, refuse(reasonNoReadbackPath,
-			fmt.Sprintf("resource %q declares no read, no list and no authored create assertion, so the create cannot be verified", res.ID)))
+			fmt.Sprintf("resource %q declares no read, no list and no authored create assertion that calls the service again, so the create cannot be verified", res.ID)))
 		return nil
 	}
 	if len(clauses) == 0 {
@@ -820,6 +871,9 @@ func (gb *groupBuilder) listTest(res resource) error {
 		gb.g.refuseOp(gb.group.Name, op, ref)
 		return nil
 	}
+	if err := gb.registerExports(&c, prefixed(res.ID, res.List.Exports), op); err != nil {
+		return err
+	}
 	a := listContains(nil, res.List.ItemsPath, map[string]any{res.List.IdentityPath: map[string]any{"$ref": res.ID + "." + res.List.Identity}})
 	if ref, err := gb.completeAssertion(&a, op, op); err != nil || ref != nil {
 		return firstErr(ref, err, gb, op)
@@ -903,7 +957,7 @@ func (gb *groupBuilder) detectTagShape(res resource) (tagShape, *refusal, error)
 		return 0, nil, fmt.Errorf("resource %q: %s has no member %q", res.ID, tags.Untag.Op, tags.Untag.Member)
 	}
 	if gb.g.model.Kind(untagTarget) != "list" || gb.g.model.Kind(gb.g.model.Shapes[untagTarget].Member) != "string" {
-		return 0, refuse(reasonUnsupportedTagShape+":"+untagTarget, fmt.Sprintf("%s.%s is not a list of strings", tags.Untag.Op, tags.Untag.Member)), nil
+		return 0, refuse(reasonUnsupportedTagShape+":"+bareShapeName(untagTarget), fmt.Sprintf("%s.%s targets %s, which is not a list of strings", tags.Untag.Op, tags.Untag.Member, untagTarget)), nil
 	}
 	switch gb.g.model.Kind(target) {
 	case "map":
@@ -919,7 +973,18 @@ func (gb *groupBuilder) detectTagShape(res resource) (tagShape, *refusal, error)
 			return tagsAsList, nil, nil
 		}
 	}
-	return 0, refuse(reasonUnsupportedTagShape+":"+target, fmt.Sprintf("%s.%s is neither a string map nor a list of {Key, Value}", tags.Tag.Op, tags.Tag.Member)), nil
+	return 0, refuse(reasonUnsupportedTagShape+":"+bareShapeName(target), fmt.Sprintf("%s.%s targets %s, which is neither a string map nor a list of {Key, Value}", tags.Tag.Op, tags.Tag.Member, target)), nil
+}
+
+// bareShapeName is a Smithy shape id without its namespace. A refusal reason
+// is a machine-readable code plus a name, and gaps.schema.json's `reason`
+// pattern has no room for the '#' and '.' of a fully-qualified id — the id
+// itself belongs in the detail, where a human reads it.
+func bareShapeName(id string) string {
+	if i := strings.LastIndexByte(id, '#'); i >= 0 {
+		return id[i+1:]
+	}
+	return id
 }
 
 func (gb *groupBuilder) tagTests(res resource) error {
@@ -1025,6 +1090,17 @@ func (gb *groupBuilder) tagTests(res resource) error {
 
 func (gb *groupBuilder) authoredTest(res resource, a authoredOp) error {
 	name := a.testName()
+	// Guard 3 (§3.5) applies to authored coverage too: an update-family
+	// operation whose clauses only read its own response asserts that the
+	// service echoed the request, which is the "the ID is still non-nil"
+	// anti-pattern the contract names. The derived path refuses it by
+	// requiring a `mutable` entry; this is the same rule for the authored one.
+	// Checked before anything is bound so a refusal leaves no export behind.
+	if isUpdateFamily(a.Op) && !anyMakesOwnCall(a.Assert) {
+		gb.g.refuseOp(gb.group.Name, a.Op, refuse(reasonUpdateWithoutReadback,
+			fmt.Sprintf("%s changes state, but every clause of the authored operation %q reads its own response; add a readback, listContains or absent clause that calls the service again, or declare the change as a `mutable` entry", a.Op, name)))
+		return nil
+	}
 	gb.forResource(res)
 	c, ref, err := gb.bindCall(a.Op, a.Params)
 	if err != nil {
@@ -1048,7 +1124,7 @@ func (gb *groupBuilder) authoredTest(res resource, a authoredOp) error {
 			gb.g.refuseOp(gb.group.Name, a.Op, ref)
 			return nil
 		}
-		clauses = append(clauses, clause)
+		clauses = append(clauses, wrapAuthored(clause, res))
 	}
 	return gb.addTest(newTest(name, a.Op, c, clauses[0], clauses[1:]...))
 }
@@ -1110,14 +1186,27 @@ func (gb *groupBuilder) deleteTest(res resource) error {
 // ---------------------------------------------------------------------------
 
 // probeGroup covers every modeled operation the emulator does not implement
-// and no lifecycle test exercises: one call with model-valid values, one
+// and no lifecycle test exercises: one call with curated literals, one
 // assertion on the modeled output. Against an unimplemented operation the SDK
 // raises the 501 and the harness records `unimplemented`; the assertion is
 // never reached, and regeneration moves the operation out of this group the
 // day it is implemented.
+//
+// A probe group has no setup and no teardown, and that is the safety rule
+// rather than an omission. A probe is the one generated call no create/delete
+// pair contains, so it binds only curated or synthetic literals — deliberately
+// nonexistent identifiers — and never a value exported from a resource the run
+// owns (the probe branch in binder.go). Two refusals follow: an operation
+// whose required members only a live export could supply is refused
+// (probe-binds-live-resource), and an operation the recipe lists under
+// `neverProbe` is refused before it is bound at all, for the operations that
+// are irreversible even against a stranger's identifiers or against none
+// (EnableAllFeatures, DeleteOrganization).
 func (g *generator) probeGroup() error {
 	name := g.groupName("probe")
-	var probes []string
+	// Recipe order, so the first resource a recipe lists is the one a refusal
+	// names when several bind the same member.
+	gb := g.newGroupBuilder(name, groupProbe, g.recipe.Resources)
 	for _, op := range g.model.Operations() {
 		if g.caps.implemented(op) {
 			continue
@@ -1125,43 +1214,11 @@ func (g *generator) probeGroup() error {
 		if _, covered := g.out.covered[op]; covered {
 			continue
 		}
-		probes = append(probes, op)
-	}
-	if len(probes) == 0 {
-		return nil
-	}
-	// Every resource the emulator can actually set up is in scope — one whose
-	// create (or read, for a pre-existing resource) is unimplemented would
-	// fail the group's setup and turn every probe into a skip instead of the
-	// `unimplemented` the probe exists to record. Only the resources a probe
-	// references are instantiated. Bind against a scope where every setup
-	// export is assumed available, then instantiate what was used.
-	all := g.probeScope()
-	assumed := g.newGroupBuilder(name, groupProbe, all)
-	for _, res := range all {
-		if res.Create == nil {
-			for ctx, path := range prefixed(res.ID, res.Read.Exports) {
-				if err := assumed.registerExports(&call{Op: res.Read.Op}, map[string]string{ctx: path}, ""); err != nil {
-					return err
-				}
-			}
+		if why, forbidden := g.recipe.neverProbe(op); forbidden {
+			g.refuseOp(name, op, refuse(reasonNeverProbe, why))
 			continue
 		}
-		for ctx, path := range prefixed(res.ID, res.Exports) {
-			if err := assumed.registerExports(&call{Op: res.Create.Op}, map[string]string{ctx: path}, ""); err != nil {
-				return err
-			}
-		}
-		for _, d := range res.Derived {
-			if err := assumed.registerExports(&call{Op: d.Op}, map[string]string{res.ID + "." + d.Export: d.Path}, ""); err != nil {
-				return err
-			}
-		}
-	}
-	var tests []boundProbe
-	used := make(map[string]bool)
-	for _, op := range probes {
-		c, ref, err := assumed.bindCall(op, nil)
+		c, ref, err := gb.bindCall(op, nil)
 		if err != nil {
 			return err
 		}
@@ -1169,67 +1226,14 @@ func (g *generator) probeGroup() error {
 			g.refuseOp(name, op, ref)
 			continue
 		}
-		a, ref, err := assumed.probeAssertion(op, c)
-		if err != nil {
-			return err
-		}
+		a, ref := gb.probeAssertion(op)
 		if ref != nil {
 			g.refuseOp(name, op, ref)
 			continue
 		}
-		t := newTest(op, op, c, a)
-		for _, ref := range refsInTest(t) {
-			used[strings.SplitN(ref, ".", 2)[0]] = true
-		}
-		tests = append(tests, boundProbe{op: op, test: t})
-	}
-	if len(tests) == 0 {
-		return nil
-	}
-	// Now build the real group: setup for the used resources' closures.
-	wanted := make(map[string]bool)
-	for id := range used {
-		for _, res := range g.recipe.closure(id) {
-			wanted[res.ID] = true
-		}
-	}
-	ordered, _ := g.recipe.topological()
-	var setup []resource
-	for _, res := range ordered {
-		if wanted[res.ID] {
-			setup = append(setup, res)
-		}
-	}
-	gb := g.newGroupBuilder(name, groupProbe, all)
-	for _, res := range setup {
-		ref, err := gb.instantiate(res)
-		if err != nil {
+		if err := gb.addTest(newTest(op, op, c, a)); err != nil {
 			return err
 		}
-		if ref != nil {
-			// A resource a probe depends on cannot be created: refuse those
-			// probes rather than the whole group.
-			for _, b := range tests {
-				if usesResource(b.test, res.ID) {
-					g.refuseOp(name, b.op, refuse(reasonSetupRefused+":"+res.ID, fmt.Sprintf("required resource %q cannot be created: %s", res.ID, ref.Detail)))
-				}
-			}
-			var kept []boundProbe
-			for _, b := range tests {
-				if !usesResource(b.test, res.ID) {
-					kept = append(kept, b)
-				}
-			}
-			tests = kept
-		}
-	}
-	for _, b := range tests {
-		if err := gb.addTest(b.test); err != nil {
-			return err
-		}
-	}
-	if err := gb.teardown(reversed(setup)); err != nil {
-		return err
 	}
 	if len(gb.group.Tests) > 0 {
 		g.out.scenario.Groups = append(g.out.scenario.Groups, gb.group)
@@ -1237,80 +1241,22 @@ func (g *generator) probeGroup() error {
 	return nil
 }
 
-func usesResource(t test, id string) bool {
-	for _, ref := range refsInTest(t) {
-		if strings.HasPrefix(ref, id+".") {
-			return true
-		}
-	}
-	return false
-}
-
-// probeScope is every recipe resource whose setup the emulator implements,
-// with everything it requires. Recipe order, so the first resource a recipe
-// lists is the one a probe binds to when several bind the same member.
-func (g *generator) probeScope() []resource {
-	all, _ := g.recipe.topological()
-	usable := make(map[string]bool)
-	for _, res := range all {
-		ok := true
-		for _, op := range res.setupOps() {
-			if !g.caps.implemented(op) {
-				ok = false
-			}
-		}
-		for _, req := range res.Requires {
-			if !usable[req] {
-				ok = false
-			}
-		}
-		usable[res.ID] = ok
-	}
-	var scope []resource
-	for _, res := range g.recipe.Resources {
-		if usable[res.ID] {
-			scope = append(scope, res)
-		}
-	}
-	return scope
-}
-
-// boundProbe is a probe test whose params bound, held until the resources it
-// references are known to be creatable.
-type boundProbe struct {
-	op   string
-	test test
-}
-
 // probeAssertion is the one clause a probe carries: the modeled output's
-// identity member, or — for an operation that returns nothing — a read-back
-// of the resource the call was bound to, proving the call left it intact.
-func (gb *groupBuilder) probeAssertion(op string, c call) (assertion, *refusal, error) {
-	output := gb.g.model.OutputShape(op)
-	if output != "" {
+// identity member, non-empty.
+//
+// An operation that returns nothing gets no probe. Reading the resource the
+// call was aimed at would assert something that was already true before the
+// call, so an operation implemented without a capability row — the one case a
+// probe of it could actually run — would pass while proving nothing. Refusing
+// is the honest answer, and gaps.json is where it is recorded.
+func (gb *groupBuilder) probeAssertion(op string) (assertion, *refusal) {
+	if output := gb.g.model.OutputShape(op); output != "" {
 		if member := identityMember(gb.g.model, output); member != "" {
-			return responseField(checks("$."+member, nonEmpty())), nil, nil
-		}
-	}
-	for _, ref := range refsIn(c.Params) {
-		id := strings.SplitN(ref, ".", 2)[0]
-		for _, res := range gb.scope {
-			if res.ID != id || res.Read == nil || res.Read.Consuming {
-				continue
-			}
-			rc, refusal, err := gb.bindCall(res.Read.Op, res.Read.Params)
-			if err != nil || refusal != nil {
-				return assertion{}, refusal, err
-			}
-			a := readback(rc, checks(res.Read.IdentityPath, gb.identityCheck(res, *res.Read)))
-			if refusal, err := gb.completeAssertion(&a, "", op); err != nil || refusal != nil {
-				return assertion{}, refusal, err
-			}
-			return a, nil, nil
+			return responseField(checks("$."+member, nonEmpty())), nil
 		}
 	}
 	return assertion{}, refuse(reasonNoOutputToAssert,
-		fmt.Sprintf("%s returns no identifying member and is bound to no readable resource, so a probe would assert nothing", op)), nil
+		fmt.Sprintf("%s returns no identifying member, and reading back the resource it names would assert something the call cannot change, so a probe would assert nothing", op))
 }
 
 // identityMember picks the output member a probe asserts: the first member,
@@ -1377,8 +1323,13 @@ func (g *generator) refusedSomewhere(op string) bool {
 	return false
 }
 
+// isUpdateFamily classifies an operation as one that changes a resource that
+// already exists, which is what guard 3 (§3.5) hangs off: such an operation
+// needs either a declared mutation (the derived path) or an authored clause
+// that calls the service again (the authored path), or it is refused. Both
+// halves of the guard use this one classifier so they cannot drift apart.
 func isUpdateFamily(op string) bool {
-	for _, prefix := range []string{"Update", "Set", "Tag", "Untag"} {
+	for _, prefix := range []string{"Update", "Set", "Put", "Tag", "Untag"} {
 		if strings.HasPrefix(op, prefix) {
 			return true
 		}

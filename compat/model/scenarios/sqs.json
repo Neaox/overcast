@@ -78,8 +78,8 @@
             },
             {
               "kind": "eventually",
-              "maxAttempts": 10,
-              "delayMs": 500,
+              "maxAttempts": 30,
+              "delayMs": 2000,
               "assert": {
                 "kind": "readback",
                 "call": {
@@ -105,8 +105,8 @@
             },
             {
               "kind": "eventually",
-              "maxAttempts": 10,
-              "delayMs": 500,
+              "maxAttempts": 30,
+              "delayMs": 2000,
               "assert": {
                 "kind": "readback",
                 "call": {
@@ -134,8 +134,8 @@
             },
             {
               "kind": "eventually",
-              "maxAttempts": 10,
-              "delayMs": 500,
+              "maxAttempts": 30,
+              "delayMs": 2000,
               "assert": {
                 "kind": "listContains",
                 "call": {
@@ -230,8 +230,8 @@
           "assert": [
             {
               "kind": "eventually",
-              "maxAttempts": 10,
-              "delayMs": 500,
+              "maxAttempts": 30,
+              "delayMs": 2000,
               "assert": {
                 "kind": "readback",
                 "call": {
@@ -274,8 +274,8 @@
           "assert": [
             {
               "kind": "eventually",
-              "maxAttempts": 10,
-              "delayMs": 500,
+              "maxAttempts": 30,
+              "delayMs": 2000,
               "assert": {
                 "kind": "readback",
                 "call": {
@@ -340,8 +340,8 @@
           "assert": [
             {
               "kind": "eventually",
-              "maxAttempts": 10,
-              "delayMs": 500,
+              "maxAttempts": 30,
+              "delayMs": 2000,
               "assert": {
                 "kind": "readback",
                 "call": {
@@ -441,8 +441,8 @@
             },
             {
               "kind": "eventually",
-              "maxAttempts": 10,
-              "delayMs": 500,
+              "maxAttempts": 30,
+              "delayMs": 2000,
               "assert": {
                 "kind": "readback",
                 "call": {
@@ -553,8 +553,8 @@
           "assert": [
             {
               "kind": "eventually",
-              "maxAttempts": 10,
-              "delayMs": 500,
+              "maxAttempts": 30,
+              "delayMs": 2000,
               "assert": {
                 "kind": "absent",
                 "call": {
@@ -696,25 +696,30 @@
               }
             },
             {
-              "kind": "readback",
-              "call": {
-                "op": "ReceiveMessage",
-                "params": {
-                  "MaxNumberOfMessages": 1,
-                  "QueueUrl": {
-                    "$ref": "queue.url"
-                  },
-                  "VisibilityTimeout": 0,
-                  "WaitTimeSeconds": 5
-                }
-              },
-              "checks": {
-                "$.Messages[0].Body": {
-                  "equals": "compat scenario message"
+              "kind": "eventually",
+              "maxAttempts": 5,
+              "delayMs": 1000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "ReceiveMessage",
+                  "params": {
+                    "MaxNumberOfMessages": 1,
+                    "QueueUrl": {
+                      "$ref": "queue.url"
+                    },
+                    "VisibilityTimeout": 0,
+                    "WaitTimeSeconds": 5
+                  }
                 },
-                "$.Messages[0].MessageId": {
-                  "equals": {
-                    "$ref": "message.id"
+                "checks": {
+                  "$.Messages[0].Body": {
+                    "equals": "compat scenario message"
+                  },
+                  "$.Messages[0].MessageId": {
+                    "equals": {
+                      "$ref": "message.id"
+                    }
                   }
                 }
               }
@@ -770,25 +775,30 @@
           },
           "assert": [
             {
-              "kind": "readback",
-              "call": {
-                "op": "ReceiveMessage",
-                "params": {
-                  "MaxNumberOfMessages": 1,
-                  "QueueUrl": {
-                    "$ref": "queue.url"
+              "kind": "eventually",
+              "maxAttempts": 5,
+              "delayMs": 1000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "ReceiveMessage",
+                  "params": {
+                    "MaxNumberOfMessages": 1,
+                    "QueueUrl": {
+                      "$ref": "queue.url"
+                    },
+                    "VisibilityTimeout": 0,
+                    "WaitTimeSeconds": 5
                   },
-                  "VisibilityTimeout": 0,
-                  "WaitTimeSeconds": 5
+                  "export": {
+                    "message.receiptHandle": "$.Messages[0].ReceiptHandle"
+                  }
                 },
-                "export": {
-                  "message.receiptHandle": "$.Messages[0].ReceiptHandle"
-                }
-              },
-              "checks": {
-                "$.Messages[0].MessageId": {
-                  "equals": {
-                    "$ref": "message.id"
+                "checks": {
+                  "$.Messages[0].MessageId": {
+                    "equals": {
+                      "$ref": "message.id"
+                    }
                   }
                 }
               }
@@ -981,24 +991,29 @@
               }
             },
             {
-              "kind": "readback",
-              "call": {
-                "op": "ReceiveMessage",
-                "params": {
-                  "MaxNumberOfMessages": 10,
-                  "QueueUrl": {
-                    "$ref": "queue.url"
+              "kind": "eventually",
+              "maxAttempts": 5,
+              "delayMs": 1000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "ReceiveMessage",
+                  "params": {
+                    "MaxNumberOfMessages": 10,
+                    "QueueUrl": {
+                      "$ref": "queue.url"
+                    },
+                    "WaitTimeSeconds": 5
                   },
-                  "WaitTimeSeconds": 5
+                  "export": {
+                    "batch.id": "$.Messages[0].MessageId",
+                    "batch.receiptHandle": "$.Messages[0].ReceiptHandle"
+                  }
                 },
-                "export": {
-                  "batch.id": "$.Messages[0].MessageId",
-                  "batch.receiptHandle": "$.Messages[0].ReceiptHandle"
-                }
-              },
-              "checks": {
-                "$.Messages[0].ReceiptHandle": {
-                  "nonEmpty": true
+                "checks": {
+                  "$.Messages[0].ReceiptHandle": {
+                    "nonEmpty": true
+                  }
                 }
               }
             }
@@ -1034,25 +1049,30 @@
               }
             },
             {
-              "kind": "readback",
-              "call": {
-                "op": "ReceiveMessage",
-                "params": {
-                  "MaxNumberOfMessages": 10,
-                  "QueueUrl": {
-                    "$ref": "queue.url"
+              "kind": "eventually",
+              "maxAttempts": 5,
+              "delayMs": 1000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "ReceiveMessage",
+                  "params": {
+                    "MaxNumberOfMessages": 10,
+                    "QueueUrl": {
+                      "$ref": "queue.url"
+                    },
+                    "VisibilityTimeout": 0,
+                    "WaitTimeSeconds": 5
                   },
-                  "VisibilityTimeout": 0,
-                  "WaitTimeSeconds": 5
+                  "export": {
+                    "batch.receiptHandle": "$.Messages[0].ReceiptHandle"
+                  }
                 },
-                "export": {
-                  "batch.receiptHandle": "$.Messages[0].ReceiptHandle"
-                }
-              },
-              "checks": {
-                "$.Messages[0].MessageId": {
-                  "equals": {
-                    "$ref": "batch.id"
+                "checks": {
+                  "$.Messages[0].MessageId": {
+                    "equals": {
+                      "$ref": "batch.id"
+                    }
                   }
                 }
               }
@@ -1074,6 +1094,9 @@
               },
               "VisibilityTimeout": 0,
               "WaitTimeSeconds": 1
+            },
+            "export": {
+              "batch.receiptHandle": "$.Messages[0].ReceiptHandle"
             }
           },
           "assert": [
@@ -1138,7 +1161,7 @@
             }
           ],
           "depends": [
-            "ChangeMessageVisibilityBatch",
+            "ReceiveMessage",
             "SendMessageBatch"
           ]
         }
@@ -1181,120 +1204,15 @@
     {
       "name": "sqs-gen-probe",
       "kind": "probe",
-      "setup": [
-        {
-          "op": "CreateQueue",
-          "params": {
-            "QueueName": {
-              "$name": "dlq"
-            }
-          },
-          "export": {
-            "dlq.url": "$.QueueUrl"
-          }
-        },
-        {
-          "op": "GetQueueAttributes",
-          "params": {
-            "AttributeNames": [
-              "QueueArn"
-            ],
-            "QueueUrl": {
-              "$ref": "dlq.url"
-            }
-          },
-          "export": {
-            "dlq.arn": "$.Attributes.QueueArn"
-          }
-        },
-        {
-          "op": "CreateQueue",
-          "params": {
-            "Attributes": {
-              "RedrivePolicy": {
-                "$concat": [
-                  "{\"deadLetterTargetArn\":\"",
-                  {
-                    "$ref": "dlq.arn"
-                  },
-                  "\",\"maxReceiveCount\":\"5\"}"
-                ]
-              },
-              "VisibilityTimeout": "30"
-            },
-            "QueueName": {
-              "$name": "q"
-            }
-          },
-          "export": {
-            "queue.url": "$.QueueUrl"
-          }
-        },
-        {
-          "op": "GetQueueAttributes",
-          "params": {
-            "AttributeNames": [
-              "QueueArn"
-            ],
-            "QueueUrl": {
-              "$ref": "queue.url"
-            }
-          },
-          "export": {
-            "queue.arn": "$.Attributes.QueueArn"
-          }
-        }
-      ],
+      "setup": [],
       "tests": [
-        {
-          "name": "AddPermission",
-          "op": "AddPermission",
-          "call": {
-            "op": "AddPermission",
-            "params": {
-              "AWSAccountIds": [
-                "123456789012"
-              ],
-              "Actions": [
-                "SendMessage"
-              ],
-              "Label": "compat-scenario",
-              "QueueUrl": {
-                "$ref": "queue.url"
-              }
-            }
-          },
-          "assert": [
-            {
-              "kind": "readback",
-              "call": {
-                "op": "GetQueueAttributes",
-                "params": {
-                  "AttributeNames": [
-                    "All"
-                  ],
-                  "QueueUrl": {
-                    "$ref": "queue.url"
-                  }
-                }
-              },
-              "checks": {
-                "$.Attributes.QueueArn": {
-                  "equals": {
-                    "$ref": "queue.arn"
-                  }
-                }
-              }
-            }
-          ]
-        },
         {
           "name": "CancelMessageMoveTask",
           "op": "CancelMessageMoveTask",
           "call": {
             "op": "CancelMessageMoveTask",
             "params": {
-              "TaskHandle": "compat-scenario-task-handle"
+              "TaskHandle": "eyJ0YXNrSWQiOiJjb21wYXQtc2NlbmFyaW8ifQ=="
             }
           },
           "assert": [
@@ -1314,9 +1232,7 @@
           "call": {
             "op": "ListMessageMoveTasks",
             "params": {
-              "SourceArn": {
-                "$ref": "dlq.arn"
-              }
+              "SourceArn": "arn:aws:sqs:us-east-1:123456789012:compat-scenario-nonexistent"
             }
           },
           "assert": [
@@ -1329,62 +1245,9 @@
               }
             }
           ]
-        },
-        {
-          "name": "RemovePermission",
-          "op": "RemovePermission",
-          "call": {
-            "op": "RemovePermission",
-            "params": {
-              "Label": "compat-scenario",
-              "QueueUrl": {
-                "$ref": "queue.url"
-              }
-            }
-          },
-          "assert": [
-            {
-              "kind": "readback",
-              "call": {
-                "op": "GetQueueAttributes",
-                "params": {
-                  "AttributeNames": [
-                    "All"
-                  ],
-                  "QueueUrl": {
-                    "$ref": "queue.url"
-                  }
-                }
-              },
-              "checks": {
-                "$.Attributes.QueueArn": {
-                  "equals": {
-                    "$ref": "queue.arn"
-                  }
-                }
-              }
-            }
-          ]
         }
       ],
-      "teardown": [
-        {
-          "op": "DeleteQueue",
-          "params": {
-            "QueueUrl": {
-              "$ref": "queue.url"
-            }
-          }
-        },
-        {
-          "op": "DeleteQueue",
-          "params": {
-            "QueueUrl": {
-              "$ref": "dlq.url"
-            }
-          }
-        }
-      ]
+      "teardown": []
     }
   ]
 }

@@ -62,12 +62,13 @@ func TestCommittedCorpus_validatesAgainstItsSchemas(t *testing.T) {
 	}
 
 	// The registry validates against the compat suite schemas, which are the
-	// loaders' contract, not this package's.
-	suites, err := compileSchemas(filepath.Join(repoRoot, "compat", "suites"), "registry.schema.json", "registry.generated.schema.json")
+	// loaders' contract, not this package's. The generator holds it to the
+	// same schema before it writes, so this is the belt to that braces.
+	suites, err := loadRegistrySchemas(filepath.Join(repoRoot, "compat", "suites"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := suites.validate("registry.generated.schema.json", readFile(t, filepath.Join(repoRoot, filepath.FromSlash(registryPath)))); err != nil {
+	if err := suites.validate(schemaGeneratedRegistry, readFile(t, filepath.Join(repoRoot, filepath.FromSlash(registryPath)))); err != nil {
 		t.Errorf("registry.generated.json: %v", err)
 	}
 }
@@ -113,7 +114,7 @@ func TestCheck_detectsAHandEdit(t *testing.T) {
 	root := copyCorpus(t)
 	path := filepath.Join(root, filepath.FromSlash(scenarioPath("sqs")))
 	contents := readFile(t, path)
-	edited := bytes.Replace(contents, []byte(`"maxAttempts": 10`), []byte(`"maxAttempts": 11`), 1)
+	edited := bytes.Replace(contents, []byte(`"maxAttempts": 30`), []byte(`"maxAttempts": 31`), 1)
 	if bytes.Equal(edited, contents) {
 		t.Fatal("the fixture edit did not apply")
 	}

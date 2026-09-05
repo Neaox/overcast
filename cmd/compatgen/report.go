@@ -169,20 +169,40 @@ func sampleTests(s *scenario, n int) [][2]string {
 	return picked
 }
 
+// sortedAuto and sortedUses order a report table field by field, and stably.
+// Concatenating the key fields would sort "g" + "AB" before "gA" + "B", and an
+// unstable sort would then reorder the ties differently from run to run, which
+// is exactly the kind of churn a byte-identical regeneration gate exists to
+// prevent.
 func sortedAuto(auto []autoBinding) []autoBinding {
 	out := append([]autoBinding(nil), auto...)
-	sort.Slice(out, func(i, j int) bool {
+	sort.SliceStable(out, func(i, j int) bool {
 		a, b := out[i], out[j]
-		return a.Group+a.Op+a.Member < b.Group+b.Op+b.Member
+		if a.Group != b.Group {
+			return a.Group < b.Group
+		}
+		if a.Op != b.Op {
+			return a.Op < b.Op
+		}
+		if a.Member != b.Member {
+			return a.Member < b.Member
+		}
+		return a.Ref < b.Ref
 	})
 	return out
 }
 
 func sortedUses(uses []valueUse) []valueUse {
 	out := append([]valueUse(nil), uses...)
-	sort.Slice(out, func(i, j int) bool {
+	sort.SliceStable(out, func(i, j int) bool {
 		a, b := out[i], out[j]
-		return a.Group+"/"+a.Op+"/"+a.Member < b.Group+"/"+b.Op+"/"+b.Member
+		if a.Group != b.Group {
+			return a.Group < b.Group
+		}
+		if a.Op != b.Op {
+			return a.Op < b.Op
+		}
+		return a.Member < b.Member
 	})
 	return out
 }

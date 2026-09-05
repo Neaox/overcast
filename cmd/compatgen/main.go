@@ -102,12 +102,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 // corpus is everything a generation run reads.
 type corpus struct {
 	schemas *schemaSet
+	// suites holds the registry schemas, which live with the loaders under
+	// compat/suites rather than with the model: the generated registry is
+	// written against the loaders' contract, not this package's.
+	suites  *schemaSet
 	recipes []recipe
 	values  *valuesTable
 }
 
 func loadCorpus(root string) (*corpus, error) {
 	schemas, err := loadSchemas(filepath.Join(root, filepath.FromSlash(modelDir)))
+	if err != nil {
+		return nil, err
+	}
+	suites, err := loadRegistrySchemas(filepath.Join(root, "compat", "suites"))
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +127,7 @@ func loadCorpus(root string) (*corpus, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &corpus{schemas: schemas, recipes: recipes, values: values}, nil
+	return &corpus{schemas: schemas, suites: suites, recipes: recipes, values: values}, nil
 }
 
 // generateAll runs the generator over every recipe and renders every output.
@@ -163,7 +171,7 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 	}
 	outputs[registryPath] = contents
 	for rel, contents := range outputs {
-		if err := validateOutput(c.schemas, rel, contents); err != nil {
+		if err := validateOutput(c, rel, contents); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -171,16 +179,21 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 }
 
 // validateOutput checks a generated file against its schema before it is
-// written: the schema is the interpreters' contract, so a document the
-// generator produced but the schema rejects is a generator bug.
-func validateOutput(schemas *schemaSet, rel string, contents []byte) error {
+// written: the schema is the interpreters' and loaders' contract, so a
+// document the generator produced but the schema rejects is a generator bug.
+// Every output is covered, the registry included — a schema check that only
+// ran in a test would let `go run ./cmd/compatgen` write a file CI then
+// rejects.
+func validateOutput(c *corpus, rel string, contents []byte) error {
 	switch {
 	case strings.HasPrefix(rel, scenarioDir+"/"):
-		return wrapSchemaErr(rel, schemas.validate(schemaScenario, contents))
+		return wrapSchemaErr(rel, c.schemas.validate(schemaScenario, contents))
 	case rel == gapsPath:
-		return wrapSchemaErr(rel, schemas.validate(schemaGaps, contents))
+		return wrapSchemaErr(rel, c.schemas.validate(schemaGaps, contents))
+	case rel == registryPath:
+		return wrapSchemaErr(rel, c.suites.validate(schemaGeneratedRegistry, contents))
 	}
-	return nil
+	return fmt.Errorf("internal: no schema is checked for generated file %s", rel)
 }
 
 func wrapSchemaErr(rel string, err error) error {

@@ -1,6 +1,9 @@
 {
-  "$comment": "Test fixture: one resource exercising every recipe role against testdata/shapes/widgets.json.",
+  "$comment": "Test fixture: five resources between them exercising every recipe role against testdata/shapes/widgets.json. `widget` is the full lifecycle (create, two reads, a mutation, map-shaped tags, an authored operation, list, delete); `cog` is setup-only and its create cannot be bound, so `spare`, which requires it, has its whole group refused with setup-refused; `gauge` is pre-existing and shows that such a resource carries more than its read; `sprocket` requires `gauge`, verifies its create with an authored assertion rather than a derived read-back, carries list-shaped tags, and is declared async so every clause that calls the service again — authored ones included — is wrapped in `eventually`.",
   "service": "widgets",
+  "neverProbe": {
+    "PurgeWidgets": "Purges every widget in the account and cannot be undone. It takes no identifier, so no curated literal could make the call miss; the only safe probe is none."
+  },
   "resources": [
     {
       "id": "widget",
@@ -8,6 +11,9 @@
       "exports": { "id": "$.WidgetId", "arn": "$.Arn" },
       "binds": { "WidgetId": "widget.id" },
       "read": { "op": "GetWidget", "identityPath": "$.Widget.WidgetId", "identity": "id" },
+      "reads": [
+        { "op": "DescribeWidget", "identityPath": "$.Widget.WidgetId", "identity": "id" }
+      ],
       "list": {
         "op": "ListWidgets",
         "params": { "NamePrefix": { "$name": "w" } },
@@ -23,8 +29,84 @@
         "untag": { "op": "UntagWidget", "member": "TagKeys" },
         "list": { "op": "ListWidgetTags", "path": "$.Tags" }
       },
+      "operations": [
+        {
+          "$comment": "PolishWidget returns nothing, so its own response says nothing about whether it worked; the read-back is the whole assertion. The resource is not async, so the clause is emitted as written.",
+          "op": "PolishWidget",
+          "assert": [
+            {
+              "kind": "readback",
+              "call": { "op": "GetWidget" },
+              "checks": { "$.Widget.WidgetId": { "equals": { "$ref": "widget.id" } } }
+            }
+          ]
+        }
+      ],
       "delete": { "op": "DeleteWidget" },
       "notFound": { "error": "WidgetNotFound" }
+    },
+    {
+      "$comment": "Setup-only, and deliberately unbindable: CreateCog.Name is a patterned string with no bind, no matching export and no curated literal, so instantiating this resource is refused and every group that requires it is refused with it.",
+      "id": "cog",
+      "setupOnly": true,
+      "create": { "op": "CreateCog" },
+      "exports": { "id": "$.CogId" }
+    },
+    {
+      "$comment": "A second widget, complete in itself, whose only problem is that it requires `cog`. Its group is refused as setup-refused:cog before a single test is emitted — the refusal names the resource that could not be set up, and the operation it names is the create that would otherwise have been fine.",
+      "id": "spare",
+      "requires": ["cog"],
+      "create": { "op": "CreateWidget", "params": { "Name": { "$name": "spare" } } },
+      "exports": { "id": "$.WidgetId" },
+      "binds": { "WidgetId": "spare.id" },
+      "read": { "op": "GetWidget", "identityPath": "$.Widget.WidgetId", "identity": "id" },
+      "delete": { "op": "DeleteWidget" },
+      "notFound": { "error": "WidgetNotFound" }
+    },
+    {
+      "$comment": "Pre-existing: no create, no delete, and its exports come from its read. Its group is not that read alone — an authored operation binding one of those exports gets a test of its own.",
+      "id": "gauge",
+      "read": {
+        "op": "DescribeGauge",
+        "identityPath": "$.Gauge.GaugeId",
+        "exports": { "id": "$.Gauge.GaugeId", "arn": "$.Gauge.Arn" }
+      },
+      "binds": { "GaugeId": "gauge.id" },
+      "operations": [
+        {
+          "op": "CalibrateGauge",
+          "assert": [
+            { "kind": "responseField", "checks": { "$.Status": { "nonEmpty": true } } }
+          ]
+        }
+      ]
+    },
+    {
+      "$comment": "Requires the pre-existing gauge, whose read runs in setup and whose ARN the sprocket records. The create is verified by an authored assertion instead of the derived read-back, and `async` wraps that authored clause — it calls the service again — while leaving the responseField clause beside it alone.",
+      "id": "sprocket",
+      "requires": ["gauge"],
+      "create": {
+        "op": "CreateSprocket",
+        "params": { "Name": { "$name": "s" }, "Description": { "$ref": "gauge.arn" } },
+        "assert": [
+          {
+            "kind": "readback",
+            "call": { "op": "GetSprocket" },
+            "checks": { "$.Sprocket.Description": { "equals": { "$ref": "gauge.arn" } } }
+          }
+        ]
+      },
+      "exports": { "id": "$.SprocketId" },
+      "binds": { "SprocketId": "sprocket.id" },
+      "read": { "op": "GetSprocket", "identityPath": "$.Sprocket.SprocketId", "identity": "id" },
+      "tags": {
+        "tag": { "op": "TagSprocket", "member": "Tags" },
+        "untag": { "op": "UntagSprocket", "member": "TagKeys" },
+        "list": { "op": "ListSprocketTags", "path": "$.Tags" }
+      },
+      "delete": { "op": "DeleteSprocket" },
+      "notFound": { "error": "SprocketNotFound" },
+      "async": { "maxAttempts": 3, "delayMs": 100 }
     }
   ]
 }

@@ -15,20 +15,24 @@ import (
 
 // JSON Schema validation of the model corpus.
 //
-// The four schemas under compat/model are the contract the interpreters are
-// written against, so the generator validates its own inputs against two of
-// them on load and its outputs against the other two in tests — the same
-// documents, not a Go-side paraphrase that could drift.
+// The four schemas under compat/model, plus the two registry schemas under
+// compat/suites, are the contract the interpreters and the suite loaders are
+// written against, so the generator validates its own inputs against them on
+// load and every output against them before it writes — the same documents,
+// not a Go-side paraphrase that could drift.
 
 const (
 	schemaRecipe   = "recipe.schema.json"
 	schemaValues   = "values.schema.json"
 	schemaScenario = "scenario.schema.json"
 	schemaGaps     = "gaps.schema.json"
+	// The registry schemas live with the loaders under compat/suites; the
+	// generated one $refs the hand-written one, so both are compiled.
+	schemaRegistry          = "registry.schema.json"
+	schemaGeneratedRegistry = "registry.generated.schema.json"
 )
 
 type schemaSet struct {
-	dir      string
 	compiled map[string]*jsonschema.Schema
 }
 
@@ -37,10 +41,15 @@ func loadSchemas(dir string) (*schemaSet, error) {
 	return compileSchemas(dir, schemaRecipe, schemaValues, schemaScenario, schemaGaps)
 }
 
+// loadRegistrySchemas compiles the registry schemas from dir (compat/suites).
+func loadRegistrySchemas(dir string) (*schemaSet, error) {
+	return compileSchemas(dir, schemaRegistry, schemaGeneratedRegistry)
+}
+
 // compileSchemas compiles a set of sibling draft-07 schemas that may refer to
 // one another by relative reference.
 func compileSchemas(dir string, names ...string) (*schemaSet, error) {
-	set := &schemaSet{dir: dir, compiled: make(map[string]*jsonschema.Schema)}
+	set := &schemaSet{compiled: make(map[string]*jsonschema.Schema)}
 	compiler := jsonschema.NewCompiler()
 	compiler.DefaultDraft(jsonschema.Draft7)
 	// Every schema is registered under its own $id before any is compiled:

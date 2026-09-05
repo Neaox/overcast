@@ -24,7 +24,19 @@ import (
 //
 // Optional members are never bound. Guessing is not an option at any step: a
 // string with no enum is refused rather than invented, because an invented
-// string is legal on the emulator far more often than on AWS.
+// string is legal on the emulator far more often than on AWS. §3.3 rule 4 also
+// lists "the shortest legal string for a pattern"; that one is deliberately
+// not implemented — see synthesize.
+//
+// Rules 1 and 2 are switched off inside a probe group. A probe calls an
+// operation the emulator does not implement, so it is the one generated call
+// whose effect no create/delete pair contains; pointing it at a resource the
+// run actually owns is how an irreversible operation (CloseAccount,
+// MoveAccount) ends up aimed at real infrastructure the moment a suite runs
+// against AWS. A probe therefore binds only curated or synthetic literals —
+// syntactically valid and deliberately nonexistent — and is refused
+// (probe-binds-live-resource) when a live export is the only thing that would
+// have supplied a member.
 
 // refusal is why an operation was not generated. Reason is machine-readable
 // and stable; Detail is for the human reading gaps.json.
@@ -37,13 +49,16 @@ func refuse(reason, detail string) *refusal { return &refusal{Reason: reason, De
 
 // Refusal reasons.
 const (
-	reasonUnboundRequiredMember = "unbound-required-member"
-	reasonUpdateWithoutMutable  = "update-without-mutable"
-	reasonNoReadbackPath        = "no-readback-path"
-	reasonProbeOfImplementedOp  = "probe-of-implemented-op"
-	reasonNoOutputToAssert      = "no-output-to-assert"
-	reasonSetupRefused          = "setup-refused"
-	reasonUnsupportedTagShape   = "unsupported-tag-shape"
+	reasonUnboundRequiredMember  = "unbound-required-member"
+	reasonUpdateWithoutMutable   = "update-without-mutable"
+	reasonUpdateWithoutReadback  = "update-without-readback"
+	reasonNoReadbackPath         = "no-readback-path"
+	reasonProbeOfImplementedOp   = "probe-of-implemented-op"
+	reasonProbeBindsLiveResource = "probe-binds-live-resource"
+	reasonNeverProbe             = "never-probe"
+	reasonNoOutputToAssert       = "no-output-to-assert"
+	reasonSetupRefused           = "setup-refused"
+	reasonUnsupportedTagShape    = "unsupported-tag-shape"
 )
 
 // autoBinding records a rule-2 binding, the riskiest inference the generator
@@ -62,10 +77,12 @@ type valueUse struct {
 const valueSynthetic valueSource = "synthetic"
 
 // bindScope is what a call may draw on: the resources whose binds and exports
-// are in play, nearest first, and the context paths exported so far.
+// are in play, nearest first, and the context paths exported so far. probe
+// marks a probe group, where rules 1 and 2 are switched off.
 type bindScope struct {
 	resources []resource
 	exports   exportKinds
+	probe     bool
 }
 
 // binder binds one service's calls. It is shared across groups; per-group
@@ -123,13 +140,20 @@ func (b *binder) bind(group, op string, explicit map[string]any, scope bindScope
 
 func (b *binder) bindMember(group, op, member, target string, scope bindScope) (any, *refusal) {
 	// Rule 1: an explicit bind, nearest resource first. A bind whose export
-	// is not in scope yet (a probe of an operation whose resource the
-	// emulator cannot set up) falls through to the later rules; if nothing
-	// else supplies the member, the refusal names the bind.
-	var unavailable string
+	// is not in scope yet falls through to the later rules; if nothing else
+	// supplies the member, the refusal names the bind. live records what a
+	// rule-1 or rule-2 binding would have been inside a probe group, where
+	// both rules are off.
+	var unavailable, live string
 	for _, res := range scope.resources {
 		ref, ok := res.Binds[member]
 		if !ok {
+			continue
+		}
+		if scope.probe {
+			if live == "" {
+				live = ref
+			}
 			continue
 		}
 		if _, available := scope.exports[ref]; available {
@@ -142,10 +166,20 @@ func (b *binder) bindMember(group, op, member, target string, scope bindScope) (
 	// Rule 2: an export with exactly the member's name.
 	for _, res := range scope.resources {
 		ref := res.ID + "." + member
-		if _, available := scope.exports[ref]; available && res.exportsName(member) {
-			b.auto = append(b.auto, autoBinding{Group: group, Op: op, Member: member, Ref: ref})
-			return map[string]any{"$ref": ref}, nil
+		if !res.exportsName(member) {
+			continue
 		}
+		if scope.probe {
+			if live == "" {
+				live = ref
+			}
+			continue
+		}
+		if _, available := scope.exports[ref]; !available {
+			continue
+		}
+		b.auto = append(b.auto, autoBinding{Group: group, Op: op, Member: member, Ref: ref})
+		return map[string]any{"$ref": ref}, nil
 	}
 	// Rule 3: a curated literal.
 	if value, source, ok := b.values.lookup(b.service, op, member, target); ok {
@@ -158,6 +192,10 @@ func (b *binder) bindMember(group, op, member, target string, scope bindScope) (
 		return value, nil
 	}
 	// Rule 5: refuse.
+	if live != "" {
+		return nil, refuse(reasonProbeBindsLiveResource+":"+member,
+			fmt.Sprintf("%s.%s would bind to %s, a value exported from a resource the run owns; a probe calls an operation the emulator does not implement, so against real AWS it would act on that resource for real. Add a curated literal for %s to values.json, or leave the operation refused", op, member, live, member))
+	}
 	if unavailable != "" {
 		return nil, refuse(reasonUnboundRequiredMember+":"+member,
 			fmt.Sprintf("%s.%s is bound to %s, which nothing exports before this call, and no curated value stands in", op, member, unavailable))
@@ -168,6 +206,17 @@ func (b *binder) bindMember(group, op, member, target string, scope bindScope) (
 
 // synthesize derives a legal literal from constraints alone. Only shapes whose
 // legal values are enumerable or bounded qualify.
+//
+// Two decisions are deliberate. A required boolean synthesises to false: the
+// shape has exactly two legal values, both model-valid, and false is the one
+// that asks the service to do less (no DryRun, no force, no cascade), so it is
+// the conservative half of an exhaustive choice rather than a guess. And §3.3
+// rule 4's "shortest legal string for a pattern" is not implemented: a pattern
+// constrains a string's *syntax*, never its *reference*, so the shortest match
+// for ^arn:aws:.* is a well-formed ARN of something that does not exist and
+// may not even be the right service — the emulator accepts far more of those
+// than AWS does, which is exactly the class of value §3.10 says belongs in the
+// gap report. Such a member is refused and a human writes the literal.
 func (b *binder) synthesize(target string) (any, bool) {
 	switch b.model.Kind(target) {
 	case "enum":
@@ -251,7 +300,15 @@ func (b *binder) checkValue(v any, target string, exports exportKinds, where, gr
 		if literalKind(v, nil) != "integer" && !(kind == "float" && literalKind(v, nil) == "float") {
 			return fmt.Errorf("%s: %s wants a number, got %s", where, b.describeShape(target), describeJSON(v))
 		}
-		return b.checkNumber(v.(json.Number), target, where)
+		// literalKind also classifies a float64 as a number, but every literal
+		// the generator handles is decoded with UseNumber, so anything else
+		// here is a value that came in some other way and must not be checked
+		// as if it had.
+		number, ok := v.(json.Number)
+		if !ok {
+			return fmt.Errorf("%s: %s wants a number decoded as json.Number, got %T; decode the document with decodeStrict", where, b.describeShape(target), v)
+		}
+		return b.checkNumber(number, target, where)
 	case "boolean":
 		if _, ok := v.(bool); !ok {
 			return fmt.Errorf("%s: %s wants a boolean, got %s", where, b.describeShape(target), describeJSON(v))
@@ -315,7 +372,7 @@ func (b *binder) checkString(s, target, where string) error {
 		return fmt.Errorf("%s: %q has length %d, outside %s's modeled length", where, s, len(s), target)
 	}
 	if b.model.Kind(target) == "enum" {
-		values := b.model.EnumValues(target)
+		values := b.model.EnumValuesSorted(target)
 		if i := sort.SearchStrings(values, s); i >= len(values) || values[i] != s {
 			return fmt.Errorf("%s: %q is not one of %s's values %s", where, s, target, values)
 		}

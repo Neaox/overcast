@@ -109,7 +109,10 @@ primary call's response is what `responseField` and call-less `listContains`
 clauses look at. If a clause of kind `errorCode` is present, the primary call
 is *expected* to fail: catch the error and check its code. Such a test
 carries no `export` and no clause that reads the primary response (the
-generator refuses one), so every other clause makes a call of its own.
+generator refuses one), so every other clause makes a call of its own. No
+derived path emits `errorCode` yet — the negative-path variants of §3.4 are
+authored, in an `operations` entry — but the kind is part of the IR and every
+interpreter implements it.
 
 ### Assertions
 
@@ -269,19 +272,39 @@ against the real AWS API.
 | `id` | the resource's name in context paths and its group |
 | `setupOnly` | exists only to be required by others; no group of its own |
 | `requires` | resources created in setup before this one (topological), deleted in teardown after it |
-| `create` | the create call. Omit it for a **pre-existing** resource (an organization): then `read` is the group's only derived test and its `exports` are what other resources bind to |
+| `create` | the create call. Omit it for a **pre-existing** resource (an organization): nothing creates or deletes it, its `exports` come from its `read`, and that read is emitted as a test rather than as setup. Everything else a recipe can declare still applies — further `reads`, `mutable`, `tags` and authored `operations` all get their tests, so such a group is not the read alone |
+| `create.assert` | authored clauses that verify the create in place of the derived read-back and list-membership, for a resource whose read cannot simply be replayed. At least one of them must call the service again, or the create is refused (`no-readback-path`): restating the create's own response is not a read-back |
 | `exports` | export name → path in the create response |
 | `derived` | exports that need a second call (an ARN only `GetQueueAttributes` returns); each becomes a read-back in the create test |
 | `binds` | input member name → context path, for every operation the resource takes part in — binding rule 1 |
 | `read` | the read-back: `identityPath` must equal the export `identity` names (or, without `identity`, match the model's pattern). `consuming: true` marks a read that changes state (`ReceiveMessage`); it is emitted once, as its own test, and never used as a read-back. `exports` take values from the read response |
 | `reads` | further reads, each its own test |
-| `list` | the list-membership check: an item at `itemsPath` whose `identityPath` equals the `identity` export. Its own test runs last before delete |
+| `list` | the list-membership check: an item at `itemsPath` whose `identityPath` equals the `identity` export. Its own test runs last before delete; `exports` taken from that response are therefore the freshest values the delete can carry (SQS wants a delete to quote the most recent receipt handle) |
 | `mutable` | one entry per update: `member` (dotted input path) is set to `to`, then `read` must show `readPath == to`. `from` is merged into the create params, so the update is a real change and the create's read-back asserts the initial value |
 | `tags` | tag/untag/list operations; the generator reads whether the service carries tags as a string map or a list of `{Key, Value}` from the model and emits tag → list → untag tests with the literal `compat=scenario` |
 | `delete` | the delete call; absence is proven by `notFound` (the read must fail with that error) or, failing that, by `list` non-membership |
 | `notFound` | the modeled error shape the read raises after delete |
-| `async` | wraps every read-back, list-membership and absence clause in `eventually` |
-| `operations` | authored coverage for operations outside the lifecycle vocabulary, written in the IR's own assertion vocabulary; `name` gives a variant test name when the operation already has a test |
+| `async` | declares the resource eventually consistent: every clause that verifies by calling the service again is wrapped in `eventually` — the derived read-back, list-membership and absence clauses, and authored clauses too. A clause that only reads the test's own response is left alone (retrying it would re-read one fixed response), and so is an authored `eventually`, whose budget its author already chose |
+| `operations` | authored coverage for operations outside the lifecycle vocabulary, written in the IR's own assertion vocabulary; `name` gives a variant test name when the operation already has a test. An update-family operation (`Update*`, `Set*`, `Put*`, `Tag*`, `Untag*`) needs at least one clause that calls the service again, exactly as the derived path needs a `mutable` entry, or it is refused (`update-without-readback`) |
+
+One field sits outside the resource list. **`neverProbe`** maps an operation
+the generator may never place in the probe group to the curated reason why,
+which is what `gaps.json` then reports. It is the half of the probe-safety
+rule the binder cannot see: the binder refuses a probe that would bind a value
+exported from a resource the run owns, but an operation that is irreversible
+against *anyone's* identifiers — or that takes no identifier that could miss,
+like `EnableAllFeatures` or `DeleteOrganization` — has to be named. Each entry
+is one sentence saying what the call does that cannot be undone.
+
+```jsonc
+{
+  "service": "organizations",
+  "neverProbe": {
+    "CloseAccount": "Closes a member account. AWS suspends it immediately and permanently deletes its resources; the account cannot be reopened."
+  },
+  "resources": [ ... ]
+}
+```
 
 Every `params` object lists only what the binder does not supply: the
 generator binds each remaining required member by rule (an explicit bind,
@@ -304,12 +327,56 @@ service and operation, with a stable reason:
 | Reason | Meaning |
 | --- | --- |
 | `unbound-required-member:<Member>` | no rule supplied a legal value; add a `binds` entry or a `values.json` literal |
-| `update-without-mutable` | an implemented Update/Set/Tag/Untag operation with no `mutable` or `tags` entry |
-| `no-readback-path` | the role exists but nothing can verify it: a create with no read, list or authored assertion; a delete with neither `notFound` nor `list`; a mutation whose read consumes |
+| `update-without-mutable` | an implemented Update/Set/Put/Tag/Untag operation with no `mutable` or `tags` entry |
+| `update-without-readback` | the same operation authored under `operations`, with no clause that calls the service again — it would assert only that the service echoed the request |
+| `no-readback-path` | the role exists but nothing can verify it: a create whose read, list and authored `create.assert` between them make no call of their own; a delete with neither `notFound` nor `list`, or one whose `notFound` has no non-consuming read to raise it; a mutation whose read consumes |
 | `probe-of-implemented-op` | an implemented operation the recipe gives no role — it may not be probed, so it needs a role |
-| `no-output-to-assert` | a probe of an operation that returns nothing and is bound to no readable resource |
+| `probe-binds-live-resource:<Member>` | a probe would have bound that member to a value exported from a resource the run owns. Add a curated literal to `values.json` — deliberately nonexistent, so the call misses — or leave the operation refused |
+| `never-probe` | the recipe's `neverProbe` list forbids probing the operation; the detail is the curated reason |
+| `no-output-to-assert` | a probe of an operation that returns nothing. Reading back the resource it names would assert something that was already true before the call, so there is nothing honest to assert |
 | `setup-refused:<resource>` | a required resource could not be bound |
-| `unsupported-tag-shape:<Shape>` | the tag member is neither a string map nor a list of `{Key, Value}` |
+| `unsupported-tag-shape:<Shape>` | the tag member is neither a string map nor a list of `{Key, Value}`. `<Shape>` is the bare shape name; the qualified Smithy id is in the detail |
 
 Refusals are a feature. Fixing one is a line in a recipe or in
 `values.json`; guessing is never an option.
+
+### What a probe may bind
+
+A probe is the one generated call no create/delete pair contains: the
+emulator does not implement the operation, so nothing undoes it, and the same
+scenario file is meant to be runnable against real AWS. Binding rules 1 and 2
+are therefore switched off inside a probe group. A probe binds only curated
+literals from `values.json` and constraint-derived ones — syntactically valid
+and deliberately nonexistent — so the call misses rather than lands. The two
+refusals above (`probe-binds-live-resource`, `never-probe`) are the two ways
+that rule shows up in the gap report, and a probe group carries no setup and
+no teardown because it has nothing to set up.
+
+### What rule 4 will and will not derive
+
+Rule 4 (§3.3) derives a literal only where the model's constraints enumerate
+or bound the legal values: the first member of an enum; a range minimum; and
+`false` for a required boolean — the shape has exactly
+two legal values and `false` is the one that asks the service to do less (no
+dry run, no force, no cascade), so the choice is exhaustive rather than a
+guess.
+
+"First member" means the order the shape snapshot carries, not sorted order —
+but the snapshot cannot always carry one. A `type: enum` shape holds its
+members in a JSON object, and `cmd/awsmodelgen` writes object keys through
+`encoding/json`, which sorts them, so for those shapes the model's declaration
+order is already lost by the time the generator reads it and the pick is the
+alphabetically first value. Every enum in the committed snapshots is of that
+form today. A `smithy.api#enum` trait is a JSON array and does keep the
+model's order, which is the case `EnumValues` preserves; recovering it for the
+other form means teaching `cmd/awsmodelgen` to emit an ordered member list.
+Either way the pick is deterministic, which is what the byte-identical
+regeneration gate needs.
+
+§3.3's fourth candidate, "the shortest legal string for a pattern", is
+deliberately not implemented: a pattern constrains a string's *syntax*, never
+its *reference*, so the shortest match for `^arn:aws:.*` is a well-formed ARN
+of something that does not exist and may not even name the right service. The
+emulator accepts far more of those than AWS does, which is exactly the class
+of value §3.10 says belongs in the gap report — so the member is refused and
+a human writes the literal.

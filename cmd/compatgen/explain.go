@@ -19,6 +19,13 @@ import (
 // file, not the recipe, so what it shows is exactly what an interpreter
 // executes. The renderings are pseudo-code: readable and faithful to each
 // SDK's conventions, not guaranteed to compile.
+//
+// This file holds the command, the rendering machinery every backend shares
+// and the naming derivations compat/model/README.md documents. The
+// per-backend styles live beside it, split by how an SDK takes its
+// parameters: explain_dynamic.go for the ones that take data (python, node,
+// cli), explain_typed.go for the ones that take request types (go, java,
+// dotnet, rust).
 
 type renderer func(s *scenario, g *group, t *test) string
 
@@ -289,262 +296,8 @@ func (e *explainer) test(s *scenario, g *group, t *test, header func()) string {
 }
 
 // ---------------------------------------------------------------------------
-// Per-language styles
+// Naming helpers shared by every backend
 // ---------------------------------------------------------------------------
-
-func pyStyle() style {
-	return style{
-		comment: "#",
-		ref:     func(ref string) string { return fmt.Sprintf("ctx[%s]", quote(ref)) },
-		name:    func(suffix string) string { return fmt.Sprintf("f\"{run_id}-{group}-%s\"", suffix) },
-		str:     quote,
-		concat:  func(parts []string) string { return strings.Join(parts, " + ") },
-		index:   func(list string, i int) string { return fmt.Sprintf("%s[%d]", list, i) },
-		object: func(entries [][2]string) string {
-			var parts []string
-			for _, e := range entries {
-				parts = append(parts, e[0]+": "+e[1])
-			}
-			return "{" + strings.Join(parts, ", ") + "}"
-		},
-		list:     func(items []string) string { return "[" + strings.Join(items, ", ") + "]" },
-		pathExpr: func(root, path string) string { return root + pathAsSubscripts(path) },
-		call: func(op string, members [][2]string) string {
-			var args []string
-			for _, m := range members {
-				args = append(args, m[0]+"="+m[1])
-			}
-			return fmt.Sprintf("client.%s(%s)", snake(op), strings.Join(args, ", "))
-		},
-		tru: "True", fls: "False",
-	}
-}
-
-func renderPython(s *scenario, g *group, t *test) string {
-	e := &explainer{st: pyStyle()}
-	return e.test(s, g, t, func() {
-		e.linef("client = boto3.client(%s, endpoint_url=endpoint)  # sdkId %s, protocol %s", quote(cliService(s.Client)), s.Client.SDKID, s.Client.Protocol)
-		e.linef("group = %s", quote(g.Name))
-	})
-}
-
-func jsStyle() style {
-	st := pyStyle()
-	st.comment = "//"
-	st.name = func(suffix string) string { return fmt.Sprintf("`${runId}-${group}-%s`", suffix) }
-	st.object = func(entries [][2]string) string {
-		var parts []string
-		for _, e := range entries {
-			parts = append(parts, e[0]+": "+e[1])
-		}
-		return "{ " + strings.Join(parts, ", ") + " }"
-	}
-	st.pathExpr = func(root, path string) string { return root + pathAsJS(path) }
-	st.call = func(op string, members [][2]string) string {
-		return fmt.Sprintf("await client.send(new %sCommand({ %s }))", op, kv(members, ", ", false))
-	}
-	st.tru, st.fls = "true", "false"
-	return st
-}
-
-func renderNode(s *scenario, g *group, t *test) string {
-	e := &explainer{st: jsStyle()}
-	return e.test(s, g, t, func() {
-		e.linef("const client = new %sClient({ endpoint });  // @aws-sdk/client-%s", pascalSDK(s.Client.SDKID), kebab(s.Client.SDKID))
-		e.linef("const group = %s;", quote(g.Name))
-	})
-}
-
-func cliStyle(client clientInfo) style {
-	st := pyStyle()
-	st.name = func(suffix string) string { return fmt.Sprintf("\"$RUN_ID-$GROUP-%s\"", suffix) }
-	st.ref = func(ref string) string { return "$" + strings.ToUpper(strings.NewReplacer(".", "_").Replace(ref)) }
-	st.pathExpr = func(root, path string) string {
-		return fmt.Sprintf("jq '%s' <<< \"$%s\"", strings.TrimPrefix(path, "$"), root)
-	}
-	st.call = func(op string, members [][2]string) string {
-		return fmt.Sprintf("$(aws %s %s --cli-input-json '{%s}')", cliService(client), kebab(op), kv(members, ", ", true))
-	}
-	st.tru, st.fls = "true", "false"
-	return st
-}
-
-func renderCLI(s *scenario, g *group, t *test) string {
-	e := &explainer{st: cliStyle(s.Client)}
-	return e.test(s, g, t, func() {
-		e.linef("export AWS_ENDPOINT_URL=$ENDPOINT  # service command %q from endpointPrefix %q", cliService(s.Client), s.Client.EndpointPrefix)
-		e.linef("GROUP=%s", quote(g.Name))
-	})
-}
-
-func goStyle() style {
-	st := jsStyle()
-	st.name = func(suffix string) string { return fmt.Sprintf("runID + \"-\" + group + \"-%s\"", suffix) }
-	st.object = func(entries [][2]string) string {
-		var parts []string
-		for _, e := range entries {
-			parts = append(parts, e[0]+": "+e[1])
-		}
-		return "map[string]any{" + strings.Join(parts, ", ") + "}"
-	}
-	st.list = func(items []string) string { return "[]T{" + strings.Join(items, ", ") + "}" }
-	st.pathExpr = func(root, path string) string { return root + pathAsGo(path) }
-	st.call = func(op string, members [][2]string) string {
-		return fmt.Sprintf("client.%s(ctx, &%sInput{%s})", op, op, kv(members, ", ", false))
-	}
-	return st
-}
-
-func renderGo(s *scenario, g *group, t *test) string {
-	e := &explainer{st: goStyle()}
-	return e.test(s, g, t, func() {
-		e.linef("client := %s.NewFromConfig(cfg)  // github.com/aws/aws-sdk-go-v2/service/%s", goPackage(s.Client.SDKID), goPackage(s.Client.SDKID))
-		e.linef("group := %s", quote(g.Name))
-	})
-}
-
-func javaStyle() style {
-	st := goStyle()
-	st.name = func(suffix string) string { return fmt.Sprintf("runId + \"-\" + group + \"-%s\"", suffix) }
-	st.object = func(entries [][2]string) string {
-		var parts []string
-		for _, e := range entries {
-			parts = append(parts, e[0]+", "+e[1])
-		}
-		return "Map.of(" + strings.Join(parts, ", ") + ")"
-	}
-	st.list = func(items []string) string { return "List.of(" + strings.Join(items, ", ") + ")" }
-	st.pathExpr = func(root, path string) string { return root + pathAsGetters(path, "()") }
-	st.call = func(op string, members [][2]string) string {
-		var setters []string
-		for _, m := range members {
-			setters = append(setters, "."+lowerFirst(m[0])+"("+m[1]+")")
-		}
-		return fmt.Sprintf("client.%s(%sRequest.builder()%s.build())", lowerFirst(op), op, strings.Join(setters, ""))
-	}
-	return st
-}
-
-func renderJava(s *scenario, g *group, t *test) string {
-	e := &explainer{st: javaStyle()}
-	return e.test(s, g, t, func() {
-		e.linef("%sClient client = %sClient.builder().endpointOverride(endpoint).build();", pascalSDK(s.Client.SDKID), pascalSDK(s.Client.SDKID))
-		e.linef("String group = %s;", quote(g.Name))
-	})
-}
-
-func dotnetStyle() style {
-	st := goStyle()
-	st.object = func(entries [][2]string) string {
-		var parts []string
-		for _, e := range entries {
-			parts = append(parts, "{ "+e[0]+", "+e[1]+" }")
-		}
-		return "new Dictionary<string, T> { " + strings.Join(parts, ", ") + " }"
-	}
-	st.list = func(items []string) string { return "new List<T> { " + strings.Join(items, ", ") + " }" }
-	st.pathExpr = func(root, path string) string { return root + pathAsGetters(path, "") }
-	st.call = func(op string, members [][2]string) string {
-		var parts []string
-		for _, m := range members {
-			parts = append(parts, m[0]+" = "+m[1])
-		}
-		return fmt.Sprintf("await client.%sAsync(new %sRequest { %s })", op, op, strings.Join(parts, ", "))
-	}
-	return st
-}
-
-func renderDotnet(s *scenario, g *group, t *test) string {
-	e := &explainer{st: dotnetStyle()}
-	return e.test(s, g, t, func() {
-		e.linef("var client = new Amazon%sClient(new Amazon%sConfig { ServiceURL = endpoint });", pascalSDK(s.Client.SDKID), pascalSDK(s.Client.SDKID))
-		e.linef("var group = %s;", quote(g.Name))
-	})
-}
-
-func rustStyle() style {
-	st := goStyle()
-	st.name = func(suffix string) string { return fmt.Sprintf("format!(\"{run_id}-{group}-%s\")", suffix) }
-	st.object = func(entries [][2]string) string {
-		var parts []string
-		for _, e := range entries {
-			parts = append(parts, "("+e[0]+", "+e[1]+")")
-		}
-		return "HashMap::from([" + strings.Join(parts, ", ") + "])"
-	}
-	st.list = func(items []string) string { return "vec![" + strings.Join(items, ", ") + "]" }
-	st.pathExpr = func(root, path string) string { return root + pathAsGetters(path, "()") }
-	st.call = func(op string, members [][2]string) string {
-		var setters []string
-		for _, m := range members {
-			setters = append(setters, "."+snake(m[0])+"("+m[1]+")")
-		}
-		return fmt.Sprintf("client.%s()%s.send().await?", snake(op), strings.Join(setters, ""))
-	}
-	return st
-}
-
-func renderRust(s *scenario, g *group, t *test) string {
-	e := &explainer{st: rustStyle()}
-	return e.test(s, g, t, func() {
-		e.linef("let client = aws_sdk_%s::Client::new(&config);  // endpoint_url set on the config", strings.ReplaceAll(kebab(s.Client.SDKID), "-", "_"))
-		e.linef("let group = %s;", quote(g.Name))
-	})
-}
-
-// ---------------------------------------------------------------------------
-// Naming helpers — the derivations compat/model/README.md documents
-// ---------------------------------------------------------------------------
-
-// pathAsSubscripts renders $.A.B[0] as ["A"]["B"][0].
-func pathAsSubscripts(path string) string {
-	var out strings.Builder
-	for _, segment := range mustPath(path).segments {
-		if segment.index >= 0 {
-			fmt.Fprintf(&out, "[%d]", segment.index)
-		} else {
-			fmt.Fprintf(&out, "[%s]", quote(segment.name))
-		}
-	}
-	return out.String()
-}
-
-// pathAsJS renders $.A.B[0] as .A.B[0].
-func pathAsJS(path string) string {
-	return strings.TrimPrefix(path, "$")
-}
-
-// pathAsGo renders $.A.B[0] as .A.B[0].
-func pathAsGo(path string) string {
-	var out strings.Builder
-	for _, segment := range mustPath(path).segments {
-		if segment.index >= 0 {
-			fmt.Fprintf(&out, "[%d]", segment.index)
-		} else {
-			fmt.Fprintf(&out, ".%s", segment.name)
-		}
-	}
-	return out.String()
-}
-
-// pathAsGetters renders $.A.B[0] as .a().b().get(0) (Java, Rust) or .A.B[0]
-// (.NET, with call="").
-func pathAsGetters(path string, call string) string {
-	var out strings.Builder
-	for _, segment := range mustPath(path).segments {
-		switch {
-		case segment.index >= 0 && call != "":
-			fmt.Fprintf(&out, ".get(%d)", segment.index)
-		case segment.index >= 0:
-			fmt.Fprintf(&out, "[%d]", segment.index)
-		case call != "":
-			fmt.Fprintf(&out, ".%s%s", lowerFirst(segment.name), call)
-		default:
-			fmt.Fprintf(&out, ".%s", segment.name)
-		}
-	}
-	return out.String()
-}
 
 // snake turns PascalCase into snake_case: SendMessageBatch → send_message_batch.
 func snake(name string) string {
@@ -577,23 +330,9 @@ func kebab(name string) string {
 // Explorer" → CostExplorer.
 func pascalSDK(sdkID string) string { return strings.ReplaceAll(sdkID, " ", "") }
 
-func goPackage(sdkID string) string {
-	return strings.ToLower(strings.ReplaceAll(sdkID, " ", ""))
-}
-
 func lowerFirst(s string) string {
 	if s == "" {
 		return s
 	}
 	return strings.ToLower(s[:1]) + s[1:]
-}
-
-// cliService is the aws CLI command name: botocore's service name, which is
-// the endpoint prefix for every service in the pilot. The README flags the
-// services where that derivation is known to differ.
-func cliService(c clientInfo) string {
-	if c.EndpointPrefix != "" {
-		return c.EndpointPrefix
-	}
-	return strings.ToLower(c.SDKID)
 }

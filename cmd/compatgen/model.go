@@ -314,7 +314,21 @@ func (m *serviceModel) Kind(target string) string {
 	return shape.Type
 }
 
-// EnumValues returns an enum shape's wire values, sorted.
+// EnumValues returns an enum shape's wire values in the order the shape
+// snapshot carries them. The order is load-bearing: binding rule 4 takes the
+// first value, and "first" has to be the model's answer rather than an
+// artefact of sorting — so this deliberately does not sort, and
+// EnumValuesSorted is the separate copy a membership search uses.
+//
+// One limitation is worth stating. A `type: enum` shape carries its members as
+// a JSON object, and cmd/awsmodelgen writes object keys through encoding/json,
+// which sorts them, so for those shapes the snapshot's own order is already
+// alphabetical and the model's declaration order is not recoverable here.
+// Recovering it means teaching cmd/awsmodelgen to emit an ordered member list;
+// until then the pick is at least deterministic, and Go's map iteration is not
+// allowed to make it otherwise, which is why that branch still sorts. A
+// `smithy.api#enum` trait is a JSON array and does keep the model's order,
+// which is the case this preserves.
 func (m *serviceModel) EnumValues(target string) []string {
 	shape := m.Shapes[target]
 	var values []string
@@ -331,6 +345,8 @@ func (m *serviceModel) EnumValues(target string) []string {
 			}
 			values = append(values, value)
 		}
+		// Members decode into a map, so nothing but sorting is deterministic.
+		sort.Strings(values)
 	case "string":
 		var entries []struct {
 			Value string `json:"value"`
@@ -343,6 +359,13 @@ func (m *serviceModel) EnumValues(target string) []string {
 			}
 		}
 	}
+	return values
+}
+
+// EnumValuesSorted is EnumValues sorted, for sort.SearchStrings. It is a copy:
+// the caller of EnumValues must keep the model's order.
+func (m *serviceModel) EnumValuesSorted(target string) []string {
+	values := append([]string(nil), m.EnumValues(target)...)
 	sort.Strings(values)
 	return values
 }

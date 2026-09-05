@@ -49,8 +49,12 @@ is required because the capability table it reads
   implements. An operation with a status other than `Unsupported` is
   implemented and may never sit in a probe group.
 - `internal/awsapi` — the routing manifest, for the scenario file's `client`
-  header (SDK id, protocol, API version, target prefix), and the alias table
-  that maps a model service to its Overcast key.
+  header (SDK id, protocol, API version, target prefix). It is *not* what
+  ties a recipe to a snapshot: a recipe whose Overcast key differs from the
+  model's says so itself, in its `model` field (`"service": "cognito"`,
+  `"model": "cognito-identity-provider"`), and that is the name the snapshot
+  file carries. The manifest's alias table is used only by `-scaffold`, to
+  print the Overcast key for a model service.
 
 ## Adding a service
 
@@ -73,12 +77,40 @@ entries and the gap report.
 ## What the generator will not do
 
 - Guess a value. A required member no rule can bind refuses the operation
-  (`unbound-required-member:<Member>`).
+  (`unbound-required-member:<Member>`). Rule 4 derives a literal only where
+  the model's constraints enumerate or bound the legal values: the first
+  member of an enum (the snapshot's own order where it survives the snapshot —
+  see `compat/model/README.md`), a range minimum, and
+  `false` for a required boolean — two legal values, of which `false` is the
+  one asking the service to do less. §3.3's fourth candidate,
+  "the shortest legal string for a pattern", is deliberately **not**
+  implemented: a pattern constrains a string's syntax, never its reference,
+  so the shortest match for `^arn:aws:.*` is a well-formed ARN of something
+  that does not exist. The emulator accepts far more of those than AWS does,
+  which is the class of value §3.10 says belongs in the gap report.
+- Point a probe at anything the run owns. A probe is the one generated call
+  no create/delete pair contains, so rules 1 and 2 are off inside a probe
+  group: it binds only curated or synthetic literals. A member only a live
+  export could supply refuses the operation
+  (`probe-binds-live-resource:<Member>`), and an operation a recipe lists
+  under `neverProbe` — irreversible even with a stranger's identifiers, or
+  taking no identifier that could miss — is refused before it is bound
+  (`never-probe`).
 - Emit a test without an assertion. The only test constructor takes its first
   assertion as a non-optional argument, the schema says `minItems: 1`, and
   `validateScenario` re-checks the finished file.
 - Probe an implemented operation, or generate an update without a declared
-  mutation, or a create/delete with no read-back path.
+  mutation, or a create/delete with no read-back path. Authored coverage is
+  held to the same rule rather than exempted from it: only a clause that
+  calls the service again — a `readback`, a `listContains` or `absent` with
+  its own call, or an `eventually` around one — counts as verifying anything,
+  so an authored `create.assert` made only of `responseField` clauses is
+  refused (`no-readback-path`), and an authored update-family operation whose
+  clauses all read its own response is refused (`update-without-readback`).
+- Assert something the call cannot have changed. A probe of an operation
+  that returns nothing is refused (`no-output-to-assert`) rather than given a
+  read-back of the resource it names, which would hold whether or not the
+  call did anything.
 - Emit a timestamp, blob or document literal: the SDKs disagree on how those
   are passed and an interpreter has no model to convert with, so such a
   member stays unbound and the operation is refused.
@@ -100,7 +132,10 @@ check from the command line. CI runs both.
 ## Tests
 
 `go test -tags dev ./cmd/compatgen` runs unit tests over a fixture service
-under `testdata/` (shapes, recipe and values) that exercises every binding
-rule, every refusal reason, the assertion contract, determinism, scaffolding,
-explain rendering and the review report, plus the sync and schema checks over
-the committed corpus.
+under `testdata/` (shapes, recipe and values). Its five resources between
+them carry every recipe role — a full lifecycle, a pre-existing resource, a
+setup-only resource whose create cannot be bound and one that requires it,
+authored operations, an authored create assertion, an async budget, and both
+tag shapes — so the suite exercises every binding rule, every refusal reason,
+the assertion contract, determinism, scaffolding, explain rendering and the
+review report, plus the sync and schema checks over the committed corpus.

@@ -324,8 +324,7 @@
             "params": {},
             "export": {
               "organization.arn": "$.Organization.Arn",
-              "organization.id": "$.Organization.Id",
-              "organization.masterAccountId": "$.Organization.MasterAccountId"
+              "organization.id": "$.Organization.Id"
             }
           },
           "assert": [
@@ -345,269 +344,15 @@
     {
       "name": "organizations-gen-probe",
       "kind": "probe",
-      "setup": [
-        {
-          "op": "CreatePolicy",
-          "params": {
-            "Content": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}]}",
-            "Description": "compat scenario policy",
-            "Name": {
-              "$name": "policy"
-            },
-            "Type": "SERVICE_CONTROL_POLICY"
-          },
-          "export": {
-            "policy.arn": "$.Policy.PolicySummary.Arn",
-            "policy.id": "$.Policy.PolicySummary.Id"
-          }
-        },
-        {
-          "op": "DescribeOrganization",
-          "params": {},
-          "export": {
-            "organization.arn": "$.Organization.Arn",
-            "organization.id": "$.Organization.Id",
-            "organization.masterAccountId": "$.Organization.MasterAccountId"
-          }
-        }
-      ],
+      "setup": [],
       "tests": [
-        {
-          "name": "AcceptHandshake",
-          "op": "AcceptHandshake",
-          "call": {
-            "op": "AcceptHandshake",
-            "params": {
-              "HandshakeId": "h-abcdefgh12345678"
-            }
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.Handshake": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "AttachPolicy",
-          "op": "AttachPolicy",
-          "call": {
-            "op": "AttachPolicy",
-            "params": {
-              "PolicyId": {
-                "$ref": "policy.id"
-              },
-              "TargetId": "r-abcd"
-            }
-          },
-          "assert": [
-            {
-              "kind": "readback",
-              "call": {
-                "op": "DescribePolicy",
-                "params": {
-                  "PolicyId": {
-                    "$ref": "policy.id"
-                  }
-                }
-              },
-              "checks": {
-                "$.Policy.PolicySummary.Id": {
-                  "equals": {
-                    "$ref": "policy.id"
-                  }
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "CancelHandshake",
-          "op": "CancelHandshake",
-          "call": {
-            "op": "CancelHandshake",
-            "params": {
-              "HandshakeId": "h-abcdefgh12345678"
-            }
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.Handshake": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "CloseAccount",
-          "op": "CloseAccount",
-          "call": {
-            "op": "CloseAccount",
-            "params": {
-              "AccountId": {
-                "$ref": "organization.masterAccountId"
-              }
-            }
-          },
-          "assert": [
-            {
-              "kind": "readback",
-              "call": {
-                "op": "DescribeOrganization",
-                "params": {}
-              },
-              "checks": {
-                "$.Organization.Arn": {
-                  "matches": "^arn:aws:organizations::\\d{12}:organization\\/o-[a-z0-9]{10,32}$"
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "CreateAccount",
-          "op": "CreateAccount",
-          "call": {
-            "op": "CreateAccount",
-            "params": {
-              "AccountName": "compat-scenario-account",
-              "Email": "compat-scenario@example.com"
-            }
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.CreateAccountStatus": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "CreateGovCloudAccount",
-          "op": "CreateGovCloudAccount",
-          "call": {
-            "op": "CreateGovCloudAccount",
-            "params": {
-              "AccountName": "compat-scenario-account",
-              "Email": "compat-scenario@example.com"
-            }
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.CreateAccountStatus": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "CreateOrganization",
-          "op": "CreateOrganization",
-          "call": {
-            "op": "CreateOrganization",
-            "params": {}
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.Organization": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "CreateOrganizationalUnit",
-          "op": "CreateOrganizationalUnit",
-          "call": {
-            "op": "CreateOrganizationalUnit",
-            "params": {
-              "Name": "compat-scenario-ou",
-              "ParentId": "r-abcd"
-            }
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.OrganizationalUnit": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "DeclineHandshake",
-          "op": "DeclineHandshake",
-          "call": {
-            "op": "DeclineHandshake",
-            "params": {
-              "HandshakeId": "h-abcdefgh12345678"
-            }
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.Handshake": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "DeregisterDelegatedAdministrator",
-          "op": "DeregisterDelegatedAdministrator",
-          "call": {
-            "op": "DeregisterDelegatedAdministrator",
-            "params": {
-              "AccountId": {
-                "$ref": "organization.masterAccountId"
-              },
-              "ServicePrincipal": "config.amazonaws.com"
-            }
-          },
-          "assert": [
-            {
-              "kind": "readback",
-              "call": {
-                "op": "DescribeOrganization",
-                "params": {}
-              },
-              "checks": {
-                "$.Organization.Arn": {
-                  "matches": "^arn:aws:organizations::\\d{12}:organization\\/o-[a-z0-9]{10,32}$"
-                }
-              }
-            }
-          ]
-        },
         {
           "name": "DescribeAccount",
           "op": "DescribeAccount",
           "call": {
             "op": "DescribeAccount",
             "params": {
-              "AccountId": {
-                "$ref": "organization.masterAccountId"
-              }
+              "AccountId": "123456789012"
             }
           },
           "assert": [
@@ -733,122 +478,6 @@
               "kind": "responseField",
               "checks": {
                 "$.ResponsibilityTransfer": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "DetachPolicy",
-          "op": "DetachPolicy",
-          "call": {
-            "op": "DetachPolicy",
-            "params": {
-              "PolicyId": {
-                "$ref": "policy.id"
-              },
-              "TargetId": "r-abcd"
-            }
-          },
-          "assert": [
-            {
-              "kind": "readback",
-              "call": {
-                "op": "DescribePolicy",
-                "params": {
-                  "PolicyId": {
-                    "$ref": "policy.id"
-                  }
-                }
-              },
-              "checks": {
-                "$.Policy.PolicySummary.Id": {
-                  "equals": {
-                    "$ref": "policy.id"
-                  }
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "DisablePolicyType",
-          "op": "DisablePolicyType",
-          "call": {
-            "op": "DisablePolicyType",
-            "params": {
-              "PolicyType": "AISERVICES_OPT_OUT_POLICY",
-              "RootId": "r-abcd"
-            }
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.Root": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "EnableAllFeatures",
-          "op": "EnableAllFeatures",
-          "call": {
-            "op": "EnableAllFeatures",
-            "params": {}
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.Handshake": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "EnablePolicyType",
-          "op": "EnablePolicyType",
-          "call": {
-            "op": "EnablePolicyType",
-            "params": {
-              "PolicyType": "AISERVICES_OPT_OUT_POLICY",
-              "RootId": "r-abcd"
-            }
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.Root": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "InviteAccountToOrganization",
-          "op": "InviteAccountToOrganization",
-          "call": {
-            "op": "InviteAccountToOrganization",
-            "params": {
-              "Target": {
-                "Id": "123456789012",
-                "Type": "ACCOUNT"
-              }
-            }
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.Handshake": {
                   "nonEmpty": true
                 }
               }
@@ -994,9 +623,7 @@
           "call": {
             "op": "ListDelegatedServicesForAccount",
             "params": {
-              "AccountId": {
-                "$ref": "organization.masterAccountId"
-              }
+              "AccountId": "123456789012"
             }
           },
           "assert": [
@@ -1016,9 +643,7 @@
           "call": {
             "op": "ListEffectivePolicyValidationErrors",
             "params": {
-              "AccountId": {
-                "$ref": "organization.masterAccountId"
-              },
+              "AccountId": "123456789012",
               "PolicyType": "AISERVICES_OPT_OUT_POLICY"
             }
           },
@@ -1194,9 +819,7 @@
           "call": {
             "op": "ListTargetsForPolicy",
             "params": {
-              "PolicyId": {
-                "$ref": "policy.id"
-              }
+              "PolicyId": "p-abcd1234"
             }
           },
           "assert": [
@@ -1209,180 +832,9 @@
               }
             }
           ]
-        },
-        {
-          "name": "MoveAccount",
-          "op": "MoveAccount",
-          "call": {
-            "op": "MoveAccount",
-            "params": {
-              "AccountId": {
-                "$ref": "organization.masterAccountId"
-              },
-              "DestinationParentId": "ou-abcd-12345678",
-              "SourceParentId": "r-abcd"
-            }
-          },
-          "assert": [
-            {
-              "kind": "readback",
-              "call": {
-                "op": "DescribeOrganization",
-                "params": {}
-              },
-              "checks": {
-                "$.Organization.Arn": {
-                  "matches": "^arn:aws:organizations::\\d{12}:organization\\/o-[a-z0-9]{10,32}$"
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "PutResourcePolicy",
-          "op": "PutResourcePolicy",
-          "call": {
-            "op": "PutResourcePolicy",
-            "params": {
-              "Content": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"123456789012\"},\"Action\":\"organizations:DescribeOrganization\",\"Resource\":\"*\"}]}"
-            }
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.ResourcePolicy": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "RegisterDelegatedAdministrator",
-          "op": "RegisterDelegatedAdministrator",
-          "call": {
-            "op": "RegisterDelegatedAdministrator",
-            "params": {
-              "AccountId": {
-                "$ref": "organization.masterAccountId"
-              },
-              "ServicePrincipal": "config.amazonaws.com"
-            }
-          },
-          "assert": [
-            {
-              "kind": "readback",
-              "call": {
-                "op": "DescribeOrganization",
-                "params": {}
-              },
-              "checks": {
-                "$.Organization.Arn": {
-                  "matches": "^arn:aws:organizations::\\d{12}:organization\\/o-[a-z0-9]{10,32}$"
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "RemoveAccountFromOrganization",
-          "op": "RemoveAccountFromOrganization",
-          "call": {
-            "op": "RemoveAccountFromOrganization",
-            "params": {
-              "AccountId": {
-                "$ref": "organization.masterAccountId"
-              }
-            }
-          },
-          "assert": [
-            {
-              "kind": "readback",
-              "call": {
-                "op": "DescribeOrganization",
-                "params": {}
-              },
-              "checks": {
-                "$.Organization.Arn": {
-                  "matches": "^arn:aws:organizations::\\d{12}:organization\\/o-[a-z0-9]{10,32}$"
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "TerminateResponsibilityTransfer",
-          "op": "TerminateResponsibilityTransfer",
-          "call": {
-            "op": "TerminateResponsibilityTransfer",
-            "params": {
-              "Id": "rt-abcdefgh12345678"
-            }
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.ResponsibilityTransfer": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "UpdateOrganizationalUnit",
-          "op": "UpdateOrganizationalUnit",
-          "call": {
-            "op": "UpdateOrganizationalUnit",
-            "params": {
-              "OrganizationalUnitId": "ou-abcd-12345678"
-            }
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.OrganizationalUnit": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "UpdateResponsibilityTransfer",
-          "op": "UpdateResponsibilityTransfer",
-          "call": {
-            "op": "UpdateResponsibilityTransfer",
-            "params": {
-              "Id": "rt-abcdefgh12345678",
-              "Name": "compat-scenario-transfer"
-            }
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.ResponsibilityTransfer": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
         }
       ],
-      "teardown": [
-        {
-          "op": "DeletePolicy",
-          "params": {
-            "PolicyId": {
-              "$ref": "policy.id"
-            }
-          }
-        }
-      ]
+      "teardown": []
     }
   ]
 }

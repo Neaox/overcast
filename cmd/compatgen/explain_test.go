@@ -54,11 +54,23 @@ func TestExplain_readsTheCommittedScenario(t *testing.T) {
 func TestScaffold_proposesASkeletonTheSchemaRefuses(t *testing.T) {
 	f := loadFixture(t)
 	skeleton := scaffold(f.model, "widgets")
-	if len(skeleton.Resources) != 1 || skeleton.Resources[0].ID != "widget" {
-		t.Fatalf("scaffold proposed %+v", skeleton.Resources)
+	// One cluster per Create* operation, in name order; the gauge, which has
+	// no create, is not something name clustering can propose.
+	var ids []string
+	res := scaffoldResource{}
+	for _, proposed := range skeleton.Resources {
+		ids = append(ids, proposed.ID)
+		if proposed.ID == "widget" {
+			res = proposed
+		}
 	}
-	res := skeleton.Resources[0]
-	if res.Create["op"] != "CreateWidget" || res.Read["op"] != "GetWidget" || res.List["op"] != "ListWidgets" || res.Delete["op"] != "DeleteWidget" {
+	if strings.Join(ids, ",") != "cog,sprocket,widget" {
+		t.Fatalf("scaffold proposed %v, want one cluster per create operation", ids)
+	}
+	// Describe* is preferred to Get* as the read, which is a heuristic the
+	// recipe author is expected to correct — the skeleton is a time-saver,
+	// never an authority.
+	if res.Create["op"] != "CreateWidget" || res.Read["op"] != "DescribeWidget" || res.List["op"] != "ListWidgets" || res.Delete["op"] != "DeleteWidget" {
 		t.Errorf("lifecycle roles = create %v read %v list %v delete %v", res.Create["op"], res.Read["op"], res.List["op"], res.Delete["op"])
 	}
 	if res.List["itemsPath"] != "$.Widgets" || res.NotFound["error"] != "WidgetNotFound" {
@@ -89,7 +101,7 @@ func TestReport_listsCoverageRefusalsAndSamples(t *testing.T) {
 	writeReport(&out, gen, 2)
 	report := out.String()
 	for _, want := range []string{
-		"10 of 15 modeled operations",
+		"19 of 27 modeled operations",
 		"| RotateWidget | widgets-gen-probe | `unbound-required-member:Angle` |",
 		"| SetWidgetSize | widgets-gen-probe | `update-without-mutable` |",
 		"### Automatic name-match bindings",

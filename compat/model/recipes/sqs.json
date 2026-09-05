@@ -55,7 +55,7 @@
       },
       "delete": { "op": "DeleteQueue" },
       "notFound": { "error": "QueueDoesNotExist" },
-      "async": { "maxAttempts": 10, "delayMs": 500 },
+      "async": { "maxAttempts": 30, "delayMs": 2000 },
       "operations": [
         {
           "op": "ListDeadLetterSourceQueues",
@@ -80,7 +80,8 @@
           "assert": [
             { "kind": "responseField", "checks": { "$.MessageId": { "nonEmpty": true } } },
             {
-              "kind": "eventually", "maxAttempts": 10, "delayMs": 500,
+              "$comment": "AWS documents ApproximateNumberOfMessages as consistent within about a minute, so the budget is a minute, not the five seconds a queue read-back gets.",
+              "kind": "eventually", "maxAttempts": 30, "delayMs": 2000,
               "assert": {
                 "kind": "readback",
                 "call": { "op": "GetQueueAttributes", "params": { "AttributeNames": ["ApproximateNumberOfMessages"] } },
@@ -199,11 +200,13 @@
       },
       "exports": { "firstId": "$.Successful[0].MessageId", "secondId": "$.Successful[1].MessageId" },
       "list": {
+        "$comment": "This receive runs between the visibility change and the delete, and it hands out a newer receipt handle for the same message; AWS asks a delete to carry the most recent handle, so the list re-exports it and DeleteMessageBatch below uses that one.",
         "op": "ReceiveMessage",
         "params": { "MaxNumberOfMessages": 10, "WaitTimeSeconds": 1, "VisibilityTimeout": 0 },
         "itemsPath": "$.Messages",
         "identityPath": "$.MessageId",
-        "identity": "id"
+        "identity": "id",
+        "exports": { "receiptHandle": "$.Messages[0].ReceiptHandle" }
       },
       "delete": {
         "op": "DeleteMessageBatch",

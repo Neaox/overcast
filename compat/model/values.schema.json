@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/overcast-dev/overcast/compat/model/values.schema.json",
+  "$id": "https://github.com/overcast-sh/overcast/compat/model/values.schema.json",
   "title": "Overcast Compat Curated Values",
   "description": "compat/model/values.json — binding rule 3 of docs/plans/compat-coverage-modelgen.md § 3.3. Plain JSON literals (never expressions) for required input members the recipes do not bind, looked up as (service, operation, member), then (service, target shape), then (service, member name). Every value must be legal on AWS, not merely accepted by the emulator; the generator checks it against the model's enum, length, range and pattern constraints.",
   "type": "object",

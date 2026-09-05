@@ -907,7 +907,7 @@ matrix: `cmd/compatgen` rewrites it wholly from the scenario IR under
 `registry.json`. Never hand-edit it, and never add a generated group to
 `registry.json` — see [compat/model/README.md](./model/README.md) for the IR,
 the recipes that produce it and the refusal report, and
-[cmd/compatgen/README.md](../../cmd/compatgen/README.md) for the workflow
+[cmd/compatgen/README.md](../cmd/compatgen/README.md) for the workflow
 (`make generate-compat-model`, `make compat-model-check`).
 
 **Rules for every suite:**

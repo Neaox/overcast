@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/overcast-dev/overcast/compat/model/scenario.schema.json",
+  "$id": "https://github.com/overcast-sh/overcast/compat/model/scenario.schema.json",
   "title": "Overcast Compat Scenario IR",
   "description": "One generated scenario file per service, compat/model/scenarios/<service>.json, written by cmd/compatgen and executed by the suite interpreters. The IR is closed: every construct an interpreter must implement is defined here, and README.md in this directory is the normative description. A test cannot be represented without at least one assertion clause.",
   "type": "object",

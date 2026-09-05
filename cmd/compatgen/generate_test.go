@@ -13,18 +13,23 @@ import (
 )
 
 // The fixture: testdata/shapes/widgets.json models a service whose operations
-// cover every emitter decision, testdata/recipes/widgets.json gives one
-// resource every role, and the capability table below decides which
-// operations count as implemented.
+// cover every emitter decision, testdata/recipes/widgets.json spreads every
+// recipe role over five resources, and the capability table below decides
+// which operations count as implemented.
 //
-//	CreateWidget … ListWidgetTags   implemented, in the recipe  → lifecycle tests
-//	SetWidgetSize                   implemented, update family  → update-without-mutable
-//	ArchiveWidget                   implemented, no role        → probe-of-implemented-op
-//	FreezeWidget                    undeclared, returns nothing → probe with a read-back
-//	PingWidgets                     undeclared, returns Status  → probe with a responseField
-//	RotateWidget                    Unsupported, Angle unbound  → unbound-required-member
+//	CreateWidget … PolishWidget     implemented or in the recipe → lifecycle tests
+//	DescribeGauge, CalibrateGauge   a pre-existing resource      → read plus authored test
+//	CreateSprocket … DeleteSprocket async, list-shaped tags      → lifecycle tests
+//	SetWidgetSize                   implemented, update family   → update-without-mutable
+//	ArchiveWidget                   implemented, no role         → probe-of-implemented-op
+//	CreateWidget (as `spare`)       requires an unbindable cog   → setup-refused:cog
+//	CreateCog                       Name unbound                 → unbound-required-member
+//	FreezeWidget                    would bind widget.id         → probe-binds-live-resource
+//	PingWidgets                     undeclared, returns Status   → probe with a responseField
+//	PurgeWidgets                    listed under neverProbe      → never-probe
+//	RotateWidget                    Unsupported, Angle unbound   → unbound-required-member
 //	DescribeGizmo                   undeclared, GizmoArn unbound → unbound-required-member
-//	PurgeWidgets                    undeclared, nothing to see  → no-output-to-assert
+//	SyncWidgets                     undeclared, nothing to see   → no-output-to-assert
 
 func fixtureCaps() capabilityTable {
 	table := capabilityTable{}
@@ -85,11 +90,15 @@ func TestGenerate_lifecycleGroupCoversEveryRole(t *testing.T) {
 	// When: it is generated.
 	_, gen := generateFixture(t)
 
-	// Then: one lifecycle group with the tests in lifecycle order, and one
-	// probe group with only the unimplemented operations.
+	// Then: a lifecycle group per resource with the tests in lifecycle order
+	// (create, reads, mutations, tags, authored, list, delete), and one probe
+	// group with only the unimplemented operations. `spare` gets no group at
+	// all: the resource it requires cannot be set up.
 	want := map[string][]string{
-		"widgets-gen-widget": {"CreateWidget", "GetWidget", "UpdateWidget", "TagWidget", "ListWidgetTags", "UntagWidget", "ListWidgets", "DeleteWidget"},
-		"widgets-gen-probe":  {"FreezeWidget", "PingWidgets"},
+		"widgets-gen-widget":   {"CreateWidget", "GetWidget", "DescribeWidget", "UpdateWidget", "TagWidget", "ListWidgetTags", "UntagWidget", "PolishWidget", "ListWidgets", "DeleteWidget"},
+		"widgets-gen-gauge":    {"DescribeGauge", "CalibrateGauge"},
+		"widgets-gen-sprocket": {"CreateSprocket", "GetSprocket", "TagSprocket", "ListSprocketTags", "UntagSprocket", "DeleteSprocket"},
+		"widgets-gen-probe":    {"PingWidgets"},
 	}
 	if len(gen.scenario.Groups) != len(want) {
 		t.Fatalf("got %d groups, want %d", len(gen.scenario.Groups), len(want))
@@ -109,10 +118,14 @@ func TestGenerate_refusesWithMachineReadableReasons(t *testing.T) {
 	_, gen := generateFixture(t)
 	want := map[string]string{
 		"ArchiveWidget": reasonProbeOfImplementedOp,
+		"CreateCog":     reasonUnboundRequiredMember + ":Name",
+		"CreateWidget":  reasonSetupRefused + ":cog",
 		"DescribeGizmo": reasonUnboundRequiredMember + ":GizmoArn",
-		"PurgeWidgets":  reasonNoOutputToAssert,
+		"FreezeWidget":  reasonProbeBindsLiveResource + ":WidgetId",
+		"PurgeWidgets":  reasonNeverProbe,
 		"RotateWidget":  reasonUnboundRequiredMember + ":Angle",
 		"SetWidgetSize": reasonUpdateWithoutMutable,
+		"SyncWidgets":   reasonNoOutputToAssert,
 	}
 	got := map[string]string{}
 	for _, gp := range gen.gaps {
@@ -143,25 +156,53 @@ func TestGenerate_probeGroupHoldsNoImplementedOperation(t *testing.T) {
 				t.Errorf("implemented operation %s sits in probe group %s", tc.Op, g.Name)
 			}
 		}
-		// A probe of an operation that returns nothing reads the bound
-		// resource back; one that returns something asserts on it.
+		// A probe asserts on the operation's own output; one that returns
+		// nothing is refused rather than given a vacuous read-back. Asserted
+		// on the group rather than inside a name match, so a probe that
+		// stopped being emitted fails here instead of passing silently.
+		if len(g.Tests) != 1 || g.Tests[0].Name != "PingWidgets" {
+			t.Fatalf("probe group holds %v, want just PingWidgets", g.Tests)
+		}
+		if a := g.Tests[0].Assert[0]; a.Kind != assertResponseField || !a.Checks["$.Status"].NonEmpty {
+			t.Errorf("PingWidgets probe asserts %+v, want $.Status non-empty", a)
+		}
+		// A probe group has no setup and no teardown, and no probe may touch
+		// a resource the run owns: nothing it binds is a $ref, so there is
+		// nothing for a teardown to undo.
+		if len(g.Setup) != 0 || len(g.Teardown) != 0 {
+			t.Errorf("probe setup/teardown = %v / %v, want neither", g.Setup, g.Teardown)
+		}
 		for _, tc := range g.Tests {
-			switch tc.Name {
-			case "FreezeWidget":
-				if tc.Assert[0].Kind != assertReadback || tc.Assert[0].Call.Op != "GetWidget" {
-					t.Errorf("FreezeWidget probe asserts %+v, want a GetWidget read-back", tc.Assert[0])
-				}
-			case "PingWidgets":
-				if tc.Assert[0].Kind != assertResponseField || tc.Assert[0].Checks["$.Status"].NonEmpty != true {
-					t.Errorf("PingWidgets probe asserts %+v, want $.Status non-empty", tc.Assert[0])
-				}
+			if refs := refsInTest(tc); len(refs) != 0 {
+				t.Errorf("probe %s binds %v, which is a live resource", tc.Name, refs)
 			}
 		}
-		// The probe's setup creates only what a probe referenced, and tears
-		// it down again.
-		if len(g.Setup) != 1 || g.Setup[0].Op != "CreateWidget" || len(g.Teardown) != 1 || g.Teardown[0].Op != "DeleteWidget" {
-			t.Errorf("probe setup/teardown = %v / %v", g.Setup, g.Teardown)
-		}
+	}
+}
+
+func TestGenerate_probeOfAnOperationThatWouldTouchALiveResourceIsRefused(t *testing.T) {
+	// Given: FreezeWidget takes the WidgetId the recipe binds to widget.id,
+	// and the emulator does not implement it.
+	// When: the fixture is generated.
+	_, gen := generateFixture(t)
+
+	// Then: it is refused rather than probed, and the refusal names the
+	// member so a curated literal can fix it.
+	got := gapIn(gen, "widgets-gen-probe", "FreezeWidget")
+	if got.Reason != reasonProbeBindsLiveResource+":WidgetId" {
+		t.Fatalf("FreezeWidget refusal = %q, want %s:WidgetId", got.Reason, reasonProbeBindsLiveResource)
+	}
+	if !strings.Contains(got.Detail, "widget.id") {
+		t.Errorf("the refusal does not name the export it would have bound: %q", got.Detail)
+	}
+	// And an operation the recipe forbids probing outright never reaches the
+	// binder: its refusal carries the curated reason.
+	purge := gapIn(gen, "widgets-gen-probe", "PurgeWidgets")
+	if purge.Reason != reasonNeverProbe {
+		t.Fatalf("PurgeWidgets, which the recipe lists under neverProbe, was refused with %q", purge.Reason)
+	}
+	if !strings.Contains(purge.Detail, "cannot be undone") {
+		t.Errorf("never-probe detail = %q, want the recipe's own reason", purge.Detail)
 	}
 }
 
@@ -407,6 +448,153 @@ func TestGenerate_recipeContradictingTheModelIsAnError(t *testing.T) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// resourceNamed is the fixture recipe's resource with that id.
+func (f fixture) resourceNamed(t *testing.T, id string) resource {
+	t.Helper()
+	for _, res := range f.recipe.Resources {
+		if res.ID == id {
+			return res
+		}
+	}
+	t.Fatalf("the fixture recipe has no resource %q", id)
+	return resource{}
+}
+
+// gapIn is the refusal recorded for op in one group, or the zero gap. The
+// group matters: an operation refused a role in its lifecycle group is
+// uncovered, so the probe group refuses it a second time for its own reason.
+func gapIn(gen *generation, group, op string) gap {
+	for _, gp := range gen.gaps {
+		if gp.Group == group && gp.Operation == op {
+			return gp
+		}
+	}
+	return gap{}
+}
+
+func TestGenerate_authoredCreateAssertionMustCallTheServiceAgain(t *testing.T) {
+	// Given: sprocket's authored create assertion, which normally reads the
+	// sprocket back, reduced to a clause that only inspects the create's own
+	// response.
+	f := loadFixture(t)
+	gauge, sprocket := f.resourceNamed(t, "gauge"), f.resourceNamed(t, "sprocket")
+	create := *sprocket.Create
+	create.Assert = []assertion{responseField(checks("$.SprocketId", nonEmpty()))}
+	sprocket.Create = &create
+	r := f.recipe
+	r.Resources = []resource{gauge, sprocket}
+
+	// When: it is generated.
+	gen, err := generate(f.model, r, f.values, fixtureCaps(), fixtureClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: the create is refused. Restating the create's own response is
+	// not a read-back, however many clauses say it.
+	if got := gapIn(gen, "widgets-gen-sprocket", "CreateSprocket"); got.Reason != reasonNoReadbackPath {
+		t.Fatalf("CreateSprocket refusal = %q, want %s", got.Reason, reasonNoReadbackPath)
+	}
+	// And the committed fixture, whose clause does call the service again,
+	// is generated — with the clause wrapped in the resource's async budget,
+	// and the response-field clause beside it left alone.
+	_, full := generateFixture(t)
+	_, createTest, ok := full.scenario.findTest("widgets-gen-sprocket", "CreateSprocket")
+	if !ok {
+		t.Fatal("the authored create assertion did not produce a test")
+	}
+	if kinds := assertionKinds(createTest.Assert); strings.Join(kinds, ",") != "responseField,eventually" {
+		t.Fatalf("CreateSprocket asserts %v, want the authored read-back wrapped in eventually", kinds)
+	}
+	inner := createTest.Assert[1]
+	if inner.MaxAttempts != 3 || inner.Assert == nil || inner.Assert.Kind != assertReadback || inner.Assert.Call.Op != "GetSprocket" {
+		t.Errorf("the authored clause was wrapped as %+v", inner)
+	}
+	// A resource that declares no async keeps its authored clause verbatim.
+	_, polish, _ := full.scenario.findTest("widgets-gen-widget", "PolishWidget")
+	if polish.Assert[0].Kind != assertReadback {
+		t.Errorf("PolishWidget asserts %v, want the authored read-back unwrapped", assertionKinds(polish.Assert))
+	}
+}
+
+func TestGenerate_authoredUpdateMustCallTheServiceAgain(t *testing.T) {
+	// Given: SetWidgetSize — an update-family operation with no `mutable`
+	// entry — authored with a clause that reads only its own response.
+	f := loadFixture(t)
+	widget := f.resourceNamed(t, "widget")
+	echo := authoredOp{Op: "SetWidgetSize", Params: map[string]any{"Size": json.Number("50")},
+		Assert: []assertion{responseField(checks("$.WidgetId", nonEmpty()))}}
+	widget.Operations = append(append([]authoredOp(nil), widget.Operations...), echo)
+	r := f.recipe
+	r.Resources = []resource{widget}
+
+	// When: it is generated.
+	gen, err := generate(f.model, r, f.values, fixtureCaps(), fixtureClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: authored coverage does not buy its way past guard 3.
+	if got := gapIn(gen, "widgets-gen-widget", "SetWidgetSize"); got.Reason != reasonUpdateWithoutReadback {
+		t.Fatalf("SetWidgetSize refusal = %q, want %s", got.Reason, reasonUpdateWithoutReadback)
+	}
+	if _, _, found := gen.scenario.findTest("widgets-gen-widget", "SetWidgetSize"); found {
+		t.Error("the refused operation was emitted anyway")
+	}
+
+	// And: the same operation with a read-back is generated, so the guard
+	// refuses the anti-pattern rather than authored updates as such.
+	real := echo
+	real.Assert = []assertion{readback(call{Op: "GetWidget"}, checks("$.Widget.Size", equals(json.Number("50"))))}
+	widget.Operations[len(widget.Operations)-1] = real
+	r.Resources = []resource{widget}
+	gen, err = generate(f.model, r, f.values, fixtureCaps(), fixtureClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, tc, found := gen.scenario.findTest("widgets-gen-widget", "SetWidgetSize"); !found {
+		t.Fatal("an authored update with a read-back was refused")
+	} else if tc.Assert[0].Kind != assertReadback || tc.Assert[0].Call.Params["WidgetId"] == nil {
+		t.Errorf("SetWidgetSize asserts %+v", tc.Assert[0])
+	}
+}
+
+func TestGenerate_unsupportedTagShapeNamesTheShapeTheSchemaAllows(t *testing.T) {
+	// Given: a tag member whose target is neither a string map nor a list of
+	// {Key, Value} — here a plain string, whose Smithy id is qualified.
+	f := loadFixture(t)
+	widget := f.resourceNamed(t, "widget")
+	tags := *widget.Tags
+	tags.Tag = tagCall{Op: "UpdateWidget", Member: "Description"}
+	widget.Tags = &tags
+	r := f.recipe
+	r.Resources = []resource{widget}
+
+	// When: it is generated.
+	gen, err := generate(f.model, r, f.values, fixtureCaps(), fixtureClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: the reason carries the bare shape name, the detail carries the
+	// qualified id, and the gap report still satisfies its schema — the
+	// reason pattern has no room for a '#'.
+	got := gapIn(gen, "widgets-gen-widget", "ListWidgetTags")
+	if got.Reason != reasonUnsupportedTagShape+":String" {
+		t.Fatalf("refusal reason = %q, want %s:String", got.Reason, reasonUnsupportedTagShape)
+	}
+	if !strings.Contains(got.Detail, "smithy.api#String") {
+		t.Errorf("the detail drops the qualified id: %q", got.Detail)
+	}
+	contents, err := encodeDocument(gapsDocument{Version: gapsVersion, Gaps: gen.gaps})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.schemas.validate(schemaGaps, contents); err != nil {
+		t.Fatalf("the refusal does not satisfy gaps.schema.json: %v", err)
 	}
 }
 
