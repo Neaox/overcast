@@ -23,6 +23,12 @@
 > against this architecture vs 16/18 for daemon read-back on the same script,
 > with `docker logs` byte-identical via the tee.
 >
+> **Extended 2026-09-06 (#1799):** the Telemetry API's deliveries now travel
+> the same way, over a channel the init opens (§ 3.5). That was the last path
+> in Lambda that ran host-to-sandbox, and the last reason a container's bridge
+> IP had to be routable from the Overcast process — so extension telemetry
+> works on Docker Desktop, which is most developer machines.
+>
 > This document was written straight after #1402,
 > the fourth round of fixes to the `X-Amz-Log-Result` tail wait (#873, #1160,
 > #1325, run 32622332545), when the question "is this a flaw in the
@@ -124,9 +130,12 @@ RuntimeAPIServer                                 /var/overcast/init   (PID 1, st
     /2020-01-01/extension/* (as today)             • parent of the runtime: exec ENTRYPOINT+CMD,
     /overcast/v1/logs  ◄── long-lived NDJSON          stdout/stderr pipes owned here
                             frame stream           • parent of extensions (/opt/extensions/*), same
-containerInstance                                  • log shipper: one connection, ordered frames,
-  logSink: per-request buffers, CWL batcher           seq numbers; drain-then-forward on /response
-  invoke: await seq ≤ X-Overcast-Log-Seq         • PID 1 duties: reap, forward SIGTERM, exit code
+    /overcast/v1/telemetry ◄── long poll,          • log shipper: one connection, ordered frames,
+                    batch handed back (§ 3.5)        seq numbers; drain-then-forward on /response
+containerInstance                                  • telemetry relay: long-polls the host, POSTs each
+  logSink: per-request buffers, CWL batcher          batch to the extension's own listener (§ 3.5)
+  telemetryRelay: per-environment handoff          • PID 1 duties: reap, forward SIGTERM, exit code
+  invoke: await seq ≤ X-Overcast-Log-Seq
 ```
 
 ### 3.1 The init (`cmd/lambda-init`, linux-only, stdlib only)
@@ -269,6 +278,26 @@ finalises the invoke.
   zero) wait; if measurement shows otherwise it can be gated on `LogTail`
   exactly as today.
 
+**The telemetry channel does not enter this invariant** (§ 3.5, #1799). It is a
+separate connection carrying no frames and no `seq`, and it runs in the
+opposite direction: everything on it is a record the *host* has already
+marshalled, from a fact this invariant has already ordered. `platform.initStart`
+and its two companions are marshalled from frames the host had ingested;
+`platform.start`, `runtimeDone` and `report` are written by the invoke path
+after its `awaitLogSeq`. A delivery is what happens to those bytes afterwards,
+so there is nothing it can reorder — and nothing about it that the host needs to
+wait for before writing anything. It is also why the delivery may lag: a
+subscriber is entitled to the records, not to them by a deadline, exactly as on
+AWS.
+
+Inside the container the relay is a goroutine of its own with its own HTTP
+clients. It never reads a pipe, never enters `drain`, and shares no connection
+with the proxy — so a batch in flight cannot delay a `/next` or a `/response`,
+and the drain still completes one poll cycle after the bytes are in the pipe.
+What it does spend is a little of the init's CPU inside the function's CFS
+quota, in the same class as the ~0.3 ms per invoke the proxy already costs, and
+only for an environment something has actually subscribed on (§ 6).
+
 ### 3.4 Host side
 
 - `RuntimeAPIServer`: the `/overcast/v1/logs` ingest on the per-environment
@@ -301,6 +330,63 @@ finalises the invoke.
   image (`ImageInspect` grows those fields; one call, cached with the image
   resolution that already happens). `awaitContainerIP`, the per-environment
   listener, INIT-burst throttling and proactive init are untouched.
+
+### 3.5 Telemetry the other way (#1799, 2026-09-06)
+
+The Telemetry API and the Logs API are the one Lambda surface whose traffic runs
+host-to-sandbox. An extension stands its listener up inside the execution
+environment and subscribes a loopback destination
+(`http://127.0.0.1:<port>`, `http://localhost:<port>`,
+`http://sandbox.localdomain:<port>`), and AWS's platform POSTs the record
+batches to it from in there. Overcast made that POST from the host process,
+rewriting the loopback to the container's bridge IP
+(`lambda.normalizeExtensionLogURI`) — which needs the host and the daemon on one
+kernel. Docker Desktop runs the engine in a VM the host has no route into, so
+every delivery timed out, the emulator logged "dropping a telemetry delivery"
+and the Telemetry API was inert on Windows and macOS. It was the last reason a
+container's address had to be *dialable* rather than merely identifying.
+
+So the delivery turns around, the way everything else here already runs:
+
+- **`initproto.TelemetryPath`** (`POST /overcast/v1/telemetry`), on the same
+  per-environment listener and attributed the same way. The init holds one poll
+  open; the host answers it with a `TelemetryDelivery` — an ID, the destination
+  *exactly as subscribed*, and the batch as `json.RawMessage` — when a
+  subscriber's batch is cut. The init POSTs those bytes to that address and
+  reports the outcome as a `TelemetryResult` on its **next** poll, so one
+  exchange both acknowledges and collects and the init needs no second path.
+- **`telemetryRelay`** (host, `telemetry_relay.go`) is a rendezvous, not a
+  queue: `telemetryBuffer` and the bounded `logsDeliveries` queue already decide
+  what is sent and what is shed, and a second buffer would be a second place for
+  records to pile up outside the accounting. `postExtensionLog` hands one
+  attempt over and waits for the verdict exactly as it waited for an HTTP
+  response, so the three attempts, the backoff, the shedding and the
+  `platform.logsDropped` report are untouched. Only the transport moved.
+- **Capability is the relay's presence**, not a version field. A relay is
+  created with the per-environment listener, so every real environment has one
+  and an init that never polls costs each batch its attempts and reports a drop
+  — the behaviour Desktop already had, and never a POST at a loopback address
+  that means something else entirely on this side of the sandbox. (Skew is
+  anyway what § 3.1 says it is: the init is embedded in the Overcast binary and
+  shipped with the host that speaks to it.) The direct POST survives for a
+  Runtime API server with no per-environment listener, which is no container at
+  all — the shape the Logs/Telemetry unit tests drive.
+- **Buffers are keyed by (environment, URI).** Not rewriting the destination
+  costs the uniqueness the rewrite used to supply: two environments' extensions
+  routinely subscribe the same loopback address and would otherwise share one
+  buffer and one delivery. Being per-environment, buffers are now also dropped
+  with the environment instead of accumulating for the life of the process.
+- **One batch in flight per environment.** The init's relay is a single loop, so
+  an environment's deliveries are strictly ordered — which the four workers
+  sharing one queue never were. It costs a slow destination delaying the batch
+  behind it, bounded by the init's one-second POST timeout; the host's own
+  attempt budget is two seconds, so the init's timeout decides a slow
+  destination rather than the two budgets racing.
+
+Not done, deliberately: `sandbox.localdomain` still does not resolve inside an
+Overcast sandbox, so a subscription using that spelling is accepted and never
+delivered — exactly as before this change, since the host could not resolve it
+either. Making it work is a container-DNS question and its own issue.
 
 ## 4. Everywhere Docker is used — what is shared, what is not
 
@@ -344,6 +430,8 @@ Nothing else changes for the other services; `containerendpoint` and
 | Handler prints nothing | 80 ms silence bound on tail invokes | zero wait (nothing to drain) |
 | Init crashes / cannot start | n/a | container exits → `exitNotifier` → the same "container exited" error path; `ContainerLogs` one-shot for the diagnostic (the init writes `[overcast-init]` errors to the container's stderr before exiting, so they are in `docker logs`, and anything the runtime managed to print is there too, teed) |
 | Log stream connection drops mid-life | n/a (reconnect logic on the daemon side) | init reconnects with backoff and replays from a bounded backlog (ring of N frames / M bytes); the host dedups by `seq`; if the backlog overflowed, a `gap` frame is sent and the host logs it naming the container — the complete record is still in `docker logs` via the tee (§3.1 item 6); `awaitLogSeq` is bounded by a short deadline (100 ms — now a fact about a *broken* channel, not a guess about a slow one) and the tail is marked truncated rather than blocking the invoke |
+| Telemetry channel drops mid-life (#1799, § 3.5) | n/a — the host dialled the container and the delivery simply failed | the init reconnects with backoff; the delivery in flight is not acknowledged, so the host's attempt times out and retries it, and an endpoint that stays unreachable is dropped with `platform.logsDropped` exactly as before. At-least-once, which is what the Telemetry API path already was |
+| Telemetry destination inside the sandbox is not listening | delivery from the host timed out (or, on Desktop, always did) | the init's POST is refused on loopback immediately; the host sees a failed attempt and retries, so a dead endpoint costs its three attempts rather than three timeouts |
 | Host restart | containers are torn down with `logCtx` | unchanged |
 | Runtime writes > pipe capacity | daemon buffers | reader goroutines always drain; the runtime never blocks on a full pipe longer than today |
 | Image whose ENTRYPOINT is not a Runtime API client (e.g. RIE hard-coded as entrypoint) | broken today too (RIE would serve its own 9001) | same — unsupported, as on AWS; documented |
@@ -379,6 +467,15 @@ Expected deltas (to be measured, gates in Phase 2):
 - **Host**: no per-container daemon connection held open (64-conn cap no
   longer contended by Lambda), no 1 ms ticker loops, no per-line `docker
   logs` demux. Batched CWL writes unchanged.
+- **Telemetry channel** (§ 3.5, measured 2026-09-06): the init binary grows
+  16 KB, 7 336 096 → 7 352 480 bytes (linux/amd64, `CGO_ENABLED=0 -trimpath
+  -ldflags "-s -w"`), against a ~7 MB binary delivered once per content hash
+  through the seeded volume. At runtime it is one parked HTTP request per
+  execution environment for its lifetime, alongside the log stream already
+  held — an accepted connection on the host, not a daemon one, and idle unless
+  something has subscribed. Nothing is added to the invoke hot path: a record
+  is published into a buffer as before, and the delivery happens on the
+  delivery workers.
 - **Throughput under contention**: log delivery no longer competes with
   create/start/stats calls on the daemon — the exact condition that produced
   every one of the four flakes.
@@ -466,6 +563,12 @@ anyway, Phase 3 is where it is deleted.
   (logging_json.go); `ingestContainerLine` reshaped around frames.
 - The `maxDockerConns` rationale in `internal/docker/client.go` (the comment,
   and possibly the number).
+- `normalizeExtensionLogURI` in `runtime_api.go`, and
+  `TestNormalizeExtensionLogURI_rewritesLoopbackToContainerIP` with it (#1799,
+  § 3.5): nothing rewrites an extension's destination any more, because nothing
+  posts to it from this side of the sandbox. That was the last use of a
+  container's address as a *destination*; it remains an environment's identity,
+  as it is for `/next`.
 
 Tests: `log_tail_wait_test.go` (779 lines) and `log_drain_wait_test.go` (114)
 in full; the `streamLogs`/reconnect cases in `container_runtime_test.go`
@@ -498,7 +601,9 @@ a specific passage, not a directory:
 | [docs/plans/lambda-cold-start.md](./lambda-cold-start.md) § cold-start anatomy table and § invoke-path | Add the init's measured cost to the copy phase and the proxy hop to the warm path, with the Phase 2 numbers; cross-reference this plan. |
 | `Makefile`, `Dockerfile`, `.github/workflows/test.yml` (build step before `go test`; the "Lambda invoke (native host binary)" job's `X-Amz-Log-Result` check stays and becomes a stronger assertion), the release workflow | Build plumbing, not prose — listed so it is not forgotten. |
 | [docs/dev/manual-testing.md](../dev/manual-testing.md) | `docker logs` still shows function output byte-for-byte (the tee, §3.1 item 6); add a line that `[overcast-init]` stderr lines are Overcast's own diagnostics and never reach CloudWatch or the tail. |
-| `.changelog/` | Phase 0: `~ [ecs]`; Phase 2: `~ [lambda]` exact tails and ordering, `+ [lambda]` extensions for image functions, `* [lambda]` for the tail-fidelity bug class; Phase 3: nothing user-visible. |
+| [docs/services/lambda/logging.md](../services/lambda/logging.md) § "Where Overcast differs" | The extension-telemetry-destinations row says batches are POSTed from inside the execution environment, as AWS's platform posts them, so the loopback address an extension subscribes is the one it listens on — on every host, Docker Desktop included (#1799, § 3.5). |
+| [tests/AGENTS.md](../../tests/AGENTS.md) § Lambda platform table | The "Windows / macOS, Docker Desktop" row loses its one exception; `skipIfHostCannotReachContainerIPs` is deleted (#1799). |
+| `.changelog/` | Phase 0: `~ [ecs]`; Phase 2: `~ [lambda]` exact tails and ordering, `+ [lambda]` extensions for image functions, `* [lambda]` for the tail-fidelity bug class; Phase 3: nothing user-visible; #1799: `* [lambda]` telemetry reaching subscribers on Docker Desktop. |
 
 Not affected, checked: docs/performance.md (its `docker logs --timestamps`
 is about Overcast's own container), docs/cdk/*, docs/local-dev.md (the ECS
@@ -509,13 +614,23 @@ flips — unless the extension limitation is tracked there; check on the day).
 ## 10. Testing strategy
 
 - **Protocol**: table tests on frame encode/decode and header parsing in
-  `initproto`, shared by both sides.
+  `initproto`, shared by both sides — plus, for the telemetry channel (§ 3.5),
+  that a delivery's body round-trips byte for byte and a poll with no result
+  omits it.
 - **Init**: Linux-only unit tests (Phase 1 list), run under `-race` via
   `scripts/docker-go.sh`; the init's proxy and drain are testable in-process
   with a fake Runtime API and pipes — no Docker needed for those.
 - **Host**: `logSink` and `awaitLogSeq` with a mock clock and a scripted frame
   source (the successor of today's mock-clock wait tests — but asserting
   ordering facts, not durations).
+- **Telemetry channel** (§ 3.5): on the init side, that the batch reaches the
+  destination byte-identical, that batches arrive in the order they were handed
+  out, and that an unreachable destination is reported rather than swallowed;
+  on the host side, that a subscriber's batch is handed to the init with the
+  destination unrewritten, that **no connection is opened to the container's
+  address** even with a server listening there, that a reported failure is
+  retried the same three times and then becomes `platform.logsDropped`, and
+  that two environments on one loopback destination get two buffers.
 - **Integration**: the Docker-gated Lambda suite already runs locally from
   the Go container with the socket mounted (verified on #1402; needs
   `MSYS_NO_PATHCONV=1` on Git Bash) and on CI's three tag sets; the compat
@@ -547,3 +662,7 @@ flips — unless the extension limitation is tracked there; check on the day).
   is the correct one there).
 - Changing how the Runtime API is addressed from the container
   (`containerendpoint`, the per-environment listener, hostnames) — unchanged.
+- Carrying the Telemetry API's *deliveries* over the init. (Since shipped:
+  #1799 — § 3.5. It was not in scope here because this plan was about owning
+  the runtime's stdout, and the delivery direction only became the last
+  outstanding one once everything else ran through the init.)

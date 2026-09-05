@@ -71,7 +71,7 @@ Overcast emits only the subset of AWS's schema it genuinely observes.
 | `platform.initStart`'s `runtimeVersion`, `runtimeVersionArn`, `instanceId`, `instanceMaxMemory` | Omitted |
 | `platform.runtimeDone` spans other than `responseLatency` | Omitted — `responseDuration` ends only after the answer has finished streaming through the init's unbuffered proxy, and `runtimeOverhead` exists only at the runtime's next poll, both after the record is on its way |
 | SnapStart restore records (`platform.restoreStart`, `platform.restoreRuntimeDone`, `platform.restoreReport`) | Not emitted; SnapStart is not emulated |
-| Extension telemetry destinations (Logs API `PUT /2020-08-15/logs`, Telemetry API `PUT /2022-07-01/telemetry`) | HTTP only. Buffering configuration is honoured with AWS's defaults; out-of-range values are clamped to the documented limits rather than rejected |
+| Extension telemetry destinations (Logs API `PUT /2020-08-15/logs`, Telemetry API `PUT /2022-07-01/telemetry`) | HTTP only. Buffering configuration is honoured with AWS's defaults; out-of-range values are clamped to the documented limits rather than rejected. Batches are POSTed to the destination from inside the execution environment, by the in-container init, as AWS's platform posts them — so the loopback address an extension subscribes is the one it listens on, on every host, Docker Desktop included |
 | `UpdateFunctionConfiguration` with an explicitly empty `LoggingConfig: {}` | `501` — AWS's semantics for that shape are undocumented. `LoggingConfig` with explicit members applies normally |
 
 ## Filtering
