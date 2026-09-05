@@ -347,7 +347,7 @@ func TestAuthCognitoStrict_rejectsBadTokens(t *testing.T) {
 	if len(parts) != 3 {
 		t.Fatalf("minted token is not a JWT: %q", pool.idToken)
 	}
-	tampered := parts[0] + "." + parts[1] + "." + flipLastRune(parts[2])
+	tampered := parts[0] + "." + parts[1] + "." + flipFirstRune(parts[2])
 
 	// A well-formed token from an issuer that is no local pool at all.
 	foreignIssuer := unsignedJWTForTest(t, map[string]any{
@@ -498,15 +498,19 @@ func unsignedJWTForTest(t *testing.T, claims map[string]any) string {
 		base64.RawURLEncoding.EncodeToString(payload) + ".fakesig"
 }
 
-// flipLastRune changes the final character of a base64url segment so the
-// signature no longer verifies while the token stays well formed.
-func flipLastRune(s string) string {
+// flipFirstRune changes the first character of a base64url segment so the
+// decoded bytes differ while the segment stays valid base64url. The FIRST
+// character is the one to change, never the last: every bit of the first
+// character is signature data, whereas the final character of an RS256
+// signature carries padding bits, so flipping it can decode to the very same
+// bytes and leave the "tampered" token verifying (seen once in CI under
+// -tags slim).
+func flipFirstRune(s string) string {
 	if s == "" {
 		return "A"
 	}
-	last := s[len(s)-1]
-	if last == 'A' {
-		return s[:len(s)-1] + "B"
+	if s[0] == 'A' {
+		return "B" + s[1:]
 	}
-	return s[:len(s)-1] + "A"
+	return "A" + s[1:]
 }
