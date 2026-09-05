@@ -1,7 +1,26 @@
 # compat/suites/terraform — Terraform
 
-> **Status: planned.** This suite does not run yet. See the parent
-> [compat/README.md](../../README.md) for the roadmap.
+> **Status: planned — nothing is implemented.** This directory holds this
+> README, [AGENTS.md](AGENTS.md) and a `.gitignore`. There is no Terraform
+> configuration, no runner and no entry point.
+
+## What exists today
+
+Nothing that runs. Specifically:
+
+- The suite is **not** in `compat/runner.go`'s suite table, so
+  `go run ./cmd/compat` never spawns it and `--suite terraform` is rejected as
+  an unknown name.
+- It is **not** in the `all_suites` matrix in
+  [.github/workflows/compat.yml](../../../.github/workflows/compat.yml), so CI
+  neither builds nor runs it.
+- It declares no groups in [compat/suites/registry.json](../registry.json), so
+  it contributes no column to the compatibility matrix and no shard to
+  `compat/baseline/`.
+
+[AGENTS.md § Implementation checklist](AGENTS.md#implementation-checklist) is
+the step-by-step guide for building it; the rest of this file describes what
+that work is meant to produce.
 
 ## What this suite will cover
 

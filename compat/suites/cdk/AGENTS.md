@@ -1,217 +1,224 @@
 # AGENTS.md — cdk suite
 
-> Conventions for AI agents and contributors planning or implementing
-> `compat/suites/cdk/`.
+> Conventions for AI agents and contributors working in `compat/suites/cdk/`.
 >
 > **Read [compat/AGENTS.md](../../AGENTS.md) first** — it contains the
-> canonical teardown rules and separation boundary that apply to every suite.
-> This file covers CDK-specific details for agents building this suite from
-> scratch.
+> canonical teardown rules and the separation boundary that apply to every
+> suite. This file covers only cdk-specific details.
 >
-> For quick-start, prerequisites, and env vars see [README.md](README.md).
+> For quick-start, prerequisites, env vars and architecture see
+> [README.md](README.md).
 
 ---
 
 ## What this suite tests
 
-End-to-end CDK v2 deployment compatibility via the native `cdk` CLI. It
-is the CDK column of the compatibility matrix.
+End-to-end CDK v2 deployment compatibility through the native `cdk` CLI. It is
+the CDK column of the compatibility matrix.
 
-Unlike SDK suites, this suite does not test individual API operations. It
-verifies that a real CDK app can bootstrap, synthesize, deploy a
-multi-resource stack, and destroy it cleanly — all pointed at Overcast.
+Unlike the SDK suites, it does not test individual API operations. It tests
+whether a real CDK app can bootstrap, synthesise, deploy a multi-resource
+stack (including a nested one), have every resource verified through the AWS
+SDK, be updated in place, and be destroyed — all pointed at Overcast. A
+failure here is usually a CloudFormation provisioning gap rather than a
+missing operation.
 
 ---
 
 ## Status
 
-**In progress.** A first runnable implementation exists in `src/`; continue
-iterating from the current code rather than rebuilding the suite from scratch.
+**Implemented.** One group, `cdk-lifecycle`, running in the compat CI matrix
+(`.github/workflows/compat.yml`), where the job also runs `npm run typecheck`
+before the suite.
 
 ---
 
 ## Runtime
 
-| Item        | Value                                        |
-| ----------- | -------------------------------------------- |
-| Language    | TypeScript (CDK app and runner) + Node.js 22.18+/23.6+ (type stripping; no build step) |
-| AWS client  | `aws-cdk` CLI + CDK v2 libraries (pinned in `package.json`) |
-| CDK version | CDK v2 (pinned in `package.json`)                           |
-| CI image    | `node:24-alpine` with `aws-cdk` installed    |
+| Item        | Value                                                                                                     |
+| ----------- | ----------------------------------------------------------------------------------------------------------- |
+| Language    | TypeScript, run directly by Node 22.18+/23.6+ (built-in type stripping; no build step, no loader)          |
+| CDK app     | `aws-cdk-lib` v2 + `constructs`, pinned in `package.json`                                                  |
+| CDK CLI     | `aws-cdk`, a **local devDependency** — resolved with `createRequire(...).resolve("aws-cdk/bin/cdk")` and spawned with `process.execPath` |
+| Spot checks | `@aws-sdk/client-*` v3, one per verified service                                                           |
+| CI image    | None of its own — GitHub Actions installs Node from `.node-version` and runs `npm ci` here; the compose path uses `.devcontainer/Dockerfile`, which already carries Node |
 
 > SDK upgrade policy: [compat/AGENTS.md § SDK version pinning](../../AGENTS.md#sdk-version-pinning--upgrade-strategy).
 
+**Never spawn the CDK CLI as `npx cdk` or `cdk`.** On Windows both are `.cmd`
+shims that `spawn` cannot find under a bare name and, since the
+CVE-2024-27980 fix, refuses to run without `shell: true`. Both failures land
+on `Bootstrap`, before a single test does anything. `runCdk` in
+`src/groups/lifecycle.ts` resolves the CLI's own entry point and runs it with
+the Node already running the suite — see
+[compat/AGENTS.md § Cross-platform rules](../../AGENTS.md#cross-platform-rules-for-suite-authors).
+
 ---
 
-## File layout (planned)
+## File layout
 
 ```
 compat/suites/cdk/
-  AGENTS.md          ← you are here
-  README.md          ← quick-start, prerequisites, env vars
-  Dockerfile         ← node:24-alpine + aws-cdk + cdk bootstrap deps
-  package.json       ← aws-cdk, aws-cdk-lib, constructs, @aws-sdk/client-*
-  run.js             ← entry point: Node version check, then imports src/runner.ts
-  tsconfig.json      ← NodeNext, strict (mirror node-js-sdk)
-  cdk.json           ← CDK app entrypoint: src/app.ts
+  AGENTS.md         ← you are here
+  README.md         ← quick-start, prerequisites, env vars, architecture
+  package.json      ← aws-cdk-lib, constructs, @aws-sdk/client-*; aws-cdk as a devDependency
+  cdk.json          ← app entry point: `node src/app.ts`
+  run.js            ← entry point: Node version check, then imports src/runner.ts
+  tsconfig.json     ← NodeNext ESM, strict, type-stripping-compatible
 
   src/
-    app.ts           ← CDK App: instantiates CdkCompatStack
-    stack.ts         ← CdkCompatStack — all planned resources as CDK constructs
-    runner.ts        ← entry point; runs lifecycle groups, emits NDJSON to stdout
+    app.ts          ← the CDK app: CompatStage wrapping CdkCompatStack
+    stack.ts        ← CdkCompatStack: every deployed resource and every CfnOutput
+    runner.ts       ← applies the env filters, then runs once or serves the
+                      interactive command loop
     lib/
-      harness.ts     ← TestContext, TestGroup, TestCase, runSuite(), emitEvent()
-      clients.ts     ← makeClients(ctx) for spot-check API calls
+      harness.ts    ← TestContext, TestGroup, runGroup(), runSuite(), makeRunId()
+      clients.ts    ← makeClients(endpoint, region) for the verification calls
+      exec.ts       ← execCmd(): spawn wrapper; throws ExecError with stdout+stderr
+      commands.ts   ← stdin NDJSON command loop for interactive mode
     groups/
-      lifecycle.ts   ← one TestGroup per CDK lifecycle phase
+      lifecycle.ts  ← the cdk-lifecycle group and the CDK CLI wrapper
 ```
 
-**One file for the CDK app stack.** Never split the stack across multiple
-`stack.*.ts` files — a single `CdkCompatStack` class is sufficient.
+**One file for the stack.** Never split `CdkCompatStack` across several
+`stack.*.ts` files.
 
 ---
 
 ## Group anatomy
 
-Unlike SDK suites, test groups map to CDK lifecycle phases, not individual API
-operations. Each phase is a `TestGroup` with `TestCase` entries.
+The suite has **one group**, `cdk-lifecycle`, whose tests are ordered by
+`depends` rather than split across groups. Every phase shares one deployed
+stack, and a group is the unit of setup, teardown and context state — so a
+second group would mean either a second deploy or state that has to survive
+outside a context bag.
 
 ```typescript
-// src/groups/lifecycle.ts
-import { execSync } from "child_process";
-import type { TestGroup } from "../lib/harness.js";
-import { makeClients } from "../lib/clients.js";
-
 export function makeLifecycleGroups(suite: string): TestGroup[] {
   return [
     {
       suite,
       service: "cdk",
-      name: "cdk-bootstrap",
+      name: "cdk-lifecycle",
       tests: [
         {
           name: "Bootstrap",
-          fn: async (ctx) => {
-            const out = execSync(
-              "npx cdk bootstrap aws://000000000000/us-east-1",
-              {
-                encoding: "utf-8",
-                env: { ...process.env, AWS_DEFAULT_REGION: ctx.region },
-              },
-            );
-            if (!out.includes("Environment aws://")) {
-              throw new Error(`bootstrap output unexpected: ${out}`);
-            }
-          },
+          fn: async (ctx) =>
+            runCdk(ctx, ["bootstrap", `aws://000000000000/${ctx.region}`]),
         },
-      ],
-      // Bootstrap is idempotent — no teardown needed.
-    },
-    {
-      suite,
-      service: "cdk",
-      name: "cdk-deploy",
-      tests: [
-        {
-          name: "Synth",
-          fn: async (ctx) => {
-            execSync("npx cdk synth", {
-              env: { ...process.env, AWS_DEFAULT_REGION: ctx.region },
-            });
-          },
-        },
-        {
-          name: "Deploy",
-          fn: async (ctx) => {
-            execSync(`npx cdk deploy --require-approval never`, {
-              env: { ...process.env, AWS_DEFAULT_REGION: ctx.region },
-            });
-            // Stash stack name so spot-check and destroy groups can use it.
-            ctx["_stackName"] = `OcCompatStack-${ctx.runId}`;
-          },
-        },
+        { name: "Synth", depends: ["Bootstrap"], fn: async (ctx) => runCdk(ctx, ["synth", cdkStackSelector(ctx)]) },
+        // … Deploy, then one verification per resource, then Update, Destroy
+        { name: "VerifyBucket", depends: ["VerifyStackStatus"], fn: verifyBucket },
       ],
       teardown: async (ctx) => {
         try {
-          execSync("npx cdk destroy --force", {
-            env: { ...process.env, AWS_DEFAULT_REGION: ctx.region },
-          });
-        } catch {}
+          await destroyStack(ctx);
+        } catch {
+          // best-effort cleanup only
+        }
       },
-    },
-    {
-      suite,
-      service: "cdk",
-      name: "cdk-spot-check",
-      tests: [
-        {
-          name: "BucketExists",
-          fn: async (ctx) => {
-            const { s3 } = makeClients(ctx);
-            // Bucket name comes from the CDK stack output or a known naming pattern.
-            const bucket = ctx["_s3BucketName"] as string;
-            if (!bucket)
-              throw new Error("_s3BucketName not set by deploy group");
-            const { Buckets = [] } = await s3.send(new ListBucketsCommand({}));
-            if (!Buckets.some((b) => b.Name === bucket)) {
-              throw new Error(`expected bucket ${bucket} in ListBuckets`);
-            }
-          },
-        },
-      ],
-      // Spot-check is read-only — no teardown needed.
     },
   ];
 }
 ```
 
+A verification test reads the stack's outputs and checks the resource through
+the AWS SDK — never by parsing CDK's own output:
+
+```typescript
+async function verifyBucket(ctx: TestContext): Promise<void> {
+  const outputs = ((ctx as Record<string, unknown>)["_outputs"] ??
+    (await fetchOutputs(ctx))) as Record<string, string>;
+  const bucketName = outputs["BucketName"];
+  assert.ok(bucketName, "missing BucketName output");
+
+  const { s3 } = makeClients(ctx.endpoint, ctx.region);
+  const resp = await s3.send(new ListBucketsCommand({}));
+  assert.ok(
+    resp.Buckets?.some((b) => b.Name === bucketName),
+    `bucket ${bucketName} missing from ListBuckets`,
+  );
+}
+```
+
+`fetchOutputs` is the fallback path, so a single verification test can be run
+on its own (`OVERCAST_COMPAT_TESTS=VerifyBucket`) against an already-deployed
+stack without `VerifyStackStatus` having populated the cache first.
+
+**A resource the tests find by name needs a `CfnOutput` in `stack.ts`.** Do
+not reconstruct a CDK-generated physical name in a test; read it from an
+output.
+
 ---
 
 ## Key types
 
-Reuse the same `TestContext`, `TestGroup`, `TestCase` shapes as the
-`node-js-sdk` suite. See
-[suites/node-js-sdk/AGENTS.md](../node-js-sdk/AGENTS.md) for the full type
-definitions.
-
 ```typescript
-interface TestContext {
-  endpoint: string; // e.g. "http://localhost:4566"
-  region: string; // e.g. "us-east-1"
-  runId: string; // unique per invocation; prefix all resource names
-  log: (msg: string) => void;
-  [key: string]: unknown; // inter-test state bag
+// lib/harness.ts
+export interface TestContext {
+  endpoint: string;
+  region: string;
+  runId: string;
+  stackName: string;       // OcCompat-{runId}
+  log(msg: string): void;  // stderr only — stdout is NDJSON
+  signal?: AbortSignal;    // aborted by the interactive protocol's cancel
+  [key: string]: unknown;  // inter-test state bag
+}
+
+export interface TestCase {
+  name: string;
+  fn: TestFn;
+  skip?: boolean | string;
+  depends?: string[];      // same-group tests that must pass first
+}
+
+export interface TestGroup {
+  suite: string; service: string; name: string;
+  tests: TestCase[];
+  setup?: (ctx: TestContext) => Promise<void>;
+  teardown?: (ctx: TestContext) => Promise<void>;
 }
 ```
+
+`execCmd(command, args, { cwd, env })` (`lib/exec.ts`) is the only way this
+suite runs a subprocess. On a non-zero exit it throws `ExecError` carrying the
+exit code, stdout and stderr, which is what makes a failed `cdk deploy`
+readable in the result rather than "exit status 1".
 
 ---
 
 ## Naming conventions
 
-| Element       | Convention                                                         |
-| ------------- | ------------------------------------------------------------------ |
-| Group name    | `cdk-<phase>` (kebab-case), e.g. `cdk-bootstrap`, `cdk-deploy`     |
-| Test name     | Title-case phase name, e.g. `Bootstrap`, `Deploy`, `BucketExists`  |
-| Stack name    | `OcCompatStack-{runId}` — always include `runId` to avoid clashes  |
-| CDK resources | Use CDK logical IDs that include `runId` where CDK allows renaming |
+| Element         | Convention                                                                          |
+| --------------- | ------------------------------------------------------------------------------------- |
+| Group name      | `cdk-lifecycle` — one group; do not add a second without a reason for a second deploy |
+| Test name       | PascalCase phase or check, e.g. `Bootstrap`, `Deploy`, `VerifyBucket`                 |
+| Stack name      | `OcCompat-{runId}`, selected as `CompatStage-{runId}/Stack`                          |
+| Construct id    | `Compat<Thing>`, e.g. `CompatBucket`, `CompatQueue`, `CompatEsm`                     |
+| Output key      | PascalCase noun the test reads, e.g. `BucketName`, `QueueArn`, `FunctionName`         |
+| Context key     | `_`-prefixed camelCase for cached state, e.g. `_outputs`, `_queueUrl`                |
+
+The `runId` goes in the stack name, which is what keeps concurrent runs and
+the post-run orphan sweep from colliding. CDK derives every physical resource
+name from the stack, so individual constructs do not need it themselves.
 
 ---
 
 ## Inter-test state
 
-Use the context bag to share data between lifecycle phases:
+The context bag caches what a later phase needs:
 
 ```typescript
-// In the Deploy test:
-ctx["_stackName"] = `OcCompatStack-${ctx.runId}`;
-ctx["_s3BucketName"] = resolvedBucketName;
+// in VerifyStackStatus:
+(ctx as Record<string, unknown>)["_outputs"] = outputs;
 
-// In a spot-check test:
-const bucket = ctx["_s3BucketName"] as string;
+// in a later verification:
+const outputs = ((ctx as Record<string, unknown>)["_outputs"] ??
+  (await fetchOutputs(ctx))) as Record<string, string>;
 ```
 
-Keys must start with `_`. Never rely on inter-group state — `ctx` is fresh for
-every group run.
+Always pair a cache read with a fallback that fetches the value, so a single
+test stays runnable on its own. Never rely on inter-group state.
 
 ---
 
@@ -220,70 +227,67 @@ every group run.
 The canonical teardown rules are in [compat/AGENTS.md](../../AGENTS.md).
 Additional CDK specifics:
 
-- The `cdk-deploy` group's teardown **must** call `cdk destroy --force`.
-  This must run even if the deploy tests fail partway through. The runner
-  always calls teardown after tests, even on failure.
-- CDK may create a CDK toolkit bucket (typically `cdk-*`). If `destroy` leaves
-  it behind, add explicit SDK cleanup in teardown via `makeClients(ctx)`.
-- Never hard-code an AWS account ID. Use `000000000000` which Overcast treats
-  as the default fake account.
-- `cdk bootstrap` is idempotent — no teardown needed for the bootstrap
-  group.
-- `cdk synth` creates no durable resources — no teardown needed.
+- The group's teardown calls `cdk destroy --force` inside `try/catch`, and
+  runs even when the tests failed partway. `Destroy` is also a test, so after
+  a clean run the teardown's second attempt finds nothing left; whatever it
+  reports is swallowed.
+- Never deploy without `--require-approval never` — omitting it blocks on
+  stdin.
+- Never hard-code an AWS account ID in a test. The app reads
+  `OVERCAST_ACCOUNT_ID`, defaulting to `000000000000`.
+- `cdk bootstrap` and `cdk synth` create nothing that needs cleaning up.
 
 ---
 
 ## Error messages
 
-Format assertion errors to identify the failed check and the run context:
+Use `node:assert/strict` and give every assertion a message naming what was
+expected and what was found:
 
 ```typescript
-throw new Error(
-  `expected bucket ${bucket} in ListBuckets (runId=${ctx.runId})`,
-);
-throw new Error(
-  `deploy failed: stack ${stackName} did not reach CREATE_COMPLETE`,
+assert.ok(bucketName, "missing BucketName output");
+assert.strictEqual(
+  resp.Timeout,
+  15,
+  `expected updated timeout 15, got ${String(resp.Timeout)}`,
 );
 ```
+
+A bare `assert.ok(x)` reports "expected value to be truthy" and nothing about
+which resource — which is the one thing the reader needs.
+
+---
+
+## Adding a lifecycle test
+
+1. Add the test to the `cdk-lifecycle` group in
+   [compat/suites/registry.json](../registry.json), with its `depends`. The
+   group is scoped `"suites": ["cdk"]`, so no other suite is affected.
+2. Add the matching entry to `makeLifecycleGroups()` in
+   `src/groups/lifecycle.ts` — the same name, the same `depends`.
+3. If it needs a new resource, add it to `src/stack.ts`, plus a `CfnOutput`
+   for anything the test looks up by name.
+4. Run `npm run typecheck`.
+5. Run the suite against a live instance and check the NDJSON output.
 
 ---
 
 ## What agents must NOT do
 
-- Never import from `internal/`, `router/`, or any Overcast server source tree.
-- Never hard-code the endpoint — CDK local uses `OVERCAST_ENDPOINT` env var;
-  spot-check SDK calls use `ctx.endpoint`.
-- Never call `process.exit` inside a test or teardown function.
-- Never write to stdout inside a lifecycle step — the harness parses stdout as
-  NDJSON.
-- Never deploy without `--require-approval never` — omitting it will block on
-  stdin in CI.
-- Never leave orphaned stacks — always register a teardown that calls
-  `cdk destroy --force`.
-- Never reference CDK resources by hard-coded logical IDs shared with other
-  test runs — always embed `runId` in stack/resource names.
-
----
-
-## Implementation checklist
-
-When building this suite from scratch:
-
-1. Create `package.json` with `aws-cdk`, `aws-cdk-lib`, `constructs`,
-   and the `@aws-sdk/client-*` packages. No TypeScript loader — Node runs the
-   sources directly.
-2. Create `tsconfig.json` (mirror `node-js-sdk/tsconfig.json`).
-3. Create `cdk.json` pointing at `src/app.ts`.
-4. Create `src/stack.ts` with `CdkCompatStack` defining the planned resources
-   (see README.md for the full resource list).
-5. Create `src/app.ts` instantiating `CdkCompatStack`.
-6. Copy `lib/harness.ts` and `lib/clients.ts` patterns from `node-js-sdk/src/`
-   — adjust imports but keep the same `TestContext`/`TestGroup` interface.
-7. Create `src/groups/lifecycle.ts` with the lifecycle phase groups.
-8. Create `src/runner.ts` that calls `runSuite()` with all groups.
-9. Create `Dockerfile` based on `node:24-alpine`; install `aws-cdk`
-   and pin the version.
-10. Register the suite in `compat/runner.go` and `compat/suites/registry.json`.
-11. Run `tsc --noEmit` to confirm type correctness.
-12. Run the suite locally against a live Overcast instance and verify that
-    the NDJSON output is well-formed and every lifecycle phase emits a result.
+- Never import from `internal/`, `router/`, or any Overcast server source tree
+  — see [compat/AGENTS.md § Separation boundary](../../AGENTS.md#separation-boundary--non-negotiable).
+- Never spawn the CDK CLI as `npx cdk`, `cdk`, or through `shell: true` —
+  resolve its entry point and run it with `process.execPath`.
+- Never use `execSync` — the runner needs the loop free while a deploy runs.
+- Never hard-code the endpoint — the CDK CLI gets it through `cdkEnv`, and
+  spot checks through `makeClients(ctx.endpoint, ctx.region)`.
+- Never call `process.exit` inside a test or teardown.
+- Never write to stdout inside a test — the runner parses stdout as NDJSON;
+  use `ctx.log()` (stderr) for diagnostics.
+- Never add a test to `lifecycle.ts` without adding it to `registry.json`.
+  This suite builds its groups from the code rather than from the registry, so
+  an unregistered test still runs and still reports — but the registry is what
+  the compat server and the dashboard read for the expected matrix, and the
+  test is missing from it.
+- Never leave a deployed stack behind: any new group needs a teardown that
+  destroys it.

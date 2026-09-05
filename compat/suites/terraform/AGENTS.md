@@ -25,8 +25,14 @@ multi-resource configuration, and destroy it cleanly.
 
 ## Status
 
-**Planned.** No implementation exists yet. Follow the implementation checklist
-at the end of this file to build the suite from scratch.
+**Planned.** No implementation exists yet: the directory holds this file, a
+README and a `.gitignore`. The suite is absent from `compat/runner.go`'s suite
+table, from the `all_suites` matrix in `.github/workflows/compat.yml`, and from
+`compat/suites/registry.json`, so nothing runs it and nothing measures it.
+
+Follow the implementation checklist at the end of this file to build the suite
+from scratch. Registering it in `runner.go` and the CI matrix is part of that
+checklist, not a separate follow-up.
 
 ---
 
