@@ -87,6 +87,25 @@ func TestDescribeCertificate_success(t *testing.T) {
 	}
 }
 
+// AWS documents ResourceNotFoundException as HTTP 400 for DescribeCertificate
+// (https://docs.aws.amazon.com/acm/latest/APIReference/API_DescribeCertificate.html#API_DescribeCertificate_Errors),
+// not 404 — see https://github.com/overcast-sh/overcast/issues/1729.
+func TestDescribeCertificate_notFound(t *testing.T) {
+	// Given: an empty store
+	srv := helpers.NewTestServer(t)
+	missing := "arn:aws:acm:us-east-1:000000000000:certificate/00000000-0000-0000-0000-000000000000"
+
+	// When: DescribeCertificate is called for an ARN that does not exist
+	resp := acmCall(t, srv, "DescribeCertificate", map[string]any{
+		"CertificateArn": missing,
+	})
+	defer resp.Body.Close()
+
+	// Then: ResourceNotFoundException, HTTP 400 (not 404)
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "ResourceNotFoundException")
+}
+
 // ─── ListCertificates ─────────────────────────────────────────────────────────
 
 func TestListCertificates_success(t *testing.T) {
@@ -137,4 +156,23 @@ func TestDeleteCertificate_success(t *testing.T) {
 	if len(result.CertificateSummaryList) != 0 {
 		t.Errorf("expected 0 certificates after delete, got %d", len(result.CertificateSummaryList))
 	}
+}
+
+// AWS documents ResourceNotFoundException as HTTP 400 for DeleteCertificate
+// (https://docs.aws.amazon.com/acm/latest/APIReference/API_DeleteCertificate.html#API_DeleteCertificate_Errors),
+// not 404 — see https://github.com/overcast-sh/overcast/issues/1729.
+func TestDeleteCertificate_notFound(t *testing.T) {
+	// Given: an empty store
+	srv := helpers.NewTestServer(t)
+	missing := "arn:aws:acm:us-east-1:000000000000:certificate/00000000-0000-0000-0000-000000000000"
+
+	// When: DeleteCertificate is called for an ARN that does not exist
+	resp := acmCall(t, srv, "DeleteCertificate", map[string]any{
+		"CertificateArn": missing,
+	})
+	defer resp.Body.Close()
+
+	// Then: ResourceNotFoundException, HTTP 400 (not 404)
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "ResourceNotFoundException")
 }

@@ -133,7 +133,10 @@ func TestACMRequestCertificate_appliesTagsAtCreation(t *testing.T) {
 }
 
 // Tagging a certificate that does not exist is an error, not a silent write
-// into a namespace no DeleteCertificate will ever clean up.
+// into a namespace no DeleteCertificate will ever clean up. AWS documents
+// ResourceNotFoundException as HTTP 400 for every one of these operations
+// (e.g. https://docs.aws.amazon.com/acm/latest/APIReference/API_AddTagsToCertificate.html#API_AddTagsToCertificate_Errors),
+// not 404 — see https://github.com/overcast-sh/overcast/issues/1729.
 func TestACMTagging_unknownCertificate(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	missing := "arn:aws:acm:us-east-1:000000000000:certificate/00000000-0000-0000-0000-000000000000"
@@ -150,9 +153,10 @@ func TestACMTagging_unknownCertificate(t *testing.T) {
 		{"ListTagsForCertificate", map[string]any{"CertificateArn": missing}},
 	} {
 		resp := acmCall(t, srv, tc.op, tc.body)
-		if resp.StatusCode != http.StatusNotFound {
-			t.Errorf("%s on a missing certificate: got %d want 404", tc.op, resp.StatusCode)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s on a missing certificate: got %d want 400", tc.op, resp.StatusCode)
 		}
+		helpers.AssertJSONError(t, resp, "ResourceNotFoundException")
 		resp.Body.Close()
 	}
 }
@@ -261,7 +265,8 @@ func TestACMDeleteCertificate_dropsItsTags(t *testing.T) {
 
 	resp := acmCall(t, srv, "ListTagsForResource", map[string]any{"ResourceArn": arn})
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("ListTagsForResource after delete: got %d want 404", resp.StatusCode)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("ListTagsForResource after delete: got %d want 400", resp.StatusCode)
 	}
+	helpers.AssertJSONError(t, resp, "ResourceNotFoundException")
 }
