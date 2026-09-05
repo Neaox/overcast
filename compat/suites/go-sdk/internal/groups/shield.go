@@ -14,11 +14,11 @@ func Shield(c *clients.Clients) ServiceGroup {
 	g := &shieldGroup{c: c}
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
-			"DescribeSubscription": g.DescribeSubscription,
-			"CreateProtection":     g.CreateProtection,
-			"ListProtections":      g.ListProtections,
-			"DescribeProtection":   g.DescribeProtection,
-			"DeleteProtection":     g.DeleteProtection,
+			"shield-protections:DescribeSubscription": g.DescribeSubscription,
+			"shield-protections:CreateProtection":     g.CreateProtection,
+			"shield-protections:ListProtections":      g.ListProtections,
+			"shield-protections:DescribeProtection":   g.DescribeProtection,
+			"shield-protections:DeleteProtection":     g.DeleteProtection,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"shield-protections": g.setupProtections,

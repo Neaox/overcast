@@ -3,6 +3,7 @@ package groups_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/overcast-sh/overcast-compat-go-sdk/internal/clients"
@@ -45,6 +46,23 @@ func TestRegisteredImplsResolveAgainstRegistry(t *testing.T) {
 func TestRegisteredImplsHaveNoDuplicateKeys(t *testing.T) {
 	if _, err := mergeAll(t); err != nil {
 		t.Fatalf("go-sdk service files register overlapping impl keys:\n%v", err)
+	}
+}
+
+// Every impl key must be group-qualified ("group:test"). #1700: a bare key
+// works only while its test name happens to be unique across every registry
+// group, and a future generated group can make it ambiguous at any time —
+// silently discarding the impl (BuildGroups refuses the bare fallback for an
+// ambiguous name) rather than failing to compile. Qualifying every key removes
+// that landmine instead of waiting to trip over it.
+func TestRegisteredImplsHaveNoBareKeys(t *testing.T) {
+	svcGroups := groups.All(clients.New("http://127.0.0.1:1", "us-east-1"))
+	for _, svc := range svcGroups {
+		for key := range svc.Impls {
+			if !strings.Contains(key, ":") {
+				t.Errorf("service %q registers bare impl key %q; want it qualified as %q", svc.Name, key, "<group>:"+key)
+			}
+		}
 	}
 }
 
