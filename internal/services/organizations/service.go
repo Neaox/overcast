@@ -2,8 +2,9 @@
 // Organizations over AWS JSON 1.1 / 1.0 and Smithy RPC v2 CBOR.
 //
 // Implemented operations:
-//   - DescribeOrganization — hand-written; a single hardcoded organization,
-//     which is what CDK bootstrap asks for.
+//   - DescribeOrganization — hand-written; a single organization per account,
+//     with an AWS-shaped ID derived deterministically from the account ID
+//     (see organizationID), which is what CDK bootstrap asks for.
 //   - CreatePolicy / DescribePolicy / UpdatePolicy / DeletePolicy /
 //     ListPolicies, plus TagResource / UntagResource /
 //     ListTagsForResource — Tier 1 over internal/inert: request metadata is
@@ -147,16 +148,17 @@ func (s *Service) accountID() string {
 
 // masterAccountARN renders the ARN of the emulator's single management
 // account, following the same `arn:aws:organizations::{accountId}:...`
-// template as policyARN.
+// template as policyARN. Matches the modeled AccountArn shape's pattern
+// (`^arn:aws:organizations::\d{12}:account\/o-[a-z0-9]{10,32}\/\d{12}$`).
 func (s *Service) masterAccountARN() string {
-	return "arn:aws:organizations::" + s.accountID() + ":account/" + organizationID + "/" + s.accountID()
+	return "arn:aws:organizations::" + s.accountID() + ":account/" + s.organizationID() + "/" + s.accountID()
 }
 
 func (s *Service) describeOrganization(w http.ResponseWriter, r *http.Request) {
 	org := map[string]any{
 		"Organization": map[string]any{
-			"Id":                 organizationID,
-			"Arn":                "arn:aws:organizations::000000000000:organization/" + organizationID,
+			"Id":                 s.organizationID(),
+			"Arn":                "arn:aws:organizations::" + s.accountID() + ":organization/" + s.organizationID(),
 			"MasterAccountId":    s.accountID(),
 			"MasterAccountArn":   s.masterAccountARN(),
 			"MasterAccountEmail": "admin@overcast.local",
