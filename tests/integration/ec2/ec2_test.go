@@ -684,6 +684,76 @@ func TestRunInstances_success(t *testing.T) {
 	}
 }
 
+// TestRunInstances_honoursPlacementAvailabilityZone is the reproducer for
+// #1722: RunInstances is routed through the typed body, which hardcoded
+// Placement.AvailabilityZone's fallback (region+"a") instead of reading the
+// request parameter — silently overriding any zone a caller (Auto Scaling's
+// AZ-spreading reconciler, in particular) asked for. Both the RunInstances
+// response and a follow-up DescribeInstances must report the requested zone.
+func TestRunInstances_honoursPlacementAvailabilityZone(t *testing.T) {
+	// Given: the EC2 service, default region us-east-1
+	srv := helpers.NewTestServer(t)
+
+	// When: RunInstances is called with an explicit, non-default zone
+	resp := ec2Query(t, srv, "RunInstances", url.Values{
+		"ImageId":                    []string{"ami-12345678"},
+		"MinCount":                   []string{"1"},
+		"MaxCount":                   []string{"1"},
+		"Placement.AvailabilityZone": []string{"us-east-1c"},
+	})
+	defer resp.Body.Close()
+
+	// Then: the RunInstances response reports the requested zone
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		Instances []struct {
+			InstanceID string `xml:"instanceId"`
+			Placement  struct {
+				AvailabilityZone string `xml:"availabilityZone"`
+			} `xml:"placement"`
+		} `xml:"instancesSet>item"`
+	}
+	b := readBody(t, resp)
+	if err := xml.Unmarshal(b, &result); err != nil {
+		t.Fatalf("unmarshal RunInstancesResponse: %v\nbody: %s", err, b)
+	}
+	if len(result.Instances) != 1 {
+		t.Fatalf("expected 1 instance, got %d", len(result.Instances))
+	}
+	inst := result.Instances[0]
+	if inst.Placement.AvailabilityZone != "us-east-1c" {
+		t.Errorf("RunInstances placement.availabilityZone = %q, want us-east-1c", inst.Placement.AvailabilityZone)
+	}
+
+	// And: DescribeInstances reports the same zone for the launched instance
+	descResp := ec2Query(t, srv, "DescribeInstances", url.Values{
+		"InstanceId.1": []string{inst.InstanceID},
+	})
+	defer descResp.Body.Close()
+	helpers.AssertStatus(t, descResp, http.StatusOK)
+	var descResult struct {
+		Reservations []struct {
+			Instances []struct {
+				InstanceID string `xml:"instanceId"`
+				Placement  struct {
+					AvailabilityZone string `xml:"availabilityZone"`
+				} `xml:"placement"`
+			} `xml:"instancesSet>item"`
+		} `xml:"reservationSet>item"`
+	}
+	db := readBody(t, descResp)
+	if err := xml.Unmarshal(db, &descResult); err != nil {
+		t.Fatalf("unmarshal DescribeInstancesResponse: %v\nbody: %s", err, db)
+	}
+	if len(descResult.Reservations) != 1 || len(descResult.Reservations[0].Instances) != 1 {
+		t.Fatalf("expected 1 reservation with 1 instance, got: %s", db)
+	}
+	descAZ := descResult.Reservations[0].Instances[0].Placement.AvailabilityZone
+	if descAZ != "us-east-1c" {
+		t.Errorf("DescribeInstances placement.availabilityZone = %q, want us-east-1c", descAZ)
+	}
+}
+
 // ─── DescribeInstances (with instances) ───────────────────────────────────────
 
 func TestDescribeInstances_withInstances(t *testing.T) {

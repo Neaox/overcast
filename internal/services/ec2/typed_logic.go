@@ -148,6 +148,7 @@ type runInstancesReq struct {
 	SubnetID          string                         `json:"SubnetId"`
 	SecurityGroupIDs  []string                       `json:"SecurityGroupId"`
 	LaunchTemplate    ec2LaunchTemplateSpecification `json:"LaunchTemplate"`
+	Placement         ec2PlacementSpecification      `json:"Placement"`
 	TagSpecifications []ec2TagSpecification          `json:"TagSpecification"`
 }
 
@@ -157,6 +158,14 @@ type ec2LaunchTemplateSpecification struct {
 	LaunchTemplateID   string `json:"LaunchTemplateId"`
 	LaunchTemplateName string `json:"LaunchTemplateName"`
 	Version            string `json:"Version"`
+}
+
+// ec2PlacementSpecification is RunInstances' Placement member. Only
+// AvailabilityZone is modeled — it's the only sub-field either dispatch path
+// (or Auto Scaling's AZ-spreading reconciler, the caller that actually sets
+// it) reads today.
+type ec2PlacementSpecification struct {
+	AvailabilityZone string `json:"AvailabilityZone"`
 }
 
 type terminateInstancesReq struct {
@@ -1323,7 +1332,21 @@ func (h *Handler) runInstancesTyped(ctx context.Context, req *runInstancesReq) (
 		sgRefs = append(sgRefs, InstanceSG{GroupID: sgID, GroupName: name})
 	}
 	now := h.clk.Now().UTC().Format(time.RFC3339)
-	az := h.cfg.Region + "a"
+	// Real EC2 places the instance in the requested zone; without this the
+	// first zone in the region was hardcoded, so a caller spreading capacity
+	// across zones (Auto Scaling does) got every instance in one of them and
+	// no way to tell. Mirrors the legacy body (handler_instances.go).
+	az := req.Placement.AvailabilityZone
+	if az == "" {
+		az = h.cfg.Region + "a"
+	}
+	// #1722 gap, shared with the legacy body: real EC2 derives the instance's
+	// zone from SubnetId when Placement.AvailabilityZone is absent (the
+	// subnet pins the zone). Neither body does that here — both simply fall
+	// back to region+"a" regardless of which subnet's zone that contradicts —
+	// so they still agree with each other, just not with AWS. Out of scope
+	// for this fix, which is about the two dispatch paths disagreeing with
+	// each other on the parameter that AWS *is* given.
 	resolvedVpcID := ""
 	if subnetID != "" {
 		if sub, aerr := h.store.getSubnet(ctx, subnetID); aerr == nil {

@@ -213,6 +213,74 @@ func TestCreateAutoScalingGroup_launchesInstancesToDesiredCapacity(t *testing.T)
 	}
 }
 
+// TestCreateAutoScalingGroup_spreadsInstancesAcrossZones is the reproducer for
+// #1722: the reconciler round-robins launches across the group's configured
+// zones via nextAvailabilityZone, sending each one to EC2 as
+// Placement.AvailabilityZone. RunInstances is routed through EC2's typed
+// body, which hardcoded the zone instead of honouring that parameter — so
+// every instance of a multi-AZ group silently landed in the same zone
+// (region+"a") and Auto Scaling's own bookkeeping (this response is what it
+// stores as each instance's AvailabilityZone) recorded the wrong zone too.
+func TestCreateAutoScalingGroup_spreadsInstancesAcrossZones(t *testing.T) {
+	// Given: a launch configuration and a group spanning three zones, asking
+	// for one instance per zone
+	srv := helpers.NewTestServer(t)
+	lc := "spread-asg-lc"
+	resp := asCall(t, srv, "CreateLaunchConfiguration", map[string]string{
+		"LaunchConfigurationName": lc,
+		"ImageId":                 "ami-0123456789abcdef0",
+		"InstanceType":            "t3.micro",
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	resp = asCall(t, srv, "CreateAutoScalingGroup", map[string]string{
+		"AutoScalingGroupName":       "spread-asg",
+		"LaunchConfigurationName":    lc,
+		"MinSize":                    "1",
+		"MaxSize":                    "5",
+		"DesiredCapacity":            "3",
+		"AvailabilityZones.member.1": "us-east-1a",
+		"AvailabilityZones.member.2": "us-east-1b",
+		"AvailabilityZones.member.3": "us-east-1c",
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	// When: the reconciler converges the group
+	instances := asGroupInstances(t, srv, "spread-asg", func(in []asgInstanceXML) bool {
+		return inServiceCount(in) == 3
+	})
+
+	// Then: the three instances are spread one-per-zone, not all in one zone
+	seen := map[string]int{}
+	for _, inst := range instances {
+		seen[inst.AvailabilityZone]++
+	}
+	want := map[string]int{"us-east-1a": 1, "us-east-1b": 1, "us-east-1c": 1}
+	for zone, count := range want {
+		if seen[zone] != count {
+			t.Errorf("zone %s: got %d instances, want %d (full spread: %+v)", zone, seen[zone], count, seen)
+		}
+	}
+	if len(seen) != 3 {
+		t.Errorf("expected instances spread across 3 distinct zones, got %+v", seen)
+	}
+
+	// And: EC2 itself reports each instance in its assigned zone, since
+	// DescribeAutoScalingGroups reflects what the reconciler recorded rather
+	// than proving what EC2 actually did with Placement.AvailabilityZone.
+	for _, inst := range instances {
+		ec2Resp := ec2Call(t, srv, "DescribeInstances", map[string]string{
+			"InstanceId.1": inst.InstanceID,
+		})
+		body := xmlText(t, ec2Resp)
+		if !strings.Contains(body, "<availabilityZone>"+inst.AvailabilityZone+"</availabilityZone>") {
+			t.Errorf("EC2 DescribeInstances for %s does not report zone %s:\n%s", inst.InstanceID, inst.AvailabilityZone, body)
+		}
+	}
+}
+
 // TestSetDesiredCapacity_scalesInAndOut pins that SetDesiredCapacity actually
 // moves the instance count in both directions.
 func TestSetDesiredCapacity_scalesInAndOut(t *testing.T) {

@@ -667,6 +667,16 @@ func mutationCases() map[string][]mutationCase {
 				name:   "launch-template-not-found",
 				params: url.Values{"LaunchTemplate.LaunchTemplateName": {"mut-no-such-template"}, "MinCount": {"1"}, "MaxCount": {"1"}},
 			},
+			{
+				// #1722: the typed body hardcoded Placement.AvailabilityZone's
+				// fallback (region+"a") instead of honouring the request
+				// parameter, so a caller asking for a specific zone — Auto
+				// Scaling's AZ-spreading reconciler, every time — silently got
+				// a different one back from the typed path while legacy
+				// launched it correctly.
+				name:   "availability-zone-honoured",
+				params: url.Values{"ImageId": {"ami-12345678"}, "MinCount": {"1"}, "MaxCount": {"1"}, "Placement.AvailabilityZone": {"us-east-1c"}},
+			},
 		},
 		"TerminateInstances": {
 			{
