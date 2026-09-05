@@ -6,6 +6,7 @@ package awscli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -19,6 +20,22 @@ import (
 // endpoint and region are injected automatically.
 func RunOutput(endpoint, region string, args ...string) (map[string]any, error) {
 	b, err := runRaw(endpoint, region, args...)
+	if err != nil {
+		return nil, err
+	}
+	return decodeJSON(b)
+}
+
+// RunOutputContext is RunOutput bound to a context: the `aws` process is killed
+// when the context is cancelled, and a context already done spawns nothing.
+//
+// The uncontexted helpers keep their behaviour and are what a hand-written
+// group uses. This one exists for the scenario interpreter, which makes every
+// call in a generated group: one `aws` that never answers would otherwise hold
+// its parallel slot until the whole suite is killed — past the per-group
+// timeout RunSuite sets, and past a dashboard cancellation.
+func RunOutputContext(ctx context.Context, endpoint, region string, args ...string) (map[string]any, error) {
+	b, _, err := runCLI(ctx, endpoint, region, runOpts{}, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -59,13 +76,13 @@ func RunOutputWithStdin(endpoint, region string, input string, args ...string) (
 // reach signed; everywhere else keep the unsigned default so that a route the
 // emulator has not bound still falls through to whatever would answer it.
 func RunSigned(endpoint, region string, args ...string) error {
-	_, _, err := runCLI(endpoint, region, runOpts{sign: true}, args...)
+	_, _, err := runCLI(context.Background(), endpoint, region, runOpts{sign: true}, args...)
 	return err
 }
 
 // RunOutputSigned is RunOutput with SigV4 signing enabled — see RunSigned.
 func RunOutputSigned(endpoint, region string, args ...string) (map[string]any, error) {
-	b, _, err := runCLI(endpoint, region, runOpts{sign: true}, args...)
+	b, _, err := runCLI(context.Background(), endpoint, region, runOpts{sign: true}, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +100,7 @@ func RunOutputSigned(endpoint, region string, args ...string) (map[string]any, e
 // so the URI still comes from the pinned model. A status of 0 means the CLI
 // failed before it reached the wire (a parameter validation error, say).
 func RunStatus(endpoint, region string, args ...string) (int, error) {
-	_, stderr, err := runCLI(endpoint, region, runOpts{debug: true}, args...)
+	_, stderr, err := runCLI(context.Background(), endpoint, region, runOpts{debug: true}, args...)
 	return lastHTTPStatus(stderr), err
 }
 
@@ -93,7 +110,7 @@ func RunStatus(endpoint, region string, args ...string) (int, error) {
 // are answered by whichever other service owns the URI, so the status read back
 // would be that service's rather than the one under test.
 func RunStatusSigned(endpoint, region string, args ...string) (int, error) {
-	_, stderr, err := runCLI(endpoint, region, runOpts{sign: true, debug: true}, args...)
+	_, stderr, err := runCLI(context.Background(), endpoint, region, runOpts{sign: true, debug: true}, args...)
 	return lastHTTPStatus(stderr), err
 }
 
@@ -167,6 +184,24 @@ func signingEnv() []string {
 	)
 }
 
+// commandEnv is the environment every `aws` invocation runs with: the process
+// environment, the signing overrides when the call is signed, and AWS_PAGER
+// blanked on all of them.
+//
+// The pager is not optional politeness. The CLI pipes output through
+// $AWS_PAGER, $PAGER or its built-in default, and a pager with no terminal to
+// draw on blocks forever holding the pipe runCLI is reading — the hang the
+// repository's own awslocal wrapper exists to prevent (root AGENTS.md
+// § Calling the AWS CLI). It applies to the unsigned majority as much as to a
+// signed call, so it is set here rather than in signingEnv.
+func commandEnv(sign bool) []string {
+	env := os.Environ()
+	if sign {
+		env = signingEnv()
+	}
+	return append(env, "AWS_PAGER=")
+}
+
 func decodeJSON(b []byte) (map[string]any, error) {
 	if len(bytes.TrimSpace(b)) == 0 {
 		return map[string]any{}, nil
@@ -195,11 +230,11 @@ func runRaw(endpoint, region string, args ...string) ([]byte, error) {
 }
 
 func runRawWithStdin(endpoint, region string, input string, args ...string) ([]byte, error) {
-	b, _, err := runCLI(endpoint, region, runOpts{input: input}, args...)
+	b, _, err := runCLI(context.Background(), endpoint, region, runOpts{input: input}, args...)
 	return b, err
 }
 
-func runCLI(endpoint, region string, o runOpts, args ...string) ([]byte, string, error) {
+func runCLI(ctx context.Context, endpoint, region string, o runOpts, args ...string) ([]byte, string, error) {
 	input := o.input
 	// When input is provided alongside /dev/stdin in args, the AWS CLI v2
 	// cannot read from /dev/stdin (it only accepts regular file paths for blob
@@ -244,10 +279,8 @@ func runCLI(endpoint, region string, o runOpts, args ...string) ([]byte, string,
 	if o.debug {
 		flags = append(flags, "--debug")
 	}
-	cmd := exec.Command("aws", append(flags, resolvedArgs...)...)
-	if o.sign {
-		cmd.Env = signingEnv()
-	}
+	cmd := exec.CommandContext(ctx, "aws", append(flags, resolvedArgs...)...)
+	cmd.Env = commandEnv(o.sign)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

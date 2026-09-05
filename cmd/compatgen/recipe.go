@@ -24,21 +24,69 @@ type recipe struct {
 	Comment string `json:"$comment,omitempty"`
 	Service string `json:"service"`
 	Model   string `json:"model,omitempty"`
-	// NeverProbe maps an operation the generator must never probe to the
-	// curated reason why, which is what gaps.json then reports. It is the
-	// second half of the probe-safety rule: the binder refuses a probe that
-	// would point at a resource the run owns, and this refuses one whose
-	// effect is irreversible even with a stranger's identifiers, or with no
-	// identifier at all (EnableAllFeatures, DeleteOrganization,
-	// CreateOrganization take nothing that could miss).
+	// NeverProbe and AllowProbe are the recipe's exceptions to the verb rule
+	// below, each mapping an operation to the curated sentence saying why.
+	// NeverProbe denies one the verb rule would have allowed — a Get* that
+	// mutates — and may also restate a denial the verb rule already makes,
+	// in which case the sentence replaces the generated one in gaps.json,
+	// which is worth doing wherever the prose says more than "not a read".
+	// AllowProbe is the other direction: a non-read operation a human has
+	// judged safe to call against a live account with a curated,
+	// deliberately nonexistent identifier.
 	NeverProbe map[string]string `json:"neverProbe,omitempty"`
+	AllowProbe map[string]string `json:"allowProbe,omitempty"`
 	Resources  []resource        `json:"resources"`
 }
 
-// neverProbe reports whether the recipe forbids probing op, and why.
-func (r recipe) neverProbe(op string) (string, bool) {
-	reason, forbidden := r.NeverProbe[op]
-	return reason, forbidden
+// probeVerbs are the operation-name prefixes a probe is allowed to call. The
+// list is deliberately short: it is what AWS uses for an operation that only
+// reads, and a probe calls an operation the emulator does not implement, so
+// against a real account nothing undoes it. `smithy.api#readonly` would say
+// this outright, but cmd/awsmodelgen does not keep the trait, so the
+// committed snapshots do not carry it; widening the pruner's allowlist is
+// the pruner's own change to make (#1795 track A).
+var probeVerbs = []string{"Describe", "List", "Get"}
+
+// isReadVerb reports whether an operation's name begins with one of the read
+// verbs at a word boundary, so a `Listen*` or `Getaway*` operation is not
+// mistaken for a `List` or a `Get`.
+func isReadVerb(op string) bool {
+	for _, verb := range probeVerbs {
+		rest, ok := strings.CutPrefix(op, verb)
+		if !ok {
+			continue
+		}
+		if rest == "" {
+			return true
+		}
+		if c := rest[0]; (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			return true
+		}
+	}
+	return false
+}
+
+// notAReadOperation is the refusal a non-read operation gets when the recipe
+// says nothing about it. It is generated, so a recipe writes a sentence only
+// where it has something to add — what the call actually does — rather than
+// once per write operation the service models.
+func notAReadOperation(op string) string {
+	return op + " is not a read operation; probes call unimplemented operations against a live account and must be side-effect free"
+}
+
+// probeDecision says whether an operation may be probed and why. Probes are
+// default-deny: only a read verb, or an explicit allowProbe, gets through.
+func (r recipe) probeDecision(op string) (bool, string) {
+	if why, denied := r.NeverProbe[op]; denied {
+		return false, why
+	}
+	if why, allowed := r.AllowProbe[op]; allowed {
+		return true, why
+	}
+	if isReadVerb(op) {
+		return true, ""
+	}
+	return false, notAReadOperation(op)
 }
 
 // modelService is the shape-snapshot key: the model service name when it
@@ -236,6 +284,17 @@ func (r recipe) validate() error {
 	for _, op := range sortedStringKeys(r.NeverProbe) {
 		if strings.TrimSpace(r.NeverProbe[op]) == "" {
 			return fmt.Errorf("neverProbe.%s: say why the operation may never be probed; the reason is what gaps.json reports", op)
+		}
+	}
+	for _, op := range sortedStringKeys(r.AllowProbe) {
+		if strings.TrimSpace(r.AllowProbe[op]) == "" {
+			return fmt.Errorf("allowProbe.%s: say why calling the operation against a live account is safe; the reason is the whole of the exception", op)
+		}
+		if _, denied := r.NeverProbe[op]; denied {
+			return fmt.Errorf("%s is in both neverProbe and allowProbe; decide which", op)
+		}
+		if isReadVerb(op) {
+			return fmt.Errorf("allowProbe.%s: %s is already probeable — its name starts with a read verb — so the entry says nothing; delete it, or move it to neverProbe if it is not in fact a read", op, op)
 		}
 	}
 	ids := make(map[string]int, len(r.Resources))
