@@ -1274,15 +1274,30 @@ allow it, and even then a PR opened as `github-actions[bot]` starts no workflow
 runs — the PR would sit on required checks that never run. The App needs
 Contents: read & write and Pull requests: read & write, and nothing else.
 
-To regenerate locally, check out the revision recorded in
-`models/aws/VERSION`, then run:
+To regenerate locally you need a checkout of the revision recorded in
+`models/aws/VERSION`. `go run ./scripts/aws-models.go --ensure` fetches
+exactly that revision into a per-user cache (`os.UserCacheDir()`, not a
+directory inside the repo — this project routinely has ten or more worktrees
+checked out at once, and a fetch per worktree would mean that many copies of
+a large third-party tree) and prints the models directory on stdout, so it
+composes directly into `AWS_MODELS_DIR`:
 
 ```sh
 make generate-aws-operations \
-  AWS_MODELS_DIR=/path/to/api-models-aws/models
+  AWS_MODELS_DIR="$(go run ./scripts/aws-models.go --ensure)"
 make aws-models-check \
-  AWS_MODELS_DIR=/path/to/api-models-aws/models
+  AWS_MODELS_DIR="$(go run ./scripts/aws-models.go --ensure)"
 ```
+
+A cache hit touches no network — completeness is tracked by a sentinel file
+written only once a checkout fully succeeds, so an interrupted fetch is redone
+rather than trusted. Add `--service <name>` (repeatable) to fetch only that
+service's models via a sparse checkout, which widens in place if you ask for
+another service later; omit it for the full checkout the commands above need.
+`--prune` deletes cached revisions other than the one currently pinned. Pass
+`--source` (or set `OVERCAST_AWS_MODELS_SOURCE`) to point at a mirror instead
+of the public repository named in `models/aws/VERSION`. See
+`go run ./scripts/aws-models.go --help` for the rest of the flags.
 
 The generator rejects a checkout whose `HEAD` differs from the pin. Supplying
 `AWS_MODELS_DIR` to `aws-models-check` adds a byte-for-byte regeneration check;
