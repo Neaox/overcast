@@ -17,6 +17,7 @@ import (
 
 	"github.com/overcast-sh/overcast/internal/middleware"
 	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 const maxFunctionPolicyBytes = 20 * 1024
@@ -538,39 +539,10 @@ func parseResourcePolicy(raw string) (policyDocument, *protocol.AWSError) {
 
 // grantsPublicAccess reports whether a statement allows every principal without
 // narrowing it by a condition — AWS's own definition of a public policy, which
-// a function's block-public-access configuration refuses by default.
+// a function's block-public-access configuration refuses by default. The check
+// itself is shared with Secrets Manager's BlockPublicPolicy in serviceutil.
 func (s permissionStatement) grantsPublicAccess() bool {
-	if s.Effect != "Allow" || !principalIsWildcard(s.Principal) {
-		return false
-	}
-	// AWS's wording is "contains no condition keys", so an omitted Condition
-	// and an empty one narrow the statement equally little.
-	if conditions, ok := s.Condition.(map[string]any); ok {
-		return len(conditions) == 0
-	}
-	return s.Condition == nil
-}
-
-// principalIsWildcard recognises the spellings of "everyone" a policy document
-// may use: the bare "*", {"AWS": "*"}, and a list containing either.
-func principalIsWildcard(principal any) bool {
-	switch p := principal.(type) {
-	case string:
-		return p == "*"
-	case []any:
-		for _, item := range p {
-			if principalIsWildcard(item) {
-				return true
-			}
-		}
-	case map[string]any:
-		for _, value := range p {
-			if principalIsWildcard(value) {
-				return true
-			}
-		}
-	}
-	return false
+	return serviceutil.StatementGrantsPublicAccess(s.Effect, s.Principal, s.Condition)
 }
 
 func (h *Handler) validatePolicyTarget(ctx context.Context, identifier, name, qualifier string) (*Function, *protocol.AWSError) {
