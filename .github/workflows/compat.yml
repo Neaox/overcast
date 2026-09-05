@@ -188,7 +188,30 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          # Two commits, not the whole history. The only history this job has
+          # ever read is `git diff --name-only HEAD^1 HEAD` in "Detect
+          # rust-sdk image input changes" below, which needs HEAD and its
+          # first parent and nothing further back — the same shape, and the
+          # same reasoning, as test.yml's `version-guard`. On a `pull_request`
+          # HEAD is GitHub's refs/pull/N/merge, so HEAD^1 is the base tip and
+          # the diff is this pull request's own changes.
+          #
+          # The push branch of that step diffs github.event.before against
+          # github.sha instead. This repository squash-merges, so a push to
+          # main is one commit and `before` is HEAD^1 — in the clone at depth
+          # 2. It does not have to be, and it does not matter if it is not:
+          # on anything but a pull request the rebuild is decided by the
+          # `exists` check below, against a tag that is a content hash of the
+          # rust-sdk sources and both registry halves
+          # (compat/suites/rust-sdk/image-tag.sh). Changed inputs mean a tag
+          # nothing has published, so the image is built and pushed whatever
+          # the diff said. The path list is the *conservative* trigger — it
+          # also names .github/workflows/compat.yml, which the tag deliberately
+          # does not — and it is the pull-request path that relies on it.
+          #
+          # So nothing here wanted 1098 commits and a ~317 MiB pack; it wanted
+          # one parent.
+          fetch-depth: 2
 
       - name: Compute image tag
         id: tag

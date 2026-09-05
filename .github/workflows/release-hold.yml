@@ -51,6 +51,12 @@ jobs:
           # The PR's own changes are a three-dot diff from the base, so the
           # merge base has to be in the clone.
           fetch-depth: 0
+          # History, not content: the only git this job runs is
+          # `git diff --name-only --diff-filter=AM`, which reads trees and
+          # compares blob object ids without opening one. The fragments it
+          # then parses are read from the working tree. See the same filter on
+          # changelog-required.yml for the size this saves.
+          filter: blob:none
 
       # Fork PRs get no secrets, so they get no comment. The check still runs
       # and still fails with its reasons in the job summary — a fork PR cannot

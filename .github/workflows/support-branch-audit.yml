@@ -45,6 +45,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # The purest case for a blobless clone in the repository: every
+          # question below is a commit-graph question — `git tag --contains`,
+          # `git describe`, `git rev-list --count` — and not one of them opens
+          # a file. blob:none filters blobs only; tags, commits and trees all
+          # still arrive, so the audit sees exactly what it saw before.
+          filter: blob:none
 
       - name: Report support branches ahead of their last release
         run: |

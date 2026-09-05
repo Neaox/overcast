@@ -63,6 +63,15 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
+          # Only one step reads a file at another revision — `git show
+          # "$update_ref:models/aws/VERSION"`, a two-line file — and a partial
+          # clone fetches it on demand. Everything else is `git rev-parse`,
+          # `git fetch`, `git switch` onto a ref whose tree the checkout
+          # already materialised, and generator runs against the working tree.
+          # This is the mirror of api-models-aws being cloned below: the
+          # revision-pinned upstream mirror is the large fetch this job cares
+          # about, and it is already cached. Overcast's own blobs never were.
+          filter: blob:none
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:

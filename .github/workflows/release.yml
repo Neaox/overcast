@@ -46,7 +46,23 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Every tag, and the history behind them: "Decide floating Docker
+          # tags" asks `git tag` what has already shipped.
           fetch-depth: 0
+          # blob:none keeps all of that — tags, commits and trees are never
+          # filtered — and drops only file contents. Almost everything here is
+          # commit-graph work (`git tag`, `git merge-base --is-ancestor`,
+          # `git ls-remote`) or reads the working tree checkout already
+          # materialised (VERSION, CHANGELOG.md).
+          #
+          # The one step that genuinely wants blobs at other revisions is
+          # "Validate changelog against current main": `git merge-tree
+          # --write-tree` does a real content merge and `git archive` extracts
+          # the merged CHANGELOG.md and .changelog/. Those come back on
+          # demand, and they are the two smallest paths in the tree — the cost
+          # moves from an unconditional ~317 MiB pack on every run to a few
+          # kilobytes fetched only during a release window.
+          filter: blob:none
 
       - name: Read release version
         id: read
