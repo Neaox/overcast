@@ -882,3 +882,150 @@ func TestCreateStack_cloudTrailTrail_generatedBucketNameIsAValidS3Name(t *testin
 		t.Errorf("want a bucket name per trail, got %d: %v", len(generated), generated)
 	}
 }
+
+// arnResourceName returns the part of an ARN after its last colon — the
+// resource name for the "arn:partition:service:region:account:name"-shaped
+// ARNs SQS and SNS return as a Create handler's physical ID.
+func arnResourceName(arn string) string {
+	if i := strings.LastIndex(arn, ":"); i >= 0 {
+		return arn[i+1:]
+	}
+	return arn
+}
+
+// TestCreateStack_generatedNameOverflow_capsAtServiceLimit pins #1691: a
+// generated name ("{StackName}-{LogicalID}-{RANDOM}") is only ever capped at
+// generatedName's 255-character default unless a handler explicitly asks for
+// its service's own limit. A long stack name plus logical ID overflows a
+// tighter limit — S3's 63, SQS's 80, Lambda's 64, IAM's 64 — well before it
+// overflows 255, minting a name the real service would reject with
+// InvalidBucketName, InvalidParameterValue, or the equivalent, even though
+// Overcast itself accepted it.
+func TestCreateStack_generatedNameOverflow_capsAtServiceLimit(t *testing.T) {
+	// Given: a stack name and logical ID long enough together (141 chars) to
+	// overflow every per-service cap below, chosen from characters valid in
+	// every one of those services' name grammars.
+	longStack := strings.Repeat("a", 70)
+	longLogical := strings.Repeat("B", 70)
+
+	for _, tc := range []struct {
+		name       string
+		slug       string // stack-name-safe identifier for this case
+		logicalID  string
+		properties string
+		maxLen     int
+		lowercase  bool
+		fifo       bool
+		// physicalName extracts the service-visible name from the
+		// PhysicalResourceId DescribeStackResources reports.
+		physicalName func(physicalID string) string
+	}{
+		{
+			name:         "AWS::S3::Bucket",
+			slug:         "s3-bucket",
+			logicalID:    longLogical,
+			properties:   `{"Type": "AWS::S3::Bucket", "Properties": {}}`,
+			maxLen:       63,
+			lowercase:    true,
+			physicalName: func(physicalID string) string { return physicalID },
+		},
+		{
+			name:         "AWS::SQS::Queue",
+			slug:         "sqs-queue",
+			logicalID:    longLogical,
+			properties:   `{"Type": "AWS::SQS::Queue", "Properties": {}}`,
+			maxLen:       80,
+			physicalName: arnResourceName,
+		},
+		{
+			name:         "AWS::SQS::Queue FIFO",
+			slug:         "sqs-queue-fifo",
+			logicalID:    longLogical,
+			properties:   `{"Type": "AWS::SQS::Queue", "Properties": {"FifoQueue": true}}`,
+			maxLen:       80,
+			fifo:         true,
+			physicalName: arnResourceName,
+		},
+		{
+			name:         "AWS::SNS::Topic",
+			slug:         "sns-topic",
+			logicalID:    longLogical,
+			properties:   `{"Type": "AWS::SNS::Topic", "Properties": {}}`,
+			maxLen:       256,
+			physicalName: arnResourceName,
+		},
+		{
+			name:      "AWS::Lambda::Function",
+			slug:      "lambda-function",
+			logicalID: longLogical,
+			properties: `{
+        "Type": "AWS::Lambda::Function",
+        "Properties": {
+          "Runtime": "nodejs20.x",
+          "Handler": "index.handler",
+          "Role": "arn:aws:iam::000000000000:role/lambda-role",
+          "Code": {"ZipFile": "exports.handler = async () => ({});"}
+        }
+      }`,
+			maxLen:       64,
+			physicalName: func(physicalID string) string { return physicalID },
+		},
+		{
+			name:      "AWS::IAM::Role",
+			slug:      "iam-role",
+			logicalID: longLogical,
+			properties: `{
+        "Type": "AWS::IAM::Role",
+        "Properties": {
+          "AssumeRolePolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [{"Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]
+          }
+        }
+      }`,
+			maxLen:       64,
+			physicalName: func(physicalID string) string { return physicalID },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := helpers.NewTestServer(t)
+			stackName := longStack + "-" + tc.slug
+			template := fmt.Sprintf(`{"Resources": {%q: %s}}`, tc.logicalID, tc.properties)
+
+			create := cfnQuery(t, srv, "CreateStack", url.Values{
+				"StackName":    {stackName},
+				"TemplateBody": {template},
+			})
+			defer create.Body.Close()
+			helpers.AssertStatus(t, create, http.StatusOK)
+
+			status := waitForStackStatusIn(t, srv, stackName,
+				"CREATE_COMPLETE", "CREATE_FAILED", "ROLLBACK_COMPLETE", "ROLLBACK_IN_PROGRESS")
+			if status != "CREATE_COMPLETE" {
+				t.Fatalf("stack status = %s, want CREATE_COMPLETE; reasons:\n%s",
+					status, strings.Join(describeStackEventReasons(t, srv, stackName), "\n"))
+			}
+
+			physID := describeStackResourceIDs(t, srv, stackName)[tc.logicalID]
+			if physID == "" {
+				t.Fatal("resource has no physical ID")
+			}
+			got := tc.physicalName(physID)
+
+			// Then: the generated name respects the service's own limit, not
+			// just generatedName's 255-character default.
+			if len(got) > tc.maxLen {
+				t.Errorf("generated name %q is %d characters, want at most %d (service limit)", got, len(got), tc.maxLen)
+			}
+			if tc.lowercase && got != strings.ToLower(got) {
+				t.Errorf("generated name %q is not lowercase", got)
+			}
+			if strings.HasSuffix(got, "-") {
+				t.Errorf("generated name %q ends with a hyphen", got)
+			}
+			if tc.fifo && !strings.HasSuffix(got, ".fifo") {
+				t.Errorf("generated FIFO queue name %q does not end with .fifo", got)
+			}
+		})
+	}
+}

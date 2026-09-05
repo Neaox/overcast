@@ -3484,8 +3484,16 @@ func (h *sqsQueueHandler) Update(ctx context.Context, router http.Handler, cfg *
 func (h *sqsQueueHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	queueName, _ := props["QueueName"].(string)
 	if queueName == "" {
-		queueName = rCtx.generatedName()
-		if asBool(props["FifoQueue"]) {
+		max := maxNameLenSQS
+		fifo := asBool(props["FifoQueue"])
+		if fifo {
+			// ".fifo" is mandatory on a FIFO queue name and counts toward
+			// SQS's 80-character limit, so it has to come out of the budget
+			// generatedNameWithin truncates to, not be appended after.
+			max -= len(".fifo")
+		}
+		queueName = rCtx.generatedNameWithin(max)
+		if fifo {
 			queueName += ".fifo"
 		}
 	}
@@ -3788,7 +3796,7 @@ func (h *snsTopicHandler) Update(ctx context.Context, router http.Handler, cfg *
 func (h *snsTopicHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	topicName, _ := props["TopicName"].(string)
 	if topicName == "" {
-		topicName = rCtx.generatedName()
+		topicName = rCtx.generatedNameWithin(maxNameLenSNS)
 	}
 
 	params := map[string]string{
@@ -3971,7 +3979,7 @@ func (h *s3BucketHandler) Create(ctx context.Context, router http.Handler, cfg *
 		// lets a template supply only the customer-chosen part.
 		bucketName = *decoded.BucketNamePrefix + serviceutil.AccountRegionalBucketSuffix(rCtx.AccountID, rCtx.Region)
 	case bucketName == "":
-		bucketName = strings.ToLower(rCtx.generatedName())
+		bucketName = rCtx.generatedNameLowerWithin(maxNameLenS3)
 	}
 
 	var extraHeaders []http.Header
@@ -4699,7 +4707,7 @@ var lambdaCreateFunctionForwardedProperties = []string{
 func (h *lambdaFunctionHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	funcName, _ := props["FunctionName"].(string)
 	if funcName == "" {
-		funcName = rCtx.generatedName()
+		funcName = rCtx.generatedNameWithin(maxNameLenLambda)
 	}
 	if err := checkLambdaFunctionAuxiliaryPropertySupport(props, nil); err != nil {
 		return "", nil, err
@@ -5455,7 +5463,7 @@ func (h *iamRoleHandler) Create(ctx context.Context, router http.Handler, _ *con
 	}
 	roleName, _ := props["RoleName"].(string)
 	if roleName == "" {
-		roleName = rCtx.generatedName()
+		roleName = rCtx.generatedNameWithin(maxNameLenIAM)
 	}
 	assumePolicy := "{}"
 	if ap, ok := props["AssumeRolePolicyDocument"]; ok {
