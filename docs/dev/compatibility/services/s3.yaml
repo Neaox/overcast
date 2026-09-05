@@ -11,9 +11,10 @@ operation_count_estimate: 61 registered; 53 supported, 8 unsupported
 current_support_level: Broad core S3 support; ACL, select, restore, and optional bucket-configuration fields remain incomplete.
 operations:
   ListObjectsV2:
-    status: fixed
+    status: reviewed
     aws_docs:
       - https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjects.html
     implementation:
       - internal/services/s3/handler_bucket.go
     tests:
@@ -28,6 +29,40 @@ operations:
       - tests/integration/s3/s3_test.go::TestListObjectsV2_continuationToken_resumesFromCorrectKey
       - tests/integration/s3/s3_test.go::TestListObjectsV2_continuationToken_lastPage_isNotTruncated
       - tests/integration/s3/s3_test.go::TestListObjectsV2_startAfter
+      - tests/integration/s3/s3_test.go::TestListObjectsV2_invalidContinuationToken_returnsInvalidArgument
+      - tests/integration/s3/s3_test.go::TestListObjectsV2_delimiterHeavyBucket_paginationWalkMatchesFullListing
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjectsV2_maxKeysZero_returnsEmptyUntruncatedPage
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjectsV2_maxKeysNegative_returnsInvalidArgument
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjectsV2_maxKeysNonNumeric_returnsInvalidArgument
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjectsV2_maxKeysAboveInt32Range_returnsInvalidArgument
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjectsV2_maxKeysAbovePageLimit_clampsToOneThousand
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjectsV2_maxKeysOmitted_defaultsToOneThousand
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjectsV2_encodingTypeURL_percentEncodesKeysAndPrefixes
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjectsV2_encodingTypeURL_percentEncodesPrefixDelimiterAndStartAfter
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjectsV2_encodingTypeOmitted_returnsRawKeysAndNoEncodingType
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjectsV2_encodingTypeInvalid_returnsInvalidArgument
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjectsV2_fetchOwnerTrue_includesOwnerPerKey
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjectsV2_fetchOwnerOmitted_omitsOwner
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjectsV2_fetchOwnerFalse_omitsOwner
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjectsV2_requestPayerHeader_isAcceptedAndNotCharged
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjectsV2_optionalObjectAttributes_isAcceptedAndOmitsRestoreStatus
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjectsV2_continuationTokenWithStartAfter_tokenSetsPosition
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjects_maxKeysZero_returnsEmptyUntruncatedPage
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjects_maxKeysInvalid_returnsInvalidArgument
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjects_encodingTypeURL_percentEncodesKeysAndPrefixes
+      - tests/integration/s3/s3_list_objects_params_test.go::TestListObjects_encodingTypeInvalid_returnsInvalidArgument
+      - tests/integration/s3/s3_expected_bucket_owner_test.go
+    evidence: >-
+      The API reference Errors section lists only NoSuchBucket, so parameter
+      validation was cross-checked against the two suites whose expectations are
+      verified against real S3: Ceph s3-tests (test_bucket_listv2_maxkeys_zero,
+      test_bucket_list_maxkeys_invalid, test_bucket_listv2_encoding_basic,
+      test_bucket_listv2_fetchowner_*, and
+      test_bucket_listv2_both_continuationtoken_startafter) and Versity's
+      conformance suite (ListObjectsV2_exceeding_max_keys, which sends
+      max-keys=233453333 and asserts MaxKeys == 1000). Ceph RGW and OpenStack
+      Swift's s3api corroborate the InvalidArgument messages, which the AWS
+      reference does not print.
     scenarios:
       - name: default empty bucket
         status: tested and matching AWS docs
@@ -35,35 +70,279 @@ operations:
         status: tested and matching AWS docs
       - name: prefix filtering
         status: tested and matching AWS docs
-      - name: delimiter common-prefix grouping
+      - name: delimiter common-prefix grouping and KeyCount
         status: tested and matching AWS docs
+        notes: >-
+          A rolled-up CommonPrefix counts as one entry against MaxKeys and
+          KeyCount, per "All of the keys that roll up into a common prefix count
+          as a single return".
       - name: missing bucket
         status: tested and matching AWS docs
       - name: max-keys truncation and continuation-token pagination
         status: tested and matching AWS docs for claimed opaque-token support
-      - name: start-after filtering and response echo
+      - name: max-keys omitted defaults to 1000
+        status: tested and matching AWS docs
+      - name: max-keys=0 returns an empty untruncated page
         status: fixed
-      - name: fetch-owner owner elements
+        notes: >-
+          Previously a 500 - the handler sliced the page to empty and then
+          indexed entries[len-1] to build NextContinuationToken.
+      - name: max-keys negative
+        status: fixed
+        notes: >-
+          Previously a 500 from a negative slice bound; now InvalidArgument/400
+          ("Argument max-keys must be an integer between 0 and 2147483647").
+      - name: max-keys non-numeric or beyond int32
+        status: fixed
+        notes: >-
+          Previously replaced silently by the 1000 default; now
+          InvalidArgument/400 ("Provided max-keys not an integer or within
+          integer range").
+      - name: max-keys above 1000 clamps and echoes the clamped MaxKeys
+        status: fixed
+      - name: max-keys supplied but empty
         status: intentionally_partial
-        gap: Not implemented; owner metadata is not returned.
+        gap: >-
+          Treated as omitted. Swift rejects it and Ceph defaults it, the AWS
+          reference does not say, and no SDK emits it, so Overcast keeps the
+          permissive reading its other query helpers use.
+      - name: start-after filtering and response echo
+        status: tested and matching AWS docs
+      - name: continuation-token precedence over start-after
+        status: tested and matching AWS docs
+        notes: The token decides the page position and StartAfter is still echoed.
+      - name: malformed continuation-token
+        status: tested and matching AWS docs
+        notes: InvalidArgument/400 rather than a silent restart from page 1.
+      - name: continuation-token or start-after supplied but empty
+        status: intentionally_partial
+        gap: >-
+          An explicitly empty value is treated as absent, so the element is
+          omitted from the response where real S3 echoes an empty one.
+          ContinuationToken and StartAfter are omitempty strings, not pointers.
       - name: encoding-type=url percent-encoding
+        status: fixed
+        notes: >-
+          Key, Prefix, Delimiter, StartAfter and CommonPrefixes are
+          percent-encoded over UTF-8 with "/" left literal, and EncodingType is
+          echoed. Matches s3-tests exactly - "+" to %2B, space to %20, Delimiter
+          "/" unchanged. ContinuationToken and NextContinuationToken are not
+          encoded, matching what the SDKs decode.
+      - name: encoding-type with an unsupported value
+        status: fixed
+        notes: InvalidArgument/400, "Invalid Encoding Method specified in Request".
+      - name: encoding-type letter case
         status: intentionally_partial
-        gap: Not implemented; keys are returned as stored.
+        gap: >-
+          Only the lowercase "url" the model documents is accepted. Ceph RGW
+          compares case-insensitively; real S3 is unverified, so Overcast is the
+          stricter of the two.
+      - name: fetch-owner owner elements
+        status: fixed
+        notes: >-
+          fetch-owner=true adds Owner (the single Overcast account) to each
+          entry; absent by default and for fetch-owner=false. Any value other
+          than "true" reads as false, since AWS documents no error for a
+          non-boolean.
+      - name: ListObjects v1 per-object Owner
+        status: intentionally_partial
+        gap: >-
+          Real ListObjects returns Owner on every entry with no opt-in. Overcast
+          omits it there; only ListObjectsV2's fetch-owner is implemented.
       - name: request-payer and request-charged
         status: intentionally_partial
-        gap: Requester Pays headers are not implemented.
+        gap: >-
+          x-amz-request-payer is accepted and ignored and x-amz-request-charged
+          is never returned, which is correct for a bucket that is not Requester
+          Pays. Requester Pays itself is unsupported - Get/PutBucketRequestPayment
+          return 501 - so no bucket here can be one.
       - name: optional-object-attributes RestoreStatus
         status: intentionally_partial
-        gap: RestoreStatus is not implemented.
+        gap: >-
+          x-amz-optional-object-attributes is accepted and no RestoreStatus
+          element is produced, which matches AWS for an object that was never
+          restored. RestoreObject is unimplemented, so no object here can have
+          one.
+      - name: ChecksumAlgorithm and ChecksumType on Contents
+        status: intentionally_partial
+        gap: >-
+          The Object shape carries both; Overcast returns Key, LastModified,
+          ETag, Size, StorageClass and, with fetch-owner, Owner only.
+      - name: x-amz-expected-bucket-owner
+        status: tested and matching AWS docs
+        notes: >-
+          Enforced by the shared guard in expected_owner.go, covered by
+          s3_expected_bucket_owner_test.go.
+      - name: InvalidArgument ArgumentName and ArgumentValue elements
+        status: intentionally_partial
+        gap: >-
+          Real S3 returns ArgumentName and ArgumentValue alongside Code and
+          Message. protocol.AWSError carries no fields for them, so every S3
+          InvalidArgument in Overcast omits both; widening the shared error type
+          is out of this review's scope.
       - name: directory buckets, access points, and S3 on Outposts
         status: unsupported
-        gap: Overcast supports general purpose bucket paths only.
+        gap: >-
+          Overcast serves general purpose bucket paths only. It has no S3 Express
+          zonal endpoint, so the directory-bucket differences the reference calls
+          out - non-lexicographic ordering, in-progress-multipart prefixes in
+          CommonPrefixes, "/" as the only delimiter, prefixes required to end in
+          a delimiter, no start-after, and the bucket owner returned as every
+          object's owner - are recorded rather than emulated.
     findings:
       fixed:
-        - start-after was ignored and StartAfter was omitted from successful responses; fixed in this session.
+        - start-after was ignored and StartAfter was omitted from successful responses.
+        - max-keys=0 and any negative max-keys returned 500 InternalError from a slice panic (#172).
+        - A non-numeric or out-of-int32 max-keys was silently replaced by the 1000 default, and a value above 1000 was honoured verbatim (#172).
+        - encoding-type=url and fetch-owner were accepted and ignored (#173).
       remaining_gaps:
-        - Validate max-keys boundary and malformed values against AWS behavior.
-        - Review encoding-type=url, fetch-owner, requester-pays, optional-object-attributes, and directory bucket caveats before marking reviewed.
+        - Per-object ChecksumAlgorithm and ChecksumType are not returned.
+        - ListObjects v1 does not return the per-object Owner AWS always includes.
+        - An explicitly empty continuation-token, start-after or max-keys is treated as absent rather than echoed or validated.
+        - InvalidArgument responses omit the ArgumentName and ArgumentValue elements real S3 returns.
+  PutBucketTagging:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketTagging.html
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketTagging.html
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketTagging.html
+      - https://docs.aws.amazon.com/AmazonS3/latest/userguide/CostAllocTagging.html
+    implementation:
+      - internal/services/s3/handler_tagging.go
+    tests:
+      - tests/integration/s3/s3_test.go::TestPutBucketTagging_success
+      - tests/integration/s3/s3_test.go::TestGetBucketTagging_success
+      - tests/integration/s3/s3_test.go::TestGetBucketTagging_noTags
+      - tests/integration/s3/s3_test.go::TestDeleteBucketTagging_success
+      - tests/integration/s3/s3_cdk_bootstrap_test.go::TestPutBucketTagging_emptyTagSet_clearsTagSet
+      - tests/integration/s3/s3_cdk_bootstrap_test.go::TestPutBucketTagging_duplicateKeys_returnsInvalidTag
+      - tests/integration/s3/s3_cdk_bootstrap_test.go::TestPutBucketTagging_tagKeyOutOfRange_returnsInvalidTag
+      - tests/integration/s3/s3_cdk_bootstrap_test.go::TestPutBucketTagging_tagValueLength
+      - tests/integration/s3/s3_cdk_bootstrap_test.go::TestPutBucketTagging_tagCountLimit
+      - tests/integration/s3/s3_cdk_bootstrap_test.go::TestPutObjectTagging_limits
+      - tests/integration/s3/s3_cdk_bootstrap_test.go::TestBucketSubresources_noSuchBucket
+    evidence: >-
+      Limits come from the S3 User Guide's cost-allocation tag page - "A tag set
+      can contain as many as 50 tags, or it can be empty. Keys must be unique
+      within a tag set", a key of "1 to 128 Unicode characters", a value of "0
+      to 256 Unicode characters". The API reference names InvalidTag as one of
+      PutBucketTagging's special errors without printing messages; the message
+      text and the BadRequest code for the count limit come from Versity's AWS
+      conformance suite.
+    scenarios:
+      - name: tag set round trip
+        status: tested and matching AWS docs
+      - name: empty tag set clears the tag set
+        status: tested and matching AWS docs
+        notes: GetBucketTagging then answers NoSuchTagSet, the untagged state.
+      - name: duplicate tag keys
+        status: fixed
+        notes: >-
+          Previously collapsed into a map, keeping the last value; now
+          InvalidTag/400 ("Cannot provide multiple Tags with the same key").
+      - name: tag key outside 1-128 characters
+        status: fixed
+        notes: InvalidTag/400. Counted in runes, as AWS counts Unicode characters.
+      - name: tag value over 256 characters
+        status: fixed
+        notes: InvalidTag/400. An empty value stays legal.
+      - name: more than 50 bucket tags or 10 object tags
+        status: fixed
+        notes: BadRequest/400, not InvalidTag - no individual tag is at fault.
+      - name: missing bucket
+        status: tested and matching AWS docs
+      - name: tag character set
+        status: intentionally_partial
+        gap: >-
+          The only place AWS writes the allowed character set down is the S3
+          Control Tag shape's pattern, so the character set is not validated
+          rather than approximated from a different service's model.
+      - name: ABAC-enabled buckets
+        status: unsupported
+        gap: >-
+          AWS refuses PutBucketTagging and DeleteBucketTagging once ABAC is
+          enabled on a bucket and requires TagResource/UntagResource instead.
+          Overcast implements neither ABAC nor S3 Control tagging.
+      - name: Content-MD5 and x-amz-sdk-checksum-algorithm
+        status: intentionally_partial
+        gap: The integrity headers are accepted and not verified for this operation.
+    findings:
+      fixed:
+        - A tag set repeating a key silently kept the last value; the 50/10 tag counts and the key and value length limits were unchecked (#175).
+      remaining_gaps:
+        - Tag character set is not validated.
+        - ABAC and the S3 Control TagResource/UntagResource path are unimplemented.
+  PutBucketPolicy:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketPolicy.html
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketPolicy.html
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketPolicy.html
+    implementation:
+      - internal/services/s3/handler_bucket.go
+    tests:
+      - tests/integration/s3/s3_test.go::TestPutBucketPolicy_success
+      - tests/integration/s3/s3_test.go::TestPutBucketPolicy_noSuchBucket
+      - tests/integration/s3/s3_test.go::TestPutBucketPolicy_emptyBody
+      - tests/integration/s3/s3_test.go::TestGetBucketPolicy_success
+      - tests/integration/s3/s3_test.go::TestGetBucketPolicy_noPolicySet
+      - tests/integration/s3/s3_test.go::TestGetBucketPolicy_noSuchBucket
+      - tests/integration/s3/s3_test.go::TestDeleteBucketPolicy_success
+      - tests/integration/s3/s3_test.go::TestDeleteBucketPolicy_noPolicySet
+      - tests/integration/s3/s3_cdk_bootstrap_test.go::TestPutBucketPolicy_notJSON_returnsMalformedPolicy
+      - tests/integration/s3/s3_cdk_bootstrap_test.go::TestPutBucketPolicy_replacesPreviousPolicy
+      - tests/integration/s3/s3_cdk_bootstrap_test.go::TestCDKBootstrapBucket_flow
+    scenarios:
+      - name: policy round trip, returned as application/json
+        status: tested and matching AWS docs
+      - name: policy replaced rather than merged
+        status: tested and matching AWS docs
+      - name: empty, non-JSON or over-20KB body
+        status: tested and matching AWS docs
+        notes: MalformedPolicy/400.
+      - name: missing bucket, and GET with no policy set
+        status: tested and matching AWS docs
+        notes: NoSuchBucket/404 and NoSuchBucketPolicy/404.
+      - name: policy document semantics
+        status: intentionally_partial
+        gap: >-
+          Any syntactically valid JSON is stored. Real S3 rejects a document that
+          is not a valid policy - a missing Statement, an unknown Effect, a
+          Resource ARN that does not name this bucket - and Overcast neither
+          validates nor evaluates the policy, so no request is ever authorised or
+          denied by one.
+      - name: x-amz-confirm-remove-self-bucket-access
+        status: unsupported
+        gap: >-
+          The header is ignored; with no policy evaluation there is no
+          self-lockout to confirm.
+      - name: GetBucketPolicyStatus IsPublic
+        status: intentionally_partial
+        gap: Derived without policy evaluation; tracked separately from this review.
+    findings:
+      remaining_gaps:
+        - Bucket policies are stored and returned but never evaluated, so they authorise nothing.
+        - Policy documents are checked for valid JSON only, not for valid policy structure.
+  PublicAccessBlock:
+    status: unsupported
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutPublicAccessBlock.html
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetPublicAccessBlock.html
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeletePublicAccessBlock.html
+    implementation:
+      - internal/services/s3/handler_stubs.go
+    tests:
+      - tests/integration/s3/s3_test.go::TestS3_UnimplementedOperations_return501
+    scenarios:
+      - name: CDK bootstrap staging bucket public-access block
+        status: unsupported
+        gap: >-
+          Put/Get/DeletePublicAccessBlock return 501. The CDK bootstrap template
+          sets all four settings to true on its staging bucket; CloudFormation
+          accepts that shape and stores nothing, so a bootstrap succeeds, but a
+          client calling the S3 API directly gets an honest 501 rather than a
+          configuration Overcast would not enforce. Enforcing it needs ACL and
+          policy evaluation, neither of which exists.
   PutBucketVersioning:
     status: fixed
     aws_docs:
@@ -418,6 +697,9 @@ operations:
         notes: Returns 204 and subsequent GetBucketWebsite returns NoSuchWebsiteConfiguration.
 findings:
   fixed:
+    - ListObjectsV2/ListObjects max-keys is validated: 0 and negative values returned 500 InternalError from a slice panic, a malformed value was silently replaced by the 1000 default, and a value above 1000 was honoured verbatim (#172).
+    - ListObjectsV2/ListObjects support encoding-type=url and ListObjectsV2 supports fetch-owner; both were previously accepted and ignored (#173, #174).
+    - PutBucketTagging/PutObjectTagging enforce AWS's tag-set limits instead of collapsing duplicate keys into a map and accepting any count or length (#175).
     - PutBucketNotificationConfiguration preserves EventBridgeConfiguration and publishes object events to the default event bus (#635).
     - PutBucketWebsite/GetBucketWebsite preserve RedirectAllRequestsTo and RoutingRules and enforce AWS's mutual exclusion (#637).
     - PutBucketLifecycleConfiguration honours x-amz-transition-default-minimum-object-size, reports it on Put and Get, and gates sub-128 KB transitions on it (#636).
@@ -428,15 +710,20 @@ findings:
     - CloudFormation AWS::S3::Bucket uses the S3 handlers for lifecycle, versioning, notifications, encryption, tags, CORS, and website configuration.
     - GetObject, GetObjectTagging and CopyObject's source lookup now answer NoSuchBucket for a bucket that does not exist, instead of NoSuchKey (#1635); HeadObject is wire-identical either way per AWS's own documented HEAD limitation.
   remaining_gaps:
-    - Finish ListObjectsV2 optional-parameter review before marking the operation reviewed.
-    - Verify CDK bootstrap bucket flows and policy/versioning/tagging edge cases.
+    - Bucket policies are stored and returned but never evaluated, so a policy authorises and denies nothing.
+    - PublicAccessBlock, RequesterPays and OwnershipControls return 501, so the CDK bootstrap template's public-access block is accepted by CloudFormation and unavailable over the S3 API.
+    - ListObjects (v1) omits the per-object Owner element AWS always returns, and per-object ChecksumAlgorithm/ChecksumType are absent from both listings.
+    - S3 InvalidArgument responses omit the ArgumentName and ArgumentValue elements real S3 returns, because protocol.AWSError has no fields for them.
     - CORS rule Id and encryption BlockedEncryptionTypes are not represented by the current stored/wire models.
     - CopyObject does not yet honour If-None-Match or If-Match, which AWS accepts on it alongside PutObject and CompleteMultipartUpload (#1678).
   intentionally_partial:
+    - Requester Pays and archive restore are unimplemented, so ListObjectsV2 accepts x-amz-request-payer and x-amz-optional-object-attributes and returns neither x-amz-request-charged nor RestoreStatus - which is what AWS returns for a bucket that is not Requester Pays and an object that was never restored.
+    - Directory buckets, access points and S3 on Outposts are out of scope; the ListObjectsV2 differences AWS documents for them are recorded in that operation's scenarios rather than emulated.
+    - Tag character sets are not validated: the only place AWS writes the pattern down is the S3 Control Tag shape, and guessing a Unicode class wrong would reject tags real S3 accepts.
     - EventBridge object-event detail omits request-id, requester and source-ip-address, which Overcast has no truthful value for; version-id and sequencer are now populated from the object version history (#645), and only Object Created and Object Deleted are emitted.
     - Website configuration is stored and returned in full, but Overcast serves no S3 website endpoint, so no request is redirected; Redirect HttpRedirectCode values are stored without validation because the model does not pin AWS's error.
     - GetObjectAttributes, RestoreObject and SelectObjectContent remain unimplemented, so no version-aware behaviour is claimed for them.
 handoff:
-  start_with: [ListObjectsV2 max-keys validation, ListObjectsV2 encoding-type, PutBucketPolicy, CDK bootstrap, issue 635, issue 636, issue 637]
-  do_not_redo: [ListObjectsV2 start-after, ListObjectsV2 continuation-token happy path, DeleteBucketCors, DeleteBucketWebsite, PutBucketVersioning status validation, CloudFormation S3 bucket seven-property dispatch, object version history and noncurrent lifecycle execution]
+  start_with: [ListObjects v1 per-object Owner, per-object ChecksumAlgorithm/ChecksumType on both listings, bucket policy document validation and evaluation, PublicAccessBlock, ListObjectVersions and ListMultipartUploads encoding-type, ListParts/ListMultipartUploads max-parts and max-uploads validation, issue 635, issue 636, issue 637]
+  do_not_redo: [ListObjectsV2 optional-parameter review, ListObjectsV2 max-keys validation, ListObjectsV2/ListObjects encoding-type, ListObjectsV2 fetch-owner, ListObjectsV2 start-after, ListObjectsV2 continuation-token, bucket and object tag-set limits, CDK bootstrap bucket flow, DeleteBucketCors, DeleteBucketWebsite, PutBucketVersioning status validation, CloudFormation S3 bucket seven-property dispatch, object version history and noncurrent lifecycle execution]
   commands: [go test -count=1 ./internal/services/s3/... ./tests/integration/s3/...]
