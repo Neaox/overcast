@@ -264,7 +264,7 @@
       "suite": "dotnet-sdk",
       "service": "ec2",
       "group": "ec2-instances",
-      "tests": 9
+      "tests": 10
     },
     {
       "suite": "dotnet-sdk",
@@ -1626,7 +1626,7 @@
       "suite": "rust-sdk",
       "service": "ec2",
       "group": "ec2-instances",
-      "tests": 9
+      "tests": 10
     },
     {
       "suite": "rust-sdk",

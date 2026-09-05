@@ -1818,6 +1818,13 @@
       "suite": "go-sdk",
       "service": "ec2",
       "group": "ec2-instances",
+      "test": "RunInstancesHonoursPlacementAvailabilityZone",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "ec2",
+      "group": "ec2-instances",
       "test": "StartInstances",
       "status": "pass"
     },

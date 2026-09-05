@@ -2083,6 +2083,13 @@
           "name": "RunInstances"
         },
         {
+          "name": "RunInstancesHonoursPlacementAvailabilityZone",
+          "op": "RunInstances",
+          "depends": [
+            "RunInstances"
+          ]
+        },
+        {
           "name": "DescribeInstances",
           "depends": [
             "RunInstances"

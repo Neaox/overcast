@@ -2063,6 +2063,13 @@
       "suite": "dotnet-sdk",
       "service": "ec2",
       "group": "ec2-instances",
+      "test": "RunInstancesHonoursPlacementAvailabilityZone",
+      "status": "skip"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "ec2",
+      "group": "ec2-instances",
       "test": "StartInstances",
       "status": "skip"
     },
