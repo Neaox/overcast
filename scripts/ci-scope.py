@@ -9,9 +9,9 @@ the Go suite, the SPA build and the image builds are the bulk of a CI run.
 
 Why this is a classifier and not a `paths-ignore:` on the workflow
 ------------------------------------------------------------------
-Nine of test.yml's jobs are in the branch ruleset's required set, and a
-required check that never reports leaves the pull request waiting on it
-forever. `paths-ignore:` skips the whole workflow, so those checks would never
+Fourteen of test.yml's jobs are in the branch ruleset's required set (the
+list is kept in test.yml's own header comment), and a required check that
+never reports leaves the pull request waiting on it forever. `paths-ignore:` skips the whole workflow, so those checks would never
 report at all.
 
 The obvious repair — a twin "skip" workflow declaring the same job names — is

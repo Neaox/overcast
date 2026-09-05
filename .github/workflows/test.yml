@@ -288,10 +288,11 @@ jobs:
         run: go mod download
 
       # The Docker-gated Lambda tests need the in-container init embedded in the
-      # binary under test; it is build output, not a committed file.
-      - name: Build the Lambda init
+      # binary under test; it is build output, not a committed file. The
+      # composite restores it from a content-addressed cache and rebuilds only
+      # when its inputs moved (see .github/actions/lambda-init).
+      - uses: ./.github/actions/lambda-init
         if: needs.changes.outputs.code == 'true'
-        run: make lambda-init
 
       # The suite pulls images (registry:2, alpine, postgres, redis, …) for the
       # Docker-backed services. Mirror them so the pulls do not compete for the
@@ -399,9 +400,8 @@ jobs:
         run: go vet -tags ${{ matrix.tags }} ./...
 
       # -tags slim does not drop the Lambda init: slim images run Lambda.
-      - name: Build the Lambda init
+      - uses: ./.github/actions/lambda-init
         if: needs.changes.outputs.code == 'true'
-        run: make lambda-init
 
       - uses: ./.github/actions/docker-hub-mirror
         if: needs.changes.outputs.code == 'true'
@@ -468,15 +468,18 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # The init first, from cache where its inputs have not moved: the binary
+      # below embeds it, and this job exists to invoke a function that needs it.
+      - uses: ./.github/actions/lambda-init
+        if: needs.changes.outputs.code == 'true'
+
       # Built here rather than in a container, and with the tags the released
       # overcastd binary carries, so this is the artifact a user runs.
       - name: Build the binary natively
         if: needs.changes.outputs.code == 'true'
         env:
           CGO_ENABLED: "0"
-        run: |
-          make lambda-init
-          go build -tags slim,nosqlite -o bin/overcast ./cmd/overcast
+        run: go build -tags slim,nosqlite -o bin/overcast ./cmd/overcast
 
       - uses: ./.github/actions/docker-hub-mirror
         if: needs.changes.outputs.code == 'true'
@@ -914,7 +917,7 @@ jobs:
         run: python3 scripts/changelog.py check
 
   # Two jobs in one: this was "Docs and capability registry" (make docs-check,
-  # 23 s) and "AWS operation coverage" (make aws-models-check, 88 s), and each
+  # 23 s) and "AWS operation coverage" (make aws-models-check-ci since #1780, 88 s), and each
   # was a checkout, a setup-go and one `make` target over the same module. The
   # second was paying a runner start and a module download for its 88 s of
   # work. Both former check names survive as step names, which is where a

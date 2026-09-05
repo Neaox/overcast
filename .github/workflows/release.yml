@@ -229,11 +229,11 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # Release-candidate detection is one predicate, shared with the CI
-      # workflow's release-gate job: the checked-out VERSION has no v<VERSION>
-      # tag yet. A "did this PR change VERSION" diff was used here before, and
-      # it went blind in exactly the case that matters most — a follow-up PR
-      # after a failed release workflow, when the unreleased version already
-      # sits on main and the changelog still has to hold.
+      # workflow's `changes` job (its `rc` step): the checked-out VERSION has no
+      # v<VERSION> tag yet. A "did this PR change VERSION" diff was used here
+      # before, and it went blind in exactly the case that matters most — a
+      # follow-up PR after a failed release workflow, when the unreleased
+      # version already sits on main and the changelog still has to hold.
       - name: Check release candidate
         id: pr-changes
         if: github.event_name == 'pull_request'

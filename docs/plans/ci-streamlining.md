@@ -280,8 +280,8 @@ is deliberately short — editing a published doc also regenerates
 not matched, so a docs change that touches the index still runs the suites.
 
 **`test.yml` is gated rather than filtered**, and the difference is the whole
-design. A `paths-ignore:` would stop those nine required checks reporting at
-all. The obvious repair — a twin workflow declaring the same job names on the
+design. A `paths-ignore:` would stop the required checks (nine then, fourteen
+now) reporting at all. The obvious repair — a twin workflow declaring the same job names on the
 inverse filter — is broken for the mixed case: GitHub skips on `paths-ignore`
 only when *every* changed file matches but runs on `paths` when *any* one does,
 so a pull request touching a doc and a handler satisfies both and two runs
