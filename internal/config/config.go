@@ -540,7 +540,6 @@ type Config struct {
 	// Default false. Corresponds to env var
 	// OVERCAST_ENFORCE_APIGATEWAY_THROTTLE.
 	EnforceAPIGatewayThrottle bool
-
 	// EnforceAppSyncCognitoAuth turns AppSync's AMAZON_COGNITO_USER_POOLS
 	// authorization from a bearer-token presence check into real verification
 	// against the local Cognito user pool the API is configured with: RS256
@@ -550,6 +549,16 @@ type Config struct {
 	// behaviour resolver tests that mint unsigned JWTs depend on. Corresponds
 	// to env var OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH.
 	EnforceAppSyncCognitoAuth bool
+
+	// EnforceLambdaResourcePolicy makes a service-originated Lambda
+	// invocation — an S3 notification, an SNS subscription delivery, an API
+	// Gateway integration, an EventBridge rule target — check the function's
+	// resource-based policy before it is delivered, the way AWS does. Off by
+	// default: statements are stored and returned but never consulted, so a
+	// stack that works today keeps working. Direct client Invoke calls are
+	// never gated either way, because Overcast does not validate credentials.
+	// Corresponds to env var OVERCAST_ENFORCE_LAMBDA_RESOURCE_POLICY.
+	EnforceLambdaResourcePolicy bool
 
 	// ProtocolStrict restores strict rejection of "claimed-but-undeclared"
 	// wire protocols: when a request's identified protocol isn't one a
@@ -1704,11 +1713,12 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	                                           an AWS service name — see docs/plans/service-metrics-platform.md)
 //	OVERCAST_SIGV4_VALIDATE            false
 //	OVERCAST_ENFORCE_IAM              false
-//	OVERCAST_ENFORCE_APIGATEWAY_THROTTLE false
-//	OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH false  (true = AppSync verifies AMAZON_COGNITO_USER_POOLS
+//	OVERCAST_ENFORCE_APIGATEWAY_THROTTLE false//	OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH false  (true = AppSync verifies AMAZON_COGNITO_USER_POOLS
 //	                                           bearer tokens against the local Cognito pool — RS256
 //	                                           signature, issuer, token_use, expiry, appIdClientRegex —
 //	                                           instead of only requiring one to be present)
+//	OVERCAST_ENFORCE_LAMBDA_RESOURCE_POLICY false (true = a service-originated invoke must be
+//	                                           allowed by the function's resource-based policy)
 //	OVERCAST_PROTOCOL_STRICT           false   (true = 415 on a protocol a service does not
 //	                                           declare, instead of attempting the decode anyway)
 //	OVERCAST_CFN_SYNC_WAIT_MS          1000
@@ -2245,10 +2255,13 @@ func Load() (*Config, error) {
 	// Optional API Gateway usage-plan throttle/quota rejection (default off:
 	// limits are measured and reported, but never turned into a 429).
 	cfg.EnforceAPIGatewayThrottle = envBool("OVERCAST_ENFORCE_APIGATEWAY_THROTTLE", false)
-
 	// Optional AppSync Cognito JWT verification (default off: a bearer token
 	// is required and decoded, but never verified).
 	cfg.EnforceAppSyncCognitoAuth = envBool("OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH", false)
+
+	// Optional Lambda resource-policy enforcement for service-originated
+	// invocations (default off: statements are stored but never consulted).
+	cfg.EnforceLambdaResourcePolicy = envBool("OVERCAST_ENFORCE_LAMBDA_RESOURCE_POLICY", false)
 
 	// Protocol drift strictness (default off — lenient "attempt anyway" posture).
 	cfg.ProtocolStrict = envBool("OVERCAST_PROTOCOL_STRICT", false)

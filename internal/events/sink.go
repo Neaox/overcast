@@ -3,6 +3,8 @@ package events
 import (
 	"context"
 	"time"
+
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // MessageEnqueuer is the narrow interface used by notification dispatchers
@@ -140,6 +142,29 @@ type FunctionInvoker interface {
 // policy and dead-letter config, not by the event source's.
 type FunctionEventInvoker interface {
 	InvokeEvent(ctx context.Context, functionARN string, payload []byte) error
+}
+
+// FunctionInvokeAuthorizer is the narrow interface a service uses to ask
+// Lambda whether its own service principal may invoke a function, the way AWS
+// checks the function's resource-based policy before letting S3, SNS, API
+// Gateway or EventBridge deliver to it. It lives in the events package for the
+// same reason FunctionInvoker does: the callers must not import lambda.
+//
+// functionRef is a bare function name or a function ARN, qualified or not.
+// principal is the AWS service principal the caller invokes as
+// ("s3.amazonaws.com", "sns.amazonaws.com", …). sourceARN and sourceAccount are
+// the aws:SourceArn and aws:SourceAccount condition-key values the caller
+// contributes; either may be empty, and a statement conditioned on one the
+// caller does not supply cannot match.
+//
+// A nil return authorises the invocation, and is what an emulator with
+// enforcement switched off always answers — the default, since Overcast does
+// not validate credentials and is not a security boundary. A non-nil error is
+// Lambda's own AccessDeniedException; each caller renders it as whatever its
+// service does when the permission is missing rather than returning it
+// verbatim.
+type FunctionInvokeAuthorizer interface {
+	AuthorizeServiceInvoke(ctx context.Context, functionRef, principal, sourceARN, sourceAccount string) *protocol.AWSError
 }
 
 // FunctionSyncInvoker is the narrow interface used by API Gateway (and
