@@ -30,7 +30,28 @@ jobs:
     name: ${{ matrix.asset }}
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
+      # The one matrix in the repository that should fail fast, and the reason
+      # is what each job's failure would tell you. Every other matrix here is
+      # distinct evidence — `build-tags` compiles different code per tag,
+      # `installers` runs a different OS per leg, `docker` builds a different
+      # image, and each compat suite is a different client library against the
+      # same emulator, so losing nine answers to learn one is a real loss.
+      #
+      # These ten are `go build` of the same two packages at ten GOOS/GOARCH
+      # pairs. A compile error fails all ten identically and the first one to
+      # report has already said everything the other nine would. Genuinely
+      # target-specific breakage exists — a syscall or a build tag that only
+      # resolves on one platform — but it presents as one leg red and nine
+      # green, which fail-fast never reaches, because it only cancels after a
+      # failure has already happened.
+      #
+      # Safe to cancel: `Cross-build` is not a required check
+      # (docs/plans/ci-streamlining.md § E lists the required set, and
+      # test.yml's cross-build job comments on the same fact), and the
+      # publishing path in release.yml gates on `needs.binaries.result ==
+      # 'success'`, so a cancelled leg blocks the release exactly as a failed
+      # one does.
+      fail-fast: true
       matrix:
         include:
           - asset: overcast-linux-amd64
