@@ -2016,6 +2016,54 @@
       ]
     },
     {
+      "service": "cloudformation",
+      "name": "cloudformation-eks-refs",
+      "tests": [
+        {
+          "name": "CreateStackWithEksRefs",
+          "op": "CreateStack"
+        },
+        {
+          "name": "DescribeStackResourcesPhysicalIds",
+          "op": "DescribeStackResources",
+          "depends": [
+            "CreateStackWithEksRefs"
+          ]
+        },
+        {
+          "name": "GetAttClusterArn",
+          "op": "DescribeStacks",
+          "depends": [
+            "CreateStackWithEksRefs"
+          ]
+        },
+        {
+          "name": "RefNodegroupIsClusterSlashName",
+          "op": "DescribeStacks",
+          "depends": [
+            "CreateStackWithEksRefs"
+          ]
+        },
+        {
+          "name": "RefAddonIsClusterPipeAddon",
+          "op": "DescribeStacks",
+          "depends": [
+            "CreateStackWithEksRefs"
+          ]
+        },
+        {
+          "name": "DeleteStackWithEksRefs",
+          "op": "DeleteStack",
+          "depends": [
+            "DescribeStackResourcesPhysicalIds",
+            "GetAttClusterArn",
+            "RefNodegroupIsClusterSlashName",
+            "RefAddonIsClusterPipeAddon"
+          ]
+        }
+      ]
+    },
+    {
       "service": "ec2",
       "name": "ec2-instances",
       "tests": [
