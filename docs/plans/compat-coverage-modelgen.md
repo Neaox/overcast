@@ -661,13 +661,19 @@ gated by default until someone gets a label.
 | --- | --- | --- |
 | Candidate | Runs everywhere, reports everywhere, gates nothing | `state` in the generated registry |
 | Soak | The existing nightly 3× flake-detection job includes candidates | [compat-flake-detection.yml](../../.github/workflows/compat-flake-detection.yml) |
-| Promotion | A group with 3 identical consecutive nightly results and **zero** `fail` flips to `gated`, via a bot PR on the existing `automation/` pattern | new `--promote-generated` in `cmd/compat` |
-| Stuck | Inconsistent groups stay candidate and raise the usual per-(suite, group) issue; a candidate older than 30 days is reported overdue | [scripts/compat-flake-issue.py](../../scripts/compat-flake-issue.py) |
+| Promotion | A group whose every (suite, test) answered identically across 3 consecutive nightly runs with **zero** `fail` flips to `gated`, via a bot PR on `automation/promote-generated` | `--promote-generated` in `cmd/compat`, writing `compat/model/promotions.json`, which `cmd/compatgen` reads to emit each group's `state` |
+| Stuck | Inconsistent groups stay candidate; `--promote-generated` names the offending `(suite, test)`s and reports a candidate older than 30 days as overdue (a `::warning` on the nightly). The flipping tests themselves raise the usual per-(suite, group) issue, since candidate groups run in the same nightly the flake detector reads | `--promote-generated`; [scripts/compat-flake-issue.py](../../scripts/compat-flake-issue.py) |
 
 Promotion is mechanical, so it needs no reviewer label — the reviewer decision
 already happened at recipe review. A generated test that fails because the
 *test* is wrong is fixed in the recipe or values table, **never** by weakening
 an assertion and never by adding it to `flaky.json`.
+
+**Built 2026-09-05 (#1789):** the state is an *input* — `cmd/compat
+--promote-generated` writes only `compat/model/promotions.json` (group →
+`state`, `firstSeen`, `promotedAt`, the run ids that agreed) and `cmd/compatgen`
+reads it when emitting each group's `state`, so no second tool ever writes
+`registry.generated.json` and `-check` stays byte-identical across a promotion.
 
 #### Volume: baseline, parity, CI runtime, dashboard
 

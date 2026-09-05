@@ -809,6 +809,34 @@ that no longer existed.
 `--lint-baseline-from/--lint-baseline-to` runs on PRs and rejects a baseline
 edit that downgrades an expectation, removes one, or adds a new `fail`.
 
+### Generated groups soak in before they gate — never hand-edit them in
+
+A group in [suites/registry.generated.json](./suites/registry.generated.json)
+lands in `state: "candidate"`: it runs and reports everywhere but is excluded
+from `--compare-baseline` and `--max-failures` in both directions. This is the
+inverse of `flaky.json` — a quarantined test escaped a gate it was already
+under, with a reviewer's approval; a candidate has not entered it yet.
+
+Promotion is mechanical, and nobody types it. Each night, after the 3×
+flake-detection runs, `go run ./cmd/compat --promote-generated` reads them and
+promotes every candidate whose every `(suite, test)` answered **identically in
+all three runs with zero `fail`**, with every suite the group is scoped to
+reporting in every run. It writes exactly one file,
+[model/promotions.json](./model/promotions.json) — the soak ledger, which
+`cmd/compatgen` reads to emit each group's `state`. `cmd/compatgen` still owns
+`registry.generated.json` and rewrites it wholly; the bot PR on
+`automation/promote-generated` carries the ledger and the regenerated registry
+in one commit, so `make compat-model-check` stays byte-identical. Two tools
+writing one generated file is the thing this shape exists to prevent.
+
+A candidate that has not promoted 30 days after its recorded `firstSeen` is
+reported overdue by the same command, naming the `(suite, test)`s that could not
+agree. That is a bug in the recipe, the values table or the emulator — fix it
+there. **Never** gate a group by hand-editing `promotions.json`, and never
+quarantine a generated test in `flaky.json` to make a run green: the soak's
+whole purpose is that a mass-generated test enters the gate on evidence rather
+than on somebody's patience.
+
 ### 2. Uniformity — the registry is the contract
 
 Every SDK and CLI suite tests **the same operations**. When you add an

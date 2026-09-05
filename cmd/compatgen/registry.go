@@ -24,7 +24,10 @@ var scenarioBackends = []string{}
 const (
 	generatedRegistryVersion = 1
 	generatedStateCandidate  = "candidate"
+	generatedStateGated      = "gated"
+	promotionsVersion        = 1
 	registryPath             = "compat/suites/registry.generated.json"
+	promotionsPath           = "compat/model/promotions.json"
 	scenarioDir              = "compat/model/scenarios"
 	gapsPath                 = "compat/model/gaps.json"
 	recipesDir               = "compat/model/recipes"
@@ -66,7 +69,13 @@ func scenarioPath(service string) string { return scenarioDir + "/" + service + 
 // buildRegistry projects scenarios onto the registry, honouring the backend
 // rule above. Groups are sorted by name across services so the file does not
 // depend on the order recipes were read in.
-func buildRegistry(scenarios []*scenario, backends []string) generatedRegistry {
+//
+// Every group is a candidate unless the soak ledger says otherwise: `state` is
+// the one field here that is not derived from the scenario, and
+// compat/model/promotions.json is where it comes from. See promotions.go for
+// why the state is an input rather than something a second tool edits into this
+// file.
+func buildRegistry(scenarios []*scenario, backends []string, promotions *promotionsFile) generatedRegistry {
 	reg := generatedRegistry{
 		Schema:  "./registry.generated.schema.json",
 		Version: generatedRegistryVersion,
@@ -85,7 +94,7 @@ func buildRegistry(scenarios []*scenario, backends []string) generatedRegistry {
 				Name:      g.Name,
 				Generated: true,
 				Scenario:  scenarioPath(s.Service),
-				State:     generatedStateCandidate,
+				State:     promotions.stateOf(g.Name),
 				Suites:    suites,
 			}
 			for _, t := range g.Tests {

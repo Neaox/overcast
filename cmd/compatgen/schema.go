@@ -15,7 +15,7 @@ import (
 
 // JSON Schema validation of the model corpus.
 //
-// The four schemas under compat/model, plus the two registry schemas under
+// The schemas under compat/model, plus the two registry schemas under
 // compat/suites, are the contract the interpreters and the suite loaders are
 // written against, so the generator validates its own inputs against them on
 // load and every output against them before it writes — the same documents,
@@ -26,6 +26,9 @@ const (
 	schemaValues   = "values.schema.json"
 	schemaScenario = "scenario.schema.json"
 	schemaGaps     = "gaps.schema.json"
+	// The soak ledger is a curated input like the recipes and the values
+	// table, not generator output — see promotions.go.
+	schemaPromotions = "promotions.schema.json"
 	// The registry schemas live with the loaders under compat/suites; the
 	// generated one $refs the hand-written one, so both are compiled.
 	schemaRegistry          = "registry.schema.json"
@@ -36,9 +39,9 @@ type schemaSet struct {
 	compiled map[string]*jsonschema.Schema
 }
 
-// loadSchemas compiles the four model schemas from dir (compat/model).
+// loadSchemas compiles the model schemas from dir (compat/model).
 func loadSchemas(dir string) (*schemaSet, error) {
-	return compileSchemas(dir, schemaRecipe, schemaValues, schemaScenario, schemaGaps)
+	return compileSchemas(dir, schemaRecipe, schemaValues, schemaScenario, schemaGaps, schemaPromotions)
 }
 
 // loadRegistrySchemas compiles the registry schemas from dir (compat/suites).

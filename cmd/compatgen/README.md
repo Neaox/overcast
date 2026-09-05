@@ -45,6 +45,11 @@ is required because the capability table it reads
   exist, every path must resolve, every literal must be of the member's
   kind and inside its constraints.
 - `compat/model/values.json` — curated literals, validated the same way.
+- `compat/model/promotions.json` — the candidate → gated soak ledger, and
+  the one thing that can move a generated group's `state`. It is written only
+  by `go run ./cmd/compat --promote-generated`, so the generator keeps sole
+  ownership of `registry.generated.json`; an entry for a group no scenario
+  produces is refused. Missing file, or a group with no entry: `candidate`.
 - `internal/capabilities/all.gen.go` — which operations the emulator
   implements. An operation with a status other than `Unsupported` is
   implemented and may never sit in a probe group.

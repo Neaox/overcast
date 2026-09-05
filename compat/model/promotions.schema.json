@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/overcast-sh/overcast/compat/model/promotions.schema.json",
+  "title": "Overcast Compat Generated Group Promotions",
+  "description": "compat/model/promotions.json — the candidate → gated soak ledger of docs/plans/compat-coverage-modelgen.md § 3.6. It is an *input* to cmd/compatgen, which emits each generated group's `state` from it; the generator owns compat/suites/registry.generated.json and this file is the only way to move a group's state. `go run ./cmd/compat --promote-generated` is the sole writer: it records a candidate's first observation and flips it to gated once N consecutive nightly runs agreed with zero failures. Two tools writing the generated registry is precisely what this file exists to avoid.",
+  "type": "object",
+  "required": ["version", "groups"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "$comment": { "type": "string" },
+    "version": { "type": "integer", "const": 1 },
+    "groups": {
+      "type": "object",
+      "description": "Generated group name → its soak record. Keys are sorted, so a promotion is a one-line diff wherever it lands in the file.",
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$" },
+      "additionalProperties": { "$ref": "#/definitions/Promotion" }
+    }
+  },
+  "definitions": {
+    "Promotion": {
+      "type": "object",
+      "required": ["state", "firstSeen"],
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["candidate", "gated"],
+          "description": "The state cmd/compatgen emits for this group. A group with no entry here is a candidate, so the file records only groups that have been observed at least once."
+        },
+        "firstSeen": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "The date the soak first saw the group (YYYY-MM-DD), written once and never rewritten. It is what makes a candidate age: one that has not promoted 30 days after this date is reported overdue, which is the only thing stopping a group that can never agree from reporting forever and gating nothing."
+        },
+        "promotedAt": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "The date the group promoted to gated (YYYY-MM-DD)."
+        },
+        "runs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "The identifiers of the runs whose agreement justified the promotion — the base names of the run reports --promote-generated read. Recorded so a promotion can be audited back to the artifacts it rests on rather than taken on trust."
+        }
+      },
+      "if": { "properties": { "state": { "const": "gated" } } },
+      "then": { "required": ["state", "firstSeen", "promotedAt", "runs"] }
+    }
+  }
+}

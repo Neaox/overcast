@@ -60,6 +60,11 @@ func TestCommittedCorpus_validatesAgainstItsSchemas(t *testing.T) {
 	if err := model.validate(schemaGaps, readFile(t, filepath.Join(repoRoot, filepath.FromSlash(gapsPath)))); err != nil {
 		t.Errorf("gaps.json: %v", err)
 	}
+	// The soak ledger is a curated input, and the schema is the only thing
+	// standing between a hand edit and a group gated on no evidence.
+	if err := model.validate(schemaPromotions, readFile(t, filepath.Join(repoRoot, filepath.FromSlash(promotionsPath)))); err != nil {
+		t.Errorf("promotions.json: %v", err)
+	}
 
 	// The registry validates against the compat suite schemas, which are the
 	// loaders' contract, not this package's. The generator holds it to the
@@ -82,12 +87,12 @@ func TestRegistryIsEmptyExactlyWhileNoBackendExists(t *testing.T) {
 	_, gen := generateFixture(t)
 	scenarios := []*scenario{gen.scenario}
 
-	empty := buildRegistry(scenarios, nil)
+	empty := buildRegistry(scenarios, nil, nil)
 	if len(empty.Groups) != 0 {
 		t.Fatalf("with no backend the registry must be empty, got %d groups", len(empty.Groups))
 	}
 
-	full := buildRegistry(scenarios, []string{"python-sdk", "cli"})
+	full := buildRegistry(scenarios, []string{"python-sdk", "cli"}, nil)
 	if len(full.Groups) != len(gen.scenario.Groups) {
 		t.Fatalf("with a backend every group is registered: got %d, want %d", len(full.Groups), len(gen.scenario.Groups))
 	}
@@ -103,7 +108,7 @@ func TestRegistryIsEmptyExactlyWhileNoBackendExists(t *testing.T) {
 	}
 
 	// The committed table decides the committed file.
-	committed := buildRegistry(scenarios, scenarioBackends)
+	committed := buildRegistry(scenarios, scenarioBackends, nil)
 	if (len(committed.Groups) == 0) != (len(scenarioBackends) == 0) {
 		t.Fatalf("scenarioBackends=%v but the registry has %d groups", scenarioBackends, len(committed.Groups))
 	}

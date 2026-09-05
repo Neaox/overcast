@@ -78,8 +78,15 @@ var (
 	// suite image that predates it behaves exactly as before.
 	generatedRegistryFile = flag.String("generated-registry-file", "compat/suites/registry.generated.json", "Generated compat test registry, concatenated with --registry-file (missing = empty). Groups in state \"candidate\" are excluded from --compare-baseline and --max-failures")
 	parityDebtFilePath    = flag.String("parity-debt-file", "compat/parity-debt.json", "Cross-suite parity debt file")
-	checkParity           = flag.Bool("check-parity", false, "Check cross-suite registry parity against --parity-debt-file, then exit")
-	updateParityDebt      = flag.Bool("update-parity-debt", false, "Regenerate --parity-debt-file from --results-file, then exit")
+	// The candidate → gated soak. --promote-generated writes the promotions
+	// ledger and nothing else; cmd/compatgen reads it and emits each group's
+	// state, so the caller regenerates afterwards. See promote.go.
+	promotionsFilePath  = flag.String("promotions-file", "compat/model/promotions.json", "Soak ledger read by cmd/compatgen to decide each generated group's state; --promote-generated is its only writer")
+	promoteGeneratedRun = flag.Bool("promote-generated", false, "Soak --promote-runs against --generated-registry-file and promote qualifying candidate groups in --promotions-file, then exit. Regenerate afterwards (`make generate-compat-model`)")
+	promoteRuns         = flag.String("promote-runs", "", "Run reports the soak reads: comma-separated files, globs, or directories of *.json. Each file is one run, identified by its base name")
+	promoteMinRuns      = flag.Int("promote-min-runs", 3, "Consecutive agreeing runs a candidate group needs before it is promoted to \"gated\"")
+	checkParity         = flag.Bool("check-parity", false, "Check cross-suite registry parity against --parity-debt-file, then exit")
+	updateParityDebt    = flag.Bool("update-parity-debt", false, "Regenerate --parity-debt-file from --results-file, then exit")
 
 	lintBaselineFrom = flag.String("lint-baseline-from", "", "Old compatibility baseline file for downgrade linting")
 	lintBaselineTo   = flag.String("lint-baseline-to", "", "New compatibility baseline file for downgrade linting")
@@ -262,6 +269,15 @@ func main() {
 		if err := updateBaselineFile(*baselineFile, *resultsFile); err != nil {
 			fmt.Fprintf(os.Stderr, "compat: update baseline: %v\n", err)
 			os.Exit(2)
+		}
+		return
+	}
+
+	if *promoteGeneratedRun {
+		if err := promoteGeneratedFile(*promotionsFilePath, *registryFile, *generatedRegistryFile,
+			*promoteRuns, *promoteMinRuns, *annotate, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "compat: promote generated groups: %v\n", err)
+			os.Exit(1)
 		}
 		return
 	}

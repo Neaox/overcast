@@ -17,6 +17,7 @@ Generator: [cmd/compatgen/README.md](../../cmd/compatgen/README.md).
 | --- | --- | --- |
 | `recipes/<service>.json` | a human | one recipe per service — the curated layer (`recipe.schema.json`) |
 | `values.json` | a human | curated literals for required members no recipe binds (`values.schema.json`) |
+| `promotions.json` | `cmd/compat --promote-generated` | the candidate → gated soak ledger, read by the generator to emit each group's `state` (`promotions.schema.json`) |
 | `scenarios/<service>.json` | `cmd/compatgen` | the scenario IR, one file per service (`scenario.schema.json`) |
 | `gaps.json` | `cmd/compatgen` | every operation the generator refused, with a reason (`gaps.schema.json`) |
 | `../suites/registry.generated.json` | `cmd/compatgen` | the generated registry sibling every loader concatenates |
@@ -24,6 +25,17 @@ Generator: [cmd/compatgen/README.md](../../cmd/compatgen/README.md).
 `<service>` is the Overcast capability key, exactly as a registry group's
 `service` field spells it. Generated files are rewritten wholly on every run;
 never edit them.
+
+`promotions.json` is an **input**, not generator output — which is the point.
+A generated group's `state` has to move from `candidate` to `gated` once the
+nightly soak has watched it agree with itself, and letting that soak rewrite
+the field in `registry.generated.json` would put two tools in charge of one
+generated file. So the soak writes the ledger, the generator reads it, and
+`-check` stays byte-identical across a promotion: regeneration is still a pure
+function of committed inputs. Do not hand-edit it to gate a group — the entry
+is the evidence of N agreeing runs, and typing one is the hand edit the soak
+exists to replace. See
+[docs/plans/compat-coverage-modelgen.md](../../docs/plans/compat-coverage-modelgen.md) § 3.6.
 
 ## The scenario file
 
