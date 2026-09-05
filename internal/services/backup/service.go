@@ -2,15 +2,19 @@
 //
 // Implemented operations: CreateBackupVault, DescribeBackupVault,
 // ListBackupVaults, DeleteBackupVault, CreateBackupPlan, GetBackupPlan,
-// ListBackupPlans, UpdateBackupPlan, DeleteBackupPlan.
+// ListBackupPlans, UpdateBackupPlan, DeleteBackupPlan,
+// CreateBackupAccessPoint, DescribeBackupAccessPoint,
+// DeleteBackupAccessPoint, ListBackupAccessPoints,
+// ListBackupAccessPointsByRecoveryPoint, ListBackupAccessPointsByResource.
 //
 // Routes are AWS's own restJson1 bindings from the pinned model
 // (backup-2018-11-15) rather than an emulator invention: vaults hang off
-// /backup-vaults and plans off /backup/plans — two subtrees, not one prefix.
-// See RegisterRoutes. The service answers on no other wire protocol; all 109
-// modeled backup operations carry `Protocols: ProtocolsRESTJSON` and an empty
-// target prefix, so the `X-Amz-Target: AWSBackup.*` namespace Overcast used to
-// dispatch on was a wire contract AWS does not have (#815).
+// /backup-vaults, plans off /backup/plans and access points off
+// /backup-access-point — three subtrees, not one prefix. See RegisterRoutes
+// and handler_access_points.go. The service answers on no other wire protocol;
+// all 109 modeled backup operations carry `Protocols: ProtocolsRESTJSON` and
+// an empty target prefix, so the `X-Amz-Target: AWSBackup.*` namespace
+// Overcast used to dispatch on was a wire contract AWS does not have (#815).
 //
 // Nothing runs behind the control plane, which is what router.TierInert
 // records for this service: no backup job ever executes, so a vault's
@@ -20,6 +24,7 @@ package backup
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"time"
@@ -39,9 +44,10 @@ import (
 const (
 	serviceName = "backup"
 
-	// pathVaults and pathPlans are the two subtrees the modeled bindings use.
-	// They are separate roots in AWS's own model, so a single "/backup" prefix
-	// would serve neither.
+	// pathVaults and pathPlans are two of the three subtrees the modeled
+	// bindings use — pathAccessPoints, in handler_access_points.go, is the
+	// third. They are separate roots in AWS's own model, so a single "/backup"
+	// prefix would serve none of them.
 	pathVaults = "/backup-vaults"
 	pathPlans  = "/backup/plans"
 
@@ -247,7 +253,9 @@ func (s *Service) Name() string { return serviceName }
 // TagsRouter(), below. "/untag" is Backup's alone — UntagResource is the one
 // tag operation Backup does not share this path space for (#1195) — so it is
 // registered directly in RegisterRoutes and belongs here.
-func (s *Service) PathPrefixes() []string { return []string{pathVaults, pathPlans, pathUntag} }
+func (s *Service) PathPrefixes() []string {
+	return []string{pathVaults, pathPlans, pathAccessPoints, pathUntag}
+}
 
 // RegisterRoutes registers Backup's modeled REST bindings:
 //
@@ -260,6 +268,9 @@ func (s *Service) PathPrefixes() []string { return []string{pathVaults, pathPlan
 //	GET    /backup/plans/{BackupPlanId}/     GetBackupPlan
 //	POST   /backup/plans/{BackupPlanId}      UpdateBackupPlan
 //	DELETE /backup/plans/{BackupPlanId}      DeleteBackupPlan
+//
+// The six access point bindings are registered here too; they are listed and
+// explained in handler_access_points.go, which holds their handlers.
 //
 // The paths are absolute rather than nested under chi sub-routers for
 // /backup-vaults and /backup, and that is deliberate. A sub-router owns its
@@ -305,6 +316,17 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Get(pathPlans+"/{BackupPlanId}/", s.getBackupPlan)
 	r.Post(pathPlans+"/{BackupPlanId}", s.updateBackupPlan)
 	r.Delete(pathPlans+"/{BackupPlanId}", s.deleteBackupPlan)
+
+	// Access points (#1467) — see handler_access_points.go. The two static
+	// segments, "create" and "delete", are the model's own and do not collide
+	// with {AccessPointArn}: chi prefers a static segment over a parameter at
+	// the same position, and the three operations differ by method anyway.
+	r.Get(pathAccessPoints, s.listBackupAccessPoints)
+	r.Put(pathAccessPoints+"/create", s.createBackupAccessPoint)
+	r.Get(pathAccessPoints+"/{AccessPointArn}", s.describeBackupAccessPoint)
+	r.Delete(pathAccessPoints+"/delete/{AccessPointArn}", s.deleteBackupAccessPoint)
+	r.Post(pathAccessPoints+"/recovery-point/{RecoveryPointArn}", s.listBackupAccessPointsByRecoveryPoint)
+	r.Post(pathAccessPoints+"/resource/{ResourceArn}", s.listBackupAccessPointsByResource)
 
 	// UntagResource (#1195). Unlike TagResource/ListTags below, this path is
 	// Backup's alone, so it is registered directly rather than through the
@@ -403,7 +425,7 @@ func (s *Service) listBackupVaults(w http.ResponseWriter, r *http.Request) {
 	// ByVaultType, ByShared, MaxResults and NextToken are all httpQuery
 	// members. This is a GET with no request body to carry any of them in.
 	query := r.URL.Query()
-	limit, aerr := pageSize(query.Get("maxResults"))
+	limit, aerr := pageSize(query.Get("maxResults"), maxResultsCeiling)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
@@ -610,7 +632,7 @@ func (s *Service) listBackupPlans(w http.ResponseWriter, r *http.Request) {
 	// outright rather than tombstoned, so no plan is ever in the deleted
 	// state it would include.
 	query := r.URL.Query()
-	limit, aerr := pageSize(query.Get("maxResults"))
+	limit, aerr := pageSize(query.Get("maxResults"), maxResultsCeiling)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
@@ -677,17 +699,32 @@ func planWriteResponse(p *planRecord) createBackupPlanResponse {
 	}
 }
 
-// pageSize reads the maxResults query parameter against MaxResults' modeled
-// range of 1–1000. An empty value means the client omitted it.
-func pageSize(raw string) (int, *protocol.AWSError) {
+// pageSize reads a MaxResults query parameter against its modeled range of
+// 1–ceiling. An empty value means the client omitted it. The ceiling is a
+// parameter because AWS gives each listing its own: 1000 for vaults and plans,
+// 100 for access points.
+func pageSize(raw string, ceiling int) (int, *protocol.AWSError) {
 	if raw == "" {
 		return 0, nil
 	}
 	value := serviceutil.ParseIntDefault(raw, -1)
-	if value < 1 || value > maxResultsCeiling {
-		return 0, invalidParameterError(fmt.Sprintf("MaxResults must be between 1 and %d.", maxResultsCeiling))
+	if value < 1 || value > ceiling {
+		return 0, invalidParameterError(fmt.Sprintf("MaxResults must be between 1 and %d.", ceiling))
 	}
 	return value, nil
+}
+
+// arnParam reads and URL-decodes an ARN-valued path label. AWS SDKs
+// percent-encode an ARN into a single path segment — its colons become %3A,
+// and an access point ARN's "/" becomes %2F — which is what the chi pattern
+// matches literally without decoding.
+func arnParam(r *http.Request, label string) string {
+	raw := chi.URLParam(r, label)
+	decoded, err := url.PathUnescape(raw)
+	if err != nil {
+		return raw
+	}
+	return decoded
 }
 
 // currentVersion reads a plan's version counter. Records written before #815

@@ -39,6 +39,15 @@ func TestDetectService(t *testing.T) {
 		{name: "ses path", method: "GET", path: "/v2/email/identities", want: "ses"},
 		{name: "cloudfront path", method: "GET", path: "/2020-05-31/distribution", want: "cloudfront"},
 		{name: "apigateway restapis", method: "GET", path: "/restapis", want: "apigateway"},
+		// AWS Backup's three subtrees, all unsigned: the two the switch has
+		// always claimed and /backup-access-point (#1467), whose six
+		// operations would otherwise be labelled — and IAM-authorised — as an
+		// s3 request to a bucket called "backup-access-point".
+		{name: "backup vaults", method: "GET", path: "/backup-vaults", want: "backup"},
+		{name: "backup plans", method: "GET", path: "/backup/plans", want: "backup"},
+		{name: "backup access point list", method: "GET", path: "/backup-access-point", want: "backup"},
+		{name: "backup access point create", method: "PUT", path: "/backup-access-point/create", want: "backup"},
+		{name: "backup access point describe", method: "GET", path: "/backup-access-point/arn%3Aaws%3Abackup%3Aus-east-1%3A000000000000%3Aaccesspoint%2Fap-one", want: "backup"},
 		{name: "apigateway v2", method: "GET", path: "/v2/apis", want: "apigateway"},
 		{name: "appsync events v2", method: "GET", path: "/v2/apis", header: map[string]string{"Authorization": "AWS4-HMAC-SHA256 Credential=AKID/20260623/us-east-1/appsync/aws4_request, SignedHeaders=host;x-amz-date, Signature=abc"}, want: "appsync"},
 

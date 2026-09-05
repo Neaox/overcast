@@ -8,12 +8,17 @@
 // namespace AWS does not have, and pinned CreationDate as an RFC 3339 string
 // where restJson1 binds an epoch-seconds number.
 //
-// Coverage — all nine implemented operations:
+// Coverage — the fifteen vault, plan and access point operations:
 //
 //	CreateBackupVault, DescribeBackupVault, ListBackupVaults, DeleteBackupVault,
-//	CreateBackupPlan, GetBackupPlan, ListBackupPlans, UpdateBackupPlan, DeleteBackupPlan
+//	CreateBackupPlan, GetBackupPlan, ListBackupPlans, UpdateBackupPlan, DeleteBackupPlan,
+//	CreateBackupAccessPoint, DescribeBackupAccessPoint, DeleteBackupAccessPoint,
+//	ListBackupAccessPoints, ListBackupAccessPointsByRecoveryPoint,
+//	ListBackupAccessPointsByResource
 //
-// No Backup operations are excluded.
+// TagResource, ListTags and UntagResource are excluded: the first two answer an
+// empty JSON document, and ListTags' one member is asserted per resource type
+// in tags_test.go.
 //
 // Determinism: every timestamp comes from the mock clock, and the one
 // remaining non-deterministic value — BackupPlanId, a UUID as it is on AWS —
@@ -36,7 +41,8 @@ import (
 const backupGoldenDir = "goldens"
 
 // backupDo, createVault, createPlan and decodeMap are defined in
-// backup_test.go and reused here.
+// backup_test.go, and createAccessPoint, accessPointArn, arnPath and
+// recoveryPointArn in access_points_test.go; both sets are reused here.
 
 // uuidPattern matches the BackupPlanId minted by CreateBackupPlan, wherever it
 // appears — on its own and inside BackupPlanArn.
@@ -132,4 +138,76 @@ func TestGolden_DeleteBackupPlan(t *testing.T) {
 
 	resp := backupDo(t, srv, http.MethodDelete, pathPlans+"/"+planID, defaultRegion, nil)
 	helpers.GoldenTest(t, backupGoldenDir, "DeleteBackupPlan", resp, normalisePlanIDs)
+}
+
+// ─── Access points ───────────────────────────────────────────────────────────
+//
+// Every value below is deterministic without normalisation: the ARN is minted
+// from the name, and CreationTime comes from the mock clock — unlike a plan,
+// an access point has no UUID.
+
+func TestGolden_CreateBackupAccessPoint(t *testing.T) {
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+
+	resp := backupDo(t, srv, http.MethodPut, pathAccessPoints+"/create", defaultRegion, map[string]any{
+		"Name":                "golden-access-point",
+		"RecoveryPointArn":    recoveryPointArn,
+		"AccessPointMetadata": map[string]any{"AccessPointInTime": "2021-11-27T03:30:27Z"},
+	})
+	helpers.GoldenTest(t, backupGoldenDir, "CreateBackupAccessPoint", resp, nil)
+}
+
+// TestGolden_DescribeBackupAccessPoint creates with AccessPointMetadata so the
+// fixture pins the map's bytes; createAccessPoint sends none.
+func TestGolden_DescribeBackupAccessPoint(t *testing.T) {
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+	seed := backupDo(t, srv, http.MethodPut, pathAccessPoints+"/create", defaultRegion, map[string]any{
+		"Name":                "golden-access-point",
+		"RecoveryPointArn":    recoveryPointArn,
+		"AccessPointMetadata": map[string]any{"AccessPointInTime": "2021-11-27T03:30:27Z"},
+	})
+	seed.Body.Close()
+
+	resp := backupDo(t, srv, http.MethodGet,
+		pathAccessPoints+"/"+arnPath(accessPointArn("golden-access-point")), defaultRegion, nil)
+	helpers.GoldenTest(t, backupGoldenDir, "DescribeBackupAccessPoint", resp, nil)
+}
+
+func TestGolden_ListBackupAccessPoints(t *testing.T) {
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+	createAccessPoint(t, srv, "golden-access-point-a")
+	createAccessPoint(t, srv, "golden-access-point-b")
+
+	resp := backupDo(t, srv, http.MethodGet, pathAccessPoints, defaultRegion, nil)
+	helpers.GoldenTest(t, backupGoldenDir, "ListBackupAccessPoints", resp, nil)
+}
+
+func TestGolden_ListBackupAccessPointsByRecoveryPoint(t *testing.T) {
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+	createAccessPoint(t, srv, "golden-access-point")
+
+	resp := backupDo(t, srv, http.MethodPost,
+		pathAccessPoints+"/recovery-point/"+arnPath(recoveryPointArn), defaultRegion, nil)
+	helpers.GoldenTest(t, backupGoldenDir, "ListBackupAccessPointsByRecoveryPoint", resp, nil)
+}
+
+// TestGolden_ListBackupAccessPointsByResource pins the empty page. It is the
+// answer for every resource ARN, because no access point ever carries a
+// ResourceArn to match — see handler_access_points.go.
+func TestGolden_ListBackupAccessPointsByResource(t *testing.T) {
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+	createAccessPoint(t, srv, "golden-access-point")
+
+	resp := backupDo(t, srv, http.MethodPost,
+		pathAccessPoints+"/resource/"+arnPath("arn:aws:s3:::golden-bucket"), defaultRegion, nil)
+	helpers.GoldenTest(t, backupGoldenDir, "ListBackupAccessPointsByResource", resp, nil)
+}
+
+func TestGolden_DeleteBackupAccessPoint(t *testing.T) {
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+	createAccessPoint(t, srv, "golden-access-point")
+
+	resp := backupDo(t, srv, http.MethodDelete,
+		pathAccessPoints+"/delete/"+arnPath(accessPointArn("golden-access-point")), defaultRegion, nil)
+	helpers.GoldenTest(t, backupGoldenDir, "DeleteBackupAccessPoint", resp, nil)
 }

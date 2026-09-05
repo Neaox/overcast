@@ -16,18 +16,18 @@ package backup
 // directly by RegisterRoutes (service.go) instead — see
 // docs/plans/resource-tagging-coverage.md's backup section.
 //
-// Tags are stored inline on the vault/plan record (vaultRecord.Tags,
-// planRecord.Tags in store.go) rather than in a namespace of their own, so
-// deleting the resource deletes its tags in the same store write — nothing
-// can outlive the record it describes. vaultTagStore/planTagStore below
-// adapt that inline storage to serviceutil.TagStore so TagResource/
-// UntagResource can share serviceutil.ApplyStoreTags/RemoveStoreTags with
-// every other service that stores tags this way.
+// Tags are stored inline on the vault/plan/access point record
+// (vaultRecord.Tags, planRecord.Tags, accessPointRecord.Tags in store.go)
+// rather than in a namespace of their own, so deleting the resource deletes
+// its tags in the same store write — nothing can outlive the record it
+// describes. vaultTagStore/planTagStore below and accessPointTagStore in
+// handler_access_points.go adapt that inline storage to serviceutil.TagStore
+// so TagResource/UntagResource can share serviceutil.ApplyStoreTags/
+// RemoveStoreTags with every other service that stores tags this way.
 
 import (
 	"context"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -73,38 +73,46 @@ func (s *Service) TagsRouter() chi.Router {
 	return r
 }
 
-// resourceArnParam reads and URL-decodes the {ResourceArn} path label. AWS
-// SDKs percent-encode the ARN into a single path segment (its colons become
-// %3A), which is what the chi pattern matches literally without decoding.
-func resourceArnParam(r *http.Request) string {
-	raw := chi.URLParam(r, "ResourceArn")
-	decoded, err := url.PathUnescape(raw)
-	if err != nil {
-		return raw
-	}
-	return decoded
-}
+// resourceArnParam reads and URL-decodes the {ResourceArn} path label — see
+// arnParam in service.go, which every ARN-valued label in this package shares.
+func resourceArnParam(r *http.Request) string { return arnParam(r, "ResourceArn") }
 
-// resolveTagTarget maps a resourceArn to the TagStore for the vault or plan
-// it names. Backup vault ARNs are arn:aws:backup:region:account:backup-vault:
-// name; plan ARNs are arn:aws:backup:region:account:backup-plan:id — see
-// vaultARN/planARN in service.go, which this mirrors in reverse. The region
-// is read from the ARN itself rather than the request's signing region:
-// unlike the vault/plan CRUD routes (which have no ARN to read and so trust
-// middleware.RegionFromContext), a resourceArn already names its own region
-// unambiguously, and using anything else would let a caller in one region
-// address a resource whose ARN claims another.
+// resolveTagTarget maps a resourceArn to the TagStore for the vault, plan or
+// access point it names. Vault ARNs are
+// arn:aws:backup:region:account:backup-vault:name and plan ARNs
+// arn:aws:backup:region:account:backup-plan:id, but an access point ARN
+// separates its resource component with a slash —
+// arn:aws:backup:region:account:accesspoint/name — because that name is shared
+// with the Amazon S3 access point namespace. See vaultARN/planARN in
+// service.go and accessPointARN in handler_access_points.go, which this
+// mirrors in reverse; the separator is read off the value rather than assumed,
+// which is why the ARN is not simply split on ":".
+//
+// The region is read from the ARN itself rather than the request's signing
+// region: unlike the vault/plan CRUD routes (which have no ARN to read and so
+// trust middleware.RegionFromContext), a resourceArn already names its own
+// region unambiguously, and using anything else would let a caller in one
+// region address a resource whose ARN claims another.
 func (s *Service) resolveTagTarget(arn string) (serviceutil.TagStore, *protocol.AWSError) {
-	parts := strings.Split(arn, ":")
-	if len(parts) < 7 || parts[0] != "arn" || parts[2] != "backup" || parts[6] == "" {
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) < 6 || parts[0] != "arn" || parts[2] != "backup" {
 		return nil, tagResourceNotFound(arn)
 	}
-	region, kind, id := parts[3], parts[5], parts[6]
+	region, resource := parts[3], parts[5]
+	kind, id, ok := strings.Cut(resource, ":")
+	if !ok {
+		kind, id, ok = strings.Cut(resource, "/")
+	}
+	if !ok || id == "" {
+		return nil, tagResourceNotFound(arn)
+	}
 	switch kind {
 	case "backup-vault":
 		return vaultTagStore{s: s, region: region, name: id}, nil
 	case "backup-plan":
 		return planTagStore{s: s, region: region, id: id}, nil
+	case "accesspoint":
+		return accessPointTagStore{s: s, region: region, name: id}, nil
 	default:
 		return nil, tagResourceNotFound(arn)
 	}

@@ -1,6 +1,6 @@
 ---
 title: "Backup — AWS Backup"
-description: "Quick start, the vault, plan and tag operations that work, and everything that never runs: no backup or restore jobs, no recovery points, no vault lock."
+description: "Quick start, the vault, plan, access point and tag operations that work, and everything that never runs: no backup or restore jobs, no recovery points, no vault lock."
 section: "Service Reference"
 tags:
   - aws
@@ -11,8 +11,8 @@ tags:
 
 # Backup — AWS Backup
 
-Vaults and plans exist so IaC that declares them deploys; no backup job, restore
-job or schedule ever runs.
+Vaults, plans and backup access points exist so IaC that declares them deploys;
+no backup job, restore job or schedule ever runs.
 
 **Status:** ⚠️ Partial
 
@@ -43,8 +43,9 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 | Vaults | Create, describe, list, delete, per region |
 | Plans | Create, get, list, update, delete; an update mints a new `VersionId` |
 | Rules | Stored and echoed back in full, including schedules and lifecycle blocks |
-| Tags | `BackupVaultTags` and `BackupPlanTags` at creation, plus `TagResource`, `ListTags` and `UntagResource` |
-| Bindings | AWS's own routes — vaults under `/backup-vaults`, plans under `/backup/plans` — so SDKs, CDK and `aws backup …` work unmodified |
+| Access points | Create, describe, list, delete; the two filtered listings match on stored metadata |
+| Tags | `BackupVaultTags`, `BackupPlanTags` and an access point's `Tags` at creation, plus `TagResource`, `ListTags` and `UntagResource` |
+| Bindings | AWS's own routes — vaults under `/backup-vaults`, plans under `/backup/plans`, access points under `/backup-access-point` — so SDKs, CDK and `aws backup …` work unmodified |
 
 ## Differences from AWS
 
@@ -57,18 +58,22 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 | Plan versions            | Every version is retrievable by `VersionId`                      | Only the current version is kept — `GetBackupPlan` with an older `VersionId` is a miss                   |
 | Deleted plans            | Tombstoned, so `ListBackupPlans --include-deleted` finds them    | Plans delete outright, so it adds nothing                                                                |
 | `AdvancedBackupSettings` | Stored and returned                                              | Neither stored nor returned                                                                              |
+| Backup access points     | Serve a recovery point's data through an S3 access point         | Metadata only — no S3 access point exists, so no `S3AccessPointArn` or `S3AccessPointAlias` comes back   |
+| `AccessPointPolicy`      | Applied to the underlying S3 access point                        | Accepted and dropped; nothing here enforces an access policy                                             |
+| Access point listings    | Find the access points on a recovery point or resource           | Both filter stored metadata, but no recovery point ever exists, so both come back empty                  |
 
 ## Gotchas
 
 > [!NOTE]
-> Tags are stored inline on the vault or plan record, so deleting the resource
-> deletes its tags in the same write. Nothing outlives the record it describes.
+> Tags are stored inline on the vault, plan or access point record, so deleting
+> the resource deletes its tags in the same write. Nothing outlives the record
+> it describes.
 
 <!-- BEGIN overcast:capabilities -->
 
 ## Operations
 
-All 12 listed operations are implemented.
+All 18 listed operations are implemented.
 Per-operation status, notes and AWS API links: [Backup operations](backup/operations.md).
 
 <!-- END overcast:capabilities -->

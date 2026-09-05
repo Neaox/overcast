@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	nsVaults = "backup:vaults"
-	nsPlans  = "backup:plans"
+	nsVaults       = "backup:vaults"
+	nsPlans        = "backup:plans"
+	nsAccessPoints = "backup:accesspoints"
 )
 
 // vaultRecord is a backup vault as it is persisted. It is deliberately not the
@@ -54,6 +55,30 @@ type planRecord struct {
 	Tags map[string]string `json:"Tags,omitempty"`
 }
 
+// accessPointRecord is a backup access point as it is persisted (#1467).
+//
+// The record holds only what the client supplied. On AWS, BackupVaultName,
+// BackupVaultArn, ResourceArn and ResourceType are all read off the recovery
+// point the access point was created against; Overcast runs no backup jobs, so
+// no recovery point exists for RecoveryPointArn to resolve to and none of the
+// four can be derived. They are absent from the wire shape rather than
+// invented — see wireAccessPoint in handler_access_points.go.
+//
+// AccessPointPolicy is deliberately not here: CreateBackupAccessPoint accepts
+// one, no operation returns it, and nothing behind this control plane enforces
+// an access policy, so persisting it would store data nothing can ever read.
+type accessPointRecord struct {
+	Name             string            `json:"Name"`
+	AccessPointArn   string            `json:"AccessPointArn"`
+	RecoveryPointArn string            `json:"RecoveryPointArn"`
+	Metadata         map[string]string `json:"AccessPointMetadata,omitempty"`
+	CreationTime     time.Time         `json:"CreationTime"`
+	// Tags is stored inline for the same reason as vaultRecord.Tags above:
+	// populated from CreateBackupAccessPoint's Tags member and mutated by
+	// TagResource/UntagResource thereafter.
+	Tags map[string]string `json:"Tags,omitempty"`
+}
+
 // backupStore is every read and write Backup makes against state.Store.
 //
 // Keys are region-scoped. AWS states the constraint on CreateBackupVault:
@@ -74,98 +99,118 @@ func newBackupStore(st state.Store, log *serviceutil.ServiceLogger) *backupStore
 	return &backupStore{store: st, log: log}
 }
 
-// ─── Vaults ───────────────────────────────────────────────────
+// ─── Generic record access ────────────────────────────────────
+//
+// All three record types are region-keyed JSON blobs in the generic kv table,
+// which both MemoryStore and SQLiteStore serve without a per-service backend —
+// no namespace here has earned a dedicated table (CONTRIBUTING § Data earns a
+// table). The four operations below are therefore the same four for every
+// record type, and are written once rather than copied per type.
 
-func (s *backupStore) putVault(ctx context.Context, region string, v *vaultRecord) error {
-	raw, err := json.Marshal(v)
+func putRecord[T any](ctx context.Context, s *backupStore, ns, region, id string, rec *T) error {
+	raw, err := json.Marshal(rec)
 	if err != nil {
 		return err
 	}
-	return s.store.Set(ctx, nsVaults, serviceutil.RegionKey(region, v.BackupVaultName), string(raw))
+	return s.store.Set(ctx, ns, serviceutil.RegionKey(region, id), string(raw))
 }
 
-// getVault returns the vault called name in region.
+// getRecord returns the record called id in region.
 //
 // A record that cannot be decoded reads as absent rather than as a failure:
 // one bad payload must not turn a describe into a 500, and
 // ResourceNotFoundException is the answer AWS models for a name the service
 // cannot produce (AGENTS.md § malformed persisted state must be isolated).
-func (s *backupStore) getVault(ctx context.Context, region, name string) (*vaultRecord, bool, error) {
-	raw, found, err := s.store.Get(ctx, nsVaults, serviceutil.RegionKey(region, name))
+func getRecord[T any](ctx context.Context, s *backupStore, ns, kind, region, id string) (*T, bool, error) {
+	raw, found, err := s.store.Get(ctx, ns, serviceutil.RegionKey(region, id))
 	if err != nil || !found {
 		return nil, false, err
 	}
-	var v vaultRecord
-	if err := json.Unmarshal([]byte(raw), &v); err != nil {
-		s.log.Warn("skipping undecodable vault record", zap.String("vault", name), zap.Error(err))
+	var rec T
+	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+		s.log.Warn("skipping undecodable record", zap.String("kind", kind), zap.String("id", id), zap.Error(err))
 		return nil, false, nil
 	}
-	return &v, true, nil
+	return &rec, true, nil
 }
 
-// listVaults returns every vault in region, skipping records that cannot be
-// decoded so that one bad payload does not fail the whole listing.
-func (s *backupStore) listVaults(ctx context.Context, region string) ([]vaultRecord, error) {
-	pairs, err := s.store.Scan(ctx, nsVaults, serviceutil.RegionKey(region, ""))
+// listRecords returns every record of one kind in region, skipping records
+// that cannot be decoded so that one bad payload does not fail the whole
+// listing.
+func listRecords[T any](ctx context.Context, s *backupStore, ns, kind, region string) ([]T, error) {
+	pairs, err := s.store.Scan(ctx, ns, serviceutil.RegionKey(region, ""))
 	if err != nil {
 		return nil, err
 	}
-	out := make([]vaultRecord, 0, len(pairs))
+	out := make([]T, 0, len(pairs))
 	for _, kv := range pairs {
-		var v vaultRecord
-		if err := json.Unmarshal([]byte(kv.Value), &v); err != nil {
-			s.log.Warn("skipping undecodable vault record", zap.String("key", kv.Key), zap.Error(err))
+		var rec T
+		if err := json.Unmarshal([]byte(kv.Value), &rec); err != nil {
+			s.log.Warn("skipping undecodable record", zap.String("kind", kind), zap.String("key", kv.Key), zap.Error(err))
 			continue
 		}
-		out = append(out, v)
+		out = append(out, rec)
 	}
 	return out, nil
 }
 
+func (s *backupStore) deleteRecord(ctx context.Context, ns, region, id string) error {
+	return s.store.Delete(ctx, ns, serviceutil.RegionKey(region, id))
+}
+
+// ─── Vaults ───────────────────────────────────────────────────
+
+func (s *backupStore) putVault(ctx context.Context, region string, v *vaultRecord) error {
+	return putRecord(ctx, s, nsVaults, region, v.BackupVaultName, v)
+}
+
+func (s *backupStore) getVault(ctx context.Context, region, name string) (*vaultRecord, bool, error) {
+	return getRecord[vaultRecord](ctx, s, nsVaults, "vault", region, name)
+}
+
+func (s *backupStore) listVaults(ctx context.Context, region string) ([]vaultRecord, error) {
+	return listRecords[vaultRecord](ctx, s, nsVaults, "vault", region)
+}
+
 func (s *backupStore) deleteVault(ctx context.Context, region, name string) error {
-	return s.store.Delete(ctx, nsVaults, serviceutil.RegionKey(region, name))
+	return s.deleteRecord(ctx, nsVaults, region, name)
 }
 
 // ─── Plans ────────────────────────────────────────────────────
 
 func (s *backupStore) putPlan(ctx context.Context, region string, p *planRecord) error {
-	raw, err := json.Marshal(p)
-	if err != nil {
-		return err
-	}
-	return s.store.Set(ctx, nsPlans, serviceutil.RegionKey(region, p.BackupPlanID), string(raw))
+	return putRecord(ctx, s, nsPlans, region, p.BackupPlanID, p)
 }
 
 func (s *backupStore) getPlan(ctx context.Context, region, id string) (*planRecord, bool, error) {
-	raw, found, err := s.store.Get(ctx, nsPlans, serviceutil.RegionKey(region, id))
-	if err != nil || !found {
-		return nil, false, err
-	}
-	var p planRecord
-	if err := json.Unmarshal([]byte(raw), &p); err != nil {
-		s.log.Warn("skipping undecodable plan record", zap.String("plan", id), zap.Error(err))
-		return nil, false, nil
-	}
-	return &p, true, nil
+	return getRecord[planRecord](ctx, s, nsPlans, "plan", region, id)
 }
 
 func (s *backupStore) listPlans(ctx context.Context, region string) ([]planRecord, error) {
-	pairs, err := s.store.Scan(ctx, nsPlans, serviceutil.RegionKey(region, ""))
-	if err != nil {
-		return nil, err
-	}
-	out := make([]planRecord, 0, len(pairs))
-	for _, kv := range pairs {
-		var p planRecord
-		if err := json.Unmarshal([]byte(kv.Value), &p); err != nil {
-			s.log.Warn("skipping undecodable plan record", zap.String("key", kv.Key), zap.Error(err))
-			continue
-		}
-		out = append(out, p)
-	}
-	return out, nil
+	return listRecords[planRecord](ctx, s, nsPlans, "plan", region)
 }
 
 func (s *backupStore) deletePlan(ctx context.Context, region, id string) error {
-	return s.store.Delete(ctx, nsPlans, serviceutil.RegionKey(region, id))
+	return s.deleteRecord(ctx, nsPlans, region, id)
+}
+
+// ─── Access points ────────────────────────────────────────────
+//
+// Keyed by Name, which AWS states is unique within an account and Region — the
+// same scope vault names carry, and the reason the key is region-scoped.
+
+func (s *backupStore) putAccessPoint(ctx context.Context, region string, a *accessPointRecord) error {
+	return putRecord(ctx, s, nsAccessPoints, region, a.Name, a)
+}
+
+func (s *backupStore) getAccessPoint(ctx context.Context, region, name string) (*accessPointRecord, bool, error) {
+	return getRecord[accessPointRecord](ctx, s, nsAccessPoints, "access point", region, name)
+}
+
+func (s *backupStore) listAccessPoints(ctx context.Context, region string) ([]accessPointRecord, error) {
+	return listRecords[accessPointRecord](ctx, s, nsAccessPoints, "access point", region)
+}
+
+func (s *backupStore) deleteAccessPoint(ctx context.Context, region, name string) error {
+	return s.deleteRecord(ctx, nsAccessPoints, region, name)
 }

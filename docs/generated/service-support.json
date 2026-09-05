@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1473,
+  "total_ops": 1479,
   "services": [
     {
       "service": "s3",
@@ -8031,8 +8031,8 @@
     {
       "service": "backup",
       "display_name": "Backup",
-      "total_ops": 12,
-      "implemented_ops": 12,
+      "total_ops": 18,
+      "implemented_ops": 18,
       "operations": [
         {
           "operation": "CreateBackupVault",
@@ -8080,9 +8080,39 @@
           "notes": "POST /backup/plans/{BackupPlanId}; mints a new VersionId per update. Prior versions are not retained and `AdvancedBackupSettings` is not stored"
         },
         {
+          "operation": "CreateBackupAccessPoint",
+          "status": "⚠️ Partial",
+          "notes": "PUT /backup-access-point/create (#1467); `Tags` is applied at create time. `AccessPointPolicy` is accepted and dropped — no access policy is enforced behind this control plane"
+        },
+        {
+          "operation": "DeleteBackupAccessPoint",
+          "status": "✅ Supported",
+          "notes": "DELETE /backup-access-point/delete/{AccessPointArn}; empty 204, the modeled Unit output"
+        },
+        {
+          "operation": "DescribeBackupAccessPoint",
+          "status": "⚠️ Partial",
+          "notes": "GET /backup-access-point/{AccessPointArn}; returns the stored `AccessPointMetadata` verbatim. No recovery point exists to read `BackupVaultName`, `BackupVaultArn`, `ResourceArn` or `ResourceType` from, and no S3 access point is created, so those members and the metadata's `S3AccessPointArn`/`S3AccessPointAlias` are absent rather than invented"
+        },
+        {
+          "operation": "ListBackupAccessPoints",
+          "status": "⚠️ Partial",
+          "notes": "GET /backup-access-point; `MaxResults` and `NextToken` query params. Members read off a recovery point are absent, as on DescribeBackupAccessPoint"
+        },
+        {
+          "operation": "ListBackupAccessPointsByRecoveryPoint",
+          "status": "⚠️ Partial",
+          "notes": "POST /backup-access-point/recovery-point/{RecoveryPointArn}; filters on the ARN each access point was created against. No backup job runs, so no recovery point Overcast produced can ever be named here and the list is empty"
+        },
+        {
+          "operation": "ListBackupAccessPointsByResource",
+          "status": "⚠️ Partial",
+          "notes": "POST /backup-access-point/resource/{ResourceArn}; an access point's `ResourceArn` is a property of its recovery point, which Overcast never creates, so nothing is ever stored for this to match and the list is empty"
+        },
+        {
           "operation": "TagResource",
           "status": "✅ Supported",
-          "notes": "POST /tags/{ResourceArn}, shared with Pipes/EKS/Scheduler/AppConfig/API Gateway's ARN-dispatched path (#1195). Tags are stored inline on the vault or plan record, so they die with it"
+          "notes": "POST /tags/{ResourceArn}, shared with Pipes/EKS/Scheduler/AppConfig/API Gateway's ARN-dispatched path (#1195). Tags are stored inline on the vault, plan or access point record, so they die with it"
         },
         {
           "operation": "ListTags",

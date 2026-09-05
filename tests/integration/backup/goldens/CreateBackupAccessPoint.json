@@ -1,0 +1,7 @@
+{
+  "status": 201,
+  "headers": {
+    "Content-Type": "application/x-amz-json-1.0"
+  },
+  "body": "{\"AccessPointArn\":\"arn:aws:backup:us-east-1:000000000000:accesspoint/golden-access-point\",\"Status\":\"CREATING\"}"
+}

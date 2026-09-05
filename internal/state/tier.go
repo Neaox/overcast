@@ -135,8 +135,9 @@ var namespaceTiers = map[string]Tier{
 	"autoscaling:grouptags":     TierHot,
 
 	// ── Backup ──────────────────────────────────────────────────────────
-	"backup:vaults": TierHot,
-	"backup:plans":  TierHot,
+	"backup:vaults":       TierHot,
+	"backup:plans":        TierHot,
+	"backup:accesspoints": TierHot,
 
 	// ── CloudFormation Events ───────────────────────────────────────────
 	"cfn:events": TierCached,
