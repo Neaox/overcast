@@ -155,6 +155,263 @@ def ValidateTemplate(ctx: TestContext) -> None:
     cfn.validate_template(TemplateBody=tpl)
 
 
+# ── cloudformation-eks-refs ───────────────────────────────────────────────────
+
+# CloudFormation documents Ref and Fn::GetAtt separately for every resource
+# type, and the EKS family disagrees with itself in ways only a deployed stack
+# reveals: Ref on a Cluster is its name and the ARN is a distinct Arn attribute,
+# Ref on a Nodegroup is "<cluster>/<nodegroup>", and Ref on an Addon is
+# "<cluster>|<addon>" — a pipe, not a slash.
+#
+#   https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-eks-cluster.html#aws-resource-eks-cluster-return-values
+#   https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-eks-nodegroup.html#aws-resource-eks-nodegroup-return-values
+#   https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-eks-addon.html#aws-resource-eks-addon-return-values
+#
+# Overcast returned the cluster ARN from Ref (#1690) and separated the add-on
+# with "/" (#1692). Both were wire-observable and neither was caught here, so
+# this group asserts the values through CloudFormation alone — stack outputs and
+# describe_stack_resources — which is what a template author actually sees.
+
+# vpc-cni is one of the add-ons DescribeAddonVersions publishes. AWS refuses an
+# AddonName it does not know, so the name is not arbitrary.
+EKS_REFS_ADDON_NAME = "vpc-cni"
+EKS_REFS_CLUSTER_ROLE_ARN = "arn:aws:iam::000000000000:role/compat-eks-refs-cluster"
+EKS_REFS_NODE_ROLE_ARN = "arn:aws:iam::000000000000:role/compat-eks-refs-node"
+EKS_REFS_SUBNET_ID = "subnet-1"
+
+# Long enough for the stack to settle, short enough to fail rather than hang.
+_EKS_REFS_WAITER_CONFIG = {"Delay": 1, "MaxAttempts": 120}
+
+
+def _eks_refs_template(cluster_name: str, nodegroup_name: str) -> str:
+    """The stack under test.
+
+    The Nodegroup and the Addon are wired to their cluster purely by
+    {"Ref": "Cluster"} — no literal cluster name and no DependsOn. That is the
+    point: CloudFormation must hand CreateNodegroup and CreateAddon the cluster
+    *name*, so a Ref that resolves to the ARN fails the stack outright.
+    """
+    return json.dumps({
+        "AWSTemplateFormatVersion": "2010-09-09",
+        "Resources": {
+            "Cluster": {
+                "Type": "AWS::EKS::Cluster",
+                "Properties": {
+                    "Name": cluster_name,
+                    "RoleArn": EKS_REFS_CLUSTER_ROLE_ARN,
+                    "ResourcesVpcConfig": {"SubnetIds": [EKS_REFS_SUBNET_ID]},
+                },
+            },
+            "Nodegroup": {
+                "Type": "AWS::EKS::Nodegroup",
+                "Properties": {
+                    "ClusterName": {"Ref": "Cluster"},
+                    "NodegroupName": nodegroup_name,
+                    "NodeRole": EKS_REFS_NODE_ROLE_ARN,
+                    "Subnets": [EKS_REFS_SUBNET_ID],
+                },
+            },
+            "Addon": {
+                "Type": "AWS::EKS::Addon",
+                "Properties": {
+                    "ClusterName": {"Ref": "Cluster"},
+                    "AddonName": EKS_REFS_ADDON_NAME,
+                },
+            },
+        },
+        "Outputs": {
+            "ClusterRef": {"Value": {"Ref": "Cluster"}},
+            "ClusterArn": {"Value": {"Fn::GetAtt": ["Cluster", "Arn"]}},
+            "NodegroupRef": {"Value": {"Ref": "Nodegroup"}},
+            "AddonRef": {"Value": {"Ref": "Addon"}},
+        },
+    })
+
+
+def _eks_refs_expected_ids(cluster_name: str, nodegroup_name: str) -> dict[str, str]:
+    """The AWS-documented Ref value — and so the physical resource ID — of each
+    resource in the template."""
+    return {
+        "Cluster": cluster_name,
+        "Nodegroup": f"{cluster_name}/{nodegroup_name}",
+        "Addon": f"{cluster_name}|{EKS_REFS_ADDON_NAME}",
+    }
+
+
+def _account_from_stack_id(stack_id: str) -> str:
+    """The account ID out of a stack ARN.
+
+    ("arn:aws:cloudformation:<region>:<account>:stack/<name>/<uuid>"), so the
+    expected EKS ARN can be built without reaching for a second AWS client.
+    """
+    parts = stack_id.split(":")
+    if len(parts) < 6 or not parts[4]:
+        raise AssertionError(
+            f"stack ID {stack_id!r} is not a stack ARN, cannot read the account ID from it"
+        )
+    return parts[4]
+
+
+def _describe_eks_refs_stack(ctx: TestContext, name_or_id: str) -> dict:
+    stacks = _cfn(ctx).describe_stacks(StackName=name_or_id).get("Stacks", [])
+    if not stacks:
+        raise AssertionError(f"DescribeStacks: {name_or_id} returned no stacks")
+    return stacks[0]
+
+
+def _eks_refs_outputs(ctx: TestContext) -> dict[str, str]:
+    """Stack outputs, read afresh for each test rather than stashed, so every
+    assertion is made against a value the server just produced rather than one
+    an earlier test cached."""
+    stack_name = ctx.get("cfn_eks_stack_name")
+    if not stack_name:
+        raise AssertionError("DescribeStacks: no stack from CreateStackWithEksRefs")
+    stack = _describe_eks_refs_stack(ctx, stack_name)
+    return {o["OutputKey"]: o["OutputValue"] for o in stack.get("Outputs", [])}
+
+
+def setup_cloudformation_eks_refs(ctx: TestContext) -> None:
+    ctx["cfn_eks_stack_name"] = f"compat-eks-refs-{ctx.run_id}"
+    ctx["cfn_eks_cluster_name"] = f"compat-eks-refs-cluster-{ctx.run_id}"
+    ctx["cfn_eks_nodegroup_name"] = f"compat-eks-refs-ng-{ctx.run_id}"
+
+
+def teardown_cloudformation_eks_refs(ctx: TestContext) -> None:
+    """Delete the stack, which cascades to the cluster, the nodegroup and the
+    add-on: CloudFormation owns every resource this group creates, and deleting
+    a stack deletes the resources it owns."""
+    stack_name = ctx.get("cfn_eks_stack_name")
+    if stack_name:
+        try:
+            _cfn(ctx).delete_stack(StackName=stack_name)
+        except Exception:
+            pass
+
+
+def CreateStackWithEksRefs(ctx: TestContext) -> None:
+    cfn = _cfn(ctx)
+    stack_name = ctx.get("cfn_eks_stack_name")
+    resp = cfn.create_stack(
+        StackName=stack_name,
+        TemplateBody=_eks_refs_template(
+            ctx.get("cfn_eks_cluster_name"), ctx.get("cfn_eks_nodegroup_name")
+        ),
+    )
+    stack_id = resp.get("StackId")
+    if not stack_id:
+        raise AssertionError("CreateStack: missing StackId")
+    ctx["cfn_eks_stack_id"] = stack_id
+
+    # Outputs and physical resource IDs only exist once the stack settles.
+    cfn.get_waiter("stack_create_complete").wait(
+        StackName=stack_name, WaiterConfig=_EKS_REFS_WAITER_CONFIG
+    )
+    stack = _describe_eks_refs_stack(ctx, stack_name)
+    if stack.get("StackStatus") != "CREATE_COMPLETE":
+        raise AssertionError(
+            f"CreateStack: {stack_name} is {stack.get('StackStatus')} "
+            f"({stack.get('StackStatusReason', '')}), want CREATE_COMPLETE"
+        )
+
+
+def DescribeStackResourcesPhysicalIds(ctx: TestContext) -> None:
+    """Assert the physical ID CloudFormation recorded for each resource.
+
+    The physical ID is what Ref resolves to, so this is the same contract the
+    output assertions below check, seen through the API an operator reaches for
+    when a stack misbehaves.
+    """
+    stack_name = ctx.get("cfn_eks_stack_name")
+    if not stack_name:
+        raise AssertionError(
+            "DescribeStackResources: no stack from CreateStackWithEksRefs"
+        )
+    resp = _cfn(ctx).describe_stack_resources(StackName=stack_name)
+    physical_ids = {
+        r.get("LogicalResourceId"): r.get("PhysicalResourceId")
+        for r in resp.get("StackResources", [])
+    }
+    want = _eks_refs_expected_ids(
+        ctx.get("cfn_eks_cluster_name"), ctx.get("cfn_eks_nodegroup_name")
+    )
+    for logical_id in ("Cluster", "Nodegroup", "Addon"):
+        got = physical_ids.get(logical_id)
+        if got != want[logical_id]:
+            raise AssertionError(
+                f"DescribeStackResources: {logical_id} PhysicalResourceId = "
+                f"{got!r}, want {want[logical_id]!r}"
+            )
+
+
+def GetAttClusterArn(ctx: TestContext) -> None:
+    """Cover the divergence AWS documents for AWS::EKS::Cluster.
+
+    Ref is the cluster name, and the ARN is reachable only as the Arn attribute.
+    Asserting both together is what makes the pair meaningful — either value
+    alone looks plausible on its own.
+    """
+    outputs = _eks_refs_outputs(ctx)
+    cluster = ctx.get("cfn_eks_cluster_name")
+    if outputs.get("ClusterRef") != cluster:
+        raise AssertionError(
+            f"Ref on AWS::EKS::Cluster = {outputs.get('ClusterRef')!r}, "
+            f"want the cluster name {cluster!r}"
+        )
+    account = _account_from_stack_id(ctx.get("cfn_eks_stack_id"))
+    want = f"arn:aws:eks:{ctx.region}:{account}:cluster/{cluster}"
+    if outputs.get("ClusterArn") != want:
+        raise AssertionError(
+            f"Fn::GetAtt [Cluster, Arn] = {outputs.get('ClusterArn')!r}, want {want!r}"
+        )
+
+
+def RefNodegroupIsClusterSlashName(ctx: TestContext) -> None:
+    outputs = _eks_refs_outputs(ctx)
+    want = _eks_refs_expected_ids(
+        ctx.get("cfn_eks_cluster_name"), ctx.get("cfn_eks_nodegroup_name")
+    )["Nodegroup"]
+    if outputs.get("NodegroupRef") != want:
+        raise AssertionError(
+            f"Ref on AWS::EKS::Nodegroup = {outputs.get('NodegroupRef')!r}, want {want!r}"
+        )
+
+
+def RefAddonIsClusterPipeAddon(ctx: TestContext) -> None:
+    outputs = _eks_refs_outputs(ctx)
+    want = _eks_refs_expected_ids(
+        ctx.get("cfn_eks_cluster_name"), ctx.get("cfn_eks_nodegroup_name")
+    )["Addon"]
+    if outputs.get("AddonRef") != want:
+        raise AssertionError(
+            f"Ref on AWS::EKS::Addon = {outputs.get('AddonRef')!r}, want {want!r} "
+            "(pipe-separated, not a slash)"
+        )
+
+
+def DeleteStackWithEksRefs(ctx: TestContext) -> None:
+    """Delete the group's own stack.
+
+    A deleted stack is readable by stack ID and gone by name — AWS documents
+    that asymmetry — so the stack ID is what proves the delete finished rather
+    than merely started.
+    """
+    cfn = _cfn(ctx)
+    stack_name = ctx.get("cfn_eks_stack_name")
+    stack_id = ctx.get("cfn_eks_stack_id")
+    if not stack_name or not stack_id:
+        raise AssertionError("DeleteStack: no stack from CreateStackWithEksRefs")
+    cfn.delete_stack(StackName=stack_name)
+    cfn.get_waiter("stack_delete_complete").wait(
+        StackName=stack_name, WaiterConfig=_EKS_REFS_WAITER_CONFIG
+    )
+    stack = _describe_eks_refs_stack(ctx, stack_id)
+    if stack.get("StackStatus") != "DELETE_COMPLETE":
+        raise AssertionError(
+            f"DeleteStack: {stack_name} is {stack.get('StackStatus')} "
+            f"({stack.get('StackStatusReason', '')}), want DELETE_COMPLETE"
+        )
+
+
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
@@ -164,11 +421,20 @@ IMPLS = {
     "cloudformation-stacks:UpdateStack": UpdateStack,
     "cloudformation-stacks:DeleteStack": DeleteStack,
     "cloudformation-stacks:ValidateTemplate": ValidateTemplate,
+    "cloudformation-eks-refs:CreateStackWithEksRefs": CreateStackWithEksRefs,
+    "cloudformation-eks-refs:DescribeStackResourcesPhysicalIds": DescribeStackResourcesPhysicalIds,
+    "cloudformation-eks-refs:GetAttClusterArn": GetAttClusterArn,
+    "cloudformation-eks-refs:RefNodegroupIsClusterSlashName": RefNodegroupIsClusterSlashName,
+    "cloudformation-eks-refs:RefAddonIsClusterPipeAddon": RefAddonIsClusterPipeAddon,
+    "cloudformation-eks-refs:DeleteStackWithEksRefs": DeleteStackWithEksRefs,
 }
 
-SETUP = {}
+SETUP = {
+    "cloudformation-eks-refs": setup_cloudformation_eks_refs,
+}
 TEARDOWN = {
     "cloudformation-stacks": lambda ctx: _teardown_cfn_stack(ctx),
+    "cloudformation-eks-refs": teardown_cloudformation_eks_refs,
 }
 
 
