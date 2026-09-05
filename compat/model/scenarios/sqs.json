@@ -7,7 +7,8 @@
     "signingName": "sqs",
     "protocol": "awsJson1_0",
     "apiVersion": "2012-11-05",
-    "targetPrefix": "AmazonSQS"
+    "targetPrefix": "AmazonSQS",
+    "awsQueryCompatible": true
   },
   "groups": [
     {

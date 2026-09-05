@@ -112,12 +112,13 @@ func clientInfoFor(model *serviceModel, service string) (clientInfo, error) {
 	}
 	op := entries[0]
 	return clientInfo{
-		SDKID:          op.SDKID,
-		EndpointPrefix: model.EndpointPrefix,
-		SigningName:    model.SigningName,
-		Protocol:       string(op.Protocol),
-		APIVersion:     op.APIVersion,
-		TargetPrefix:   strings.TrimSuffix(op.TargetPrefix, "."),
+		SDKID:              op.SDKID,
+		EndpointPrefix:     model.EndpointPrefix,
+		SigningName:        model.SigningName,
+		Protocol:           string(op.Protocol),
+		APIVersion:         op.APIVersion,
+		TargetPrefix:       strings.TrimSuffix(op.TargetPrefix, "."),
+		AWSQueryCompatible: model.QueryCompatible,
 	}, nil
 }
 

@@ -44,7 +44,8 @@ exists to replace. See
   "version": 1,
   "service": "sqs",
   "client": { "sdkId": "SQS", "endpointPrefix": "sqs", "signingName": "sqs",
-              "protocol": "awsJson1_0", "apiVersion": "2012-11-05", "targetPrefix": "AmazonSQS" },
+              "protocol": "awsJson1_0", "apiVersion": "2012-11-05", "targetPrefix": "AmazonSQS",
+              "awsQueryCompatible": true },
   "groups": [
     {
       "name": "sqs-gen-queue",
@@ -83,6 +84,13 @@ name (`awsJson1_0`, `awsJson1_1`, `awsQuery`, `ec2Query`, `restJson1`,
 AWS JSON protocols, and the `X-Amz-Target` header is `<targetPrefix>.<Op>`.
 Per-SDK package names are deliberately not in the file — see
 [Naming](#naming).
+
+`awsQueryCompatible` is the service's `aws.protocols#awsQueryCompatible`
+trait: the service was migrated from the Query protocol, and AWS still returns
+the Query error code in an `x-amzn-query-error` response header alongside the
+JSON body. It is present on every scenario, `true` or `false`, so that `false`
+and "this file predates the field" cannot be confused. What an interpreter
+does with it is under [Assertions](#assertions).
 
 ### A call
 
@@ -161,6 +169,17 @@ again — for SQS, `QueueDoesNotExist` and
 they surface, so an interpreter accepts an error whose reported code **or**
 type name equals **either**. An error whose code matches neither, or a call
 that succeeds, fails the clause.
+
+`client.awsQueryCompatible` says whether a third spelling can reach the
+interpreter. When it is `true`, AWS also returns the Query code in an
+`x-amzn-query-error` response header, as `<code>;<Sender|Receiver>` — a
+missing SQS queue answers
+`AWS.SimpleQueueService.NonExistentQueue;Sender`. An SDK that surfaces that
+header rather than the JSON `__type` therefore reports the code with a fault
+suffix on it, which matches neither accepted value literally, so an
+interpreter that reads the header splits on the first `;` and compares the
+code half on the same terms as the other two. When it is `false` there is no
+such header and the JSON `__type`/`code` is the only carrier.
 
 Equality "as JSON": compare the SDK's value after mapping it to JSON the way
 the SDK itself would (a boto3 `int` is a JSON number, a `bool` a boolean, a

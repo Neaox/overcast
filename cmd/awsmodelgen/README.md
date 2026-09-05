@@ -124,7 +124,7 @@ reason it is there.
 | HTTP bindings | `http`, `httpLabel`, `httpQuery`, `httpQueryParams`, `httpHeader`, `httpPrefixHeaders`, `httpPayload`, `httpResponseCode`, `httpChecksumRequired` |
 | Serialisation names | `jsonName`, `xmlName`, `xmlFlattened`, `xmlAttribute`, `xmlNamespace`, `aws.protocols#ec2QueryName` |
 | Pagination | `paginated` |
-| Service identity and protocol | `aws.api#service`, `aws.auth#sigv4`, and the eight protocol traits (`awsJson1_0`, `awsJson1_1`, `awsQuery`, `ec2Query`, `restJson1`, `restXml`, `rpcv2Cbor`, `rpcv2Json`) |
+| Service identity and protocol | `aws.api#service`, `aws.auth#sigv4`, `aws.protocols#awsQueryCompatible`, and the eight protocol traits (`awsJson1_0`, `awsJson1_1`, `awsQuery`, `ec2Query`, `restJson1`, `restXml`, `rpcv2Cbor`, `rpcv2Json`) |
 | Resource metadata | `aws.api#arn`, `aws.api#taggable` |
 
 Unqualified names above are `smithy.api#`. Adding an entry widens the committed
