@@ -5,7 +5,7 @@
  * and runs the suite via runSuite() which emits NDJSON to stdout.
  *
  * Environment variables:
- *   OVERCAST_ENDPOINT              Overcast base URL (default: http://localhost:4566)
+ *   OVERCAST_ENDPOINT              Overcast base URL (default: http://127.0.0.1:4566)
  *   OVERCAST_DEFAULT_REGION         AWS region (default: us-east-1)
  *   OVERCAST_COMPAT_SKIP_DOCKER    Skip tests requiring Docker (default: false)
  *   OVERCAST_COMPAT_GROUPS         Comma-separated group names to run (default: all)
@@ -38,7 +38,10 @@ import { makeAllGroups, makeImplMap } from "./groups/index.ts";
 
 const SUITE = "node-js-sdk";
 
-const endpoint = process.env.OVERCAST_ENDPOINT ?? "http://localhost:4566";
+// 127.0.0.1, not localhost: on a dual-stack host "localhost" resolves to ::1
+// first while the container publishes IPv4 only, so every new connection
+// pays a ~2s IPv6-then-IPv4 fallback.
+const endpoint = process.env.OVERCAST_ENDPOINT ?? "http://127.0.0.1:4566";
 const region = process.env.OVERCAST_DEFAULT_REGION ?? "us-east-1";
 const runId = process.env.OVERCAST_COMPAT_RUN_ID ?? makeRunId();
 

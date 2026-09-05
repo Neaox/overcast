@@ -248,9 +248,11 @@ func bindHosts(gateway string) []string {
 // overcastOptions configures a managed Overcast instance.
 type overcastOptions struct {
 	// Host is the hostname the suites address the instance by. Defaults to
-	// "localhost"; set it to a wildcard-resolving name such as
-	// localhost.overcast.sh when a suite needs virtual-host-style addressing
-	// (S3 bucket subdomains) to reach the emulator.
+	// "127.0.0.1" (not "localhost": a dual-stack host resolves "localhost" to
+	// ::1 first, adding a ~2s IPv6-then-IPv4 fallback per connection to the
+	// container, which publishes IPv4 only); set it to a wildcard-resolving
+	// name such as localhost.overcast.sh when a suite needs virtual-host-style
+	// addressing (S3 bucket subdomains) to reach the emulator.
 	Host string
 	// Bin is an explicit path to the overcast binary. Empty searches
 	// bin/overcast then PATH.
@@ -289,7 +291,7 @@ type overcastOptions struct {
 
 // managedOvercast is a running instance owned by this process.
 type managedOvercast struct {
-	// Endpoint is the API base URL, e.g. "http://localhost:4570".
+	// Endpoint is the API base URL, e.g. "http://127.0.0.1:4570".
 	Endpoint string
 	// UIURL is the emulator's own web UI, empty when disabled.
 	UIURL string
@@ -331,7 +333,8 @@ func startOvercast(ctx context.Context, opts overcastOptions) (*managedOvercast,
 		opts.LogLevel = "warn"
 	}
 	if opts.Host == "" {
-		opts.Host = "localhost"
+		// 127.0.0.1, not localhost: see the Host field doc above.
+		opts.Host = "127.0.0.1"
 	}
 	if opts.DockerSocket == "" {
 		opts.DockerSocket = dockerSocketPath
