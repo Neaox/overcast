@@ -230,15 +230,20 @@ jobs:
   promote:
     name: Promote soaked candidate groups
     needs: detect
-    # always(): a red detect leg means that suite found a flake, which is
-    # exactly the evidence the promotion rule needs to see. A leg that did not
-    # run at all leaves its suite missing from every run, and the rule blocks on
-    # that too — so nothing is promoted on incomplete evidence either way.
+    # !cancelled() rather than always(): a red detect leg means that suite found
+    # a flake, which is exactly the evidence the promotion rule needs to see,
+    # and a leg that did not run at all leaves its suite missing from every run,
+    # which the rule blocks on — so nothing is promoted on incomplete evidence
+    # either way. A *cancelled* workflow is neither. Somebody pressed cancel, or
+    # a newer run superseded this one, and the artifacts are whatever happened
+    # to be uploaded before the axe fell; always() would run the soak over that
+    # truncated evidence, and a run cancelled midway is the likeliest way for a
+    # suite's later runs to be missing without anyone noticing.
     #
     # Only for a full run: a dispatch narrowed to one suite has no evidence
     # about the other backends a group is scoped to, and a promotion is supposed
     # to rest on the whole nightly.
-    if: always() && github.event.inputs.suite == ''
+    if: ${{ !cancelled() && github.event.inputs.suite == '' }}
     runs-on: ubuntu-latest
     # A checkout, a Go build, an artifact download and two generator runs. No
     # suite runs here.
@@ -269,6 +274,18 @@ jobs:
           pattern: flake-runs-*-${{ github.run_id }}
           path: flake-runs
 
+      # Its own step, and deliberately so. The merge step below runs under
+      # `set -uo pipefail` *without* `-e`, so that one run whose artifacts will
+      # not merge is dropped rather than killing the job — the soak then sees
+      # fewer runs than it needs and blocks, which is the safe outcome. The
+      # build has no business inheriting that tolerance: built here, a `go
+      # build` failure made every merge fail silently, left `merged` at 0,
+      # skipped the soak step through its own `if:`, and finished green having
+      # promoted nothing and reported nothing. Under this step's default
+      # `bash -e` a broken build fails the job, which is what it is.
+      - name: Build the compat CLI
+        run: go build -o bin/compat ./cmd/compat
+
       # One report per nightly run, not per suite: the promotion rule asks
       # whether every suite a group is scoped to answered the same way in run i,
       # so run i has to be a single report spanning the matrix. --merge-results
@@ -280,7 +297,6 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p soak
-          go build -o bin/compat ./cmd/compat
           merged=0
           for i in $(seq 1 "${RUNS}"); do
             # A run no suite reported is skipped rather than merged into an
@@ -291,11 +307,18 @@ jobs:
               echo "No suite reported run $i — skipping it."
               continue
             fi
-            ./bin/compat \
+            # Counted only when it actually merged. Incrementing regardless
+            # would offer a run as evidence that produced no report, and the
+            # warning is what keeps a merge failure from passing for a quiet
+            # night.
+            if ./bin/compat \
               --merge-results "flake-runs/*/flake-run-$i.json" \
               --results-file "soak/run-${GITHUB_RUN_ID}-$i.json" \
-              --format pretty > /dev/null
-            merged=$((merged + 1))
+              --format pretty > /dev/null; then
+              merged=$((merged + 1))
+            else
+              echo "::warning title=Compat soak::Could not merge run $i — it does not count toward the soak."
+            fi
           done
           echo "Merged $merged of ${RUNS} nightly run(s) for the generated group soak." >> "$GITHUB_STEP_SUMMARY"
           echo "merged=$merged" >> "$GITHUB_OUTPUT"

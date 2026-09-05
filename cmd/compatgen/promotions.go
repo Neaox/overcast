@@ -5,6 +5,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	compatmodel "github.com/overcast-sh/overcast/compat/model"
 )
 
 // The soak ledger, compat/model/promotions.json.
@@ -27,50 +29,42 @@ import (
 // See docs/plans/compat-coverage-modelgen.md § 3.6 and cmd/compat/promote.go,
 // which is the writer.
 
-type promotionsFile struct {
-	Schema  string                    `json:"$schema,omitempty"`
-	Comment string                    `json:"$comment,omitempty"`
-	Version int                       `json:"version"`
-	Groups  map[string]promotionEntry `json:"groups"`
-}
-
-type promotionEntry struct {
-	State      string   `json:"state"`
-	FirstSeen  string   `json:"firstSeen"`
-	PromotedAt string   `json:"promotedAt,omitempty"`
-	Runs       []string `json:"runs,omitempty"`
-}
+// The ledger's shape, its version and its strict reader live in compat/model
+// (package compatmodel), shared with cmd/compat, which is the writer. Two
+// hand-maintained copies of one schema in two `main` packages is how the two
+// readers came to disagree about whether an unknown field is an error.
 
 // loadPromotions reads and schema-checks the ledger.
 //
 // A missing file is an empty ledger, for the same reason readGeneratedRegistry
 // tolerates a missing registry: a checkout that predates the soak must generate
 // exactly what it generated before, with every group a candidate.
-func loadPromotions(path string, schema *schemaSet) (*promotionsFile, error) {
+func loadPromotions(path string, schema *schemaSet) (*compatmodel.Promotions, error) {
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &promotionsFile{Version: promotionsVersion, Groups: map[string]promotionEntry{}}, nil
+			return compatmodel.EmptyPromotions(), nil
 		}
 		return nil, fmt.Errorf("read promotions %s: %w", path, err)
 	}
+	// The schema first, because it says far more than the Go types can — the
+	// date patterns, the state enum, and that a gated entry carries its
+	// evidence. The strict decode then catches what a schema cannot: a field
+	// the document declares and this build has no home for.
 	if err := schema.validate(schemaPromotions, contents); err != nil {
 		return nil, fmt.Errorf("promotions %s: %w", path, err)
 	}
-	var file promotionsFile
-	if err := decodeStrict(contents, &file); err != nil {
+	file, err := compatmodel.DecodePromotions(contents)
+	if err != nil {
 		return nil, fmt.Errorf("promotions %s: %w", path, err)
 	}
-	if file.Groups == nil {
-		file.Groups = map[string]promotionEntry{}
-	}
-	return &file, nil
+	return file, nil
 }
 
-// stateOf is the state the registry records for a group. Absent from the
-// ledger means candidate: a group that nothing has observed yet has not soaked,
-// and the safe default is the one that gates nothing.
-func (p *promotionsFile) stateOf(group string) string {
+// promotionStateOf is the state the registry records for a group. Absent from
+// the ledger means candidate: a group that nothing has observed yet has not
+// soaked, and the safe default is the one that gates nothing.
+func promotionStateOf(p *compatmodel.Promotions, group string) string {
 	if p == nil {
 		return generatedStateCandidate
 	}
@@ -89,7 +83,7 @@ func (p *promotionsFile) stateOf(group string) string {
 // Checking against the scenarios rather than the registry is deliberate — the
 // registry is empty until a suite has a scenario backend, so an entry would
 // look stale for a reason that has nothing to do with the group existing.
-func checkPromotionsAreKnownGroups(promotions *promotionsFile, scenarios []*scenario) error {
+func checkPromotionsAreKnownGroups(promotions *compatmodel.Promotions, scenarios []*scenario) error {
 	known := make(map[string]bool)
 	for _, s := range scenarios {
 		for _, g := range s.Groups {

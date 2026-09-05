@@ -9,8 +9,9 @@
 //
 // --promote-generated is that step. It reads N consecutive nightly run reports,
 // and promotes a candidate group when every (suite, test) in it answered
-// identically across all N with zero failures, every suite the group is scoped
-// to reporting in every run.
+// identically across all N with no `fail` and no `skip`, every suite the group
+// is scoped to reporting in every run. `unimplemented` is a promotable
+// agreement — decidePromotion says why, and a Tier 0 probe group depends on it.
 //
 // It writes exactly one file: compat/model/promotions.json. It does **not**
 // touch compat/suites/registry.generated.json, which cmd/compatgen owns and
@@ -25,7 +26,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -35,10 +35,10 @@ import (
 	"time"
 
 	"github.com/overcast-sh/overcast/compat"
+	compatmodel "github.com/overcast-sh/overcast/compat/model"
 )
 
 const (
-	promotionsVersion = 1
 	// promotionDateLayout matches flakyDateLayout: the two ledgers are read
 	// side by side by anyone triaging a nightly, and a second date format
 	// would be gratuitous.
@@ -55,64 +55,12 @@ const (
 // compat/model/promotions.json
 // ---------------------------------------------------------------------------
 
-// promotionsFile is the soak ledger. Groups is a map so the encoder sorts it:
-// a promotion is then a one-line diff wherever the group's name falls, rather
-// than a reordering of an array.
-type promotionsFile struct {
-	Schema  string                    `json:"$schema,omitempty"`
-	Comment string                    `json:"$comment,omitempty"`
-	Version int                       `json:"version"`
-	Groups  map[string]promotionEntry `json:"groups"`
-}
-
-type promotionEntry struct {
-	// State is generatedStateCandidate or generatedStateGated — the state
-	// cmd/compatgen emits into the generated registry for this group.
-	State string `json:"state"`
-	// FirstSeen is the date the soak first observed the group, written once
-	// and never rewritten. Without it a candidate cannot age, and a group that
-	// will never agree would report forever while gating nothing — the inverse
-	// of the flake-list problem the state machine was designed to avoid.
-	FirstSeen string `json:"firstSeen"`
-	// PromotedAt and Runs are the evidence: which day the group entered the
-	// gate, and which runs agreed. A promotion nobody can audit back to its
-	// artifacts is a hand edit with extra steps.
-	PromotedAt string   `json:"promotedAt,omitempty"`
-	Runs       []string `json:"runs,omitempty"`
-}
-
-func readPromotionsFile(path string) (*promotionsFile, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &promotionsFile{Version: promotionsVersion, Groups: map[string]promotionEntry{}}, nil
-		}
-		return nil, fmt.Errorf("read promotions %s: %w", path, err)
-	}
-	var file promotionsFile
-	if err := json.Unmarshal(b, &file); err != nil {
-		return nil, fmt.Errorf("parse promotions %s: %w", path, err)
-	}
-	if file.Groups == nil {
-		file.Groups = map[string]promotionEntry{}
-	}
-	return &file, nil
-}
-
-// encodePromotionsFile renders the ledger exactly as cmd/compatgen renders its
-// own output — two-space indent, no HTML escaping, one trailing newline — so
-// that a file written here and a file a human tidied by hand are the same
-// bytes, and a no-op run produces no diff.
-func encodePromotionsFile(file *promotionsFile) ([]byte, error) {
-	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(file); err != nil {
-		return nil, fmt.Errorf("encode promotions: %w", err)
-	}
-	return buffer.Bytes(), nil
-}
+// The ledger's shape, its version, its strict reader and its canonical encoder
+// live in compat/model (package compatmodel). cmd/compatgen reads the same
+// file, and two hand-maintained copies of one schema in two `main` packages
+// drift: the copy here had neither the version check nor the strict decode its
+// sibling had, so a field a later schema added would have been dropped on read
+// and erased on the write that follows it.
 
 // ---------------------------------------------------------------------------
 // The decision
@@ -173,6 +121,21 @@ func runStatuses(report *compat.RunReport, group string) map[string]compat.Statu
 //   - Every (suite, test) must carry the same status in all N runs.
 //   - No status may be `fail`. A consistent failure is consistent, and would
 //     otherwise promote straight into a gate it immediately breaks.
+//   - No status may be `skip` either. A skip is not an answer about the
+//     operation — it is the suite saying it never asked. A group whose every
+//     test skips in all N runs (a setup failing the same way three nights
+//     running is the realistic case) is perfectly consistent and has been
+//     exercised precisely zero times, so promoting it would gate on evidence
+//     that nothing ran. It is reported like a flip, naming the (suite, test),
+//     because the fix is the same: find out why, in the recipe or the emulator.
+//
+// `unimplemented` is the one agreement that is emphatically promotable, and
+// nothing above should be read as doubting it. A Tier 0 probe group calls an
+// operation the emulator does not implement, with identifiers that do not
+// exist; a stable 501 from every suite in every run is that operation
+// answering exactly as modelled, and gating on it is what makes the group
+// catch the day it stops being true. A rule that held `unimplemented` back
+// would leave the largest class of generated group outside the gate forever.
 func decidePromotion(group generatedGroup, runs []promotionRun, minRuns int) promotionVerdict {
 	verdict := promotionVerdict{Group: group.Name}
 	// len(runs) == 0 is checked in its own right, not just against minRuns: a
@@ -215,6 +178,10 @@ func decidePromotion(group generatedGroup, runs []promotionRun, minRuns int) pro
 				verdict.Blockers = append(verdict.Blockers, fmt.Sprintf(
 					"%s failed in every run — a consistent failure is still a failure", key))
 			}
+			if seen[0] == compat.StatusSkip {
+				verdict.Blockers = append(verdict.Blockers, fmt.Sprintf(
+					"%s skipped in every run — nothing was exercised, so nothing soaked", key))
+			}
 		}
 	}
 	sort.Strings(verdict.Blockers)
@@ -253,19 +220,19 @@ type promotionOutcome struct {
 	// to them any more.
 	Pruned []string
 	// File is the ledger as it should now be written.
-	File *promotionsFile
+	File *compatmodel.Promotions
 }
 
 // applyPromotions decides every candidate group and returns the ledger that
 // results. It is pure — the clock is an argument — so the thirty-day deadline
 // is testable without waiting a month.
-func applyPromotions(gen *generatedRegistry, ledger *promotionsFile, runs []promotionRun, minRuns int, now time.Time) promotionOutcome {
+func applyPromotions(gen *generatedRegistry, ledger *compatmodel.Promotions, runs []promotionRun, minRuns int, now time.Time) promotionOutcome {
 	today := now.Format(promotionDateLayout)
-	out := promotionOutcome{File: &promotionsFile{
+	out := promotionOutcome{File: &compatmodel.Promotions{
 		Schema:  ledger.Schema,
 		Comment: ledger.Comment,
-		Version: promotionsVersion,
-		Groups:  make(map[string]promotionEntry, len(ledger.Groups)),
+		Version: compatmodel.PromotionsVersion,
+		Groups:  make(map[string]compatmodel.Promotion, len(ledger.Groups)),
 	}}
 
 	known := make(map[string]bool, len(gen.Groups))
@@ -276,6 +243,18 @@ func applyPromotions(gen *generatedRegistry, ledger *promotionsFile, runs []prom
 		if !known[name] {
 			out.Pruned = append(out.Pruned, name)
 			continue
+		}
+		// Taking a group back out of the gate is a supported hand edit — set
+		// its state to candidate — and it leaves promotedAt and the run ids
+		// behind, describing a promotion that has been withdrawn. That is
+		// worse than untidy: promotions.schema.json requires both only of a
+		// gated entry, anyone auditing the ledger reads them as the evidence
+		// of a live promotion, and the soak would copy them forward verbatim
+		// every night. The state is the record; clear the evidence to match
+		// it, and let the group earn a fresh set.
+		if entry.State == generatedStateCandidate {
+			entry.PromotedAt = ""
+			entry.Runs = nil
 		}
 		out.File.Groups[name] = entry
 	}
@@ -299,7 +278,7 @@ func applyPromotions(gen *generatedRegistry, ledger *promotionsFile, runs []prom
 			// First observation. Recording it even when nothing promotes is
 			// the whole basis of the overdue check — a candidate with no
 			// first-seen date can never be too old.
-			entry = promotionEntry{State: generatedStateCandidate, FirstSeen: today}
+			entry = compatmodel.Promotion{State: generatedStateCandidate, FirstSeen: today}
 			out.File.Groups[group.Name] = entry
 		}
 
@@ -375,13 +354,13 @@ func promoteGeneratedFile(promotionsPath, registryPath, generatedPath, runSpec s
 	if err != nil {
 		return err
 	}
-	ledger, err := readPromotionsFile(promotionsPath)
+	ledger, err := compatmodel.ReadPromotions(promotionsPath)
 	if err != nil {
 		return err
 	}
 
 	outcome := applyPromotions(gen, ledger, runs, minRuns, time.Now())
-	contents, err := encodePromotionsFile(outcome.File)
+	contents, err := compatmodel.EncodePromotions(outcome.File)
 	if err != nil {
 		return err
 	}

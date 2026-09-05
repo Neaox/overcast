@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	compatmodel "github.com/overcast-sh/overcast/compat/model"
 )
 
 // The soak ledger is the only input that can move a generated group's `state`,
@@ -25,9 +27,9 @@ func TestPromotions_changeTheStateAndNothingElse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ledger := &promotionsFile{
-		Version: promotionsVersion,
-		Groups: map[string]promotionEntry{
+	ledger := &compatmodel.Promotions{
+		Version: compatmodel.PromotionsVersion,
+		Groups: map[string]compatmodel.Promotion{
 			promoted: {State: generatedStateGated, FirstSeen: "2026-09-01", PromotedAt: "2026-09-05", Runs: []string{"run-1"}},
 		},
 	}
@@ -83,8 +85,8 @@ func changedLines(before, after string) []string {
 // ledger file is not an error.
 func TestPromotions_defaultToCandidate(t *testing.T) {
 	_, gen := generateFixture(t)
-	empty := &promotionsFile{Version: promotionsVersion, Groups: map[string]promotionEntry{}}
-	for _, source := range []*promotionsFile{nil, empty} {
+	empty := compatmodel.EmptyPromotions()
+	for _, source := range []*compatmodel.Promotions{nil, empty} {
 		for _, g := range buildRegistry([]*scenario{gen.scenario}, []string{"cli"}, source).Groups {
 			if g.State != generatedStateCandidate {
 				t.Errorf("group %s state = %q with ledger %v, want %q", g.Name, g.State, source, generatedStateCandidate)

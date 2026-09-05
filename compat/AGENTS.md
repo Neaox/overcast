@@ -820,14 +820,29 @@ under, with a reviewer's approval; a candidate has not entered it yet.
 Promotion is mechanical, and nobody types it. Each night, after the 3×
 flake-detection runs, `go run ./cmd/compat --promote-generated` reads them and
 promotes every candidate whose every `(suite, test)` answered **identically in
-all three runs with zero `fail`**, with every suite the group is scoped to
-reporting in every run. It writes exactly one file,
+all three runs, with no `fail` and no `skip`**, with every suite the group is
+scoped to reporting in every run. It writes exactly one file,
 [model/promotions.json](./model/promotions.json) — the soak ledger, which
 `cmd/compatgen` reads to emit each group's `state`. `cmd/compatgen` still owns
 `registry.generated.json` and rewrites it wholly; the bot PR on
 `automation/promote-generated` carries the ledger and the regenerated registry
 in one commit, so `make compat-model-check` stays byte-identical. Two tools
 writing one generated file is the thing this shape exists to prevent.
+
+`skip` blocks for a different reason from `fail`, and the difference matters:
+a skip is not an answer about the operation, it is the suite saying it never
+asked. A group whose every test skips in all three runs — a setup failing the
+same way three nights running is the realistic case — is perfectly consistent
+and has been exercised exactly zero times, so consistency alone would gate it
+on evidence that nothing ran. It is reported like a flip, naming the
+`(suite, test)`.
+
+**`unimplemented` is a promotable agreement, and deliberately so.** A Tier 0
+probe group calls an operation the emulator does not implement, with
+identifiers that do not exist; a stable 501 from every suite in every run is
+that operation answering exactly as modelled, and gating on it is what makes
+the group catch the day it stops being true. Holding `unimplemented` back
+would leave the largest class of generated group outside the gate forever.
 
 A candidate that has not promoted 30 days after its recorded `firstSeen` is
 reported overdue by the same command, naming the `(suite, test)`s that could not

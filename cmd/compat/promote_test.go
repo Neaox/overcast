@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/overcast-sh/overcast/compat"
+	compatmodel "github.com/overcast-sh/overcast/compat/model"
 )
 
 // The soak's decision is the whole of --promote-generated's risk: it is what
@@ -93,10 +94,33 @@ func TestDecidePromotion(t *testing.T) {
 			wantPromote: true,
 		},
 		{
+			// A Tier 0 probe group is exactly this: a stable 501 from every
+			// suite in every run is the operation answering as modelled, and
+			// it is the largest class of generated group there is.
 			name:        "a consistently unimplemented group still promotes",
 			runs:        soakRuns(3, compat.StatusUnimplemented),
 			minRuns:     3,
 			wantPromote: true,
+		},
+		{
+			// The consistency rule on its own would promote this: three
+			// identical answers, no failure. But a skip is the suite saying it
+			// never asked — a setup failing the same way three nights running
+			// is the realistic case — so the group would enter the gate having
+			// been exercised zero times.
+			name:        "a consistently skipped group blocks — consistency is not evidence",
+			runs:        soakRuns(3, compat.StatusSkip),
+			minRuns:     3,
+			wantBlocker: "cli/CreateQueue skipped in every run",
+		},
+		{
+			name: "one test skipping in every run blocks the group",
+			runs: soakRuns(3, compat.StatusPass,
+				statusOverride{run: 0, suite: "python-sdk", test: "SendMessage", status: compat.StatusSkip},
+				statusOverride{run: 1, suite: "python-sdk", test: "SendMessage", status: compat.StatusSkip},
+				statusOverride{run: 2, suite: "python-sdk", test: "SendMessage", status: compat.StatusSkip}),
+			minRuns:     3,
+			wantBlocker: "python-sdk/SendMessage skipped in every run",
 		},
 		{
 			name: "one failing run blocks",
@@ -186,7 +210,7 @@ func containsSubstring(lines []string, want string) bool {
 // or it can never age out and the overdue nag has nothing to measure against.
 func TestApplyPromotions_recordsFirstSeenOnFirstObservation(t *testing.T) {
 	now := time.Date(2026, 9, 5, 3, 0, 0, 0, time.UTC)
-	ledger := &promotionsFile{Version: promotionsVersion, Groups: map[string]promotionEntry{}}
+	ledger := &compatmodel.Promotions{Version: compatmodel.PromotionsVersion, Groups: map[string]compatmodel.Promotion{}}
 
 	outcome := applyPromotions(candidateFixture(), ledger, soakRuns(2, compat.StatusPass), 3, now)
 
@@ -209,7 +233,7 @@ func TestApplyPromotions_recordsFirstSeenOnFirstObservation(t *testing.T) {
 // each run rewrote it, no candidate could ever reach thirty days old.
 func TestApplyPromotions_keepsTheOriginalFirstSeen(t *testing.T) {
 	now := time.Date(2026, 9, 5, 3, 0, 0, 0, time.UTC)
-	ledger := &promotionsFile{Version: promotionsVersion, Groups: map[string]promotionEntry{
+	ledger := &compatmodel.Promotions{Version: compatmodel.PromotionsVersion, Groups: map[string]compatmodel.Promotion{
 		promoteTestGroup: {State: generatedStateCandidate, FirstSeen: "2026-08-01"},
 	}}
 
@@ -222,7 +246,7 @@ func TestApplyPromotions_keepsTheOriginalFirstSeen(t *testing.T) {
 
 func TestApplyPromotions_promotesWithEvidence(t *testing.T) {
 	now := time.Date(2026, 9, 5, 3, 0, 0, 0, time.UTC)
-	ledger := &promotionsFile{Version: promotionsVersion, Groups: map[string]promotionEntry{
+	ledger := &compatmodel.Promotions{Version: compatmodel.PromotionsVersion, Groups: map[string]compatmodel.Promotion{
 		promoteTestGroup: {State: generatedStateCandidate, FirstSeen: "2026-09-01"},
 	}}
 
@@ -246,13 +270,13 @@ func TestApplyPromotions_promotesWithEvidence(t *testing.T) {
 // look like it had just promoted on a failure.
 func TestApplyPromotions_leavesAGatedGroupAlone(t *testing.T) {
 	now := time.Date(2026, 10, 20, 3, 0, 0, 0, time.UTC)
-	gated := promotionEntry{
+	gated := compatmodel.Promotion{
 		State:      generatedStateGated,
 		FirstSeen:  "2026-09-01",
 		PromotedAt: "2026-09-04",
 		Runs:       []string{"old-1", "old-2", "old-3"},
 	}
-	ledger := &promotionsFile{Version: promotionsVersion, Groups: map[string]promotionEntry{promoteTestGroup: gated}}
+	ledger := &compatmodel.Promotions{Version: compatmodel.PromotionsVersion, Groups: map[string]compatmodel.Promotion{promoteTestGroup: gated}}
 
 	// The registry still says candidate: that is the window between a
 	// promotion and the regeneration that applies it, and the ledger has to
@@ -265,6 +289,72 @@ func TestApplyPromotions_leavesAGatedGroupAlone(t *testing.T) {
 	if got := outcome.File.Groups[promoteTestGroup]; got.PromotedAt != gated.PromotedAt ||
 		strings.Join(got.Runs, ",") != strings.Join(gated.Runs, ",") {
 		t.Fatalf("entry = %+v, want %+v", got, gated)
+	}
+}
+
+// TestApplyPromotions_clearsTheEvidenceOfAWithdrawnPromotion. Taking a group
+// back out of the gate is the supported hand edit — set its state to candidate
+// — and it used to leave promotedAt and the run ids behind. The schema requires
+// both only of a gated entry, anyone auditing the file reads them as a live
+// promotion, and the soak copied them forward verbatim every night.
+func TestApplyPromotions_clearsTheEvidenceOfAWithdrawnPromotion(t *testing.T) {
+	now := time.Date(2026, 10, 20, 3, 0, 0, 0, time.UTC)
+	demoted := compatmodel.Promotion{
+		State:      generatedStateCandidate,
+		FirstSeen:  "2026-09-01",
+		PromotedAt: "2026-09-04",
+		Runs:       []string{"old-1", "old-2", "old-3"},
+	}
+
+	tests := []struct {
+		name           string
+		runs           []promotionRun
+		wantPromoted   bool
+		wantPromotedAt string
+		wantRuns       string
+	}{
+		{
+			// Still stuck: the stale evidence goes and nothing replaces it.
+			name:           "a demoted group that does not re-promote keeps no evidence",
+			runs:           soakRuns(3, compat.StatusFail),
+			wantPromotedAt: "",
+			wantRuns:       "",
+		},
+		{
+			// Re-promoting overwrites it with the runs that actually agreed,
+			// never with the ones it was demoted from.
+			name:           "a demoted group that re-promotes records the new runs",
+			runs:           soakRuns(3, compat.StatusPass),
+			wantPromoted:   true,
+			wantPromotedAt: "2026-10-20",
+			wantRuns:       "run-1,run-2,run-3",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ledger := &compatmodel.Promotions{
+				Version: compatmodel.PromotionsVersion,
+				Groups:  map[string]compatmodel.Promotion{promoteTestGroup: demoted},
+			}
+
+			outcome := applyPromotions(candidateFixture(), ledger, tc.runs, 3, now)
+
+			if promoted := len(outcome.Promoted) == 1; promoted != tc.wantPromoted {
+				t.Fatalf("promoted = %v, want %v", outcome.Promoted, tc.wantPromoted)
+			}
+			entry := outcome.File.Groups[promoteTestGroup]
+			if entry.PromotedAt != tc.wantPromotedAt {
+				t.Errorf("promotedAt = %q, want %q", entry.PromotedAt, tc.wantPromotedAt)
+			}
+			if got := strings.Join(entry.Runs, ","); got != tc.wantRuns {
+				t.Errorf("runs = %q, want %q", got, tc.wantRuns)
+			}
+			// The date the group was first seen survives either way: it is
+			// what the overdue nag measures against.
+			if entry.FirstSeen != demoted.FirstSeen {
+				t.Errorf("firstSeen = %q, want the original %q", entry.FirstSeen, demoted.FirstSeen)
+			}
+		})
 	}
 }
 
@@ -283,7 +373,7 @@ func TestApplyPromotions_reportsOverdueAtThirtyDays(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			ledger := &promotionsFile{Version: promotionsVersion, Groups: map[string]promotionEntry{
+			ledger := &compatmodel.Promotions{Version: compatmodel.PromotionsVersion, Groups: map[string]compatmodel.Promotion{
 				promoteTestGroup: {State: generatedStateCandidate, FirstSeen: firstSeen.Format(promotionDateLayout)},
 			}}
 			outcome := applyPromotions(candidateFixture(), ledger, soakRuns(3, compat.StatusPass,
@@ -306,7 +396,7 @@ func TestApplyPromotions_reportsOverdueAtThirtyDays(t *testing.T) {
 // inherit a gated state it never earned.
 func TestApplyPromotions_prunesAGroupThatNoLongerExists(t *testing.T) {
 	now := time.Date(2026, 9, 5, 3, 0, 0, 0, time.UTC)
-	ledger := &promotionsFile{Version: promotionsVersion, Groups: map[string]promotionEntry{
+	ledger := &compatmodel.Promotions{Version: compatmodel.PromotionsVersion, Groups: map[string]compatmodel.Promotion{
 		promoteTestGroup: {State: generatedStateCandidate, FirstSeen: "2026-09-01"},
 		"sqs-gen-gone":   {State: generatedStateGated, FirstSeen: "2026-01-01", PromotedAt: "2026-01-04", Runs: []string{"x"}},
 	}}
@@ -389,7 +479,7 @@ func TestPromoteGeneratedFile_writesOnlyTheLedger(t *testing.T) {
 	if got := readTempFile(t, generated); got != generatedBefore {
 		t.Fatal("--promote-generated rewrote registry.generated.json; cmd/compatgen owns that file")
 	}
-	var ledger promotionsFile
+	var ledger compatmodel.Promotions
 	if err := json.Unmarshal([]byte(readTempFile(t, promotions)), &ledger); err != nil {
 		t.Fatalf("the ledger is not valid JSON: %v", err)
 	}
