@@ -74,14 +74,22 @@ jobs:
   # are conditional. A prose-only pull request gets the same green checks in
   # seconds. scripts/ci-scope.py holds the rule and scripts/ci_scope_test.py
   # pins it — including that anything unrecognised counts as code.
-  # Every other job now waits on this one, so it is kept to a shallow checkout
-  # and one API call. Diffing locally would mean `fetch-depth: 0` — a full
-  # history clone — to gain nothing the API does not already know.
+  # Every other job now waits on this one, so it is kept to a shallow checkout,
+  # one API call and one `git ls-remote`. Diffing locally would mean
+  # `fetch-depth: 0` — a full history clone — to gain nothing the API does not
+  # already know.
+  #
+  # It answers the release-candidate question too, which used to be a job of
+  # its own. That job was a checkout and six seconds of `git ls-remote`, and
+  # everything that needed the answer already needed this job's, so it cost a
+  # runner slot and a second round of queueing to say something this job was
+  # positioned to say.
   changes:
     name: Changed-path scope
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.scope.outputs.code }}
+      rc: ${{ steps.rc.outputs.rc }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: scope
@@ -117,6 +125,25 @@ jobs:
           else
             echo "Prose only — the Go, SPA and image jobs have nothing to exercise."
           fi
+
+      # Decided once, here, and read by `web`, `cross-build`, `docker` and
+      # `rc-comment`: a same-repo PR whose checked-out VERSION has no
+      # v<VERSION> tag yet. That covers the PR that bumps VERSION and — where a
+      # release/* branch-name test would go blind — a follow-up PR after a
+      # failed release workflow, when the unreleased version already sits on
+      # main. The script never fails (errors degrade to rc=false with a
+      # warning), so the jobs that hang off this output cannot be
+      # skip-cascaded by an infrastructure hiccup.
+      - id: rc
+        env:
+          IS_SAME_REPO_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          rc=false
+          if [ "$IS_SAME_REPO_PR" = "true" ]; then
+            rc=$(bash scripts/release-candidate-check.sh)
+          fi
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          echo "release candidate: $rc"
 
   # No `needs: web`. An untagged Go build embeds `all:web/dist`, and the
   # committed `web/dist/.gitkeep` is what keeps that pattern resolving without
@@ -160,6 +187,20 @@ jobs:
         run: |
           go mod download
           go vet ./...
+
+      # Folded in from the job that used to own it, which opened with the same
+      # `go vet ./...` this job had already run and then tested one package.
+      # Vet 109 s + SQS 163 s in run 33946645470 is ~250 s once the duplicated
+      # checkout, setup-go, module download and vet are paid once — well inside
+      # the 689 s `coverage` sets as the critical path, for one runner slot
+      # instead of two.
+      #
+      # OVERCAST_PROTOCOL_DISPATCH turns on the Smithy-aligned typed dispatcher
+      # (internal/router/service.go), a passthrough in every other job here, so
+      # this is the SQS suite over a routing path nothing else in CI takes.
+      - name: SQS integration tests (protocol dispatch)
+        if: needs.changes.outputs.code == 'true'
+        run: OVERCAST_PROTOCOL_DISPATCH=1 go test -race -count=1 -timeout=300s ./tests/integration/sqs/...
 
   # The longest job in the workflow, and it used to start 187 s late waiting on
   # the SPA it never read — see the note on `vet`. It sets the critical path,
@@ -255,33 +296,6 @@ jobs:
       - name: Test suite
         if: needs.changes.outputs.code == 'true'
         run: go test -count=1 -timeout=1200s -tags ${{ matrix.tags }} ./...
-
-  sqs-protocol-dispatch:
-    name: SQS integration tests (protocol dispatch)
-    needs: changes
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: needs.changes.outputs.code == 'true'
-
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: needs.changes.outputs.code == 'true'
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Install dependencies
-        if: needs.changes.outputs.code == 'true'
-        run: go mod download
-
-      - name: Vet
-        if: needs.changes.outputs.code == 'true'
-        run: go vet ./...
-
-      - name: SQS integration tests (protocol dispatch)
-        if: needs.changes.outputs.code == 'true'
-        run: OVERCAST_PROTOCOL_DISPATCH=1 go test -race -count=1 -timeout=300s ./tests/integration/sqs/...
 
   # Can a Lambda container reach the Runtime API of an Overcast that is NOT
   # itself a container?
@@ -591,6 +605,18 @@ jobs:
       - name: Comment marker lint
         run: python3 scripts/check_todos.py
 
+      # Folded in from the Compat registry schema job. Both jobs were a
+      # checkout, the same setup-python, and a few seconds of Python over files
+      # on disk — no emulator, no Docker, no network — and both are ungated, so
+      # the conditions carry over unchanged. jsonschema is the only thing the
+      # folded job had that this one did not.
+      - name: Install jsonschema
+        run: pip install --quiet jsonschema
+      - name: Validate compat registry against its schema
+        run: python3 scripts/validate-compat-registry.py
+      - name: Compat suite name hygiene
+        run: python3 scripts/compat-name-hygiene.py
+
   # The compat suites carry unit tests, and until this job nothing ran them.
   #
   # Every suite is its own module — its own go.mod, package.json,
@@ -645,12 +671,18 @@ jobs:
           cache: true
           cache-dependency-path: compat/suites/go-sdk/go.sum
 
+      # Two lockfiles: the node-js-sdk suite's, and compat/ui's for the steps
+      # folded in at the end of this job. setup-node hashes every path it is
+      # given into one npm cache key, so a change to either invalidates it —
+      # which is the behaviour that keeps both installs honest.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         if: needs.changes.outputs.code == 'true'
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: compat/suites/node-js-sdk/package-lock.json
+          cache-dependency-path: |
+            compat/suites/node-js-sdk/package-lock.json
+            compat/ui/package-lock.json
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         if: needs.changes.outputs.code == 'true'
@@ -701,48 +733,37 @@ jobs:
         working-directory: compat/suites/cli
         run: go test -count=1 ./...
 
-  # compat/ui (the compat dashboard) is a separate Vite/React app from web/
-  # (see compat/AGENTS.md § Separation boundary) and had no CI coverage at
-  # all until this job — a broken tsc, Vite build, or vitest run could reach
-  # main undetected (issue #1185). Gated the same way as
-  # compat-suite-unit-tests: on whether *some* code changed, not scoped to
-  # compat/ui specifically — ci-scope.py is a prose-vs-code classifier, not a
-  # per-directory path filter (see its docstring), so this mirrors every
-  # other job in this workflow rather than inventing a narrower gate nothing
-  # else uses.
-  compat-ui:
-    name: Compat UI
-    needs: changes
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: needs.changes.outputs.code == 'true'
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        if: needs.changes.outputs.code == 'true'
-        with:
-          node-version-file: .node-version
-          cache: npm
-          cache-dependency-path: compat/ui/package-lock.json
-
-      - run: npm ci
+      # compat/ui (the compat dashboard) is a separate Vite/React app from web/
+      # (see compat/AGENTS.md § Separation boundary) and had no CI coverage at
+      # all until it got a job of its own — a broken tsc, Vite build, or vitest
+      # run could reach main undetected (issue #1185). Folded in here because
+      # that job's whole cost beyond the work was a second checkout and a
+      # second Node install, and this job already installs Node with an npm
+      # cache; 26 s of checks did not need a runner slot of their own.
+      #
+      # Its gate was identical to this job's — on whether *some* code changed,
+      # not scoped to compat/ui specifically, because ci-scope.py is a
+      # prose-vs-code classifier and not a per-directory path filter (see its
+      # docstring) — so the steps carry the same condition as everything else
+      # here rather than a narrower one nothing else uses.
+      - name: compat/ui install
         if: needs.changes.outputs.code == 'true'
         working-directory: compat/ui
+        run: npm ci
 
       # Attributable failure before `build` (which also typechecks via
       # `tsc -b`) would otherwise surface it inside the build step instead.
-      - name: Type check
+      - name: compat/ui type check
         if: needs.changes.outputs.code == 'true'
         working-directory: compat/ui
         run: npm run typecheck
 
-      - name: Unit tests
+      - name: compat/ui unit tests
         if: needs.changes.outputs.code == 'true'
         working-directory: compat/ui
         run: npm run test
 
-      - name: Build
+      - name: compat/ui build
         if: needs.changes.outputs.code == 'true'
         working-directory: compat/ui
         run: npm run build
@@ -759,42 +780,35 @@ jobs:
       - name: Lint fragments and enforce empty [Unreleased]
         run: python3 scripts/changelog.py check
 
+  # Two jobs in one: this was "Docs and capability registry" (make docs-check,
+  # 23 s) and "AWS operation coverage" (make aws-models-check, 88 s), and each
+  # was a checkout, a setup-go and one `make` target over the same module. The
+  # second was paying a runner start and a module download for its 88 s of
+  # work. Both former check names survive as step names, which is where a
+  # failure is read from anyway; neither was in the required set.
+  #
+  # Gated, where neither of them was. Both compile Go, and ci-scope.py counts
+  # docs/ as code — deliberately, because embed.go compiles the published docs
+  # into the binary — so anything either check can react to already sets
+  # `code`. A prose-only pull request was spending ~110 s and two slots on two
+  # checks with nothing to read.
   docs-check:
-    name: Docs and capability registry
+    name: Docs and AWS operation coverage
+    needs: changes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.code == 'true'
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: needs.changes.outputs.code == 'true'
         with:
           go-version-file: go.mod
           cache: true
-      - run: make docs-check
-
-  compat-registry:
-    name: Compat registry schema
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.14"
-      - name: Install jsonschema
-        run: pip install --quiet jsonschema
-      - name: Validate compat registry against its schema
-        run: python3 scripts/validate-compat-registry.py
-      - name: Compat suite name hygiene
-        run: python3 scripts/compat-name-hygiene.py
-
-  aws-operation-coverage:
-    name: AWS operation coverage
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Validate generated operation ownership
+      - name: Docs and capability registry
+        if: needs.changes.outputs.code == 'true'
+        run: make docs-check
+      - name: AWS operation coverage
+        if: needs.changes.outputs.code == 'true'
         run: make aws-models-check-ci
 
   # Gated like the Go jobs from `Lint` down, with one extra consequence: this
@@ -818,13 +832,13 @@ jobs:
   # #1257/#1258 lockfile: `--frozen-lockfile --lockfile-only` exits 0 on it).
   web:
     name: Web UI
-    needs: [changes, release-gate]
+    needs: changes
     runs-on: ubuntu-latest
     # Same two reasons to run as `docker`: a release candidate needs the SPA
     # built whatever the changed paths say, because cross-build consumes this
     # job's artifact.
     env:
-      RUN_BUILD: ${{ needs.changes.outputs.code == 'true' || needs.release-gate.outputs.rc == 'true' }}
+      RUN_BUILD: ${{ needs.changes.outputs.code == 'true' || needs.changes.outputs.rc == 'true' }}
     defaults:
       run:
         working-directory: web
@@ -935,31 +949,6 @@ jobs:
           echo "::error::VERSION may only be changed by @$RELEASE_BOT (release PRs) or a VERSION code owner in .github/CODEOWNERS. Author of this PR: @$AUTHOR. Code owners of VERSION: $(printf '%s' "$owners" | tr '\n' ' ')" >&2
           exit 1
 
-  # release-gate decides, once, whether this build is a release candidate:
-  # a same-repo PR whose checked-out VERSION has no v<VERSION> tag yet. That
-  # covers the PR that bumps VERSION and — where a release/* branch-name test
-  # would go blind — a follow-up PR after a failed release workflow, when the
-  # unreleased version already sits on main. The script never fails (errors
-  # degrade to rc=false with a warning), so the jobs that hang off this output
-  # cannot be skip-cascaded by an infrastructure hiccup.
-  release-gate:
-    name: Release candidate gate
-    runs-on: ubuntu-latest
-    outputs:
-      rc: ${{ steps.check.outputs.rc }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - id: check
-        env:
-          IS_SAME_REPO_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
-        run: |
-          rc=false
-          if [ "$IS_SAME_REPO_PR" = "true" ]; then
-            rc=$(bash scripts/release-candidate-check.sh)
-          fi
-          echo "rc=$rc" >> "$GITHUB_OUTPUT"
-          echo "release candidate: $rc"
-
   # The binary set is defined once in build-binaries.yml and shared with
   # release.yml, so the PR check builds exactly what a release would ship.
   # On a release-candidate build the binaries are also uploaded as artifacts;
@@ -972,17 +961,17 @@ jobs:
   # `web` job does not upload.
   cross-build:
     name: Cross-build
-    needs: [changes, web, release-gate]
-    if: needs.changes.outputs.code == 'true' || needs.release-gate.outputs.rc == 'true'
+    needs: [changes, web]
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.rc == 'true'
     uses: ./.github/workflows/build-binaries.yml
     with:
       version: ci
-      upload-artifacts: ${{ needs.release-gate.outputs.rc == 'true' }}
+      upload-artifacts: ${{ needs.changes.outputs.rc == 'true' }}
       retention-days: 14
 
   docker:
     name: Docker build (${{ matrix.image }})
-    needs: [changes, release-gate]
+    needs: changes
     runs-on: ubuntu-latest
     # One condition, named once, because this job has two reasons to build and
     # six later steps that assume a checkout happened.
@@ -993,7 +982,7 @@ jobs:
     # changed VERSION. Gating on paths alone would leave those steps running
     # against an empty workspace.
     env:
-      RUN_BUILD: ${{ needs.changes.outputs.code == 'true' || needs.release-gate.outputs.rc == 'true' }}
+      RUN_BUILD: ${{ needs.changes.outputs.code == 'true' || needs.changes.outputs.rc == 'true' }}
     # contents: read restates the default that adding a job-level block would
     # otherwise drop; packages: write is exercised only on same-repo release
     # PRs, where the freshly built image is pushed as a release candidate.
@@ -1154,9 +1143,9 @@ jobs:
       # The native build above still runs, and is what the slim smoke test
       # exercises; the amd64 half of this build reuses its layers from cache.
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-        if: needs.release-gate.outputs.rc == 'true'
+        if: needs.changes.outputs.rc == 'true'
       - name: Log in to GHCR
-        if: needs.release-gate.outputs.rc == 'true'
+        if: needs.changes.outputs.rc == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -1174,7 +1163,7 @@ jobs:
       # registry "have these exact bits been built?" without keeping state.
       - name: Name the release candidate
         id: rc-name
-        if: needs.release-gate.outputs.rc == 'true'
+        if: needs.changes.outputs.rc == 'true'
         env:
           IMAGE_SUFFIX: ${{ matrix.image == 'slim' && '-slim' || '' }}
           RUN_NUMBER: ${{ github.run_number }}
@@ -1231,7 +1220,7 @@ jobs:
       # lookup. A prose-only push to a release branch takes this path.
       - name: Reuse an identical candidate when one exists
         id: rc-reuse
-        if: needs.release-gate.outputs.rc == 'true'
+        if: needs.changes.outputs.rc == 'true'
         env:
           RC_IMAGE: ${{ steps.rc-name.outputs.image }}
           CONTEXT_IMAGE: ${{ steps.rc-name.outputs.context }}
@@ -1248,7 +1237,7 @@ jobs:
 
       - name: Push release-candidate image
         id: rc-push
-        if: needs.release-gate.outputs.rc == 'true' && steps.rc-reuse.outputs.reused == 'false'
+        if: needs.changes.outputs.rc == 'true' && steps.rc-reuse.outputs.reused == 'false'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
@@ -1264,7 +1253,7 @@ jobs:
       # manifest actually tagged whether it was just built or retagged.
       - name: Record release-candidate image reference
         id: rc-record
-        if: needs.release-gate.outputs.rc == 'true'
+        if: needs.changes.outputs.rc == 'true'
         env:
           RC_IMAGE: ${{ steps.rc-name.outputs.image }}
           REUSED: ${{ steps.rc-reuse.outputs.reused }}
@@ -1291,8 +1280,8 @@ jobs:
   # comment is updated in place on every build rather than posted again.
   rc-comment:
     name: Release candidate summary
-    needs: [release-gate, cross-build, docker]
-    if: needs.release-gate.outputs.rc == 'true'
+    needs: [changes, cross-build, docker]
+    if: needs.changes.outputs.rc == 'true'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
