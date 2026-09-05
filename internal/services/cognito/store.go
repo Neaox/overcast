@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -857,8 +858,14 @@ func (s *Service) validateAccessToken(ctx context.Context, w http.ResponseWriter
 		return nil, false
 	}
 
-	// 3. Load the signing key and verify signature.
-	priv, _, err := s.getOrCreateSigningKey(ctx, poolID)
+	// 3. Load the signing key and verify signature. The read-only getter is
+	// deliberate: poolID comes from an unverified claim, so a pool with no key
+	// on record must reject rather than mint one (#1731).
+	priv, _, err := s.getSigningKey(ctx, poolID)
+	if errors.Is(err, errNoSigningKey) {
+		protocol.WriteJSONError(w, r, errNotAuthorized("Invalid access token issuer."))
+		return nil, false
+	}
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return nil, false

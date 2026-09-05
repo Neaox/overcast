@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -30,40 +31,76 @@ type poolSigningKey struct {
 	PrivKeyPEM string `json:"priv_pem"`
 }
 
-// getOrCreateSigningKey returns the RSA-2048 signing key for a pool, lazily
-// generating and persisting one on first use.
-func (s *Service) getOrCreateSigningKey(ctx context.Context, poolID string) (*rsa.PrivateKey, string, error) {
+// errNoSigningKey reports that a pool has no signing key on record. A key is
+// minted the first time a pool issues a token or serves its JWKS, so a pool
+// without one has issued nothing: a token naming it in `iss` cannot be one of
+// ours. Token validation treats this as a rejection rather than a reason to
+// create a key — see getSigningKey.
+var errNoSigningKey = errors.New("cognito: no signing key for pool")
+
+// getSigningKey returns a pool's RSA signing key without ever creating one,
+// wrapping errNoSigningKey when the pool has none.
+//
+// Every path that validates a *caller-supplied* token must use this rather
+// than getOrCreateSigningKey. The pool ID comes from the unverified `iss`
+// claim, so creating on a miss let any bearer token reaching API Gateway's
+// COGNITO_USER_POOLS / JWT authorizer spend an RSA-2048 generation and leave a
+// permanent cognito:sigkeys record keyed by a string the caller chose — never
+// reclaimed, because removeSigningKey only runs when a pool that exists is
+// deleted (issue #1731). The token was always rejected; the state growth was
+// the defect.
+//
+// A read-only getter is deliberately preferred here over resolving poolID
+// through cognito:pools first: the miss on this read is already the "no such
+// pool" answer, so it costs the authorised request no extra store read, and no
+// later edit to a caller can reintroduce creation from a validation path.
+func (s *Service) getSigningKey(ctx context.Context, poolID string) (*rsa.PrivateKey, string, error) {
 	storeKey := serviceutil.RegionKey(s.region(ctx), poolID)
 	raw, found, err := s.store.Get(ctx, nsSigningKeys, storeKey)
 	if err != nil {
 		return nil, "", fmt.Errorf("cognito: read signing key for %s: %w", poolID, err)
 	}
-	if found {
-		var sk poolSigningKey
-		if err := json.Unmarshal([]byte(raw), &sk); err != nil {
-			return nil, "", fmt.Errorf("cognito: unmarshal signing key: %w", err)
-		}
-		block, _ := pem.Decode([]byte(sk.PrivKeyPEM))
-		if block == nil {
-			return nil, "", fmt.Errorf("cognito: invalid PEM for pool %s", poolID)
-		}
-		iface, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-		if err != nil {
-			return nil, "", fmt.Errorf("cognito: parse signing key: %w", err)
-		}
-		priv, ok := iface.(*rsa.PrivateKey)
-		if !ok {
-			return nil, "", fmt.Errorf("cognito: unexpected key type for pool %s", poolID)
-		}
-		return priv, sk.KID, nil
+	if !found {
+		return nil, "", fmt.Errorf("%w %s", errNoSigningKey, poolID)
+	}
+	var sk poolSigningKey
+	if err := json.Unmarshal([]byte(raw), &sk); err != nil {
+		return nil, "", fmt.Errorf("cognito: unmarshal signing key: %w", err)
+	}
+	block, _ := pem.Decode([]byte(sk.PrivKeyPEM))
+	if block == nil {
+		return nil, "", fmt.Errorf("cognito: invalid PEM for pool %s", poolID)
+	}
+	iface, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, "", fmt.Errorf("cognito: parse signing key: %w", err)
+	}
+	priv, ok := iface.(*rsa.PrivateKey)
+	if !ok {
+		return nil, "", fmt.Errorf("cognito: unexpected key type for pool %s", poolID)
+	}
+	return priv, sk.KID, nil
+}
+
+// getOrCreateSigningKey returns the RSA-2048 signing key for a pool, lazily
+// generating and persisting one on first use. Only for callers that have
+// already established the pool exists — pool creation, token minting, and the
+// JWKS endpoint. Validation uses getSigningKey.
+func (s *Service) getOrCreateSigningKey(ctx context.Context, poolID string) (*rsa.PrivateKey, string, error) {
+	priv, kid, err := s.getSigningKey(ctx, poolID)
+	if err == nil {
+		return priv, kid, nil
+	}
+	if !errors.Is(err, errNoSigningKey) {
+		return nil, "", err
 	}
 
 	// Generate a new RSA-2048 key pair for this pool.
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	priv, err = rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, "", fmt.Errorf("cognito: generate signing key: %w", err)
 	}
-	kid := strings.ReplaceAll(poolID, "_", "-") + "-key"
+	kid = strings.ReplaceAll(poolID, "_", "-") + "-key"
 	der, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
 		return nil, "", fmt.Errorf("cognito: marshal signing key: %w", err)
@@ -71,6 +108,7 @@ func (s *Service) getOrCreateSigningKey(ctx context.Context, poolID string) (*rs
 	privPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
 	sk := poolSigningKey{KID: kid, PrivKeyPEM: privPEM}
 	rawBytes, _ := json.Marshal(sk)
+	storeKey := serviceutil.RegionKey(s.region(ctx), poolID)
 	if err := s.store.Set(ctx, nsSigningKeys, storeKey, string(rawBytes)); err != nil {
 		return nil, "", fmt.Errorf("cognito: save signing key: %w", err)
 	}
@@ -221,7 +259,9 @@ func (s *Service) ValidateCognitoToken(ctx context.Context, tokenStr string) (ma
 		return nil, fmt.Errorf("cognito: %w", err)
 	}
 
-	priv, _, err := s.getOrCreateSigningKey(ctx, poolID)
+	// getSigningKey, never getOrCreateSigningKey: poolID came from an
+	// unverified claim, so a miss must reject rather than mint (#1731).
+	priv, _, err := s.getSigningKey(ctx, poolID)
 	if err != nil {
 		return nil, fmt.Errorf("cognito: signing key for pool %s: %w", poolID, err)
 	}
