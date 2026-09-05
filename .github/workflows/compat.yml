@@ -313,6 +313,9 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
+      - uses: ./.github/actions/lambda-init
+        if: env.RUN_SUITES == 'true'
+
       # No SPA build, and no pnpm at all. `bin/overcast` is untagged, so it
       # embeds `all:web/dist` — but the committed `web/dist/.gitkeep` is what
       # keeps that pattern resolving, and a binary without a real SPA serves
@@ -335,7 +338,6 @@ jobs:
         if: env.RUN_SUITES == 'true'
         run: |
           mkdir -p bin
-          make lambda-init
           go build -o bin/overcast ./cmd/overcast
           go build -o bin/compat ./cmd/compat
 

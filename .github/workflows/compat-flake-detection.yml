@@ -115,10 +115,14 @@ jobs:
         run: pip install --quiet -r requirements.txt
         working-directory: compat/suites/python-sdk
 
+      # `-tags slim` does not drop the Lambda init — slim images run Lambda —
+      # so this needs it as much as the console build does. Eight matrix legs,
+      # one content hash between them.
+      - uses: ./.github/actions/lambda-init
+
       - name: Build binaries
         run: |
           mkdir -p bin
-          make lambda-init
           go build -tags slim,nosqlite -o bin/overcast ./cmd/overcast
           go build -o bin/compat ./cmd/compat
 
