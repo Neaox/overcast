@@ -935,15 +935,35 @@ until promotion — but it must never look like a pass.
 
 ### Implementation keys — `group:test`, and a bad key aborts the run
 
-Every suite maps a key to each test implementation. The key is either the bare
-test name or the **group-qualified** form, and the separator is a **colon** in
-all seven loaders:
+Every suite maps a key to each test implementation. **The key is always the
+group-qualified `group:test`**, and the separator is a **colon** in all seven
+loaders:
 
 ```
-"lambda-crud:CreateFunction"      ← group-qualified (always correct)
-"CreateFunction"                  ← bare (only when one group declares the name)
+"lambda-crud:CreateFunction"      ← group-qualified: the only form to write
+"CreateFunction"                  ← bare: legacy, and refused by the suite's own tests
 "lambda-crud/CreateFunction"      ← WRONG: not a separator any loader accepts
 ```
+
+The loaders still *resolve* a bare key while exactly one group declares that
+test name, and that is the trap #1700 closes. A bare key is not wrong when it is
+written; it becomes wrong when someone else adds a second group declaring the
+same name — a one-line registry diff, in another PR, that turns every bare key
+for that name into an abort. So the rule is not "qualify the ambiguous ones", it
+is **qualify every key**, unconditionally, and each suite's registration test
+enforces it by refusing any key without a `:` (named per suite below).
+
+That is what makes a shared test name a non-event. Twenty-odd registry test
+names are already declared by two or more groups — `ListUsers`, `TagResource`,
+`CreateFunction` — and `registry.generated.json` adds far more by construction:
+a generated test's name is the PascalCase operation name
+([docs/plans/compat-coverage-modelgen.md](../docs/plans/compat-coverage-modelgen.md)
+§3.3), so every generated SQS group declares `CreateQueue`, `SendMessage` and
+the rest beside `sqs-queues` and `sqs-messages`, and a model refresh may add
+more with zero human actions (§3.11). **A test name declared by several groups —
+hand-written or generated — is normal and safe**, precisely because no key that
+resolves it is ever bare. Nothing has to be acknowledged, listed or waived when
+it happens.
 
 Three rules are enforced by every loader, and breaking any of them **aborts the
 run**:
@@ -998,13 +1018,37 @@ This is the harness-side application of the principle in
 `BuildGroups` (and each suite's equivalent) also refuses the bare fallback for
 an ambiguous name, so a mis-bind cannot occur even if validation is bypassed —
 such a test is reported as `not yet implemented in <suite> test suite` rather
-than bound to the wrong implementation.
+than bound to the wrong implementation. **That refusal is the second line of
+defence and it stays** — but with every key qualified it no longer has anything
+to stand between: there is no bare key left for it to disambiguate.
+
+What there deliberately **is not** is a registry-side lint against shared test
+names. Ambiguity is not the fault to catch; an unqualified key is, and that is
+caught in the suite that wrote it. `cmd/compat` cannot read a suite's impl map
+anyway — those are Go, Python, Java, C#, Rust and TypeScript source, not data —
+and a lint that failed on new ambiguity would fail on the generator's own naming
+convention, on every model refresh, against the plan's zero-human-actions rule.
+`lintGeneratedRegistry` in
+[cmd/compat/generatedregistry.go](../cmd/compat/generatedregistry.go) therefore
+checks only what really is a conflict: a duplicate group name across the two
+registries, and an exact `(group, test)` duplicate — both of which would merge
+rather than clash in `compat/baseline/`, `compat/flaky.json` and
+`compat/parity-debt.json`.
 
 Each loader has unit tests pinning all three rules, plus — where the suite's
 group list can be imported without starting a run — a test that merges the
 suite's real registrations and resolves them against the real `registry.json`.
 That test is the one that catches a collision introduced in a service file,
-because merging the real maps is itself the duplicate check:
+because merging the real maps is itself the duplicate check. It is also where
+the no-bare-keys rule is enforced: the test asserts that every key the suite
+registers contains a `:`, and names the offenders when one does not. It is
+`TestRegisteredImplsHaveNoBareKeys` in `go-sdk` and `cli`,
+`test_registered_impls_have_no_bare_keys` in `python-sdk`,
+`registeredImplKeysAreAllQualified` in `java-sdk`,
+`RegisteredImplKeysAreAllQualified` in `dotnet-sdk`, and
+`registration_tests::real_impls_resolve_against_the_real_registry_and_are_all_qualified`
+in `rust-sdk`. `node-js-sdk` needs none: `makeImplMap` (`src/groups/index.ts`)
+qualifies every key by construction.
 
 | Suite | Tests | Run with |
 | --- | --- | --- |
@@ -1012,13 +1056,13 @@ because merging the real maps is itself the duplicate check:
 | `java-sdk` | loader + real registrations | `mvn test` (also runs in the image build) |
 | `python-sdk` | loader + real registrations | `python -m unittest discover -s tests` (after `pip install -r requirements.txt`) |
 | `node-js-sdk` | loader + real registrations | `npm run test:unit` (after `npm ci`) |
-| `rust-sdk` | loader | `cargo test` (also runs in the image build) |
-| `dotnet-sdk` | — (no test project) | covered by the startup abort |
+| `rust-sdk` | loader + real registrations (`registration_tests`, #1714) | `cargo test` (also runs in the image build) |
+| `dotnet-sdk` | loader + real registrations (`Tests/`, #1697) | `dotnet test Tests/OvercastCompat.Tests.csproj` (also runs in the image build) |
 
-`dotnet-sdk` is the one gap: it has no test project, so its only guard is the
-abort at startup. Adding one is worth doing on its own — it needs a csproj, a
-test SDK package and a Dockerfile stage — and until then a duplicate there
-surfaces on the first run rather than in CI's unit tests.
+`dotnet-sdk` had no test project at all until #1697, which adds `Tests/` — the
+loader cases and the registration cases together — and runs `dotnet test` in the
+image build. Until that lands its only guard is the abort at startup, so a
+duplicate or bare key there surfaces on the first run rather than in CI.
 
 In CI they run in `test.yml`'s **Compat suite unit tests** job: `go-sdk`, `cli`,
 `python-sdk` and `node-js-sdk`, each from its own directory, with no emulator
@@ -1063,6 +1107,12 @@ failing the pre-push gate with "no packages to test".
   `compat/flaky.json` and `compat/parity-debt.json` are keyed the same way.
   Rename in the registry and every suite, re-key all three files, and land it
   in one PR.
+- **Reusing a test name another group already declares is fine and needs no
+  ceremony.** The join key is `suite/group/test` and every impl key is
+  `group:test`, so a shared name binds nothing wrongly — see § Implementation
+  keys. Prefer a distinct name where the two tests really are different things,
+  but a generated group declaring the same operation name as a hand-written one
+  is the expected shape, not a clash to resolve.
 - Bump the `version` field only for breaking schema changes; adding new groups
   is non-breaking and does not require a version bump.
 - CI validates the registry against `registry.schema.json` (the `Compat registry
