@@ -341,6 +341,214 @@ export interface RunGroupOptions {
 }
 
 /** Run a single test group, emitting one test_result per test. */
+interface GroupCounts {
+  passed: number;
+  failed: number;
+  skipped: number;
+  unimplemented: number;
+  cancelled: number;
+}
+
+/**
+ * Run a group's setup, if it has one. Returns true if the test phase should
+ * run.
+ *
+ * A setup failure emits one skip per test with the failure reason and
+ * returns false — it does NOT run teardown itself. The IR requires teardown
+ * to run either way (compat/model/README.md § The scenario file): a setup
+ * that failed partway through has already created whatever its successful
+ * steps produced, and that is exactly the run that leaks if the caller skips
+ * teardown too.
+ */
+async function runSetupPhase(
+  group: TestGroup,
+  ctx: TestContext,
+  counts: GroupCounts,
+): Promise<boolean> {
+  if (!group.setup) return true;
+  try {
+    await withTimeout(
+      group.setup(ctx),
+      TEST_TIMEOUT_MS,
+      `setup ${group.name}`,
+    );
+    return true;
+  } catch (err) {
+    // Emit all tests as skipped if setup fails
+    const reason = `setup failed: ${String(err)}`;
+    for (const tc of group.tests) {
+      emitEvent({
+        event: "test_result",
+        suite: group.suite,
+        service: group.service,
+        group: group.name,
+        test: tc.name,
+        status: "skip",
+        duration_ms: 0,
+        error: reason,
+      });
+      counts.skipped++;
+    }
+    ctx.log(`[${group.name}] ${reason}`);
+    return false;
+  }
+}
+
+/**
+ * Run every test in a group, honouring skip/na markers, the dependency gate,
+ * per-test timeouts and cancellation.
+ */
+async function runTestsPhase(
+  group: TestGroup,
+  ctx: TestContext,
+  options: RunGroupOptions | undefined,
+  counts: GroupCounts,
+): Promise<void> {
+  // Track which tests passed so we can cascade-skip dependents.
+  const passedTests = new Set<string>();
+  const failedOrSkipped = new Set<string>();
+
+  for (const tc of group.tests) {
+    if (tc.na) {
+      emitEvent({
+        event: "test_result",
+        suite: group.suite,
+        service: group.service,
+        group: group.name,
+        test: tc.name,
+        status: "na",
+        duration_ms: 0,
+        error: tc.na,
+        ...(tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {}),
+      });
+      continue;
+    }
+
+    if (tc.skip) {
+      const reason = typeof tc.skip === "string" ? tc.skip : undefined;
+      emitEvent({
+        event: "test_result",
+        suite: group.suite,
+        service: group.service,
+        group: group.name,
+        test: tc.name,
+        status: "skip",
+        duration_ms: 0,
+        ...(reason ? { error: reason } : {}),
+        ...(tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {}),
+      });
+      counts.skipped++;
+      failedOrSkipped.add(tc.name);
+      continue;
+    }
+
+    // Dependency gate — skip if any declared dependency failed or was skipped.
+    if (tc.depends && tc.depends.length > 0) {
+      const failedDeps = tc.depends.filter((d) => failedOrSkipped.has(d));
+      if (failedDeps.length > 0) {
+        emitEvent({
+          event: "test_result",
+          suite: group.suite,
+          service: group.service,
+          group: group.name,
+          test: tc.name,
+          status: "skip",
+          duration_ms: 0,
+          error: `dependency failed: ${failedDeps.join(", ")}`,
+          ...(tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {}),
+        });
+        counts.skipped++;
+        failedOrSkipped.add(tc.name);
+        continue;
+      }
+    }
+
+    // Create per-test AbortController for cancellation support.
+    const ac = new AbortController();
+    const acKey = `${group.name}:${tc.name}`;
+    options?.abortControllers?.set(acKey, ac);
+
+    ctx.signal = ac.signal;
+    const start = Date.now();
+    try {
+      emitEvent({
+        event: "test_start",
+        suite: group.suite,
+        service: group.service,
+        group: group.name,
+        test: tc.name,
+      });
+      await withTimeout(
+        raceAbort(tc.fn(ctx), ac.signal),
+        TEST_TIMEOUT_MS,
+        tc.name,
+      );
+      const duration_ms = Date.now() - start;
+      emitEvent({
+        event: "test_result",
+        suite: group.suite,
+        service: group.service,
+        group: group.name,
+        test: tc.name,
+        status: "pass",
+        duration_ms,
+        ...(tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {}),
+      });
+      counts.passed++;
+      passedTests.add(tc.name);
+    } catch (err) {
+      const duration_ms = Date.now() - start;
+      const error =
+        err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      if (isAbortError(err)) {
+        emitEvent({
+          event: "test_result",
+          suite: group.suite,
+          service: group.service,
+          group: group.name,
+          test: tc.name,
+          status: "cancelled",
+          duration_ms,
+          error: "cancelled",
+          ...(tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {}),
+        });
+        counts.cancelled++;
+        failedOrSkipped.add(tc.name);
+      } else if (isUnimplemented(err)) {
+        emitEvent({
+          event: "test_result",
+          suite: group.suite,
+          service: group.service,
+          group: group.name,
+          test: tc.name,
+          status: "unimplemented",
+          duration_ms,
+          error,
+          ...(tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {}),
+        });
+        counts.unimplemented++;
+        failedOrSkipped.add(tc.name);
+      } else {
+        emitEvent({
+          event: "test_result",
+          suite: group.suite,
+          service: group.service,
+          group: group.name,
+          test: tc.name,
+          status: "fail",
+          duration_ms,
+          error,
+          ...(tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {}),
+        });
+        counts.failed++;
+        failedOrSkipped.add(tc.name);
+      }
+    } finally {
+      options?.abortControllers?.delete(acKey);
+    }
+  }
+}
+
 export async function runGroup(
   group: TestGroup,
   ctx: TestContext,
@@ -352,206 +560,31 @@ export async function runGroup(
   unimplemented: number;
   cancelled: number;
 }> {
-  let passed = 0;
-  let failed = 0;
-  let skipped = 0;
-  let unimplemented = 0;
-  let cancelled = 0;
+  const counts: GroupCounts = {
+    passed: 0,
+    failed: 0,
+    skipped: 0,
+    unimplemented: 0,
+    cancelled: 0,
+  };
 
-  // Track which tests passed so we can cascade-skip dependents.
-  const passedTests = new Set<string>();
-  const failedOrSkipped = new Set<string>();
+  const setupOk = await runSetupPhase(group, ctx, counts);
+  if (setupOk) {
+    await runTestsPhase(group, ctx, options, counts);
+  }
 
-  // Setup phase — abort group on failure
-  if (group.setup) {
+  // Teardown always runs, even after a failed setup — a setup that failed
+  // partway through has already created whatever its successful steps
+  // produced, and that is exactly the run that leaks if teardown is skipped.
+  if (group.teardown) {
     try {
-      await withTimeout(
-        group.setup(ctx),
-        TEST_TIMEOUT_MS,
-        `setup ${group.name}`,
-      );
+      await group.teardown(ctx);
     } catch (err) {
-      // Emit all tests as skipped if setup fails
-      const reason = `setup failed: ${String(err)}`;
-      for (const tc of group.tests) {
-        emitEvent({
-          event: "test_result",
-          suite: group.suite,
-          service: group.service,
-          group: group.name,
-          test: tc.name,
-          status: "skip",
-          duration_ms: 0,
-          error: reason,
-        });
-        skipped++;
-      }
-      ctx.log(`[${group.name}] ${reason}`);
-      return { passed, failed, skipped, unimplemented, cancelled };
+      ctx.log(`[${group.name}] teardown error: ${String(err)}`);
     }
   }
 
-  // Test execution phase
-  try {
-    for (const tc of group.tests) {
-      if (tc.na) {
-        emitEvent({
-          event: "test_result",
-          suite: group.suite,
-          service: group.service,
-          group: group.name,
-          test: tc.name,
-          status: "na",
-          duration_ms: 0,
-          error: tc.na,
-          ...(tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {}),
-        });
-        continue;
-      }
-
-      if (tc.skip) {
-        const reason = typeof tc.skip === "string" ? tc.skip : undefined;
-        emitEvent({
-          event: "test_result",
-          suite: group.suite,
-          service: group.service,
-          group: group.name,
-          test: tc.name,
-          status: "skip",
-          duration_ms: 0,
-          ...(reason ? { error: reason } : {}),
-          ...(tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {}),
-        });
-        skipped++;
-        failedOrSkipped.add(tc.name);
-        continue;
-      }
-
-      // Dependency gate — skip if any declared dependency failed or was skipped.
-      if (tc.depends && tc.depends.length > 0) {
-        const failedDeps = tc.depends.filter((d) => failedOrSkipped.has(d));
-        if (failedDeps.length > 0) {
-          emitEvent({
-            event: "test_result",
-            suite: group.suite,
-            service: group.service,
-            group: group.name,
-            test: tc.name,
-            status: "skip",
-            duration_ms: 0,
-            error: `dependency failed: ${failedDeps.join(", ")}`,
-            ...(tc.op !== undefined
-              ? { op: tc.op === false ? "" : tc.op }
-              : {}),
-          });
-          skipped++;
-          failedOrSkipped.add(tc.name);
-          continue;
-        }
-      }
-
-      // Create per-test AbortController for cancellation support.
-      const ac = new AbortController();
-      const acKey = `${group.name}:${tc.name}`;
-      options?.abortControllers?.set(acKey, ac);
-
-      ctx.signal = ac.signal;
-      const start = Date.now();
-      try {
-        emitEvent({
-          event: "test_start",
-          suite: group.suite,
-          service: group.service,
-          group: group.name,
-          test: tc.name,
-        });
-        await withTimeout(
-          raceAbort(tc.fn(ctx), ac.signal),
-          TEST_TIMEOUT_MS,
-          tc.name,
-        );
-        const duration_ms = Date.now() - start;
-        emitEvent({
-          event: "test_result",
-          suite: group.suite,
-          service: group.service,
-          group: group.name,
-          test: tc.name,
-          status: "pass",
-          duration_ms,
-          ...(tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {}),
-        });
-        passed++;
-        passedTests.add(tc.name);
-      } catch (err) {
-        const duration_ms = Date.now() - start;
-        const error =
-          err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-        if (isAbortError(err)) {
-          emitEvent({
-            event: "test_result",
-            suite: group.suite,
-            service: group.service,
-            group: group.name,
-            test: tc.name,
-            status: "cancelled",
-            duration_ms,
-            error: "cancelled",
-            ...(tc.op !== undefined
-              ? { op: tc.op === false ? "" : tc.op }
-              : {}),
-          });
-          cancelled++;
-          failedOrSkipped.add(tc.name);
-        } else if (isUnimplemented(err)) {
-          emitEvent({
-            event: "test_result",
-            suite: group.suite,
-            service: group.service,
-            group: group.name,
-            test: tc.name,
-            status: "unimplemented",
-            duration_ms,
-            error,
-            ...(tc.op !== undefined
-              ? { op: tc.op === false ? "" : tc.op }
-              : {}),
-          });
-          unimplemented++;
-          failedOrSkipped.add(tc.name);
-        } else {
-          emitEvent({
-            event: "test_result",
-            suite: group.suite,
-            service: group.service,
-            group: group.name,
-            test: tc.name,
-            status: "fail",
-            duration_ms,
-            error,
-            ...(tc.op !== undefined
-              ? { op: tc.op === false ? "" : tc.op }
-              : {}),
-          });
-          failed++;
-          failedOrSkipped.add(tc.name);
-        }
-      } finally {
-        options?.abortControllers?.delete(acKey);
-      }
-    }
-  } finally {
-    // Teardown always runs
-    if (group.teardown) {
-      try {
-        await group.teardown(ctx);
-      } catch (err) {
-        ctx.log(`[${group.name}] teardown error: ${String(err)}`);
-      }
-    }
-  }
-
-  return { passed, failed, skipped, unimplemented, cancelled };
+  return counts;
 }
 
 /** Run all groups in parallel, emitting run_start and run_end events.
