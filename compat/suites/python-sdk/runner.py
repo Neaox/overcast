@@ -6,7 +6,7 @@ Usage:
     python3 runner.py
 
 Environment variables:
-    OVERCAST_ENDPOINT            Emulator endpoint (default: http://localhost:4566)
+    OVERCAST_ENDPOINT            Emulator endpoint (default: http://127.0.0.1:4566)
     OVERCAST_DEFAULT_REGION              AWS region (default: us-east-1)
     OVERCAST_COMPAT_RUN_ID       Deterministic run ID for reproducible naming
     OVERCAST_COMPAT_SKIP_DOCKER  Set to "1" to skip tests that require Docker
@@ -68,7 +68,10 @@ SUITE = "python-sdk"
 
 # ─── Configuration ─────────────────────────────────────────────────────────────
 
-endpoint = os.environ.get("OVERCAST_ENDPOINT", "http://localhost:4566")
+# 127.0.0.1, not localhost: on a dual-stack host "localhost" resolves to ::1
+# first while the container publishes IPv4 only, so every new connection pays
+# a ~2s IPv6-then-IPv4 fallback.
+endpoint = os.environ.get("OVERCAST_ENDPOINT", "http://127.0.0.1:4566")
 region = os.environ.get("OVERCAST_DEFAULT_REGION", "us-east-1")
 run_id = os.environ.get("OVERCAST_COMPAT_RUN_ID") or make_run_id()
 skip_docker = os.environ.get("OVERCAST_COMPAT_SKIP_DOCKER") == "1"

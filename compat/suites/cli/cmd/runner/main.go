@@ -45,7 +45,10 @@ const suite = "cli"
 func main() {
 	endpoint := os.Getenv("OVERCAST_ENDPOINT")
 	if endpoint == "" {
-		endpoint = "http://localhost:4566"
+		// 127.0.0.1, not localhost: on a dual-stack host "localhost" resolves
+		// to ::1 first while the container publishes IPv4 only, so every new
+		// connection pays a ~2s IPv6-then-IPv4 fallback.
+		endpoint = "http://127.0.0.1:4566"
 	}
 	region := os.Getenv("OVERCAST_DEFAULT_REGION")
 	if region == "" {

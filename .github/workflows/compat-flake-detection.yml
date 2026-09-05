@@ -156,12 +156,15 @@ jobs:
             # loopback-only default (#761) is invisible from on this runner.
             OVERCAST_PORT=4566 OVERCAST_STATE=memory OVERCAST_LOG_LEVEL=warn OVERCAST_RDS_MODE=mock OVERCAST_LISTEN=0.0.0.0 ./bin/overcast serve &
             pid=$!
+            # 127.0.0.1, not localhost: avoids a dual-stack ::1-first
+            # resolution paying an IPv6-then-IPv4 fallback on every retry
+            # and on every suite connection (matches compat.yml).
             for _ in $(seq 1 30); do
-              curl -sf http://localhost:4566/_overcast/health > /dev/null && break
+              curl -sf http://127.0.0.1:4566/_overcast/health > /dev/null && break
               sleep 1
             done
             ./bin/compat \
-              --endpoint http://localhost:4566 \
+              --endpoint http://127.0.0.1:4566 \
               --format pretty \
               --suite "${{ matrix.suite }}" \
               --results-file "flake-run-$i.json" || true
