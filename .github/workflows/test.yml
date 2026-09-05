@@ -83,7 +83,9 @@ jobs:
   # Fourteen of the branch ruleset's required check names are produced below —
   # Vet, Lint, Actionlint, Web UI, the three Test suite (-tags …) legs, Full
   # test suite with coverage, both Docker build (…) legs, Script tests, Lambda
-  # invoke (native host binary), Changelog fragments and VERSION guard. (The
+  # invoke (native host binary), Changelog fragments and Docs and capability
+  # registry. VERSION guard is not in the set as read on 2026-09-05, whatever
+  # its own comment below says. (The
   # rest of the required set is reported by other workflows: Breaking-change
   # hold, Changelog entry, Lockfile freshness and Aggregate Compatibility
   # Results. The `Protect Main` ruleset is where the list is maintained;
@@ -917,11 +919,13 @@ jobs:
         run: python3 scripts/changelog.py check
 
   # Two jobs in one: this was "Docs and capability registry" (make docs-check,
-  # 23 s) and "AWS operation coverage" (make aws-models-check-ci since #1780, 88 s), and each
-  # was a checkout, a setup-go and one `make` target over the same module. The
+  # 23 s) and "AWS operation coverage" (make aws-models-check-ci since #1780,
+  # 88 s), and each was a checkout, a setup-go and one `make` target over the
+  # same module. The
   # second was paying a runner start and a module download for its 88 s of
-  # work. Both former check names survive as step names, which is where a
-  # failure is read from anyway; neither was in the required set.
+  # work. The job keeps the first name because the `Protect Main` ruleset
+  # requires it (read 2026-09-05); the second survives as a step name, which is
+  # where a failure is read from anyway.
   #
   # Gated, where neither of them was. Both compile Go, and ci-scope.py counts
   # docs/ as code — deliberately, because embed.go compiles the published docs
@@ -929,7 +933,7 @@ jobs:
   # `code`. A prose-only pull request was spending ~110 s and two slots on two
   # checks with nothing to read.
   docs-check:
-    name: Docs and AWS operation coverage
+    name: Docs and capability registry
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 10
