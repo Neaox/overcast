@@ -273,7 +273,7 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: needs.changes.outputs.code == 'true'
         with:
           path: |
@@ -380,7 +380,7 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: needs.changes.outputs.code == 'true'
         with:
           path: |
@@ -406,26 +406,8 @@ jobs:
       - uses: ./.github/actions/docker-hub-mirror
         if: needs.changes.outputs.code == 'true'
 
-      # Start the Lambda base-image pulls now, detached, so they overlap the Go
-      # build instead of landing inside a test's own deadline. A function has
-      # 2 minutes to reach Active (waitForFunctionActive in
-      # tests/integration/lambda/lambda_test.go), and a cold pull of a runtime
-      # image inside that window is what times out.
-      #
-      # The mirror above does not cover these. It points the daemon at
-      # mirror.gcr.io, which is a Docker Hub pull-through cache; these images
-      # live on public.ecr.aws, which it never sees.
-      #
-      # Detached and unchecked on purpose. `nohup … &` outlives the step — the
-      # runner does not reap it, which is how the Lambda invoke job below
-      # backgrounds a whole server — so this step neither waits nor fails. If a
-      # pull is slow or fails outright the test pulls the image itself, exactly
-      # as it does today; this can only make that pull already done.
-      #
-      # Only what the Docker-gated tests actually create: nodejs20.x dominates
-      # and python3.11 is the rest (the layer, hot-reload and deleted-layer
-      # cases). Tags from internal/services/lambda/runtime_catalog.go, which is
-      # where the emulator resolves a runtime ID to an image.
+      # Same detached pre-pull as `coverage`, for the same reason; the note there
+      # has the full rationale. Same image list, on purpose: keep the two in step.
       - name: Warm the Lambda runtime images in the background
         if: needs.changes.outputs.code == 'true'
         run: |
