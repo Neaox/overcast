@@ -7,7 +7,8 @@
     "signingName": "organizations",
     "protocol": "awsJson1_1",
     "apiVersion": "2016-11-28",
-    "targetPrefix": "AWSOrganizationsV20161128"
+    "targetPrefix": "AWSOrganizationsV20161128",
+    "awsQueryCompatible": false
   },
   "groups": [
     {

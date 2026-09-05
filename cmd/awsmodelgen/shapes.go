@@ -99,6 +99,10 @@ var shapeTraitAllowlist = map[string]struct{}{
 	"aws.protocols#restXml":      {},
 	"smithy.protocols#rpcv2Cbor": {},
 	"smithy.protocols#rpcv2Json": {},
+	// A JSON-protocol service migrated from Query, which still answers with the
+	// Query error code in the x-amzn-query-error header. An interpreter has to
+	// know which code an SDK may surface (compat/model/README.md § Assertions).
+	"aws.protocols#awsQueryCompatible": {},
 
 	// Resource metadata the lifecycle walk depends on (§3.1 Tag, §3.5 ARNs).
 	"aws.api#arn":      {},

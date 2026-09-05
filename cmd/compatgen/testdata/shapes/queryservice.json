@@ -1,0 +1,13 @@
+{
+"smithy": "2.0",
+"service": "queryservice",
+"namespace": "example.queryservice",
+"serviceShape": "QueryService",
+"sdkId": "Query Service",
+"apiVersion": "2026-01-01",
+"protocols": ["AWSJSON10"],
+"shapes": {
+"Ping": {"type":"operation","input":"smithy.api#Unit","output":"smithy.api#Unit"},
+"QueryService": {"type":"service","version":"2026-01-01","operations":["Ping"],"traits":{"aws.api#service":{"endpointPrefix":"queryservice","sdkId":"Query Service"},"aws.auth#sigv4":{"name":"queryservice"},"aws.protocols#awsJson1_0":{},"aws.protocols#awsQueryCompatible":{}}}
+}
+}

@@ -34,6 +34,11 @@ type serviceModel struct {
 	// interpreters need them to build a client without a table of their own.
 	EndpointPrefix string
 	SigningName    string
+	// QueryCompatible is aws.protocols#awsQueryCompatible: a JSON-protocol
+	// service that was migrated from Query and still answers with the Query
+	// error code in x-amzn-query-error. Which of the two codes an SDK
+	// surfaces depends on the SDK, so an interpreter has to be told.
+	QueryCompatible bool
 	// operationNames is every operation reachable from the service, sorted.
 	operationNames []string
 }
@@ -116,6 +121,7 @@ func (m *serviceModel) readServiceTraits(service awsmodel.SnapshotShape) error {
 		}
 	}
 	m.SigningName = sigv4.Name
+	m.QueryCompatible = hasTrait(service.Traits, "aws.protocols#awsQueryCompatible")
 	return nil
 }
 
