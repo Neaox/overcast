@@ -28,7 +28,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY --from=build /build/target/debug/rust-sdk-compat /app/rust-sdk-compat
 
+# Both halves of the registry: the loader resolves registry.generated.json as
+# the sibling of registry.json, so shipping only the hand-written half would
+# leave the image silently ignoring every generated group.
 COPY registry.json /registry.json
+COPY registry.generated.json /registry.generated.json
 ENV OVERCAST_REGISTRY_PATH=/registry.json
 ENV OVERCAST_ENDPOINT=http://localhost:4566
 ENV OVERCAST_DEFAULT_REGION=us-east-1

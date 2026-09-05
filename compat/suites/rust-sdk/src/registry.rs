@@ -1,9 +1,19 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
 use crate::harness::{TestCase, TestFn, TestGroup};
+
+/// Machine-generated sibling of `registry.json`, written wholly by
+/// `cmd/compatgen` from the scenario IR. Every loader concatenates the two.
+const GENERATED_REGISTRY_FILE: &str = "registry.generated.json";
+
+/// The only `version` this loader understands. Anything else is a load error
+/// rather than a file we half-read.
+const GENERATED_REGISTRY_VERSION: u32 = 1;
 
 #[derive(Deserialize)]
 struct RegistryRoot {
@@ -14,7 +24,31 @@ struct RegistryRoot {
 struct RegistryGroup {
     service: String,
     name: String,
+    /// Restricts the group to the suites it names; empty — the usual case —
+    /// means every suite. See [`in_scope`].
+    #[serde(default)]
+    suites: Vec<String>,
     tests: Vec<RegistryTest>,
+    /// Set only for groups read from [`GENERATED_REGISTRY_FILE`]; the
+    /// hand-written registry declares none of those fields, so serde never
+    /// populates this.
+    #[serde(skip)]
+    generated: Option<GeneratedMeta>,
+}
+
+/// The metadata a generated group carries beyond the shared group shape.
+///
+/// Nothing in the loader branches on it. It is parsed so that a scenario
+/// backend reads the same values `cmd/compatgen` wrote, and so that a group
+/// missing a required one fails the load instead of running as something it is
+/// not.
+struct GeneratedMeta {
+    /// `candidate` or `gated`, verbatim. The gate semantics are `cmd/compat`'s,
+    /// not a suite's, so no value is rejected here.
+    state: String,
+    /// Path to the scenario IR the group was generated from, relative to the
+    /// repository root. Optional in the schema.
+    scenario: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -28,30 +62,173 @@ struct RegistryTest {
     depends: Vec<String>,
 }
 
+/// The generated registry's own shape. Its three extra fields are required
+/// here — not `Option`, no `#[serde(default)]` — so serde's missing-field error
+/// is the load error a malformed generated file has to produce.
+#[derive(Deserialize)]
+struct GeneratedRoot {
+    version: u32,
+    groups: Vec<GeneratedGroup>,
+}
+
+#[derive(Deserialize)]
+struct GeneratedGroup {
+    service: String,
+    name: String,
+    tests: Vec<RegistryTest>,
+    /// Always `true` in a well-formed file. Read rather than assumed: a group
+    /// that does not claim to be generator output must not be loaded as one.
+    generated: bool,
+    state: String,
+    suites: Vec<String>,
+    #[serde(default)]
+    scenario: Option<String>,
+}
+
+impl GeneratedGroup {
+    fn into_registry_group(self, path: &Path) -> Result<RegistryGroup, String> {
+        if !self.generated {
+            return Err(format!(
+                "parse {}: group \"{}\" has \"generated\": false — every group in this file is generator output",
+                path.display(),
+                self.name
+            ));
+        }
+        Ok(RegistryGroup {
+            service: self.service,
+            name: self.name,
+            suites: self.suites,
+            tests: self.tests,
+            generated: Some(GeneratedMeta {
+                state: self.state,
+                scenario: self.scenario,
+            }),
+        })
+    }
+}
+
+/// The test a scenario backend is asked to execute, and the group it belongs
+/// to.
+///
+/// Built for any test with no static impl — a generated group's, or a
+/// hand-written group ported to an authored scenario under the same registry
+/// group/test names (G6, docs/plans/compat-coverage-modelgen.md § 3.11) — not
+/// only a generated group's.
+///
+/// Nothing in this suite implements [`ScenarioBackend`] yet, so nothing reads
+/// these fields — the G2 interpreters are what will.
+#[allow(dead_code)]
+pub struct ScenarioRequest<'a> {
+    pub group: &'a str,
+    pub service: &'a str,
+    pub test: &'a str,
+    /// The group's `scenario` path: `Some` for a generated group that
+    /// declares one; `None` for a generated group that omits it, or for a
+    /// hand-written group, which carries no `scenario` field at all.
+    pub scenario: Option<&'a str>,
+    /// The group's `state`, verbatim: `candidate` or `gated`, for a generated
+    /// group. `None` for a hand-written group — it carries no `state`, so
+    /// there is no value to invent for one.
+    pub state: Option<&'a str>,
+}
+
+/// Resolves a test to an implementation when no static impl claims it.
+///
+/// A scenario-backed group — generated, or a hand-written group ported to an
+/// authored scenario under the same registry group/test names (G6,
+/// docs/plans/compat-coverage-modelgen.md § 3.11) — is executed by an
+/// interpreter walking its scenario IR, not by an implementation a service
+/// file registered, so it needs a resolution step of its own. This is that
+/// extension point, and it is consulted for **any** test with no static impl
+/// — hand-written or generated — before the not-implemented sentinels below.
+/// It is the last one tried: the registry `skip`, the capability gate and the
+/// registered impls all still win over it.
+///
+/// **Nothing implements this in rust-sdk yet** (#1393; the G2 interpreters land
+/// the first backends). Until one does, a generated group scoped to this suite
+/// fails loudly — see [`missing_scenario_backend`] — and a hand-written group
+/// with no impl keeps today's plain `not yet implemented` skip.
+pub trait ScenarioBackend {
+    fn resolve(&self, request: &ScenarioRequest<'_>) -> Option<TestFn>;
+}
+
+/// Everything about the owning group that a test's resolution depends on.
+struct GroupContext<'a> {
+    name: &'a str,
+    service: &'a str,
+    generated: Option<&'a GeneratedMeta>,
+}
+
 pub fn build_groups(
     suite: &str,
     impls: &HashMap<String, TestFn>,
     setups: &HashMap<String, TestFn>,
     teardowns: &HashMap<String, TestFn>,
     capabilities: &HashSet<String>,
+    backend: Option<&dyn ScenarioBackend>,
 ) -> Result<Vec<TestGroup>, String> {
-    let registry = load()?;
+    let registry = load(suite)?;
+    assemble(
+        suite,
+        registry,
+        impls,
+        setups,
+        teardowns,
+        capabilities,
+        backend,
+    )
+}
+
+fn assemble(
+    suite: &str,
+    registry: RegistryRoot,
+    impls: &HashMap<String, TestFn>,
+    setups: &HashMap<String, TestFn>,
+    teardowns: &HashMap<String, TestFn>,
+    capabilities: &HashSet<String>,
+    backend: Option<&dyn ScenarioBackend>,
+) -> Result<Vec<TestGroup>, String> {
     validate_impls(&registry, impls, suite)?;
     let ambiguous = ambiguous_test_names(&registry);
 
     Ok(registry
         .groups
         .into_iter()
-        .map(|group| TestGroup {
-            suite: suite.to_string(),
-            service: group.service.clone(),
-            name: group.name.clone(),
-            tests: topo_sort(group.tests)
+        .map(|group| {
+            let RegistryGroup {
+                service,
+                name,
+                tests,
+                generated,
+                ..
+            } = group;
+            let context = GroupContext {
+                name: &name,
+                service: &service,
+                generated: generated.as_ref(),
+            };
+            let tests: Vec<TestCase> = topo_sort(tests)
                 .into_iter()
-                .map(|test| build_test_case(suite, &group.name, test, impls, capabilities, &ambiguous))
-                .collect(),
-            setup: setups.get(&group.name).cloned(),
-            teardown: teardowns.get(&group.name).cloned(),
+                .map(|test| {
+                    build_test_case(
+                        suite,
+                        &context,
+                        test,
+                        impls,
+                        capabilities,
+                        &ambiguous,
+                        backend,
+                    )
+                })
+                .collect();
+            TestGroup {
+                suite: suite.to_string(),
+                setup: setups.get(&name).cloned(),
+                teardown: teardowns.get(&name).cloned(),
+                service,
+                name,
+                tests,
+            }
         })
         .collect())
 }
@@ -91,11 +268,12 @@ fn test_name_owners(registry: &RegistryRoot) -> std::collections::BTreeMap<&str,
 
 fn build_test_case(
     suite: &str,
-    group_name: &str,
+    group: &GroupContext<'_>,
     test: RegistryTest,
     impls: &HashMap<String, TestFn>,
     capabilities: &HashSet<String>,
     ambiguous: &HashSet<String>,
+    backend: Option<&dyn ScenarioBackend>,
 ) -> TestCase {
     let noop: TestFn = std::sync::Arc::new(|_| Box::pin(async { Ok(()) }));
 
@@ -129,39 +307,207 @@ fn build_test_case(
 
     // A name shared by several groups may only be resolved by its qualified
     // key — a bare-name match would run another group's implementation.
-    let qualified = format!("{}:{}", group_name, test.name);
+    let qualified = format!("{}:{}", group.name, test.name);
     let bare = if ambiguous.contains(&test.name) {
         None
     } else {
         impls.get(&test.name).cloned()
     };
-    let implementation = impls
-        .get(&qualified)
-        .cloned()
-        .or(bare)
-        .unwrap_or_else(|| noop.clone());
-    let implemented = impls.contains_key(&qualified)
-        || (!ambiguous.contains(&test.name) && impls.contains_key(&test.name));
-    let skip = if implemented {
-        None
-    } else {
-        Some(format!("not yet implemented in {suite} test suite"))
-    };
+    if let Some(implementation) = impls.get(&qualified).cloned().or(bare) {
+        return TestCase {
+            name: test.name,
+            op: test.op,
+            skip: None,
+            depends: test.depends,
+            fn_: implementation,
+        };
+    }
 
-    TestCase {
-        name: test.name,
-        op: test.op,
-        skip,
-        depends: test.depends,
-        fn_: implementation,
+    // No registered impl. Consulted for any test with no static impl — a
+    // generated group's, or a hand-written group ported to an authored
+    // scenario under the same registry group/test names (G6,
+    // docs/plans/compat-coverage-modelgen.md § 3.11) — not only a generated
+    // group's, so a G6-ported hand-written group resolves to its scenario
+    // with no loader change. Only a generated group with no resolution falls
+    // to the interim fail rule; a hand-written one keeps today's plain
+    // not-yet-implemented skip.
+    let resolved = backend.and_then(|backend| {
+        backend.resolve(&ScenarioRequest {
+            group: group.name,
+            service: group.service,
+            test: &test.name,
+            scenario: group.generated.and_then(|meta| meta.scenario.as_deref()),
+            state: group.generated.map(|meta| meta.state.as_str()),
+        })
+    });
+
+    if let Some(implementation) = resolved {
+        return TestCase {
+            name: test.name,
+            op: test.op,
+            skip: None,
+            depends: test.depends,
+            fn_: implementation,
+        };
+    }
+
+    match group.generated {
+        Some(_) => TestCase {
+            name: test.name,
+            op: test.op,
+            skip: None,
+            depends: test.depends,
+            fn_: missing_scenario_backend(group.name, suite),
+        },
+        None => TestCase {
+            name: test.name,
+            op: test.op,
+            skip: Some(format!("not yet implemented in {suite} test suite")),
+            depends: test.depends,
+            fn_: noop,
+        },
     }
 }
 
-fn load() -> Result<RegistryRoot, String> {
-    let path =
-        std::env::var("OVERCAST_REGISTRY_PATH").unwrap_or_else(|_| "../registry.json".to_string());
-    let body = fs::read_to_string(&path).map_err(|err| format!("read {path}: {err}"))?;
-    serde_json::from_str(&body).map_err(|err| format!("parse {path}: {err}"))
+/// The interim result for a generated group this suite is scoped to but has no
+/// backend for.
+///
+/// `suites` on a generated group is derived from backend availability by
+/// `cmd/compatgen`, so a suite named in it that cannot execute the group is a
+/// generator or loader bug, and it has to be loud. Reporting `skip` would file
+/// it under the same sentinel a hand-written registry gap uses, and `na` would
+/// claim the SDK has no API for it — both report as success, which is the one
+/// thing this must never do. So the test fails the way any other broken
+/// expectation does: the harness turns an `Err` from a test into a `fail`
+/// result, so no new result kind is needed. Because `candidate` groups are
+/// excluded from the gates by `cmd/compat` (#1367) this cannot red a build until
+/// a group is `gated`, at which point it is a real regression and should.
+fn missing_scenario_backend(group: &str, suite: &str) -> TestFn {
+    let message = format!(
+        "generated group \"{group}\" is scoped to {suite} but {suite} has no scenario backend"
+    );
+    std::sync::Arc::new(move |_| {
+        let message = message.clone();
+        Box::pin(async move { Err(message) })
+    })
+}
+
+fn load(suite: &str) -> Result<RegistryRoot, String> {
+    let path = registry_path();
+    let mut registry: RegistryRoot = read_json(&path)?;
+    let generated = read_generated(&generated_sibling(&path))?;
+    append_generated(&mut registry, generated, suite)?;
+    Ok(registry)
+}
+
+fn registry_path() -> PathBuf {
+    std::env::var("OVERCAST_REGISTRY_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("../registry.json"))
+}
+
+/// The generated registry is the sibling of `registry.json` — same directory,
+/// whatever path this loader was pointed at.
+fn generated_sibling(registry: &Path) -> PathBuf {
+    registry.with_file_name(GENERATED_REGISTRY_FILE)
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
+    let body = fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    serde_json::from_str(&body).map_err(|err| format!("parse {}: {err}", path.display()))
+}
+
+/// Reads the generated registry.
+///
+/// A missing file is an empty registry, never an error: suite images, CI
+/// artifacts and branches cut before the file existed all have to keep working.
+/// A file that is present and wrong is a load error, exactly as a malformed
+/// `registry.json` is — a bad generated file must not be silently dropped.
+fn read_generated(path: &Path) -> Result<Vec<RegistryGroup>, String> {
+    let body = match fs::read_to_string(path) {
+        Ok(body) => body,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(format!("read {}: {err}", path.display())),
+    };
+    parse_generated(&body, path)
+}
+
+fn parse_generated(body: &str, path: &Path) -> Result<Vec<RegistryGroup>, String> {
+    let root: GeneratedRoot =
+        serde_json::from_str(body).map_err(|err| format!("parse {}: {err}", path.display()))?;
+    if root.version != GENERATED_REGISTRY_VERSION {
+        return Err(format!(
+            "parse {}: unsupported version {} (this loader reads {GENERATED_REGISTRY_VERSION})",
+            path.display(),
+            root.version
+        ));
+    }
+    root.groups
+        .into_iter()
+        .map(|group| group.into_registry_group(path))
+        .collect()
+}
+
+/// Concatenates the generated groups onto the hand-written ones — hand-written
+/// first, generated after, in file order — dropping the ones this suite is out
+/// of scope for.
+///
+/// The two files are joined on group and test names, so a generated group may
+/// never reuse a hand-written name: `cmd/compat` lints for it and this is the
+/// second line of defence, the same posture as the ambiguous-name defence in
+/// [`validate_impls`].
+///
+/// `suites` is scoped here rather than over every group because rust-sdk has
+/// never filtered hand-written groups by it: `cdk-lifecycle` is loaded today and
+/// its 35 tests are recorded as `skip` in `compat/baseline/rust-sdk.json`, so
+/// dropping it here would turn every one of them into a
+/// "compat baseline missing result" regression. De-scoping it is a baseline
+/// change of its own, across rust-sdk, java-sdk and dotnet-sdk together
+/// (go-sdk, cli, python-sdk and node-js-sdk already exclude it), and it is not
+/// this change.
+fn append_generated(
+    registry: &mut RegistryRoot,
+    generated: Vec<RegistryGroup>,
+    suite: &str,
+) -> Result<(), String> {
+    let hand_written: HashSet<String> = registry
+        .groups
+        .iter()
+        .map(|group| group.name.clone())
+        .collect();
+    let collisions = {
+        let mut names: Vec<String> = generated
+            .iter()
+            .filter(|group| hand_written.contains(&group.name))
+            .map(|group| group.name.clone())
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        names
+    };
+    if !collisions.is_empty() {
+        return Err(format!(
+            "{GENERATED_REGISTRY_FILE} redeclares group(s) already in registry.json: {} — \
+             the two files are joined on group and test names, so a generated group may not \
+             reuse a hand-written name",
+            collisions.join(", ")
+        ));
+    }
+
+    registry
+        .groups
+        .extend(generated.into_iter().filter(|group| in_scope(group, suite)));
+    Ok(())
+}
+
+/// Whether this suite runs `group`.
+///
+/// A group declaring `suites` runs only in the suites it names; elsewhere it is
+/// out of scope rather than in debt, which is what keeps a suite with no
+/// scenario backend from reporting anything at all about a group it was never
+/// asked to run.
+fn in_scope(group: &RegistryGroup, suite: &str) -> bool {
+    group.suites.is_empty() || group.suites.iter().any(|scoped| scoped == suite)
 }
 
 fn topo_sort(tests: Vec<RegistryTest>) -> Vec<RegistryTest> {
@@ -345,6 +691,8 @@ fn validate_impls(
 mod tests {
     use super::*;
 
+    use crate::harness::TestContext;
+
     fn noop() -> TestFn {
         std::sync::Arc::new(|_| Box::pin(async { Ok(()) }))
     }
@@ -359,21 +707,31 @@ mod tests {
         }
     }
 
+    fn hand_written_group(service: &str, name: &str, tests: Vec<RegistryTest>) -> RegistryGroup {
+        RegistryGroup {
+            service: service.to_string(),
+            name: name.to_string(),
+            suites: Vec::new(),
+            tests,
+            generated: None,
+        }
+    }
+
     /// Two unrelated groups declaring a test of the same name, plus a name owned
     /// by exactly one group — the shape that made a mis-binding possible.
     fn two_groups_one_name() -> RegistryRoot {
         RegistryRoot {
             groups: vec![
-                RegistryGroup {
-                    service: "iam".to_string(),
-                    name: "iam-users".to_string(),
-                    tests: vec![test_entry("ListUsers"), test_entry("CreateUser")],
-                },
-                RegistryGroup {
-                    service: "cognito".to_string(),
-                    name: "cognito-userpools".to_string(),
-                    tests: vec![test_entry("ListUsers")],
-                },
+                hand_written_group(
+                    "iam",
+                    "iam-users",
+                    vec![test_entry("ListUsers"), test_entry("CreateUser")],
+                ),
+                hand_written_group(
+                    "cognito",
+                    "cognito-userpools",
+                    vec![test_entry("ListUsers")],
+                ),
             ],
         }
     }
@@ -500,6 +858,9 @@ mod tests {
         }
     }
 
+    /// Builds the fixture's groups *without* [`validate_impls`], which is the
+    /// point: the resolution tests below check that a bad key cannot bind even
+    /// when validation is bypassed.
     fn build(keys: &[&str]) -> Vec<TestGroup> {
         let registry = two_groups_one_name();
         let ambiguous = ambiguous_test_names(&registry);
@@ -517,11 +878,16 @@ mod tests {
                     .map(|test| {
                         build_test_case(
                             "rust-sdk",
-                            &group.name,
+                            &GroupContext {
+                                name: &group.name,
+                                service: &group.service,
+                                generated: group.generated.as_ref(),
+                            },
                             test.clone(),
                             &impls,
                             &HashSet::new(),
                             &ambiguous,
+                            None,
                         )
                     })
                     .collect(),
@@ -574,5 +940,313 @@ mod tests {
             test_name_owners(&registry).get("ListUsers"),
             Some(&vec!["cognito-userpools", "iam-users"])
         );
+    }
+
+    // ── registry.generated.json ──────────────────────────────────────────────
+
+    /// The body `compat/suites/registry.generated.json` ships with. Asserted as
+    /// a *no-op*, not as what is on disk: the generator is expected to fill that
+    /// file in, and a test pinning it empty would fail the day it does.
+    const EMPTY_GENERATED: &str = r#"{"version":1,"groups":[]}"#;
+
+    fn generated_path() -> PathBuf {
+        PathBuf::from("../registry.generated.json")
+    }
+
+    /// A generated file declaring one group per `(name, suites)` pair, each with
+    /// a single `SendMessage` test.
+    fn generated_json(groups: &[(&str, &[&str])]) -> String {
+        let groups: Vec<String> = groups
+            .iter()
+            .map(|(name, suites)| {
+                let suites: Vec<String> =
+                    suites.iter().map(|suite| format!("\"{suite}\"")).collect();
+                format!(
+                    r#"{{"service":"sqs","name":"{name}","generated":true,"state":"candidate","scenario":"compat/scenarios/{name}.yaml","suites":[{}],"tests":[{{"name":"SendMessage"}}]}}"#,
+                    suites.join(",")
+                )
+            })
+            .collect();
+        format!(r#"{{"version":1,"groups":[{}]}}"#, groups.join(","))
+    }
+
+    fn group_names(registry: &RegistryRoot) -> Vec<&str> {
+        registry
+            .groups
+            .iter()
+            .map(|group| group.name.as_str())
+            .collect()
+    }
+
+    /// Loads `body` as the generated registry and concatenates it onto the
+    /// hand-written fixture, as [`load`] does with the two real files.
+    fn concatenated(body: &str, suite: &str) -> Result<RegistryRoot, String> {
+        let mut registry = two_groups_one_name();
+        let generated = parse_generated(body, &generated_path())?;
+        append_generated(&mut registry, generated, suite)?;
+        Ok(registry)
+    }
+
+    #[test]
+    fn resolves_the_generated_registry_beside_registry_json() {
+        // Whatever path the loader was pointed at — the default relative one,
+        // or the absolute OVERCAST_REGISTRY_PATH the suite image sets.
+        assert_eq!(
+            generated_sibling(Path::new("../registry.json")),
+            PathBuf::from("../registry.generated.json")
+        );
+        assert_eq!(
+            generated_sibling(Path::new("/registry.json")),
+            PathBuf::from("/registry.generated.json")
+        );
+    }
+
+    /// Suite images, CI artifacts and branches cut before the file existed all
+    /// have to keep working, so a missing file is an empty registry.
+    #[test]
+    fn a_missing_generated_registry_is_a_no_op() {
+        let absent = generated_path().with_file_name("registry.generated.absent.json");
+        let generated = read_generated(&absent).expect("a missing file is not an error");
+        assert!(generated.is_empty());
+
+        let mut registry = two_groups_one_name();
+        let before = group_names(&registry).join(",");
+        append_generated(&mut registry, generated, "rust-sdk").expect("nothing to concatenate");
+        assert_eq!(group_names(&registry).join(","), before);
+    }
+
+    #[test]
+    fn an_empty_generated_registry_is_a_no_op() {
+        let registry = concatenated(EMPTY_GENERATED, "rust-sdk").expect("empty file must load");
+        assert_eq!(group_names(&registry), ["iam-users", "cognito-userpools"]);
+    }
+
+    #[test]
+    fn generated_groups_follow_the_hand_written_ones_in_file_order() {
+        let body = generated_json(&[
+            ("sqs-scenario-b", &["rust-sdk"]),
+            ("sqs-scenario-a", &["rust-sdk", "python-sdk"]),
+        ]);
+        let registry = concatenated(&body, "rust-sdk").expect("generated file must load");
+        assert_eq!(
+            group_names(&registry),
+            [
+                "iam-users",
+                "cognito-userpools",
+                "sqs-scenario-b",
+                "sqs-scenario-a"
+            ]
+        );
+    }
+
+    /// Out of scope is not the same as in debt: the group contributes no tests,
+    /// no skips and no results to a suite its `suites` list does not name.
+    #[test]
+    fn a_generated_group_scoped_elsewhere_is_not_loaded() {
+        let body = generated_json(&[("sqs-scenario", &["python-sdk", "node-js-sdk"])]);
+        let registry = concatenated(&body, "rust-sdk").expect("generated file must load");
+        assert_eq!(group_names(&registry), ["iam-users", "cognito-userpools"]);
+    }
+
+    /// The interim rule: scoped to this suite, no impl, no backend ⇒ a `fail`
+    /// carrying the message every loader emits, never a skip and never an `na`.
+    #[tokio::test]
+    async fn a_scoped_generated_group_without_a_backend_fails_loudly() {
+        let body = generated_json(&[("sqs-scenario", &["rust-sdk"])]);
+        let registry = concatenated(&body, "rust-sdk").expect("generated file must load");
+        let groups = assemble(
+            "rust-sdk",
+            registry,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashSet::new(),
+            None,
+        )
+        .expect("groups must build");
+
+        let group = groups
+            .iter()
+            .find(|group| group.name == "sqs-scenario")
+            .expect("the generated group must be loaded");
+        let test = group
+            .tests
+            .first()
+            .expect("the generated group must keep its test");
+
+        assert!(
+            test.skip.is_none(),
+            "must not report as a skip: {:?}",
+            test.skip
+        );
+        let err = (test.fn_)(TestContext::new(
+            "http://localhost:4566".to_string(),
+            "us-east-1".to_string(),
+            "test".to_string(),
+        ))
+        .await
+        .expect_err("a group with no backend must fail");
+        assert_eq!(
+            err,
+            "generated group \"sqs-scenario\" is scoped to rust-sdk but rust-sdk has no scenario backend"
+        );
+        // The harness classifies an Err by its text; this one must land as
+        // `fail`, not be swallowed as an emulator gap.
+        assert!(!crate::harness::is_unimplemented(&err), "{err}");
+    }
+
+    /// The two files are joined on group and test names. `cmd/compat` lints for
+    /// this; the loader is the second line of defence.
+    #[test]
+    fn a_generated_group_may_not_reuse_a_hand_written_name() {
+        let body = generated_json(&[("iam-users", &["rust-sdk"])]);
+        // Not `expect_err`: the Ok type is a RegistryRoot, which is not Debug.
+        let err = concatenated(&body, "rust-sdk")
+            .err()
+            .expect("the collision must be refused");
+        assert!(err.contains("iam-users"), "{err}");
+    }
+
+    /// A file that is present and wrong is a load error, exactly as a malformed
+    /// registry.json is — never a silent empty registry.
+    #[test]
+    fn a_malformed_generated_registry_is_a_load_error() {
+        for (label, body) in [
+            ("unparsable", "{".to_string()),
+            (
+                "wrong version",
+                r#"{"version":2,"groups":[]}"#.to_string(),
+            ),
+            ("no version", r#"{"groups":[]}"#.to_string()),
+            (
+                "group without state",
+                r#"{"version":1,"groups":[{"service":"sqs","name":"sqs-scenario","generated":true,"suites":["rust-sdk"],"tests":[{"name":"SendMessage"}]}]}"#.to_string(),
+            ),
+            (
+                "group without suites",
+                r#"{"version":1,"groups":[{"service":"sqs","name":"sqs-scenario","generated":true,"state":"candidate","tests":[{"name":"SendMessage"}]}]}"#.to_string(),
+            ),
+            (
+                "group without generated",
+                r#"{"version":1,"groups":[{"service":"sqs","name":"sqs-scenario","state":"candidate","suites":["rust-sdk"],"tests":[{"name":"SendMessage"}]}]}"#.to_string(),
+            ),
+        ] {
+            let err = parse_generated(&body, &generated_path())
+                .err()
+                .unwrap_or_else(|| panic!("{label} must not load"));
+            assert!(
+                err.contains("registry.generated.json"),
+                "{label}: message must name the file: {err}"
+            );
+        }
+    }
+
+    /// A stand-in for the interpreter that will implement [`ScenarioBackend`]
+    /// in G2. It exists only to prove the extension point is reachable and is
+    /// handed the group's `scenario` path; rust-sdk ships no backend.
+    struct RecordingBackend;
+
+    impl ScenarioBackend for RecordingBackend {
+        fn resolve(&self, request: &ScenarioRequest<'_>) -> Option<TestFn> {
+            let described = format!(
+                "{}/{}/{} from {}",
+                request.service,
+                request.group,
+                request.test,
+                request.scenario.unwrap_or("<none>")
+            );
+            let implementation: TestFn = std::sync::Arc::new(move |_| {
+                let described = described.clone();
+                Box::pin(async move { Err(described) })
+            });
+            Some(implementation)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_backend_resolves_a_generated_group_before_the_fail() {
+        let body = generated_json(&[("sqs-scenario", &["rust-sdk"])]);
+        let registry = concatenated(&body, "rust-sdk").expect("generated file must load");
+        let groups = assemble(
+            "rust-sdk",
+            registry,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashSet::new(),
+            Some(&RecordingBackend),
+        )
+        .expect("groups must build");
+
+        let test = groups
+            .iter()
+            .find(|group| group.name == "sqs-scenario")
+            .and_then(|group| group.tests.first())
+            .expect("the generated group must be loaded");
+        let resolved = (test.fn_)(TestContext::new(
+            "http://localhost:4566".to_string(),
+            "us-east-1".to_string(),
+            "test".to_string(),
+        ))
+        .await
+        .expect_err("the stand-in reports what it was given");
+        assert_eq!(
+            resolved,
+            "sqs/sqs-scenario/SendMessage from compat/scenarios/sqs-scenario.yaml"
+        );
+    }
+
+    /// G6 (docs/plans/compat-coverage-modelgen.md § 3.11) ports hand-written
+    /// groups to authored scenarios under the same registry group/test
+    /// names, so the backend must be consulted for a hand-written group's
+    /// test with no impl too — not only a generated group's.
+    #[tokio::test]
+    async fn a_hand_written_groups_test_resolves_through_a_registered_backend() {
+        let registry = two_groups_one_name();
+        let groups = assemble(
+            "rust-sdk",
+            registry,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashSet::new(),
+            Some(&RecordingBackend),
+        )
+        .expect("groups must build");
+
+        let test = groups
+            .iter()
+            .find(|group| group.name == "iam-users")
+            .and_then(|group| group.tests.iter().find(|t| t.name == "CreateUser"))
+            .expect("the hand-written group's test must be loaded");
+
+        assert!(
+            test.skip.is_none(),
+            "must not fall back to the not-yet-implemented skip: {:?}",
+            test.skip
+        );
+
+        let resolved = (test.fn_)(TestContext::new(
+            "http://localhost:4566".to_string(),
+            "us-east-1".to_string(),
+            "test".to_string(),
+        ))
+        .await
+        .expect_err("the stand-in reports what it was given");
+        assert_eq!(resolved, "iam/iam-users/CreateUser from <none>");
+    }
+
+    /// `scenario` is optional in the schema, and a group omitting it still
+    /// loads.
+    #[test]
+    fn a_generated_group_may_omit_its_scenario_path() {
+        let body = r#"{"version":1,"groups":[{"service":"sqs","name":"sqs-scenario","generated":true,"state":"gated","suites":["rust-sdk"],"tests":[{"name":"SendMessage"}]}]}"#;
+        let groups = parse_generated(body, &generated_path()).expect("must load");
+        let meta = groups[0]
+            .generated
+            .as_ref()
+            .expect("the group must carry its metadata");
+        assert_eq!(meta.state, "gated");
+        assert!(meta.scenario.is_none());
     }
 }
