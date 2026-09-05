@@ -59,7 +59,7 @@ func TestRunTask_withDocker_pullsCDKContainerAssetFromTheServedRegistry(t *testi
 	// server, so RunTask below would otherwise race it. The registry setup that
 	// follows happens to be slow enough to hide that today — which is not a
 	// property this test should be resting on.
-	waitForECSDocker(t, srv)
+	helpers.WaitForECSDocker(t, srv)
 	helpers.PullOrSkip(t, dc, "registry:2")
 
 	repoURI := createECRRepository(t, srv, cdkAssetRepository)
@@ -201,7 +201,7 @@ func TestRunTask_withDocker_runsAnAssetPublishedTheWayCDKPublishesOne(t *testing
 		helpers.WithAccountID("000000000000"),
 		helpers.WithECRRegistryPort(helpers.ReserveTCPPort(t)),
 	)
-	waitForECSDocker(t, srv)
+	helpers.WaitForECSDocker(t, srv)
 	helpers.PullOrSkip(t, dc, "registry:2")
 	repoURI := createECRRepository(t, srv, cdkAssetRepository)
 

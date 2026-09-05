@@ -66,7 +66,8 @@ func serviceStackTemplateWithImage(desiredCount, image string) string {
 func TestUpdateStack_ECSServiceDesiredCountChange(t *testing.T) {
 	helpers.SkipWithoutDocker(t)
 	// Given: a deployed stack with a service running one task.
-	srv := helpers.NewTestServer(t)
+	srv := helpers.NewTestServer(t, helpers.WithECSDocker())
+	helpers.WaitForECSDocker(t, srv)
 	cr := cfnQuery(t, srv, "CreateStack", url.Values{
 		"StackName":    []string{"ecs-upd-stack"},
 		"TemplateBody": []string{serviceStackTemplate("1")},
@@ -116,7 +117,8 @@ func TestUpdateStack_ECSServiceDesiredCountChange(t *testing.T) {
 func TestUpdateStack_ECSServiceTaskDefinitionChange(t *testing.T) {
 	helpers.SkipWithoutDocker(t)
 	// Given: a deployed stack running one task
-	srv := helpers.NewTestServer(t)
+	srv := helpers.NewTestServer(t, helpers.WithECSDocker())
+	helpers.WaitForECSDocker(t, srv)
 	cr := cfnQuery(t, srv, "CreateStack", url.Values{
 		"StackName":    []string{"ecs-upd-td-stack"},
 		"TemplateBody": []string{serviceStackTemplateWithImage("1", "nginx:latest")},
@@ -211,7 +213,8 @@ func TestUpdateStack_ECSServiceTaskDefinitionChange(t *testing.T) {
 func TestUpdateStack_ECSServiceFailedUpdateLeavesStackRecoverable(t *testing.T) {
 	helpers.SkipWithoutDocker(t)
 	// Given: a deployed stack.
-	srv := helpers.NewTestServer(t)
+	srv := helpers.NewTestServer(t, helpers.WithECSDocker())
+	helpers.WaitForECSDocker(t, srv)
 	cr := cfnQuery(t, srv, "CreateStack", url.Values{
 		"StackName":    []string{"ecs-upd-fail-stack"},
 		"TemplateBody": []string{serviceStackTemplate("1")},

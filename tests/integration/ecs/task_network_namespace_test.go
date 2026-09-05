@@ -33,7 +33,7 @@ func TestRunTask_withDocker_awsvpcContainersShareOneNetworkNamespace(t *testing.
 	// Given: an awsvpc task of two containers that talk to each other over
 	// loopback, exactly as they would on Fargate.
 	srv := helpers.NewTestServer(t, helpers.WithECSDocker())
-	waitForECSDocker(t, srv)
+	helpers.WaitForECSDocker(t, srv)
 
 	create := ecsCall(t, srv, "CreateCluster", map[string]any{"clusterName": "netns"})
 	helpers.AssertStatus(t, create, http.StatusOK)

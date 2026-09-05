@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/overcast-sh/overcast/tests/helpers"
 )
@@ -36,7 +35,7 @@ func TestRunTask_withDocker_pullFailureIsNotCopiedToEveryContainer(t *testing.T)
 	// Given: a cluster and a two-container task definition whose first
 	// container's image cannot be pulled and whose second is a sidecar.
 	srv := helpers.NewTestServer(t, helpers.WithECSDocker())
-	waitForECSDocker(t, srv)
+	helpers.WaitForECSDocker(t, srv)
 
 	create := ecsCall(t, srv, "CreateCluster", map[string]any{"clusterName": "start-failure"})
 	helpers.AssertStatus(t, create, http.StatusOK)
@@ -116,19 +115,3 @@ func TestRunTask_withDocker_pullFailureIsNotCopiedToEveryContainer(t *testing.T)
 
 // waitForECSDocker blocks until the Docker probe has wired the ECS service.
 //
-// The probe runs in a goroutine started with the server, so a test that places
-// a task straight away races it: ECS is still metadata-only, RunTask starts no
-// container, and the task sits at PROVISIONING rather than failing. That is a
-// pass for a test asserting a task started and a confusing failure for one
-// asserting it did not. DescribeTasks reports the state the probe sets, through
-// the backing headers every Docker-backed describe carries.
-func waitForECSDocker(t *testing.T, srv *helpers.TestServer) {
-	t.Helper()
-	helpers.Eventually(t, 30*time.Second, 25*time.Millisecond, func() bool {
-		resp := ecsCall(t, srv, "DescribeTasks", map[string]any{
-			"tasks": []string{"11112222-3333-4444-5555-666677778888"},
-		})
-		defer resp.Body.Close()
-		return resp.Header.Get("x-overcast-backing-reason") == "docker-wired"
-	}, "the ECS Docker probe never wired the service, so no container would have been started")
-}

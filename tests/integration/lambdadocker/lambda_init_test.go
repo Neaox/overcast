@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -144,7 +143,7 @@ func indexOfLine(messages []string, want string) int {
 // what is not racy is that a line goes to the invocation that was in flight
 // when it was written.
 func TestInvoke_logTail_exactAttribution(t *testing.T) {
-	skipIfNoDocker(t)
+	helpers.SkipWithoutDocker(t)
 	requireLambdaInit(t)
 
 	srv := helpers.NewTestServer(t, helpers.WithLambdaDocker())
@@ -242,7 +241,7 @@ func requestIDOf(t *testing.T, tail string) string {
 // startup-exit capture in awaitContainerIP able to explain a container that
 // died. Its own diagnostics are there too, on stderr, clearly labelled.
 func TestInvoke_containerLogsStillCarryTheHandlersOutput(t *testing.T) {
-	skipIfNoDocker(t)
+	helpers.SkipWithoutDocker(t)
 	requireLambdaInit(t)
 
 	srv := helpers.NewTestServer(t, helpers.WithLambdaDocker())
@@ -301,7 +300,7 @@ exports.handler = async () => {
 // response arrived, while the handler's line was still travelling through the
 // daemon.
 func TestInvoke_cloudWatchOrderingIsExact(t *testing.T) {
-	skipIfNoDocker(t)
+	helpers.SkipWithoutDocker(t)
 	requireLambdaInit(t)
 
 	srv := helpers.NewTestServer(t, helpers.WithLambdaDocker())
@@ -339,7 +338,7 @@ exports.handler = async () => {
 // the daemon's pipe was lost. The init drains, flushes and closes its stream
 // when its child exits, so the host waits for an event rather than for silence.
 func TestInvoke_crashedHandlersOutputLandsBeforeEndAndReport(t *testing.T) {
-	skipIfNoDocker(t)
+	helpers.SkipWithoutDocker(t)
 	requireLambdaInit(t)
 
 	srv := helpers.NewTestServer(t, helpers.WithLambdaDocker())
@@ -398,9 +397,9 @@ func buildLambdaImage(t *testing.T, dockerfile string, files map[string]string) 
 		t.Fatal(err)
 	}
 
-	client := daemonHTTPClient(t)
-	req, err := http.NewRequest(http.MethodPost,
-		"http://docker/v1.45/build?t="+tag+"&dockerfile=Dockerfile&rm=1&forcerm=1", bytes.NewReader(ctxTar.Bytes()))
+	client, base := daemonHTTPClient(t)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+		base+"/v1.45/build?t="+tag+"&dockerfile=Dockerfile&rm=1&forcerm=1", bytes.NewReader(ctxTar.Bytes()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +415,10 @@ func buildLambdaImage(t *testing.T, dockerfile string, files map[string]string) 
 	}
 
 	t.Cleanup(func() {
-		delReq, err := http.NewRequest(http.MethodDelete, "http://docker/v1.45/images/"+tag+"?force=1", nil)
+		// A fresh context: t's is already cancelled by the time cleanups run.
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		delReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, base+"/v1.45/images/"+tag+"?force=1", nil)
 		if err != nil {
 			return
 		}
@@ -428,21 +430,30 @@ func buildLambdaImage(t *testing.T, dockerfile string, files map[string]string) 
 	return tag
 }
 
-// daemonHTTPClient talks to the Docker daemon over its Unix socket. The build
-// endpoint is not on internal/docker.Client — nothing in Overcast builds images
-// — so these tests speak to it directly. Unix only, which is where the
-// Docker-gated tests run (skipIfNoDocker checks for the socket).
-func daemonHTTPClient(t *testing.T) *http.Client {
+// daemonHTTPClient talks to the Docker daemon directly, because the build
+// endpoint is not on internal/docker.Client — nothing in Overcast builds
+// images. It returns the client and the base URL Engine API paths hang off.
+//
+// The transport comes from docker.Transport, so this dials the daemon exactly
+// as the emulator does on every platform. It used to hand-roll one that dialled
+// "unix" whatever the endpoint was, which on Windows asked the kernel to open a
+// named pipe as a filesystem socket:
+//
+//	dial unix npipe:////./pipe/docker_engine: connect: An invalid argument was supplied
+//
+// That was invisible while the package's Docker gate stat-ed /var/run/docker.sock
+// and skipped every test on Windows; it failed six of them the moment the gate
+// started telling the truth (#1785). There must be exactly one place that knows
+// how to dial a Docker endpoint, and it is not here.
+//
+// The response-header deadline is dropped: a build that has to pull its base
+// image can sit silent for longer than the 30s the short-call default allows,
+// and the transport is this caller's own to adjust.
+func daemonHTTPClient(t *testing.T) (*http.Client, string) {
 	t.Helper()
-	socket := helpers.TestDockerSocket()
-	return &http.Client{
-		Timeout: 10 * time.Minute,
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, "unix", socket)
-			},
-		},
-	}
+	transport, base := docker.Transport(helpers.TestDockerSocket())
+	transport.ResponseHeaderTimeout = 0
+	return &http.Client{Timeout: 10 * time.Minute, Transport: transport}, base
 }
 
 // createImageFunction creates a PackageType=Image function.
@@ -468,7 +479,7 @@ func createImageFunction(t *testing.T, srv *helpers.TestServer, name, imageURI s
 // override has to reach the child, and the tail has to work exactly as it does
 // for a zip function.
 func TestInvoke_imageFunction_withImageConfigEntrypoint(t *testing.T) {
-	skipIfNoDocker(t)
+	helpers.SkipWithoutDocker(t)
 	requireLambdaInit(t)
 
 	image := buildLambdaImage(t, `FROM public.ecr.aws/lambda/nodejs:20
@@ -501,7 +512,7 @@ exports.overridden = async () => {
 // With no ImageConfig at all, the child is the image's own ENTRYPOINT+CMD, read
 // back from the daemon because the daemon can no longer merge them in.
 func TestInvoke_imageFunction_usesTheImagesOwnEntrypoint(t *testing.T) {
-	skipIfNoDocker(t)
+	helpers.SkipWithoutDocker(t)
 	requireLambdaInit(t)
 
 	image := buildLambdaImage(t, `FROM public.ecr.aws/lambda/nodejs:20
@@ -532,7 +543,7 @@ exports.baked = async () => {
 // subscriber (asserted against the sink in
 // internal/services/lambda/container_logs_test.go).
 func TestInvoke_imageFunction_startsExtensions(t *testing.T) {
-	skipIfNoDocker(t)
+	helpers.SkipWithoutDocker(t)
 	requireLambdaInit(t)
 
 	image := buildLambdaImage(t, `FROM public.ecr.aws/lambda/nodejs:20
@@ -619,7 +630,7 @@ function call(method, path, headers, body) {
 // first is proved by reading the volume back through a container that had no
 // part in seeding it.
 func TestInvoke_initIsMountedFromASeededVolume(t *testing.T) {
-	skipIfNoDocker(t)
+	helpers.SkipWithoutDocker(t)
 	requireLambdaInit(t)
 
 	srv := helpers.NewTestServer(t, helpers.WithLambdaDocker())
@@ -763,7 +774,7 @@ func initArtefactSize(t *testing.T, goarch string) int64 {
 // A custom image ENTRYPOINT is the sharpest form of it: the line is printed
 // before the runtime interface client even exists.
 func TestInvoke_initPhaseOutputPrecedesTheFirstStart(t *testing.T) {
-	skipIfNoDocker(t)
+	helpers.SkipWithoutDocker(t)
 	requireLambdaInit(t)
 
 	image := buildLambdaImage(t, `FROM public.ecr.aws/lambda/nodejs:20
@@ -818,7 +829,7 @@ exports.handler = async () => {
 // the next one, which had not begun. It reaches CloudWatch, and it reaches
 // neither tail.
 func TestInvoke_outputAfterTheResponseBelongsToNoInvocation(t *testing.T) {
-	skipIfNoDocker(t)
+	helpers.SkipWithoutDocker(t)
 	requireLambdaInit(t)
 
 	srv := helpers.NewTestServer(t, helpers.WithLambdaDocker())
