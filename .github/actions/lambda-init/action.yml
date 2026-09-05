@@ -65,7 +65,7 @@ runs:
     # look for here.
     - name: Restore the built Lambda init
       id: cache
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: internal/services/lambda/initbin/dist
         key: ${{ steps.key.outputs.value }}
@@ -108,7 +108,7 @@ runs:
 
     - name: Save the built Lambda init
       if: steps.cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: internal/services/lambda/initbin/dist
         key: ${{ steps.key.outputs.value }}

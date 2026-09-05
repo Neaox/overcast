@@ -127,7 +127,7 @@ jobs:
       # else; ten *copies* of it would be the same waste this item is removing,
       # in the other direction.
       - name: Restore the Go module cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/pkg/mod
           key: go-mod-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
@@ -154,7 +154,7 @@ jobs:
       # stdlib and the dependency tree. Changed Overcast packages recompile,
       # which they would anyway.
       - name: Restore the Go build cache for this target
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
           key: go-build-${{ matrix.asset }}-go${{ steps.go.outputs.go-version }}-${{ hashFiles('**/go.sum') }}
