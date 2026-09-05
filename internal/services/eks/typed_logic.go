@@ -23,6 +23,8 @@ type createClusterRequest struct {
 	ResourcesVPCConfig      map[string]any    `json:"resourcesVpcConfig" cbor:"resourcesVpcConfig"`
 	KubernetesNetworkConfig map[string]any    `json:"kubernetesNetworkConfig" cbor:"kubernetesNetworkConfig"`
 	EncryptionConfig        []map[string]any  `json:"encryptionConfig" cbor:"encryptionConfig"`
+	Logging                 map[string]any    `json:"logging" cbor:"logging"`
+	AccessConfig            map[string]any    `json:"accessConfig" cbor:"accessConfig"`
 	Tags                    map[string]string `json:"tags" cbor:"tags"`
 }
 
@@ -41,6 +43,9 @@ func (s *Service) createClusterTyped(ctx context.Context, req *createClusterRequ
 	if version == "" {
 		version = "1.31"
 	}
+	// logging and accessConfig are CreateCluster members AWS echoes back from
+	// DescribeCluster. UpdateClusterConfig has always accepted logging, so
+	// before #540 a cluster only picked it up on a second call.
 	cluster := &Cluster{
 		Name:                    req.Name,
 		Arn:                     s.clusterARN(region, req.Name),
@@ -50,6 +55,8 @@ func (s *Service) createClusterTyped(ctx context.Context, req *createClusterRequ
 		ResourcesVPCConfig:      req.ResourcesVPCConfig,
 		KubernetesNetworkConfig: req.KubernetesNetworkConfig,
 		EncryptionConfig:        req.EncryptionConfig,
+		Logging:                 req.Logging,
+		AccessConfig:            req.AccessConfig,
 		Endpoint:                fmt.Sprintf("https://%s.mock.eks.local", req.Name),
 		Status:                  "ACTIVE",
 		CertificateAuthority:    map[string]any{"data": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t"},
