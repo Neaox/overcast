@@ -20,16 +20,23 @@ Every divergence from real AppSync. The working set is on
 | --- | --- |
 | `API_KEY` | Verified. The key must exist and must not have expired |
 | `AWS_LAMBDA` | Verified. The authorizer function is invoked, `isAuthorized` decides, `identityValidationExpression` is applied as a regex, `resolverContext` reaches `$context.identity`, `deniedFields` are enforced per field, and results are cached for `authorizerResultTtlInSeconds`. Accept-all only when no `authorizerUri` is configured |
-| `AMAZON_COGNITO_USER_POOLS` | A `Bearer` token must be present. The payload is decoded so claims reach `$context.identity`, but the **signature and `exp` are not checked** |
-| `OPENID_CONNECT` | Same as Cognito, plus an issuer override from configuration |
+| `AMAZON_COGNITO_USER_POOLS` | A `Bearer` token must be present. The payload is decoded so claims reach `$context.identity`, but the **signature and `exp` are not checked** — unless `OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH=true`, which verifies the token against the local Cognito pool the API names (signature, issuer, `token_use`, `exp`, `appIdClientRegex`) |
+| `OPENID_CONNECT` | A `Bearer` token must be present and its payload is decoded, plus an issuer override from configuration. The signature and `exp` are never checked; there is no enforcement switch for this mode |
 | `AWS_IAM` | Accepted unconditionally. The access key is read out of the header; no SigV4 signature is verified |
 
 Multi-auth through `additionalAuthenticationProviders` works as a fallback
-chain over the modes above.
+chain over the modes above, under the same rules — a Cognito entry there is
+verified exactly when the primary mode would be.
+
+Under `OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH` the token must come from
+Overcast's own Cognito: verification reads the pool's key from local state, so
+a token minted by real AWS Cognito is refused. Rejections carry AppSync's
+`UnauthorizedException` and HTTP `401`.
 
 > [!CAUTION]
-> Three of the five modes above accept a token nobody signed. Do not use
-> Overcast to prove that an unauthorized caller is refused.
+> By default, three of the five modes above accept a token nobody signed. Do
+> not use Overcast to prove that an unauthorized caller is refused, even with
+> Cognito enforcement on: `OPENID_CONNECT` and `AWS_IAM` are unaffected by it.
 
 ## Data sources
 

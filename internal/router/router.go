@@ -823,6 +823,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	appsyncSvc.InitBus(bus)
 	appsyncSvc.InitLambdaInvoker(lambdaSvc.SyncInvoker())
 	appsyncSvc.InitDynamoDBInvoker(ddbSvc.DynamoDBInvoker())
+	appsyncSvc.InitCognitoValidator(cognitoSvc)
 	// CloudFront: wire bus for distribution lifecycle events.
 	cloudfrontSvc.InitBus(bus)
 	// CloudFormation: wire bus + router for async provisioning.

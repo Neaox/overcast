@@ -186,11 +186,11 @@ All 82 listed operations are implemented. Back to [AppSync](../appsync.md).
 
 ### Execution & Evaluation
 
-| Operation                 | Status       | Notes                                                                 | AWS Docs                                                                                         |
-| ------------------------- | ------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `ExecuteGraphQL`          | ✅ Supported | Executes a GraphQL operation against the API                          | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_ExecuteGraphQL.html)          |
-| `EvaluateMappingTemplate` | ✅ Supported | Evaluates VTL mapping templates; logs and outErrors are not populated | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_EvaluateMappingTemplate.html) |
-| `EvaluateCode`            | ✅ Supported | Evaluates APPSYNC_JS resolver code; outErrors is not populated        | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_EvaluateCode.html)            |
+| Operation                 | Status       | Notes                                                                                                                                                                         | AWS Docs                                                                                         |
+| ------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `ExecuteGraphQL`          | ✅ Supported | Executes a GraphQL operation against the API; Cognito bearer tokens are decoded only, or verified against the local user pool when OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH=true | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_ExecuteGraphQL.html)          |
+| `EvaluateMappingTemplate` | ✅ Supported | Evaluates VTL mapping templates; logs and outErrors are not populated                                                                                                         | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_EvaluateMappingTemplate.html) |
+| `EvaluateCode`            | ✅ Supported | Evaluates APPSYNC_JS resolver code; outErrors is not populated                                                                                                                | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_EvaluateCode.html)            |
 
 ### DynamoDB Resolver Operations
 
