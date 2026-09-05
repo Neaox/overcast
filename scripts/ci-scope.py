@@ -50,11 +50,21 @@ import sys
 # docs/plans/ and docs/dev/ are contributor-only. They are excluded from the
 # embed pattern and from the index, so nothing builds or tests them — which is
 # what keeps a plan-doc edit, this file's main beneficiary, genuinely free.
+#
+# compat/baseline/ is output, not input: it is a status ledger (one JSON shard
+# per compat suite, recording pass/fail counts) that compat.yml writes after a
+# push to main and opens a promotion PR for. Nothing builds or tests against
+# those files — the only thing that reads them is `cmd/compat --lint-baseline*`,
+# which the promotion PR's own compat `aggregate` job runs regardless of what
+# this classifier decides. Without this entry, a promotion PR that touches
+# only compat/baseline/*.json is classed as code and runs the entire test.yml
+# and compat.yml suites (~90 job-minutes) to validate a ledger file.
 PROSE_SUFFIXES = (".md",)
 PROSE_PREFIXES = (
     "docs/plans/",
     "docs/dev/",
     ".changelog/",
+    "compat/baseline/",
 )
 
 # Published docs: read by the build and by the tests, whatever their suffix.
