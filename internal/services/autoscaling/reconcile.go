@@ -374,12 +374,40 @@ func (s *Service) beginTermination(ctx context.Context, inst *ASGInstance, _ tim
 // launchInstance runs one EC2 instance for the group and records it. Returns
 // whether anything changed.
 func (s *Service) launchInstance(ctx context.Context, g *AutoScalingGroup, cause string) bool {
-	lc, found := s.st.getLaunchConfig(ctx, g.LaunchConfigurationName)
-	if !found {
-		s.log.Warn("autoscaling: cannot launch: launch configuration is missing",
-			zap.String("group", g.AutoScalingGroupName),
-			zap.String("launch_configuration", g.LaunchConfigurationName))
-		return false
+	params := url.Values{
+		"Action":   {"RunInstances"},
+		"Version":  {ec2QueryVersion},
+		"MinCount": {"1"},
+		"MaxCount": {"1"},
+	}
+	// A group launches from a template or from a launch configuration. With a
+	// template, the parameters stay on the EC2 side: RunInstances resolves the
+	// version and merges its data itself, so there is one implementation of
+	// that merge rather than a second one here.
+	instanceType := ""
+	if g.LaunchTemplate != nil {
+		if g.LaunchTemplate.LaunchTemplateId != "" {
+			params.Set("LaunchTemplate.LaunchTemplateId", g.LaunchTemplate.LaunchTemplateId)
+		} else {
+			params.Set("LaunchTemplate.LaunchTemplateName", g.LaunchTemplate.LaunchTemplateName)
+		}
+		if g.LaunchTemplate.Version != "" {
+			params.Set("LaunchTemplate.Version", g.LaunchTemplate.Version)
+		}
+	} else {
+		lc, found := s.st.getLaunchConfig(ctx, g.LaunchConfigurationName)
+		if !found {
+			s.log.Warn("autoscaling: cannot launch: launch configuration is missing",
+				zap.String("group", g.AutoScalingGroupName),
+				zap.String("launch_configuration", g.LaunchConfigurationName))
+			return false
+		}
+		instanceType = lc.InstanceType
+		params.Set("ImageId", lc.ImageId)
+		params.Set("InstanceType", lc.InstanceType)
+		for i, sg := range lc.SecurityGroups {
+			params.Set(fmt.Sprintf("SecurityGroupId.%d", i+1), sg)
+		}
 	}
 
 	s.mu.Lock()
@@ -388,22 +416,11 @@ func (s *Service) launchInstance(ctx context.Context, g *AutoScalingGroup, cause
 	az := nextAvailabilityZone(g, len(existing))
 	subnet := nextSubnet(g, len(existing))
 
-	params := url.Values{
-		"Action":       {"RunInstances"},
-		"Version":      {ec2QueryVersion},
-		"ImageId":      {lc.ImageId},
-		"InstanceType": {lc.InstanceType},
-		"MinCount":     {"1"},
-		"MaxCount":     {"1"},
-	}
 	if subnet != "" {
 		params.Set("SubnetId", subnet)
 	}
 	if az != "" {
 		params.Set("Placement.AvailabilityZone", az)
-	}
-	for i, sg := range lc.SecurityGroups {
-		params.Set(fmt.Sprintf("SecurityGroupId.%d", i+1), sg)
 	}
 	// Real Auto Scaling stamps every instance it launches with the group name
 	// and with each group tag marked PropagateAtLaunch.
@@ -438,8 +455,9 @@ func (s *Service) launchInstance(ctx context.Context, g *AutoScalingGroup, cause
 	var resp struct {
 		XMLName   xml.Name `xml:"RunInstancesResponse"`
 		Instances []struct {
-			InstanceID string `xml:"instanceId"`
-			Placement  struct {
+			InstanceID   string `xml:"instanceId"`
+			InstanceType string `xml:"instanceType"`
+			Placement    struct {
 				AvailabilityZone string `xml:"availabilityZone"`
 			} `xml:"placement"`
 			SubnetID string `xml:"subnetId"`
@@ -454,16 +472,22 @@ func (s *Service) launchInstance(ctx context.Context, g *AutoScalingGroup, cause
 	if launched.Placement.AvailabilityZone != "" {
 		az = launched.Placement.AvailabilityZone
 	}
+	// With a launch template the instance type came out of the template, so
+	// the answer is the one EC2 reports rather than one this side chose.
+	if launched.InstanceType != "" {
+		instanceType = launched.InstanceType
+	}
 
 	now := s.clk.Now().UTC()
 	inst := &ASGInstance{
 		InstanceId:              launched.InstanceID,
 		AutoScalingGroupName:    g.AutoScalingGroupName,
-		InstanceType:            lc.InstanceType,
+		InstanceType:            instanceType,
 		AvailabilityZone:        az,
 		LifecycleState:          lifecyclePending,
 		HealthStatus:            healthStatusHealthy,
 		LaunchConfigurationName: g.LaunchConfigurationName,
+		LaunchTemplate:          g.LaunchTemplate,
 		ProtectedFromScaleIn:    g.NewInstancesProtectedFromScaleIn,
 		LaunchedAt:              now,
 	}
@@ -537,21 +561,99 @@ func (s *Service) finishTermination(ctx context.Context, g *AutoScalingGroup, in
 // would — a missing AMI produces EC2's own AWS error rather than a silent
 // no-op.
 func (s *Service) ec2Call(ctx context.Context, params url.Values) ([]byte, error) {
+	body, status, err := s.ec2CallRaw(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 400 {
+		return nil, fmt.Errorf("HTTP %d: %s", status, strings.TrimSpace(string(body)))
+	}
+	return body, nil
+}
+
+// ec2CallRaw is ec2Call without the status check, for a caller that needs
+// EC2's own error body rather than a message about it — validating a launch
+// template, which reports EC2's wording inside Auto Scaling's ValidationError.
+func (s *Service) ec2CallRaw(ctx context.Context, params url.Values) ([]byte, int, error) {
 	if s.router == nil {
-		return nil, fmt.Errorf("autoscaling: no router configured")
+		return nil, 0, fmt.Errorf("autoscaling: no router configured")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/", strings.NewReader(params.Encode()))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("X-Overcast-Region", s.region())
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
-	if rec.Code >= 400 {
-		return nil, fmt.Errorf("HTTP %d: %s", rec.Code, strings.TrimSpace(rec.Body.String()))
+	return rec.Body.Bytes(), rec.Code, nil
+}
+
+// resolveLaunchTemplate asks EC2 for the version a group's LaunchTemplate
+// names, so a group is stored only when something can really be launched from
+// it. It returns the pair of identifiers AWS echoes back regardless of which
+// the caller supplied, and the version string verbatim: a group pinned to
+// $Latest follows its template, one pinned to a number does not.
+func (s *Service) resolveLaunchTemplate(ctx context.Context, spec launchTemplateSpec) (*ASGLaunchTemplate, *protocol.AWSError) {
+	params := url.Values{
+		"Action":                  {"DescribeLaunchTemplateVersions"},
+		"Version":                 {ec2QueryVersion},
+		"LaunchTemplateVersion.1": {launchTemplateVersionOrDefault(spec.Version)},
 	}
-	return rec.Body.Bytes(), nil
+	if spec.LaunchTemplateId != "" {
+		params.Set("LaunchTemplateId", spec.LaunchTemplateId)
+	}
+	if spec.LaunchTemplateName != "" {
+		params.Set("LaunchTemplateName", spec.LaunchTemplateName)
+	}
+
+	body, status, err := s.ec2CallRaw(ctx, params)
+	if err != nil {
+		return nil, &protocol.AWSError{
+			Code:       "InternalFailure",
+			Message:    "failed to resolve the launch template",
+			HTTPStatus: http.StatusInternalServerError,
+		}
+	}
+	if status >= 400 {
+		return nil, asgValidationError("You must use a valid fully-formed launch template. %s", ec2ErrorMessage(body))
+	}
+
+	var resp struct {
+		Versions []struct {
+			LaunchTemplateId   string `xml:"launchTemplateId"`
+			LaunchTemplateName string `xml:"launchTemplateName"`
+		} `xml:"launchTemplateVersionSet>item"`
+	}
+	if err := xml.Unmarshal(body, &resp); err != nil || len(resp.Versions) == 0 {
+		return nil, asgValidationError("You must use a valid fully-formed launch template. The specified launch template version does not exist.")
+	}
+	return &ASGLaunchTemplate{
+		LaunchTemplateId:   resp.Versions[0].LaunchTemplateId,
+		LaunchTemplateName: resp.Versions[0].LaunchTemplateName,
+		Version:            spec.Version,
+	}, nil
+}
+
+// launchTemplateVersionOrDefault is AWS's rule for a group that names a
+// template without a version: the template's default version is used.
+func launchTemplateVersionOrDefault(version string) string {
+	if version == "" {
+		return "$Default"
+	}
+	return version
+}
+
+// ec2ErrorMessage pulls EC2's own message out of a Query error body, so Auto
+// Scaling's ValidationError can carry it the way AWS's does.
+func ec2ErrorMessage(body []byte) string {
+	var parsed struct {
+		Message string `xml:"Errors>Error>Message"`
+	}
+	if err := xml.Unmarshal(body, &parsed); err == nil && parsed.Message != "" {
+		return parsed.Message
+	}
+	return strings.TrimSpace(string(body))
 }
 
 // ─── Activities ───────────────────────────────────────────────────────────────

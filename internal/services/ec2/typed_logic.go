@@ -141,13 +141,22 @@ type describeSubnetsReq struct {
 }
 
 type runInstancesReq struct {
-	ImageID           string                `json:"ImageId"`
-	InstanceType      string                `json:"InstanceType"`
-	MinCount          int                   `json:"MinCount"`
-	MaxCount          int                   `json:"MaxCount"`
-	SubnetID          string                `json:"SubnetId"`
-	SecurityGroupIDs  []string              `json:"SecurityGroupId"`
-	TagSpecifications []ec2TagSpecification `json:"TagSpecification"`
+	ImageID           string                         `json:"ImageId"`
+	InstanceType      string                         `json:"InstanceType"`
+	MinCount          int                            `json:"MinCount"`
+	MaxCount          int                            `json:"MaxCount"`
+	SubnetID          string                         `json:"SubnetId"`
+	SecurityGroupIDs  []string                       `json:"SecurityGroupId"`
+	LaunchTemplate    ec2LaunchTemplateSpecification `json:"LaunchTemplate"`
+	TagSpecifications []ec2TagSpecification          `json:"TagSpecification"`
+}
+
+// ec2LaunchTemplateSpecification is RunInstances' LaunchTemplate member: the
+// template to take launch parameters from, and which of its versions.
+type ec2LaunchTemplateSpecification struct {
+	LaunchTemplateID   string `json:"LaunchTemplateId"`
+	LaunchTemplateName string `json:"LaunchTemplateName"`
+	Version            string `json:"Version"`
 }
 
 type terminateInstancesReq struct {
@@ -1268,10 +1277,22 @@ func (h *Handler) describeSubnetsTyped(ctx context.Context, req *describeSubnets
 }
 
 func (h *Handler) runInstancesTyped(ctx context.Context, req *runInstancesReq) (*runInstancesResp, *protocol.AWSError) {
-	if req.ImageID == "" {
+	// A launch template supplies whatever the request leaves out. Resolving it
+	// first is what lets ImageId be required *after* the merge, as on AWS: a
+	// template carrying an AMI makes the parameter optional.
+	overlay, aerr := h.launchTemplateOverlayFor(ctx, launchTemplateRef{
+		ID:      req.LaunchTemplate.LaunchTemplateID,
+		Name:    req.LaunchTemplate.LaunchTemplateName,
+		Version: req.LaunchTemplate.Version,
+	})
+	if aerr != nil {
+		return nil, aerr
+	}
+	imageID := applyString(req.ImageID, overlay.imageID)
+	if imageID == "" {
 		return nil, ec2err("MissingParameter", "ImageId is required", http.StatusBadRequest)
 	}
-	instanceType := req.InstanceType
+	instanceType := applyString(req.InstanceType, overlay.instanceType)
 	if instanceType == "" {
 		instanceType = "t3.micro"
 	}
@@ -1283,16 +1304,17 @@ func (h *Handler) runInstancesTyped(ctx context.Context, req *runInstancesReq) (
 	if maxCount < minCount {
 		maxCount = minCount
 	}
-	subnetID := req.SubnetID
-	tags := typedTagSpecifications(req.TagSpecifications, "instance")
+	subnetID := applyString(req.SubnetID, overlay.subnetID)
+	securityGroupIDs := applyList(req.SecurityGroupIDs, overlay.securityGroupIDs)
+	tags := applyTags(typedTagSpecifications(req.TagSpecifications, "instance"), overlay.instanceTags())
 	// Create-time tags are checked before anything is launched, as on AWS: a
 	// rejected tag must fail the call rather than leave instances running.
 	if aerr := validateTagSpecifications(tags); aerr != nil {
 		return nil, aerr
 	}
 	// Resolve SG names for the response.
-	sgRefs := make([]InstanceSG, 0, len(req.SecurityGroupIDs))
-	for _, sgID := range req.SecurityGroupIDs {
+	sgRefs := make([]InstanceSG, 0, len(securityGroupIDs))
+	for _, sgID := range securityGroupIDs {
 		sg, _ := h.store.getSecurityGroup(ctx, sgID)
 		name := ""
 		if sg != nil {
@@ -1328,7 +1350,7 @@ func (h *Handler) runInstancesTyped(ctx context.Context, req *runInstancesReq) (
 		}
 		inst := &Instance{
 			InstanceID:       instID,
-			ImageID:          req.ImageID,
+			ImageID:          imageID,
 			InstanceType:     instanceType,
 			State:            InstanceState{Code: 0, Name: "pending"},
 			LaunchTime:       now,
@@ -1364,7 +1386,7 @@ func (h *Handler) runInstancesTyped(ctx context.Context, req *runInstancesReq) (
 		}
 		instances = append(instances, typedInstanceXML{
 			InstanceID:    instID,
-			ImageID:       req.ImageID,
+			ImageID:       imageID,
 			InstanceState: typedInstanceStateXML{Code: 0, Name: "pending"},
 			InstanceType:  instanceType,
 			LaunchTime:    now,

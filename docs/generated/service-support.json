@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1462,
+  "total_ops": 1469,
   "services": [
     {
       "service": "s3",
@@ -2968,8 +2968,8 @@
     {
       "service": "ec2",
       "display_name": "EC2 / VPC",
-      "total_ops": 72,
-      "implemented_ops": 72,
+      "total_ops": 79,
+      "implemented_ops": 79,
       "operations": [
         {
           "operation": "AcceptVpcPeeringConnection",
@@ -3079,6 +3079,18 @@
           "notes": "CidrBlock required; creates Docker bridge network (`--internal` unless IGW attached) and main route table"
         },
         {
+          "operation": "CreateLaunchTemplate",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Mints an lt- ID and version 1; LaunchTemplateData, VersionDescription and TagSpecification supported"
+        },
+        {
+          "operation": "CreateLaunchTemplateVersion",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Numbers from the latest version; SourceVersion inherits the parameters the request does not set"
+        },
+        {
           "operation": "CreateVpcEndpoint",
           "category": "General",
           "status": "✅ Supported",
@@ -3154,6 +3166,18 @@
           "category": "General",
           "status": "✅ Supported",
           "notes": "Removes Docker network; fails with DependencyViolation while subnets, gateways, endpoints, peering connections, ENIs, or instances remain"
+        },
+        {
+          "operation": "DeleteLaunchTemplate",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Deletes the template and every version it owns"
+        },
+        {
+          "operation": "DeleteLaunchTemplateVersions",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Per-version outcomes; the default version is refused with OperationNotPermitted"
         },
         {
           "operation": "DeleteVpcEndpoints",
@@ -3276,6 +3300,18 @@
           "notes": "Returns the stored enableDnsSupport or enableDnsHostnames value"
         },
         {
+          "operation": "DescribeLaunchTemplateVersions",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Resolves $Latest and $Default; honours LaunchTemplateVersion.N, MinVersion and MaxVersion; Filters: create-time, image-id, instance-type"
+        },
+        {
+          "operation": "DescribeLaunchTemplates",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Selects by LaunchTemplateId.N or LaunchTemplateName.N; Filters: create-time, launch-template-name, tag:\u003ckey\u003e, tag-key, tag-value"
+        },
+        {
           "operation": "DescribeVpcEndpoints",
           "category": "General",
           "status": "✅ Supported",
@@ -3324,6 +3360,12 @@
           "notes": "Cannot disassociate main association"
         },
         {
+          "operation": "ModifyLaunchTemplate",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "SetDefaultVersion only, accepting a version number or $Latest/$Default"
+        },
+        {
           "operation": "ModifyInstanceAttribute",
           "category": "General",
           "status": "✅ Supported",
@@ -3361,7 +3403,7 @@
           "operation": "RunInstances",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "MinCount/MaxCount, TagSpecifications, async pending→running; each state emits an EC2 Instance State-change Notification to the default EventBridge bus"
+          "notes": "MinCount/MaxCount, TagSpecifications, async pending→running; each state emits an EC2 Instance State-change Notification to the default EventBridge bus. LaunchTemplate supplies ImageId, InstanceType, security groups, subnet and instance tags beneath any parameter the request passes"
         },
         {
           "operation": "StartInstances",
@@ -6955,17 +6997,17 @@
         {
           "operation": "CreateAutoScalingGroup",
           "status": "✅ Supported",
-          "notes": "Reconciles: launches EC2 instances to DesiredCapacity. LaunchTemplate, MixedInstancesPolicy and InstanceId are refused with 501 — Overcast's EC2 has no launch templates"
+          "notes": "Reconciles: launches EC2 instances to DesiredCapacity from a LaunchConfiguration or a LaunchTemplate, resolved through EC2 at create time. MixedInstancesPolicy and InstanceId are refused with 501"
         },
         {
           "operation": "UpdateAutoScalingGroup",
           "status": "✅ Supported",
-          "notes": "Min/max/desired changes re-converge the group; desired outside min/max is AWS's ValidationError"
+          "notes": "Min/max/desired changes re-converge the group; desired outside min/max is AWS's ValidationError. Setting either launch source clears the other"
         },
         {
           "operation": "DescribeAutoScalingGroups",
           "status": "✅ Supported",
-          "notes": "Reports the real converged instance set with LifecycleState, HealthStatus, AvailabilityZone and ProtectedFromScaleIn"
+          "notes": "Reports the real converged instance set with LifecycleState, HealthStatus, AvailabilityZone and ProtectedFromScaleIn, and the group's LaunchTemplate when it has one"
         },
         {
           "operation": "DeleteAutoScalingGroup",

@@ -100,7 +100,16 @@ type xmlStateChangeItem struct {
 
 // RunInstances launches one or more new EC2 instances.
 func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
-	imageID := r.FormValue("ImageId")
+	// A launch template supplies whatever the request leaves out. Resolving it
+	// first is what lets ImageId be required *after* the merge, as on AWS: a
+	// template carrying an AMI makes the parameter optional.
+	overlay, aerr := h.launchTemplateOverlayFor(r.Context(), launchTemplateRefFromForm(r, "LaunchTemplate."))
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
+	imageID := applyString(r.FormValue("ImageId"), overlay.imageID)
 	if imageID == "" {
 		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "MissingParameter",
@@ -110,16 +119,16 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	instanceType := r.FormValue("InstanceType")
+	instanceType := applyString(r.FormValue("InstanceType"), overlay.instanceType)
 	if instanceType == "" {
 		instanceType = "t3.micro"
 	}
 
 	minCount := formInt(r, "MinCount", 1)
 	maxCount := formInt(r, "MaxCount", minCount)
-	subnetID := r.FormValue("SubnetId")
-	securityGroups := parseIndexedParam(r, "SecurityGroupId")
-	tags := parseTagSpecifications(r, "instance")
+	subnetID := applyString(r.FormValue("SubnetId"), overlay.subnetID)
+	securityGroups := applyList(parseIndexedParam(r, "SecurityGroupId"), overlay.securityGroupIDs)
+	tags := applyTags(parseTagSpecifications(r, "instance"), overlay.instanceTags())
 	// Create-time tags are checked before anything is launched, as on AWS: a
 	// rejected tag must fail the call rather than leave instances running.
 	if aerr := validateTagSpecifications(tags); aerr != nil {

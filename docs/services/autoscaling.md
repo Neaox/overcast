@@ -45,6 +45,7 @@ pokes — a lifecycle heartbeat expiring, a cooldown ending.
 | Area | Behaviour |
 | --- | --- |
 | Convergence | `CreateAutoScalingGroup`, `UpdateAutoScalingGroup`, `SetDesiredCapacity`, `ExecutePolicy` and alarm-driven policies all move `DesiredCapacity`; the reconciler then calls EC2 `RunInstances` / `TerminateInstances` to close the gap, clamped to `MinSize` and `MaxSize` |
+| Launch source | Either a launch configuration or an EC2 `LaunchTemplate`, by ID or name and at a version including `$Latest` and `$Default`. The template is resolved through EC2 when the group is configured, so one that does not exist is a `ValidationError` rather than a group that never converges. `DescribeAutoScalingGroups` reports it, as does each instance launched from it |
 | Instance state | `Pending` → `InService` and `Terminating` → gone, reported with `LifecycleState`, `HealthStatus`, `AvailabilityZone`, `InstanceType` and `ProtectedFromScaleIn` |
 | Placement | Round-robin across `AvailabilityZones` and, when set, across `VPCZoneIdentifier`'s subnets. Tags marked `PropagateAtLaunch` are applied to each instance, alongside `aws:autoscaling:groupName` |
 | Scaling policies | `SimpleScaling` and `StepScaling` execute, honouring `ChangeInCapacity`, `ExactCapacity`, `PercentChangeInCapacity`, `MinAdjustmentMagnitude` and the group's cooldown |
@@ -59,7 +60,6 @@ operation rather than stored and quietly disregarded.
 
 | Configuration | Operation | Result |
 | --- | --- | --- |
-| `LaunchTemplate` | `CreateAutoScalingGroup` / `UpdateAutoScalingGroup` | `501` — EC2 has no `CreateLaunchTemplate` to resolve `ImageId`/`InstanceType` from. Use a launch configuration |
 | `MixedInstancesPolicy` | `CreateAutoScalingGroup` / `UpdateAutoScalingGroup` | `501` — there is no instance-type fleet or spot allocation to distribute over |
 | `InstanceId` | `CreateAutoScalingGroup` | `501` — launch parameters cannot be derived from a running instance |
 | No launch source at all | `CreateAutoScalingGroup` | `400 ValidationError`, as on AWS |

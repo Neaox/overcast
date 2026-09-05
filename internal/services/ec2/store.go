@@ -15,24 +15,26 @@ import (
 )
 
 const (
-	nsVPCs                  = "ec2:vpcs"
-	nsSubnets               = "ec2:subnets"
-	nsSecurityGroups        = "ec2:security-groups"
-	nsInstances             = "ec2:instances"
-	nsKeyPairs              = "ec2:keypairs"
-	nsRouteTables           = "ec2:route-tables"
-	nsInternetGateways      = "ec2:internet-gateways"
-	nsVpnGateways           = "ec2:vpn-gateways"
-	nsVpcPeeringConnections = "ec2:vpc-peering-connections"
-	nsTags                  = "ec2:tags"
-	nsElasticIPs            = "ec2:elastic-ips"
-	nsNatGateways           = "ec2:nat-gateways"
-	nsNetworkInterfaces     = "ec2:network-interfaces"
-	nsVpcEndpoints          = "ec2:vpc-endpoints"
-	nsDefaultVPC            = "ec2:default-vpc"
-	nsVPCIPTranslations     = "ec2:vpc-ip-translations"
-	nsVPCIPTranslationsReal = "ec2:vpc-ip-translations-real"
-	nsPlacements            = "ec2:placements"
+	nsVPCs                   = "ec2:vpcs"
+	nsSubnets                = "ec2:subnets"
+	nsSecurityGroups         = "ec2:security-groups"
+	nsInstances              = "ec2:instances"
+	nsKeyPairs               = "ec2:keypairs"
+	nsRouteTables            = "ec2:route-tables"
+	nsInternetGateways       = "ec2:internet-gateways"
+	nsVpnGateways            = "ec2:vpn-gateways"
+	nsVpcPeeringConnections  = "ec2:vpc-peering-connections"
+	nsTags                   = "ec2:tags"
+	nsElasticIPs             = "ec2:elastic-ips"
+	nsNatGateways            = "ec2:nat-gateways"
+	nsNetworkInterfaces      = "ec2:network-interfaces"
+	nsVpcEndpoints           = "ec2:vpc-endpoints"
+	nsDefaultVPC             = "ec2:default-vpc"
+	nsVPCIPTranslations      = "ec2:vpc-ip-translations"
+	nsVPCIPTranslationsReal  = "ec2:vpc-ip-translations-real"
+	nsPlacements             = "ec2:placements"
+	nsLaunchTemplates        = "ec2:launch-templates"
+	nsLaunchTemplateVersions = "ec2:launch-template-versions"
 )
 
 // VPC represents an EC2 VPC resource.
@@ -1167,4 +1169,218 @@ func (s *ec2Store) deleteVpcEndpoint(ctx context.Context, id string) *protocol.A
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return s.deleteTags(ctx, id)
+}
+
+// ── Launch Templates ─────────────────────────────────────────────────────────
+
+// LaunchTemplate is the metadata record for an EC2 launch template. The launch
+// parameters themselves live in the versions (LaunchTemplateVersion); this
+// record only tracks which of them is the default and which is the latest —
+// the two numbers `$Default` and `$Latest` resolve to.
+type LaunchTemplate struct {
+	LaunchTemplateID     string `json:"LaunchTemplateId"`
+	LaunchTemplateName   string `json:"LaunchTemplateName"`
+	CreateTime           string `json:"CreateTime"`
+	CreatedBy            string `json:"CreatedBy"`
+	DefaultVersionNumber int64  `json:"DefaultVersionNumber"`
+	LatestVersionNumber  int64  `json:"LatestVersionNumber"`
+}
+
+// LaunchTemplateVersion is one immutable version of a launch template.
+//
+// AWS reports defaultVersion on every version it returns, but that is derived
+// from the owning template's DefaultVersionNumber rather than stored here:
+// recording it on the version too would mean rewriting every version each time
+// ModifyLaunchTemplate moves the default.
+type LaunchTemplateVersion struct {
+	LaunchTemplateID   string             `json:"LaunchTemplateId"`
+	LaunchTemplateName string             `json:"LaunchTemplateName"`
+	VersionNumber      int64              `json:"VersionNumber"`
+	VersionDescription string             `json:"VersionDescription,omitempty"`
+	CreateTime         string             `json:"CreateTime"`
+	CreatedBy          string             `json:"CreatedBy"`
+	Data               LaunchTemplateData `json:"LaunchTemplateData"`
+}
+
+// LaunchTemplateData is the subset of AWS's RequestLaunchTemplateData that
+// Overcast stores and merges into RunInstances. AWS's shape carries around
+// thirty members; the ones here are those an emulated instance record can act
+// on, plus the identity fields a caller reads back.
+type LaunchTemplateData struct {
+	ImageID            string                           `json:"ImageId,omitempty"`
+	InstanceType       string                           `json:"InstanceType,omitempty"`
+	KeyName            string                           `json:"KeyName,omitempty"`
+	UserData           string                           `json:"UserData,omitempty"`
+	SecurityGroupIDs   []string                         `json:"SecurityGroupIds,omitempty"`
+	SecurityGroups     []string                         `json:"SecurityGroups,omitempty"`
+	IamInstanceProfile *LaunchTemplateIamProfile        `json:"IamInstanceProfile,omitempty"`
+	NetworkInterfaces  []LaunchTemplateNetworkInterface `json:"NetworkInterfaces,omitempty"`
+	TagSpecifications  []LaunchTemplateTagSpecification `json:"TagSpecifications,omitempty"`
+}
+
+// LaunchTemplateIamProfile names the instance profile launched instances get.
+type LaunchTemplateIamProfile struct {
+	ARN  string `json:"Arn,omitempty"`
+	Name string `json:"Name,omitempty"`
+}
+
+// LaunchTemplateNetworkInterface is one entry of a template's
+// NetworkInterface.N. Only the members an emulated instance record can act on
+// are kept: which subnet it lands in and which security groups it joins.
+type LaunchTemplateNetworkInterface struct {
+	DeviceIndex              *int     `json:"DeviceIndex,omitempty"`
+	SubnetID                 string   `json:"SubnetId,omitempty"`
+	Groups                   []string `json:"Groups,omitempty"`
+	AssociatePublicIPAddress *bool    `json:"AssociatePublicIpAddress,omitempty"`
+}
+
+// LaunchTemplateTagSpecification is one entry of a template's
+// LaunchTemplateData.TagSpecification.N — the tags applied to the resources an
+// instance launch creates, not to the template itself.
+type LaunchTemplateTagSpecification struct {
+	ResourceType string `json:"ResourceType"`
+	Tags         []Tag  `json:"Tags,omitempty"`
+}
+
+// launchTemplateVersionKey builds a version's store key. The number is
+// zero-padded so a prefix scan returns versions in numeric order rather than
+// lexical order, which is what would otherwise put version 10 before version 9.
+func launchTemplateVersionKey(templateID string, version int64) string {
+	return fmt.Sprintf("%s/%010d", templateID, version)
+}
+
+func (s *ec2Store) putLaunchTemplate(ctx context.Context, lt *LaunchTemplate) *protocol.AWSError {
+	raw, err := json.Marshal(lt)
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	key := serviceutil.RegionKey(s.region(ctx), lt.LaunchTemplateID)
+	if err := s.store.Set(ctx, nsLaunchTemplates, key, string(raw)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+// getLaunchTemplate returns one template by ID, or nil when it does not exist.
+// A record that will not decode is treated as absent rather than failing the
+// call, per the malformed-persisted-state rule.
+func (s *ec2Store) getLaunchTemplate(ctx context.Context, id string) (*LaunchTemplate, *protocol.AWSError) {
+	raw, ok, err := s.store.Get(ctx, nsLaunchTemplates, serviceutil.RegionKey(s.region(ctx), id))
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if !ok {
+		return nil, nil
+	}
+	var lt LaunchTemplate
+	if err := json.Unmarshal([]byte(raw), &lt); err != nil {
+		return nil, nil
+	}
+	return &lt, nil
+}
+
+func (s *ec2Store) listLaunchTemplates(ctx context.Context) ([]*LaunchTemplate, *protocol.AWSError) {
+	pairs, err := s.store.Scan(ctx, nsLaunchTemplates, serviceutil.RegionKey(s.region(ctx), ""))
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	out := make([]*LaunchTemplate, 0, len(pairs))
+	for _, p := range pairs {
+		var lt LaunchTemplate
+		if err := json.Unmarshal([]byte(p.Value), &lt); err != nil {
+			continue
+		}
+		out = append(out, &lt)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].LaunchTemplateID < out[j].LaunchTemplateID })
+	return out, nil
+}
+
+// getLaunchTemplateByName resolves a template name to its record. Launch
+// template names are unique per account and region on AWS, so the first match
+// is the only one.
+func (s *ec2Store) getLaunchTemplateByName(ctx context.Context, name string) (*LaunchTemplate, *protocol.AWSError) {
+	all, aerr := s.listLaunchTemplates(ctx)
+	if aerr != nil {
+		return nil, aerr
+	}
+	for _, lt := range all {
+		if lt.LaunchTemplateName == name {
+			return lt, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *ec2Store) putLaunchTemplateVersion(ctx context.Context, v *LaunchTemplateVersion) *protocol.AWSError {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	key := serviceutil.RegionKey(s.region(ctx), launchTemplateVersionKey(v.LaunchTemplateID, v.VersionNumber))
+	if err := s.store.Set(ctx, nsLaunchTemplateVersions, key, string(raw)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+// getLaunchTemplateVersion returns one version, or nil when it does not exist.
+func (s *ec2Store) getLaunchTemplateVersion(ctx context.Context, templateID string, version int64) (*LaunchTemplateVersion, *protocol.AWSError) {
+	key := serviceutil.RegionKey(s.region(ctx), launchTemplateVersionKey(templateID, version))
+	raw, ok, err := s.store.Get(ctx, nsLaunchTemplateVersions, key)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if !ok {
+		return nil, nil
+	}
+	var v LaunchTemplateVersion
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return nil, nil
+	}
+	return &v, nil
+}
+
+// listLaunchTemplateVersions returns a template's versions in numeric order.
+func (s *ec2Store) listLaunchTemplateVersions(ctx context.Context, templateID string) ([]*LaunchTemplateVersion, *protocol.AWSError) {
+	prefix := serviceutil.RegionKey(s.region(ctx), templateID+"/")
+	pairs, err := s.store.Scan(ctx, nsLaunchTemplateVersions, prefix)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	out := make([]*LaunchTemplateVersion, 0, len(pairs))
+	for _, p := range pairs {
+		var v LaunchTemplateVersion
+		if err := json.Unmarshal([]byte(p.Value), &v); err != nil {
+			continue
+		}
+		out = append(out, &v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].VersionNumber < out[j].VersionNumber })
+	return out, nil
+}
+
+func (s *ec2Store) deleteLaunchTemplateVersion(ctx context.Context, templateID string, version int64) *protocol.AWSError {
+	key := serviceutil.RegionKey(s.region(ctx), launchTemplateVersionKey(templateID, version))
+	if err := s.store.Delete(ctx, nsLaunchTemplateVersions, key); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+// deleteLaunchTemplate removes a template, every version it owns and its tags.
+func (s *ec2Store) deleteLaunchTemplate(ctx context.Context, templateID string) *protocol.AWSError {
+	versions, aerr := s.listLaunchTemplateVersions(ctx, templateID)
+	if aerr != nil {
+		return aerr
+	}
+	for _, v := range versions {
+		if aerr := s.deleteLaunchTemplateVersion(ctx, templateID, v.VersionNumber); aerr != nil {
+			return aerr
+		}
+	}
+	if err := s.store.Delete(ctx, nsLaunchTemplates, serviceutil.RegionKey(s.region(ctx), templateID)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return s.deleteTags(ctx, templateID)
 }

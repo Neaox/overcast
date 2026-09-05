@@ -206,6 +206,8 @@ var namespaceTiers = map[string]Tier{
 	"ec2:vpc-endpoints":            TierHot,
 	"ec2:vpc-ip-translations":      TierHot,
 	"ec2:vpc-ip-translations-real": TierHot,
+	"ec2:launch-templates":         TierHot,
+	"ec2:launch-template-versions": TierHot,
 
 	// ── ECR ─────────────────────────────────────────────────────────────
 	"ecr:repositories": TierHot,

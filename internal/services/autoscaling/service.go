@@ -25,12 +25,12 @@
 //	Tags:
 //	  CreateOrUpdateTags, DeleteTags, DescribeTags
 //
-// A group backed by a launch configuration really converges: a single
-// background reconciler launches and terminates EC2 instances through the
-// emulator's own router until the owned instance set matches DesiredCapacity,
-// runs the Pending/InService/Terminating lifecycle state machine, honours
-// lifecycle hooks, and records a scaling activity for every launch and
-// termination. Group shapes it cannot converge — launch templates, mixed
+// A group backed by a launch configuration or an EC2 launch template really
+// converges: a single background reconciler launches and terminates EC2
+// instances through the emulator's own router until the owned instance set
+// matches DesiredCapacity, runs the Pending/InService/Terminating lifecycle
+// state machine, honours lifecycle hooks, and records a scaling activity for
+// every launch and termination. Group shapes it cannot converge — mixed
 // instances policies, launch-from-instance — and scaling policy types it
 // cannot execute — target tracking, predictive — are refused with a 501 at the
 // configuring operation rather than stored and silently ignored.
