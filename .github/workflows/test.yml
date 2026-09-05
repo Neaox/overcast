@@ -80,17 +80,18 @@ concurrency:
 jobs:
   # Does this pull request need the expensive jobs at all?
   #
-  # Fourteen of the branch ruleset's required check names are produced below —
-  # Vet, Lint, Actionlint, Web UI, the three Test suite (-tags …) legs, Full
-  # test suite with coverage, both Docker build (…) legs, Script tests, Lambda
-  # invoke (native host binary), Changelog fragments and Docs and capability
-  # registry. VERSION guard is not in the set as read on 2026-09-05, whatever
-  # its own comment below says. (The
-  # rest of the required set is reported by other workflows: Breaking-change
-  # hold, Changelog entry, Lockfile freshness and Aggregate Compatibility
-  # Results. The `Protect Main` ruleset is where the list is maintained;
+  # Fifteen of the required check names are produced below — Vet, Lint,
+  # Actionlint, Web UI, the three Test suite (-tags …) legs, Full test suite
+  # with coverage, both Docker build (…) legs, Script tests, Lambda invoke
+  # (native host binary), Changelog fragments, Docs and capability registry
+  # and VERSION guard (added to the ruleset 2026-09-05; it had been missing,
+  # so a VERSION change was mergeable without it). The rest of the set is
+  # reported by other workflows: Breaking-change hold, Changelog entry,
+  # Lockfile freshness and Aggregate Compatibility Results. The `Protect Main`
+  # ruleset is where the list is maintained (Docs and capability registry and
+  # Aggregate Compatibility Results come from classic branch protection);
   # docs/plans/ci-streamlining.md § Tier 3 records it as last read, and is the
-  # place to update if it changes.) A required check that never reports leaves
+  # place to update if it changes. A required check that never reports leaves
   # the pull request waiting on it forever. So this cannot be a `paths-ignore:`
   # on the workflow, and it cannot be a twin "skip" workflow either — GitHub
   # skips on paths-ignore only when *every* changed file matches but runs on
