@@ -21,12 +21,33 @@ that CloudFormation substitutes at deploy time.
 | --- | --- |
 | `secretsmanager` | Resolves against the emulated service, reading exactly what `GetSecretValue` would return |
 | `ssm` | Resolves against the emulated service. An explicit parameter version is accepted but resolves to the current value, with a warning |
-| `ssm-secure` | Resolves, and is accepted in any resource property except a custom resource's, where secure references are refused outright. AWS restricts it to an enumerated list of properties |
+| `ssm-secure` | Resolves against the emulated service, with decryption, in the properties AWS enumerates for secure strings and nowhere else. Refused outright in a custom resource's properties |
 | `s3` | Not supported; fails the resource rather than resolving to something wrong |
 
 Resolution happens after the intrinsic functions, so a reference built by `Fn::Sub`
 or `Fn::Join` resolves once the surrounding value is complete. A resolved value is
 never rescanned — secret content containing `{{resolve:` is data, not a reference.
+
+## `ssm-secure` only where AWS allows it
+
+A secure string may be read into the properties AWS lists under
+[resources that support dynamic parameter patterns for secure strings](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references-ssm-secure-strings.html#template-parameters-dynamic-patterns-resources),
+and nowhere else. `AWS::RDS::DBInstance`'s `MasterUserPassword` is on that
+list; an SQS `QueueName` is not.
+
+Anywhere else the reference **fails the resource** and the stack rolls back,
+naming the reference and the property path — `SSM Secure reference is not
+supported in: [AWS::SQS::Queue/Properties/QueueName]`, the wording AWS itself
+uses. A list index is not part of the path: every element of
+`AWS::OpsWorks::Stack`'s `RdsDbInstances` allows `DbPassword`. The parameter is
+never decrypted on the way to being refused.
+
+AWS rejects such a template at `CreateStack`, before any resource is created;
+Overcast fails the resource instead, so the template is caught either way but
+the failure arrives as a stack event rather than a `ValidationError`.
+
+`secretsmanager` and plain `ssm` carry no such restriction — a secret can be
+read into any property.
 
 ## A reference is compared as written, never as resolved
 

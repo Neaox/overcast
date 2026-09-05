@@ -46,7 +46,7 @@ func init() {
 			DocsURL: "[docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-secretsmanager)"},
 		capabilities.Capability{Service: "cloudformation", Operation: "{{resolve:ssm}}", Category: "Dynamic references", Status: capabilities.StatusSupported, Notes: "Plaintext parameter; an explicit version resolves to the current value", DocOnly: true,
 			DocsURL: "[docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-ssm)"},
-		capabilities.Capability{Service: "cloudformation", Operation: "{{resolve:ssm-secure}}", Category: "Dynamic references", Status: capabilities.StatusSupported, Notes: "Read with decryption; an explicit version resolves to the current value", DocOnly: true,
+		capabilities.Capability{Service: "cloudformation", Operation: "{{resolve:ssm-secure}}", Category: "Dynamic references", Status: capabilities.StatusSupported, Notes: "Read with decryption, in the properties AWS enumerates only; an explicit version resolves to the current value", DocOnly: true,
 			DocsURL: "[docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-ssm-secure)"},
 		capabilities.Capability{Service: "cloudformation", Operation: "{{resolve:s3}}", Category: "Dynamic references", Status: capabilities.StatusUnsupported, Notes: "Not resolved; fails the resource that uses it", DocOnly: true,
 			DocsURL: "[docs](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html)"},

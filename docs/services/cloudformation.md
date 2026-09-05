@@ -66,7 +66,6 @@ Intrinsics: `Ref`, `Fn::Sub`, `Fn::Join`, `Fn::Select`, `Fn::GetAtt`, `Fn::If`,
 | `AWS::NoValue`                                      | Removes the property                           | Substitutes the empty string                                                                     |
 | `{{resolve:s3:...}}`                                | Resolved                                       | Not resolved; fails the resource                                                                 |
 | SSM dynamic-reference versions                      | Version-selected                               | An explicit version resolves to the current value, with a warning                                |
-| `ssm-secure`                                        | Restricted to an enumerated list of properties | Accepted in any resource property except a custom resource's                                     |
 | Unknown resource types                              | Rejected                                       | Accepted with a synthetic stub ID, a warning, and an `Overcast:`-prefixed `ResourceStatusReason` |
 | `DeleteStack`'s `RetainResources`                   | Supported                                      | Not implemented                                                                                  |
 | `DeletionPolicy: Snapshot`                          | Snapshots                                      | Treated as `Retain`; no snapshot is taken                                                        |

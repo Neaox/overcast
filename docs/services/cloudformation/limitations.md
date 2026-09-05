@@ -21,7 +21,7 @@ state each operation may start from, and the resources a stack waits on.
 | `AWS::NoValue` | Substitutes the empty string rather than removing the property | — |
 | `{{resolve:s3:…}}` | Not resolved; fails the resource | [Dynamic references](./dynamic-references.md) |
 | SSM dynamic-reference versions | An explicit version resolves to the current value, with a warning | [Dynamic references](./dynamic-references.md) |
-| `ssm-secure` | Accepted in any resource property except a custom resource's, where AWS restricts it to an enumerated list | [Dynamic references](./dynamic-references.md) |
+| `ssm-secure` outside the properties AWS allows | Fails the resource; AWS refuses the template at `CreateStack` instead | [Dynamic references](./dynamic-references.md) |
 | `DeleteStack`'s `RetainResources` | Not implemented — a resource that keeps refusing cannot be skipped past | [Teardown](./teardown.md) |
 | `DeletionPolicy: Snapshot` | Treated as `Retain`; no snapshot is ever taken | [Teardown](./teardown.md) |
 | Property-hash tracking | A stack created before it has no hashes, so its first update treats those resources as unchanged | [Stack updates](./updates.md) |
