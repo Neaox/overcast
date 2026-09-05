@@ -209,3 +209,213 @@ jobs:
         run: |
           echo "New flaky test(s) detected — see the job summary and the tracking issue." >&2
           exit 1
+
+  # The candidate → gated soak (docs/plans/compat-coverage-modelgen.md § 3.6).
+  #
+  # The runs above are already the soak: `./bin/compat --suite <s>` passes no
+  # --shard and no OVERCAST_COMPAT_GROUPS, so every suite runs every group it is
+  # scoped to, and each loader concatenates registry.generated.json onto
+  # registry.json — candidate groups included. Nothing had to be added to make
+  # them run; what was missing was anything that reads the result.
+  #
+  # This job does. It merges the per-suite artifacts back into one report per
+  # run (run i of every suite = one nightly), promotes the candidate groups that
+  # answered identically across all of them with zero failures, regenerates, and
+  # opens the bot PR. It writes compat/model/promotions.json only — the registry
+  # is cmd/compatgen's, rewritten by `make generate-compat-model` here, so the
+  # two files land in one commit and `compatgen -check` stays green.
+  #
+  # It is a strict no-op until there is something to promote: with no generated
+  # groups, or with the ledger unchanged, no branch is pushed and no PR opened.
+  promote:
+    name: Promote soaked candidate groups
+    needs: detect
+    # always(): a red detect leg means that suite found a flake, which is
+    # exactly the evidence the promotion rule needs to see. A leg that did not
+    # run at all leaves its suite missing from every run, and the rule blocks on
+    # that too — so nothing is promoted on incomplete evidence either way.
+    #
+    # Only for a full run: a dispatch narrowed to one suite has no evidence
+    # about the other backends a group is scoped to, and a promotion is supposed
+    # to rest on the whole nightly.
+    if: always() && github.event.inputs.suite == ''
+    runs-on: ubuntu-latest
+    # A checkout, a Go build, an artifact download and two generator runs. No
+    # suite runs here.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      # persist-credentials: false for the same reason compat.yml's promotion
+      # job sets it: checkout otherwise writes GITHUB_TOKEN into .git/config as
+      # an http.extraheader that wins over the App token embedded in the push
+      # URL, and the push would go out as github-actions[bot] — whose pushes
+      # start no workflow runs, leaving the PR waiting on required checks that
+      # never run. Do not re-enable persisted credentials here.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Download the suite runs
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: flake-runs-*-${{ github.run_id }}
+          path: flake-runs
+
+      # One report per nightly run, not per suite: the promotion rule asks
+      # whether every suite a group is scoped to answered the same way in run i,
+      # so run i has to be a single report spanning the matrix. --merge-results
+      # is what compat.yml already uses to fold the suite legs together.
+      - name: Merge each run across the suites
+        id: merge
+        env:
+          RUNS: ${{ github.event.inputs.runs || '3' }}
+        run: |
+          set -uo pipefail
+          mkdir -p soak
+          go build -o bin/compat ./cmd/compat
+          merged=0
+          for i in $(seq 1 "${RUNS}"); do
+            # A run no suite reported is skipped rather than merged into an
+            # empty report. An empty run would read as "every suite reported
+            # nothing", which the rule treats as a missing suite — a different
+            # and misleading finding from "that run did not happen".
+            if ! compgen -G "flake-runs/*/flake-run-$i.json" > /dev/null; then
+              echo "No suite reported run $i — skipping it."
+              continue
+            fi
+            ./bin/compat \
+              --merge-results "flake-runs/*/flake-run-$i.json" \
+              --results-file "soak/run-${GITHUB_RUN_ID}-$i.json" \
+              --format pretty > /dev/null
+            merged=$((merged + 1))
+          done
+          echo "Merged $merged of ${RUNS} nightly run(s) for the generated group soak." >> "$GITHUB_STEP_SUMMARY"
+          echo "merged=$merged" >> "$GITHUB_OUTPUT"
+
+      # --annotate turns an overdue candidate into a ::warning, so a group that
+      # has been unable to agree with itself for a month surfaces on the run
+      # rather than only in this log.
+      - name: Soak the candidate groups
+        id: soak
+        if: steps.merge.outputs.merged != '0'
+        env:
+          RUNS: ${{ github.event.inputs.runs || '3' }}
+        run: |
+          set -euo pipefail
+          ./bin/compat \
+            --promote-generated \
+            --promote-runs soak \
+            --promote-min-runs "${RUNS}" \
+            --annotate | tee "$RUNNER_TEMP/soak.log"
+          {
+            echo
+            echo "### Generated group soak"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/soak.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ -z "$(git status --porcelain -- compat/model/promotions.json)" ]]; then
+            echo "Nothing to promote — the ledger is unchanged."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The generator owns compat/suites/registry.generated.json and rewrites it
+      # wholly from its inputs, of which the ledger is now one. Regenerating in
+      # the same job is what keeps the two files consistent in a single commit;
+      # -check afterwards proves the commit is byte-for-byte the generator's own
+      # output, so the PR cannot land a registry a reviewer would have to trust.
+      - name: Regenerate the compat model
+        if: steps.soak.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          make generate-compat-model
+          go run -tags dev ./cmd/compatgen -check
+
+      # A GitHub App installation token, not GITHUB_TOKEN: a PR opened as
+      # github-actions[bot] starts no workflow runs, so it would sit forever on
+      # required checks that never run. These are the same two secrets
+      # compat.yml's baseline promotion uses — this is the other half of the
+      # same bot's job — and the same two repository permissions suffice:
+      # Contents (push the branch, merge once checks pass) and Pull requests
+      # (open it, arm auto-merge). Not Workflows: the commit touches
+      # compat/model/ and compat/suites/ and nothing else.
+      - name: Check promotion App credentials
+        id: app-check
+        if: steps.soak.outputs.changed == 'true'
+        env:
+          CLIENT_ID: ${{ secrets.COMPAT_PROMOTION_CLIENT_ID }}
+          APP_KEY: ${{ secrets.COMPAT_PROMOTION_PRIVATE_KEY }}
+        run: |
+          if [ -n "$CLIENT_ID" ] && [ -n "$APP_KEY" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Compat soak::Promotions computed but NOT published: the promotion App credentials (secrets.COMPAT_PROMOTION_CLIENT_ID / secrets.COMPAT_PROMOTION_PRIVATE_KEY) are not configured — see issue #440. Apply compat/model/promotions.json by hand and regenerate until then."
+          fi
+
+      - name: Mint promotion App token
+        id: promotion-token
+        if: steps.app-check.outputs.available == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.COMPAT_PROMOTION_CLIENT_ID }}
+          private-key: ${{ secrets.COMPAT_PROMOTION_PRIVATE_KEY }}
+
+      # One coalescing PR on a fixed branch, force-pushed, exactly as the
+      # baseline promotion does: successive nights overwrite a superseded
+      # promotion rather than opening a second pull request. Branch protection
+      # rejects a direct push to main — automation included — so this lands
+      # through the same required checks a human edit would.
+      - name: Publish the promotion PR
+        if: steps.app-check.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ steps.promotion-token.outputs.token }}
+          APP_SLUG: ${{ steps.promotion-token.outputs.app-slug }}
+        run: |
+          set -uo pipefail
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
+          git add compat/model/promotions.json compat/suites/registry.generated.json
+          # Belt to the braces of the `changed` output above: an empty commit
+          # would be force-pushed as main's own tip and open a pull request with
+          # no diff, which is the one outcome this job must never produce.
+          if git diff --cached --quiet; then
+            echo "Nothing staged — no promotion to publish."
+            exit 0
+          fi
+          git commit -m "chore(compat): promote soaked generated groups" -m "Automated: the nightly flake-detection runs (run ${GITHUB_RUN_ID}, commit ${GITHUB_SHA}) agreed on these candidate groups with zero failures."
+          # Non-fatal from here down: a promotion is an optimisation, and a
+          # dropped one is recomputed by tomorrow's nightly.
+          if ! git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:automation/promote-generated; then
+            echo "::warning title=Compat soak::Could not push the promotion branch — tomorrow's nightly will recompute it."
+            exit 0
+          fi
+          {
+            echo "Automated: generated compat groups that answered identically across the nightly runs"
+            echo "with zero failures move from candidate to gated (run ${GITHUB_RUN_ID}, commit ${GITHUB_SHA})."
+            echo
+            echo "compat/model/promotions.json is the soak ledger cmd/compatgen reads;"
+            echo "compat/suites/registry.generated.json is its regenerated output, written by"
+            echo "make generate-compat-model in the same job and verified with compatgen -check."
+            echo
+            echo "Auto-merges when checks pass; a superseded promotion is force-pushed over."
+            echo "See docs/plans/compat-coverage-modelgen.md § 3.6."
+          } > "$RUNNER_TEMP/promote-pr.md"
+          # One coalescing PR: the create fails harmlessly when it already
+          # exists (the force-push above updated it), then auto-merge is armed
+          # either way.
+          gh pr create --head automation/promote-generated --base main --title "chore(compat): promote soaked generated groups" --body-file "$RUNNER_TEMP/promote-pr.md" || true
+          if ! gh pr merge automation/promote-generated --squash --auto; then
+            echo "::warning title=Compat soak::Promotion PR exists but auto-merge could not be armed — merge it manually."
+          fi

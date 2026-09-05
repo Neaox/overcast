@@ -108,6 +108,10 @@ type corpus struct {
 	suites  *schemaSet
 	recipes []recipe
 	values  *valuesTable
+	// promotions is the soak ledger: the one generated-registry field that
+	// comes from an input file rather than from the scenario. See
+	// promotions.go.
+	promotions *promotionsFile
 }
 
 func loadCorpus(root string) (*corpus, error) {
@@ -127,7 +131,11 @@ func loadCorpus(root string) (*corpus, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &corpus{schemas: schemas, suites: suites, recipes: recipes, values: values}, nil
+	promotions, err := loadPromotions(filepath.Join(root, filepath.FromSlash(promotionsPath)), schemas)
+	if err != nil {
+		return nil, err
+	}
+	return &corpus{schemas: schemas, suites: suites, recipes: recipes, values: values, promotions: promotions}, nil
 }
 
 // generateAll runs the generator over every recipe and renders every output.
@@ -164,7 +172,10 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 		return nil, nil, err
 	}
 	outputs[gapsPath] = contents
-	registry := buildRegistry(scenarios, scenarioBackends)
+	if err := checkPromotionsAreKnownGroups(c.promotions, scenarios); err != nil {
+		return nil, nil, err
+	}
+	registry := buildRegistry(scenarios, scenarioBackends, c.promotions)
 	contents, err = encodeDocument(registry)
 	if err != nil {
 		return nil, nil, err

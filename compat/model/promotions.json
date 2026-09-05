@@ -1,0 +1,6 @@
+{
+  "$schema": "./promotions.schema.json",
+  "$comment": "The candidate → gated soak ledger for generated compat groups. Written only by `go run ./cmd/compat --promote-generated` (the nightly bot PR on automation/promote-generated) and read only by cmd/compatgen, which emits each group's `state` from it. Do not hand-edit to gate a group: promotion is the evidence of N agreeing nightly runs, and typing it here would be the hand edit the soak exists to replace. Removing an entry demotes the group to candidate, which is the supported way to take a group back out of the gate. See docs/plans/compat-coverage-modelgen.md § 3.6 and compat/model/README.md.",
+  "version": 1,
+  "groups": {}
+}
