@@ -1111,6 +1111,54 @@
     {
       "suite": "python-sdk",
       "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "CreateStackWithEksRefs",
+      "op": "CreateStack",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "DeleteStackWithEksRefs",
+      "op": "DeleteStack",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "DescribeStackResourcesPhysicalIds",
+      "op": "DescribeStackResources",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "GetAttClusterArn",
+      "op": "DescribeStacks",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "RefAddonIsClusterPipeAddon",
+      "op": "DescribeStacks",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "test": "RefNodegroupIsClusterSlashName",
+      "op": "DescribeStacks",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudformation",
       "group": "cloudformation-stacks",
       "test": "CreateStack",
       "status": "pass"

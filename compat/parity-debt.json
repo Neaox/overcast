@@ -185,6 +185,12 @@
     {
       "suite": "dotnet-sdk",
       "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "tests": 6
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "cloudformation",
       "group": "cloudformation-stacks",
       "tests": 6
     },
@@ -1537,6 +1543,12 @@
       "service": "backup",
       "group": "backup-vaults",
       "tests": 10
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-eks-refs",
+      "tests": 6
     },
     {
       "suite": "rust-sdk",
