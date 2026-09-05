@@ -202,7 +202,9 @@ mod registration_tests {
         let mut capabilities = HashSet::new();
         capabilities.insert("docker".to_string());
 
-        build_groups("rust-sdk", &impls, &setups, &teardowns, &capabilities)
+        // No scenario backend: this case is about the hand-written
+        // registrations resolving, the same `None` main passes.
+        build_groups("rust-sdk", &impls, &setups, &teardowns, &capabilities, None)
             .expect("real impl registrations must resolve against the real registry");
     }
 }
