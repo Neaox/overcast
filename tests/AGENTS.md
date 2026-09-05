@@ -147,6 +147,15 @@ reported green ([#1785](https://github.com/overcast-sh/overcast/issues/1785)).
 `TestMain`'s image pre-pull uses the same resolution, through
 `helpers.DockerAvailable`, so the daemon the suite warms is the daemon it tests.
 
+**Gating on Docker means wiring it.** `SkipWithoutDocker` only proves a daemon
+exists; the server under test still has to be told about it. A test that skips
+without Docker and then calls `helpers.NewTestServer(t)` with no options gets
+the metadata-only ECS stub, and its tasks never leave PROVISIONING. The eight
+ECS service and CloudFormation ECS-service tests did exactly that and failed
+identically on every platform the first time the gate let them run. Pair the
+gate with `helpers.WithECSDocker()` and `helpers.WaitForECSDocker(t, srv)`
+(or the Lambda equivalents), every time.
+
 | Platform | What runs | What does not, and why |
 | --- | --- | --- |
 | Linux, daemon on this kernel | everything | — |

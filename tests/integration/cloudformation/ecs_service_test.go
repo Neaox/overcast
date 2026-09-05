@@ -59,7 +59,8 @@ const fargateServiceTemplate = `{
 // which is what a CDK-deployed Fargate service did.
 func TestCreateStack_ECSServiceDefaultsDesiredCount(t *testing.T) {
 	helpers.SkipWithoutDocker(t)
-	srv := helpers.NewTestServer(t)
+	srv := helpers.NewTestServer(t, helpers.WithECSDocker())
+	helpers.WaitForECSDocker(t, srv)
 
 	cr := cfnQuery(t, srv, "CreateStack", url.Values{
 		"StackName":    []string{"ecs-service-stack"},
@@ -110,7 +111,8 @@ func TestCreateStack_ECSServiceDefaultsDesiredCount(t *testing.T) {
 // not override a count the template actually gave.
 func TestCreateStack_ECSServiceExplicitDesiredCountWins(t *testing.T) {
 	helpers.SkipWithoutDocker(t)
-	srv := helpers.NewTestServer(t)
+	srv := helpers.NewTestServer(t, helpers.WithECSDocker())
+	helpers.WaitForECSDocker(t, srv)
 
 	template := strings.Replace(fargateServiceTemplate,
 		`"LaunchType": "FARGATE",`,
@@ -156,7 +158,8 @@ func TestCreateStack_ECSServiceExplicitDesiredCountWins(t *testing.T) {
 // reaching CREATE_COMPLETE around a service that never starts anything.
 func TestCreateStack_ECSServiceMissingNetworkConfigurationFailsStack(t *testing.T) {
 	helpers.SkipWithoutDocker(t)
-	srv := helpers.NewTestServer(t)
+	srv := helpers.NewTestServer(t, helpers.WithECSDocker())
+	helpers.WaitForECSDocker(t, srv)
 
 	template := strings.Replace(fargateServiceTemplate,
 		`"NetworkConfiguration": {

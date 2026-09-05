@@ -1,6 +1,7 @@
 package helpers
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -364,6 +365,42 @@ func WithECSDocker() Option {
 		so.cfg.Network = fmt.Sprintf("overcast_ecs_test_%d", time.Now().UnixNano())
 		so.ownsNetworks = true
 	}
+}
+
+// WaitForECSDocker blocks until the ECS service of a server started with
+// WithECSDocker has finished probing its daemon and is backed by Docker, so a
+// task the test then runs is placed in a real container rather than answered
+// by the metadata-only stub.
+//
+// The probe runs in a goroutine router.New does not await, so a test that
+// creates a service immediately after NewTestServer can race it and watch
+// runningCount stay at 0 forever. Every ECS response carries the backing
+// decision in x-overcast-backing-reason; "docker-wired" is the value once the
+// probe has succeeded. Any ECS operation exposes it, and DescribeTasks on a
+// task that does not exist is the cheapest one that does.
+//
+// Pair it with WithECSDocker every time. A test that gates on
+// SkipWithoutDocker and then builds a server *without* WithECSDocker has a
+// Docker daemon and an ECS service that never heard of it — which is how the
+// eight ECS service tests behind that gate failed, identically, on every
+// platform the first time the gate let them run (#1785).
+func WaitForECSDocker(t *testing.T, srv *TestServer) {
+	t.Helper()
+	Eventually(t, 30*time.Second, 25*time.Millisecond, func() bool {
+		body := []byte(`{"tasks":["11112222-3333-4444-5555-666677778888"]}`)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL+"/", bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("WaitForECSDocker: build request: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+		req.Header.Set("X-Amz-Target", "AmazonEC2ContainerServiceV20141113.DescribeTasks")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("WaitForECSDocker: DescribeTasks: %v", err)
+		}
+		resp.Body.Close()
+		return resp.Header.Get("x-overcast-backing-reason") == "docker-wired"
+	}, "the ECS Docker probe never wired the service, so no container would have been started")
 }
 
 // WithECRRegistryPort makes the ECR registry claim a fixed host port instead of

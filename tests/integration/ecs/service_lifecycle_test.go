@@ -26,7 +26,11 @@ import (
 // cluster and returns the server.
 func awsvpcTaskDefCluster(t *testing.T, cluster, family string) *helpers.TestServer {
 	t.Helper()
-	srv := helpers.NewTestServer(t)
+	// Every caller gates on SkipWithoutDocker and asserts on tasks reaching
+	// RUNNING, which only a Docker-backed ECS service can deliver: without
+	// WithECSDocker the service is the metadata stub and runningCount stays 0.
+	srv := helpers.NewTestServer(t, helpers.WithECSDocker())
+	helpers.WaitForECSDocker(t, srv)
 
 	cr := ecsCall(t, srv, "CreateCluster", map[string]any{"clusterName": cluster})
 	helpers.AssertStatus(t, cr, http.StatusOK)
