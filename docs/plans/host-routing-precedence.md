@@ -66,7 +66,7 @@ CI stayed green because every host-route test uses an `.amazonaws.com` base —
 the only base with no S3 collision. See
 [apigateway_test.go:3186](../../tests/integration/apigateway/apigateway_test.go),
 [appsync_test.go:6437](../../tests/integration/appsync/appsync_test.go),
-[lambda_test.go:5399](../../tests/integration/lambda/lambda_test.go),
+[lambda_test.go:3551](../../tests/integration/lambda/lambda_test.go),
 [router/hostroute_test.go:30](../../tests/integration/router/hostroute_test.go).
 
 ## 3. How other emulators avoid this

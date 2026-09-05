@@ -12,8 +12,8 @@ package lambda
 // this test binary was compiled, which on a fresh checkout was before the
 // artefacts existed, and nothing built mid-run can change an embed. That is
 // what initbin.EnvDistDir exists for — point it at dist/ and this very run
-// reads what was just built. tests/integration/lambda's requireLambdaInit does
-// the same for the Docker-gated tests.
+// reads what was just built. tests/helpers/lambdafixture's EnsureInit does
+// the same for the Docker-gated tests in tests/integration/lambdadocker.
 
 import (
 	"fmt"

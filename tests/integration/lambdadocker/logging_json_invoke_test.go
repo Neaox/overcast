@@ -1,4 +1,4 @@
-package lambda_test
+package lambdadocker_test
 
 import (
 	"bytes"

@@ -5,7 +5,7 @@ reference_policy: aws_docs_only_unless_user_approves_real_aws
 last_updated: 2026-08-14
 protocols: [rest_json, event_stream]
 implementation: [internal/services/lambda]
-integration_tests: [tests/integration/lambda]
+integration_tests: [tests/integration/lambda, tests/integration/lambdadocker]
 capability_docs: docs/services/lambda.md
 operation_count_estimate: 51 tracked; 49 supported, 2 unsupported
 current_support_level: Broad control plane plus Docker-backed invoke; InvokeAsync unsupported.
@@ -197,4 +197,4 @@ handoff:
   commands:
     - go test -count=1 -run 'TestCreateFunction_' ./tests/integration/lambda/...
     - go test -count=1 ./internal/services/lambda/...
-    - go vet ./internal/services/lambda/... ./tests/integration/lambda/...
+    - go vet ./internal/services/lambda/... ./tests/integration/lambda/... ./tests/integration/lambdadocker/...

@@ -1,4 +1,4 @@
-package lambda_test
+package lambdadocker_test
 
 // telemetry_init_phase_test.go — what an extension subscribed to the Telemetry
 // API sees of the INIT phase.
