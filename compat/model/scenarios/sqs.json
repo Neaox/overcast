@@ -1240,7 +1240,7 @@
               "kind": "responseField",
               "checks": {
                 "$.Results": {
-                  "nonEmpty": true
+                  "isList": true
                 }
               }
             }

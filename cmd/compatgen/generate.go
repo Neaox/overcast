@@ -1242,42 +1242,140 @@ func (g *generator) probeGroup() error {
 }
 
 // probeAssertion is the one clause a probe carries: the modeled output's
-// identity member, non-empty.
+// identity member, non-empty — or, for an operation whose only assertable
+// output is a page of results, that list's shape.
 //
 // An operation that returns nothing gets no probe. Reading the resource the
 // call was aimed at would assert something that was already true before the
 // call, so an operation implemented without a capability row — the one case a
 // probe of it could actually run — would pass while proving nothing. Refusing
 // is the honest answer, and gaps.json is where it is recorded.
+//
+// The same honesty rule decides the list case. A `List*` whose output is a
+// page and a next-page token has no identity to assert: the token is absent
+// on a single-page answer, which is the answer real AWS gives most of the
+// time, so `nonEmpty` on it is false by construction (§3.10 wants assertions
+// that are AWS-legal), and `nonEmpty` on a list this call did not populate is
+// the same mistake one member over. `isList` is what is left that is true of
+// a correct response and false of a broken one.
 func (gb *groupBuilder) probeAssertion(op string) (assertion, *refusal) {
-	if output := gb.g.model.OutputShape(op); output != "" {
-		if member := identityMember(gb.g.model, output); member != "" {
-			return responseField(checks("$."+member, nonEmpty())), nil
-		}
+	output := gb.g.model.OutputShape(op)
+	if output == "" {
+		return assertion{}, refuse(reasonNoOutputToAssert,
+			fmt.Sprintf("%s returns nothing, and reading back the resource it names would assert something the call cannot change, so a probe would assert nothing", op))
+	}
+	if member := identityMember(gb.g.model, op, output); member != "" {
+		return responseField(checks("$."+member, nonEmpty())), nil
+	}
+	if member := listMember(gb.g.model, op, output); member != "" {
+		return responseField(checks("$."+member, isList())), nil
 	}
 	return assertion{}, refuse(reasonNoOutputToAssert,
-		fmt.Sprintf("%s returns no identifying member, and reading back the resource it names would assert something the call cannot change, so a probe would assert nothing", op))
+		fmt.Sprintf("%s returns no identifying member and no single list to check the shape of — a pagination token is never an identity — and reading back the resource it names would assert something the call cannot change, so a probe would assert nothing", op))
 }
 
 // identityMember picks the output member a probe asserts: the first member,
 // in suffix-preference order, that looks like an identifier; else the first
-// required member; else the first member at all.
-func identityMember(model *serviceModel, output string) string {
+// required member; else the first member at all. Pagination tokens and lists
+// are never eligible, so "" is a real answer and its callers handle it.
+//
+// A pagination token is excluded because asserting it non-empty asserts that
+// more pages follow, which a single-page answer contradicts — the clause
+// would be false against real AWS by construction. A list is excluded because
+// a probe populates nothing, so its length says nothing; probeAssertion gives
+// it a shape check of its own instead.
+func identityMember(model *serviceModel, op, output string) string {
 	members := model.Members(output)
 	if len(members) == 0 {
 		return ""
 	}
-	for _, suffix := range []string{"Arn", "Id", "Url", "Name", "Handle", "Token", "Status", "State"} {
+	tokens := paginationTokens(model, op, output)
+	eligible := func(member string) bool {
+		if tokens[member] {
+			return false
+		}
+		target, _ := model.MemberTarget(output, member)
+		return model.Kind(target) != "list"
+	}
+	for _, suffix := range []string{"Arn", "Id", "Url", "Name", "Handle", "Status", "State"} {
 		for _, member := range members {
-			if strings.HasSuffix(member, suffix) && isScalar(model, output, member) {
+			if strings.HasSuffix(member, suffix) && isScalar(model, output, member) && eligible(member) {
 				return member
 			}
 		}
 	}
-	if required := model.RequiredMembers(output); len(required) > 0 {
-		return required[0]
+	for _, member := range model.RequiredMembers(output) {
+		if eligible(member) {
+			return member
+		}
 	}
-	return members[0]
+	for _, member := range members {
+		if eligible(member) {
+			return member
+		}
+	}
+	return ""
+}
+
+// paginationTokenNames are the member names AWS gives a pagination token. The
+// suffix rule below covers every one of them and the variants a service
+// invents (`NextPageToken`, `NextPageMarker`); the set is written out because
+// it is the vocabulary, and a reader should not have to derive it.
+var paginationTokenNames = map[string]bool{
+	"NextToken":             true,
+	"Marker":                true,
+	"NextMarker":            true,
+	"ContinuationToken":     true,
+	"NextContinuationToken": true,
+	"PaginationToken":       true,
+}
+
+// paginationTokens is the set of output members that carry a next-page token:
+// the one @paginated names as its `outputToken` where the operation declares
+// the trait, plus every member whose own name — or whose target shape's name —
+// follows the convention, which is how the operations that paginate without
+// declaring the trait are caught.
+func paginationTokens(model *serviceModel, op, output string) map[string]bool {
+	tokens := map[string]bool{}
+	if outputToken := model.Pagination(op).OutputToken; outputToken != "" {
+		tokens[outputToken] = true
+	}
+	for _, member := range model.Members(output) {
+		target, _ := model.MemberTarget(output, member)
+		if isTokenName(member) || isTokenName(bareShapeName(target)) {
+			tokens[member] = true
+		}
+	}
+	return tokens
+}
+
+func isTokenName(name string) bool {
+	return paginationTokenNames[name] || strings.HasSuffix(name, "Token") || strings.HasSuffix(name, "Marker")
+}
+
+// listMember is the one list a probe may check the shape of: the member
+// @paginated names as its `items`, else the output's sole list-typed
+// top-level member. Two lists and no trait to choose between them is an
+// ambiguity the generator refuses rather than guesses at.
+func listMember(model *serviceModel, op, output string) string {
+	isListMember := func(member string) bool {
+		target, ok := model.MemberTarget(output, member)
+		return ok && model.Kind(target) == "list"
+	}
+	if items := model.Pagination(op).Items; items != "" && isListMember(items) {
+		return items
+	}
+	var only string
+	for _, member := range model.Members(output) {
+		if !isListMember(member) {
+			continue
+		}
+		if only != "" {
+			return ""
+		}
+		only = member
+	}
+	return only
 }
 
 func isScalar(model *serviceModel, structure, member string) bool {

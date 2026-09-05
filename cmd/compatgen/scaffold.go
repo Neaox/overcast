@@ -305,7 +305,7 @@ func scaffoldIdentityPath(model *serviceModel, op string) string {
 	if output == "" {
 		return "$.<todo: " + op + " returns nothing>"
 	}
-	if member := identityMember(model, output); member != "" {
+	if member := identityMember(model, op, output); member != "" {
 		return "$." + member
 	}
 	return "$.<todo>"

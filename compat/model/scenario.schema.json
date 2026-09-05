@@ -198,6 +198,7 @@
         "additionalProperties": false,
         "properties": {
           "nonEmpty": { "const": true, "description": "The path resolves to a value that is not null, \"\", [] or {}." },
+          "isList": { "const": true, "description": "The path resolves to a list. An empty list satisfies it: a single-page List* legally returns one, so this is the strongest check a call that populated nothing can make." },
           "equals": { "$ref": "#/definitions/Value", "description": "The path resolves to a value equal (as JSON) to the evaluated expression." },
           "matches": { "type": "string", "description": "The path resolves to a string matching this RE2-compatible regular expression." },
           "missing": { "const": true, "description": "The path does not resolve (any segment absent)." }

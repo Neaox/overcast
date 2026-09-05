@@ -133,6 +133,7 @@ The set is closed. `kind` selects the fields.
 | Check | Holds when |
 | --- | --- |
 | `{"nonEmpty": true}` | the path resolves to a value that is not `null`, `""`, `[]` or `{}`; numbers and booleans are never empty |
+| `{"isList": true}` | the path resolves to a list, **empty or not**. It exists because `nonEmpty` cannot say "this is a page of results": a single-page `List*` legally returns an empty page, so `nonEmpty` on a list the test did not populate is false by construction |
 | `{"equals": <value>}` | the path resolves and the value is equal, as JSON, to the evaluated expression |
 | `{"matches": "<regex>"}` | the path resolves to a string matching the regular expression (RE2-compatible syntax; anchored only where the pattern anchors itself) |
 | `{"missing": true}` | the path does not resolve — any segment absent |
@@ -333,12 +334,35 @@ service and operation, with a stable reason:
 | `probe-of-implemented-op` | an implemented operation the recipe gives no role — it may not be probed, so it needs a role |
 | `probe-binds-live-resource:<Member>` | a probe would have bound that member to a value exported from a resource the run owns. Add a curated literal to `values.json` — deliberately nonexistent, so the call misses — or leave the operation refused |
 | `never-probe` | the recipe's `neverProbe` list forbids probing the operation; the detail is the curated reason |
-| `no-output-to-assert` | a probe of an operation that returns nothing. Reading back the resource it names would assert something that was already true before the call, so there is nothing honest to assert |
+| `no-output-to-assert` | a probe of an operation that returns nothing a probe can assert: no output at all, or no identity member and no single list to check the shape of. Reading back the resource it names would assert something that was already true before the call, so there is nothing honest to assert |
 | `setup-refused:<resource>` | a required resource could not be bound |
 | `unsupported-tag-shape:<Shape>` | the tag member is neither a string map nor a list of `{Key, Value}`. `<Shape>` is the bare shape name; the qualified Smithy id is in the detail |
 
 Refusals are a feature. Fixing one is a line in a recipe or in
 `values.json`; guessing is never an option.
+
+### What a probe asserts
+
+One clause, on the probe's own response. The generator picks the output's
+**identity member** — the first member, in `Arn`, `Id`, `Url`, `Name`,
+`Handle`, `Status`, `State` suffix order, that is a scalar; else the first
+required member; else the first member at all — and asserts it non-empty.
+
+A **pagination token is never the identity**, and neither is a list. The
+token — the member `@paginated` names as its `outputToken`, or any member (or
+member target) named `NextToken`, `Marker`, `NextMarker`,
+`ContinuationToken`, `NextContinuationToken`, `PaginationToken`, or ending in
+`Token` or `Marker` — is exactly the field AWS omits when there is nothing
+left to page, so `nonEmpty` on it asserts the opposite of a correct
+single-page answer. A list is excluded because a probe populates nothing, so
+its length says nothing about the service.
+
+That leaves the `List*` operations, whose only assertable output *is* a list.
+They get `{"isList": true}` on the page — the member `@paginated` names as
+its `items`, else the output's sole list-typed top-level member — which is
+true of a correct empty page and false of a response that is not a list at
+all. An operation with two lists and no `items` to choose between them, or
+with nothing but a token, is refused (`no-output-to-assert`).
 
 ### What a probe may bind
 

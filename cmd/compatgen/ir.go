@@ -104,9 +104,15 @@ type assertion struct {
 	Assert      *assertion `json:"assert,omitempty"`
 }
 
-// check is exactly one of: nonEmpty, equals, matches, missing.
+// check is exactly one of: nonEmpty, isList, equals, matches, missing.
+//
+// isList exists because nonEmpty cannot say "this is a page of results" — a
+// single-page List* legally returns an empty one, so nonEmpty on a list the
+// test did not populate is false by construction. isList is the strongest
+// check that is still true of a correct empty answer.
 type check struct {
 	NonEmpty bool   `json:"nonEmpty,omitempty"`
+	IsList   bool   `json:"isList,omitempty"`
 	Equals   any    `json:"equals,omitempty"`
 	Matches  string `json:"matches,omitempty"`
 	Missing  bool   `json:"missing,omitempty"`
@@ -154,6 +160,7 @@ func eventually(inner assertion, retry retrySpec) assertion {
 }
 
 func nonEmpty() check         { return check{NonEmpty: true} }
+func isList() check           { return check{IsList: true} }
 func equals(value any) check  { return check{Equals: value} }
 func matches(re string) check { return check{Matches: re} }
 func missing() check          { return check{Missing: true} }
@@ -260,6 +267,9 @@ func validateAssertion(a assertion) error {
 		if c.NonEmpty {
 			set++
 		}
+		if c.IsList {
+			set++
+		}
 		if c.Equals != nil {
 			set++
 		}
@@ -270,7 +280,7 @@ func validateAssertion(a assertion) error {
 			set++
 		}
 		if set != 1 {
-			return fmt.Errorf("check on %s must be exactly one of nonEmpty, equals, matches, missing", path)
+			return fmt.Errorf("check on %s must be exactly one of nonEmpty, isList, equals, matches, missing", path)
 		}
 	}
 	return nil

@@ -209,14 +209,14 @@
       "operation": "AddPermission",
       "group": "sqs-gen-probe",
       "reason": "no-output-to-assert",
-      "detail": "AddPermission returns no identifying member, and reading back the resource it names would assert something the call cannot change, so a probe would assert nothing"
+      "detail": "AddPermission returns nothing, and reading back the resource it names would assert something the call cannot change, so a probe would assert nothing"
     },
     {
       "service": "sqs",
       "operation": "RemovePermission",
       "group": "sqs-gen-probe",
       "reason": "no-output-to-assert",
-      "detail": "RemovePermission returns no identifying member, and reading back the resource it names would assert something the call cannot change, so a probe would assert nothing"
+      "detail": "RemovePermission returns nothing, and reading back the resource it names would assert something the call cannot change, so a probe would assert nothing"
     }
   ]
 }

@@ -422,6 +422,30 @@ func (m *serviceModel) ErrorCode(shape string) string {
 	return shape
 }
 
+// paginationTrait is smithy.api#paginated, as far as the generator reads it:
+// which output member carries the next-page token, and which carries the page
+// of items. cmd/awsmodelgen already allowlists the trait, so the committed
+// snapshots carry it and nothing has to be regenerated to consult it.
+// `inputToken` and `pageSize` are deliberately absent: nothing generated
+// pages, so decoding them would be two fields written and never read.
+type paginationTrait struct {
+	OutputToken string `json:"outputToken"`
+	Items       string `json:"items"`
+}
+
+// Pagination returns an operation's @paginated trait, zero-valued where the
+// operation declares none. A service may paginate without declaring it —
+// organizations' ListInboundResponsibilityTransfers returns a `NextToken` and
+// carries no trait — so callers take the trait as authoritative where it
+// exists and fall back to the name convention where it does not.
+func (m *serviceModel) Pagination(op string) paginationTrait {
+	var trait paginationTrait
+	if raw, ok := m.Shapes[op].Traits["smithy.api#paginated"]; ok {
+		_ = json.Unmarshal(raw, &trait)
+	}
+	return trait
+}
+
 // IsErrorShape reports whether a shape carries @error.
 func (m *serviceModel) IsErrorShape(shape string) bool {
 	return hasTrait(m.Shapes[shape].Traits, "smithy.api#error")

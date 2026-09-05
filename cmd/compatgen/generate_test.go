@@ -26,6 +26,9 @@ import (
 //	CreateCog                       Name unbound                 → unbound-required-member
 //	FreezeWidget                    would bind widget.id         → probe-binds-live-resource
 //	PingWidgets                     undeclared, returns Status   → probe with a responseField
+//	ListCogs                        a page and a NextToken       → probe with isList on the page
+//	ListGauges                      @paginated names the token   → probe with isList on the page
+//	ScanWidgets                     a NextToken and nothing else → no-output-to-assert
 //	PurgeWidgets                    listed under neverProbe      → never-probe
 //	RotateWidget                    Unsupported, Angle unbound   → unbound-required-member
 //	DescribeGizmo                   undeclared, GizmoArn unbound → unbound-required-member
@@ -98,7 +101,7 @@ func TestGenerate_lifecycleGroupCoversEveryRole(t *testing.T) {
 		"widgets-gen-widget":   {"CreateWidget", "GetWidget", "DescribeWidget", "UpdateWidget", "TagWidget", "ListWidgetTags", "UntagWidget", "PolishWidget", "ListWidgets", "DeleteWidget"},
 		"widgets-gen-gauge":    {"DescribeGauge", "CalibrateGauge"},
 		"widgets-gen-sprocket": {"CreateSprocket", "GetSprocket", "TagSprocket", "ListSprocketTags", "UntagSprocket", "DeleteSprocket"},
-		"widgets-gen-probe":    {"PingWidgets"},
+		"widgets-gen-probe":    {"ListCogs", "ListGauges", "PingWidgets"},
 	}
 	if len(gen.scenario.Groups) != len(want) {
 		t.Fatalf("got %d groups, want %d", len(gen.scenario.Groups), len(want))
@@ -124,6 +127,7 @@ func TestGenerate_refusesWithMachineReadableReasons(t *testing.T) {
 		"FreezeWidget":  reasonProbeBindsLiveResource + ":WidgetId",
 		"PurgeWidgets":  reasonNeverProbe,
 		"RotateWidget":  reasonUnboundRequiredMember + ":Angle",
+		"ScanWidgets":   reasonNoOutputToAssert,
 		"SetWidgetSize": reasonUpdateWithoutMutable,
 		"SyncWidgets":   reasonNoOutputToAssert,
 	}
@@ -160,10 +164,15 @@ func TestGenerate_probeGroupHoldsNoImplementedOperation(t *testing.T) {
 		// nothing is refused rather than given a vacuous read-back. Asserted
 		// on the group rather than inside a name match, so a probe that
 		// stopped being emitted fails here instead of passing silently.
-		if len(g.Tests) != 1 || g.Tests[0].Name != "PingWidgets" {
-			t.Fatalf("probe group holds %v, want just PingWidgets", g.Tests)
+		var names []string
+		for _, tc := range g.Tests {
+			names = append(names, tc.Name)
 		}
-		if a := g.Tests[0].Assert[0]; a.Kind != assertResponseField || !a.Checks["$.Status"].NonEmpty {
+		if strings.Join(names, ",") != "ListCogs,ListGauges,PingWidgets" {
+			t.Fatalf("probe group holds %v, want ListCogs, ListGauges and PingWidgets", names)
+		}
+		_, ping, _ := gen.scenario.findTest(g.Name, "PingWidgets")
+		if a := ping.Assert[0]; a.Kind != assertResponseField || !a.Checks["$.Status"].NonEmpty {
 			t.Errorf("PingWidgets probe asserts %+v, want $.Status non-empty", a)
 		}
 		// A probe group has no setup and no teardown, and no probe may touch
@@ -619,5 +628,96 @@ func TestGenerate_refusesUpdateWhoseReadConsumes(t *testing.T) {
 	}
 	if strings.Join(reasons, ",") != reasonNoReadbackPath {
 		t.Fatalf("UpdateWidget reasons = %v, want %s", reasons, reasonNoReadbackPath)
+	}
+}
+
+// TestGenerate_probeNeverAssertsAPaginationToken pins the rule that a probe of
+// a list operation asserts the page and never the token. A `NextToken` is
+// absent from a single-page answer — the answer real AWS gives most of the
+// time — so `nonEmpty` on it is false by construction, which §3.10 does not
+// allow. The fixture covers both ways a token is recognised and the case where
+// excluding it leaves nothing to assert.
+func TestGenerate_probeNeverAssertsAPaginationToken(t *testing.T) {
+	f, gen := generateFixture(t)
+
+	// ListCogs returns {Cogs, NextToken} and declares no @paginated trait:
+	// the member name alone rules the token out, and the sole list is what is
+	// left to assert.
+	_, cogs, ok := gen.scenario.findTest("widgets-gen-probe", "ListCogs")
+	if !ok {
+		t.Fatal("ListCogs was not probed")
+	}
+	if len(cogs.Assert[0].Checks) != 1 || !cogs.Assert[0].Checks["$.Cogs"].IsList {
+		t.Errorf("ListCogs probe asserts %+v, want isList on $.Cogs", cogs.Assert[0].Checks)
+	}
+
+	// ListGauges names its token `Cursor`, which no name rule would catch:
+	// the @paginated trait is what rules it out, and the trait's `items` is
+	// what names the page.
+	_, gauges, ok := gen.scenario.findTest("widgets-gen-probe", "ListGauges")
+	if !ok {
+		t.Fatal("ListGauges was not probed")
+	}
+	if len(gauges.Assert[0].Checks) != 1 || !gauges.Assert[0].Checks["$.Gauges"].IsList {
+		t.Errorf("ListGauges probe asserts %+v, want isList on $.Gauges", gauges.Assert[0].Checks)
+	}
+	if identityMember(f.model, "ListGauges", "ListGaugesResponse") != "" {
+		t.Error("the trait-named token Cursor was offered as an identity")
+	}
+
+	// An output that is nothing but a token has nothing left once the token
+	// is excluded, so the operation is refused rather than probed.
+	scan := gapIn(gen, "widgets-gen-probe", "ScanWidgets")
+	if scan.Reason != reasonNoOutputToAssert {
+		t.Fatalf("ScanWidgets refusal = %q, want %s", scan.Reason, reasonNoOutputToAssert)
+	}
+	if !strings.Contains(scan.Detail, "pagination token") {
+		t.Errorf("the refusal does not say why the token was not enough: %q", scan.Detail)
+	}
+	if _, _, found := gen.scenario.findTest("widgets-gen-probe", "ScanWidgets"); found {
+		t.Error("a token-only output was probed anyway")
+	}
+
+	// And nothing anywhere in the generated scenario asserts a token.
+	for _, g := range gen.scenario.Groups {
+		for _, tc := range g.Tests {
+			for i, a := range tc.Assert {
+				for path := range a.Checks {
+					if strings.HasSuffix(path, "Token") || strings.HasSuffix(path, "Marker") || strings.HasSuffix(path, "Cursor") {
+						t.Errorf("%s/%s assert[%d] checks %s, which is a pagination token", g.Name, tc.Name, i, path)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestIdentityMember_skipsTokensAndLists is the unit-level half: the same rule
+// stated over the fixture model, including the fallbacks, which used to return
+// whatever member sorted first.
+func TestIdentityMember_skipsTokensAndLists(t *testing.T) {
+	f := loadFixture(t)
+	cases := []struct{ op, output, want string }{
+		{"PingWidgets", "PingWidgetsResponse", "Status"},
+		{"ListWidgets", "ListWidgetsResponse", ""},             // one list, no token
+		{"ListCogs", "ListCogsResponse", ""},                   // token by name
+		{"ListGauges", "ListGaugesResponse", ""},               // token by @paginated
+		{"ScanWidgets", "ScanWidgetsResponse", ""},             // nothing but a token
+		{"CreateWidget", "CreateWidgetResponse", "Arn"},        // suffix preference is unchanged
+		{"DescribeWidget", "DescribeWidgetResponse", "Widget"}, // the last-resort member is still offered
+	}
+	for _, tc := range cases {
+		if got := identityMember(f.model, tc.op, tc.output); got != tc.want {
+			t.Errorf("identityMember(%s) = %q, want %q", tc.op, got, tc.want)
+		}
+	}
+	if got := listMember(f.model, "ListGauges", "ListGaugesResponse"); got != "Gauges" {
+		t.Errorf("listMember(ListGauges) = %q, want Gauges (the @paginated items)", got)
+	}
+	if got := listMember(f.model, "ListCogs", "ListCogsResponse"); got != "Cogs" {
+		t.Errorf("listMember(ListCogs) = %q, want Cogs (the sole list member)", got)
+	}
+	if got := listMember(f.model, "ScanWidgets", "ScanWidgetsResponse"); got != "" {
+		t.Errorf("listMember(ScanWidgets) = %q, want none", got)
 	}
 }

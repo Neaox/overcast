@@ -495,8 +495,8 @@
             {
               "kind": "responseField",
               "checks": {
-                "$.NextToken": {
-                  "nonEmpty": true
+                "$.EnabledServicePrincipals": {
+                  "isList": true
                 }
               }
             }
@@ -513,8 +513,8 @@
             {
               "kind": "responseField",
               "checks": {
-                "$.NextToken": {
-                  "nonEmpty": true
+                "$.Accounts": {
+                  "isList": true
                 }
               }
             }
@@ -533,8 +533,8 @@
             {
               "kind": "responseField",
               "checks": {
-                "$.NextToken": {
-                  "nonEmpty": true
+                "$.Accounts": {
+                  "isList": true
                 }
               }
             }
@@ -553,7 +553,7 @@
             {
               "kind": "responseField",
               "checks": {
-                "$.NextToken": {
+                "$.PolicyType": {
                   "nonEmpty": true
                 }
               }
@@ -574,8 +574,8 @@
             {
               "kind": "responseField",
               "checks": {
-                "$.NextToken": {
-                  "nonEmpty": true
+                "$.Children": {
+                  "isList": true
                 }
               }
             }
@@ -592,8 +592,8 @@
             {
               "kind": "responseField",
               "checks": {
-                "$.NextToken": {
-                  "nonEmpty": true
+                "$.CreateAccountStatuses": {
+                  "isList": true
                 }
               }
             }
@@ -610,8 +610,8 @@
             {
               "kind": "responseField",
               "checks": {
-                "$.NextToken": {
-                  "nonEmpty": true
+                "$.DelegatedAdministrators": {
+                  "isList": true
                 }
               }
             }
@@ -630,8 +630,8 @@
             {
               "kind": "responseField",
               "checks": {
-                "$.NextToken": {
-                  "nonEmpty": true
+                "$.DelegatedServices": {
+                  "isList": true
                 }
               }
             }
@@ -669,8 +669,8 @@
             {
               "kind": "responseField",
               "checks": {
-                "$.NextToken": {
-                  "nonEmpty": true
+                "$.Handshakes": {
+                  "isList": true
                 }
               }
             }
@@ -687,8 +687,8 @@
             {
               "kind": "responseField",
               "checks": {
-                "$.NextToken": {
-                  "nonEmpty": true
+                "$.Handshakes": {
+                  "isList": true
                 }
               }
             }
@@ -707,8 +707,8 @@
             {
               "kind": "responseField",
               "checks": {
-                "$.NextToken": {
-                  "nonEmpty": true
+                "$.ResponsibilityTransfers": {
+                  "isList": true
                 }
               }
             }
@@ -727,8 +727,8 @@
             {
               "kind": "responseField",
               "checks": {
-                "$.NextToken": {
-                  "nonEmpty": true
+                "$.OrganizationalUnits": {
+                  "isList": true
                 }
               }
             }
@@ -747,8 +747,8 @@
             {
               "kind": "responseField",
               "checks": {
-                "$.NextToken": {
-                  "nonEmpty": true
+                "$.ResponsibilityTransfers": {
+                  "isList": true
                 }
               }
             }
@@ -767,8 +767,8 @@
             {
               "kind": "responseField",
               "checks": {
-                "$.NextToken": {
-                  "nonEmpty": true
+                "$.Parents": {
+                  "isList": true
                 }
               }
             }
@@ -788,8 +788,8 @@
             {
               "kind": "responseField",
               "checks": {
-                "$.NextToken": {
-                  "nonEmpty": true
+                "$.Policies": {
+                  "isList": true
                 }
               }
             }
@@ -806,8 +806,8 @@
             {
               "kind": "responseField",
               "checks": {
-                "$.NextToken": {
-                  "nonEmpty": true
+                "$.Roots": {
+                  "isList": true
                 }
               }
             }
@@ -826,8 +826,8 @@
             {
               "kind": "responseField",
               "checks": {
-                "$.NextToken": {
-                  "nonEmpty": true
+                "$.Targets": {
+                  "isList": true
                 }
               }
             }
