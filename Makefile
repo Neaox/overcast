@@ -55,7 +55,7 @@ SLIM_IMAGE    ?= overcast-slim:$(IMAGE_TAG)
         ci-local ci-local-web ci-local-go \
         bench bench-startup lint lint-go lint-web lint-actions lint-encoding fmt vet tidy check verify aws-models-check docker docker-slim docker-console docker-run docker-clean docker-clean-test-networks clean \
         compat compat-build compat-serve compat-dev compat-docker compat-report compat-registry-check \
-        generate-caps check-caps generate-ts check-ts generate-aws-operations aws-models-check docs docs-lint docs-check supportmeta-check check-binary-symbols
+        generate-caps check-caps generate-ts check-ts generate-aws-operations aws-models-check aws-models-check-ci docs docs-lint docs-check supportmeta-check check-binary-symbols
 
 ## help: print this help message
 help:
@@ -269,14 +269,23 @@ generate-aws-operations:
 	$(GO) run ./cmd/awsmodelgen -models "$(AWS_MODELS_DIR)" -output internal/awsapi/manifest.gen.go -source-revision "$(AWS_MODELS_REVISION)" \
 		-shapes-out models/aws/shapes -shapes-services models/aws/shapes-services.txt
 
+## aws-models-check-ci: CI-only subset of aws-models-check
+## `./cmd/awsmodelgen ./internal/awsapi ./internal/protocol/codec ./tests/integration/router` are inside `./...` and
+## already run by the `Full test suite with coverage` job, so the `aws-operation-coverage` CI job runs this narrower
+## target instead of the full aws-models-check and skips re-running ~60s of tests another job already ran. Nothing
+## else compiles the `dev` tag set below, so it is not duplicated and must stay.
+aws-models-check-ci:
+	$(GO) test -count=1 -tags dev ./internal/router ./cmd/capgen
+	$(GO) run -tags dev ./cmd/capgen --check-model
+
 ## aws-models-check: validate the committed AWS operation corpus, generated runtime ownership indexes and pruned shape snapshot
 ## Without AWS_MODELS_DIR this is the offline gate: the Go tests verify the committed manifest and snapshot against the
 ## manifest-sha256/shapes-sha256 digests in models/aws/VERSION, and hold the snapshot to its reviewed size budget.
 ## Set AWS_MODELS_DIR to additionally prove both artifacts match that pinned checkout byte-for-byte.
-aws-models-check:
+## This is the full, developer-facing target. CI's aws-operation-coverage job runs aws-models-check-ci instead (see
+## above) because the first line below duplicates packages that job's sibling coverage job already tests.
+aws-models-check: aws-models-check-ci
 	$(GO) test -count=1 ./cmd/awsmodelgen ./internal/awsapi ./internal/protocol/codec ./tests/integration/router
-	$(GO) test -count=1 -tags dev ./internal/router ./cmd/capgen
-	$(GO) run -tags dev ./cmd/capgen --check-model
 	@if [ -n "$(AWS_MODELS_DIR)" ]; then \
 		$(GO) run ./cmd/awsmodelgen -models "$(AWS_MODELS_DIR)" -output internal/awsapi/manifest.gen.go -source-revision "$(AWS_MODELS_REVISION)" \
 			-shapes-out models/aws/shapes -shapes-services models/aws/shapes-services.txt -check; \

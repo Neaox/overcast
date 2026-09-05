@@ -74,6 +74,14 @@ class NeedsCodeJobs(unittest.TestCase):
 		# index, so nothing reads them.
 		self.assertFalse(scope.needs_code_jobs(["docs/dev/content-charter.md", "docs/plans/x.md"]))
 
+	def test_compat_baseline_is_prose(self) -> None:
+		# compat.yml opens a PR after every push to main that touches only
+		# compat/baseline/*.json (a status ledger nothing builds or tests
+		# against). Classifying it as code runs the entire test.yml and
+		# compat.yml on a JSON-only diff for no reason.
+		self.assertFalse(scope.needs_code_jobs(["compat/baseline/cli.json"]))
+		self.assertFalse(scope.needs_code_jobs(["compat/baseline/java-sdk.json", "compat/baseline/go-sdk.json"]))
+
 	def test_the_tells_allowlist_is_code(self) -> None:
 		# It lives under docs/dev/, but `make docs-lint` reads it and fails on an
 		# entry that no longer matches, so it has to run the docs gate.

@@ -423,3 +423,104 @@ The estimate this document opened with — 56 → 40 runner-minutes — was buil
 D landing. Without it the figure is closer to 56 → 50 on a code PR, and near
 zero on a docs-only one. The wall-clock improvement is the real result; the
 runner-minute one was mostly D, and D was not worth its cost.
+
+## 2026-09-05 analysis: the Free-plan job budget
+
+The account runs on GitHub's Free plan: 20 concurrent jobs. A code PR fans
+`test.yml` and `compat.yml` out to roughly 50 jobs between the two, so a single
+push queues about two and a half deep behind itself before the later batches
+even start. This section records that framing, a ranked list of candidate
+changes with the issue tracking each, and the ideas that were considered and
+rejected, so none of them gets re-proposed without first reading why it was
+declined.
+
+Two of the ranked items below (2 and 10) are implemented by this issue
+(#1774); the rest are tracked separately so this analysis is recorded once
+rather than repeated in each of their issues.
+
+### Ranked changes
+
+Ordered as proposed, by measured or estimated saving. "Job-min/PR" is
+job-minutes saved on a typical code PR; "slots/PR" is concurrent job slots
+freed on a typical code PR, which matters on its own on a plan capped at 20
+concurrent jobs, independent of total job-minutes.
+
+| # | Change | Measured impact | Issue |
+| --- | --- | --- | --- |
+| 1 | Per-job Go cache keys | 8-15 job-min/PR, 0 slots/PR | #1778 (test.yml), #1777 (elsewhere) |
+| 2 | Classify `compat/baseline/` as prose in `ci-scope.py` | ~90 job-minutes per baseline-promotion PR | #1774 |
+| 3 | `filter: blob:none` on checkout | 2-3 job-min/PR, 0 slots/PR | #1777 |
+| 4 | Pre-pull the Lambda image | 2-4 job-min/PR, 0 slots/PR | #1778 |
+| 5 | buildx GHA cache on PR docker builds | 2-3 job-min/PR, 0 slots/PR | #1778 |
+| 6 | Consolidate five non-required jobs | ~2.5 job-min/PR, 5 slots/PR | #1778 |
+| 7 | Split `tests/integration/lambda` off the critical path | ~50 s off the critical path, across 4 jobs | #1776 |
+| 8 | Drop the SPA build from compat's `build-binaries` | ~1 job-min/PR, 0 slots/PR | #1777 |
+| 9 | Cache `lambda-init` | ~1 job-min/PR, 0 slots/PR (about 16 runs before cache hits) | #1777 |
+| 10 | Drop `Makefile:277` from the CI job | ~0.7 job-min/PR, 0 slots/PR | #1774 |
+| 11 | Short-circuit `docker.Probe` on an empty socket | not yet quantified | #1775 |
+| 12 | Gate `docs-check`/`aws-operation-coverage` on `changes` | ~1.5 job-minutes saved on prose PRs | #1778 |
+| 13 | `OVERCAST_COMPAT_PARALLEL_SLOTS: 16` for `cli` | ~2 minutes off the compat wall clock | #1777 |
+| 14 | `timeout-minutes` everywhere | not yet quantified | #1778 (test.yml), #1777 (elsewhere) |
+| 15 | `fail-fast: true` on `cross-build` | not yet quantified | #1777 |
+
+### Do not do
+
+Each of these was considered and rejected. The measurement or incident that
+settles it is recorded so nobody re-proposes it without seeing why.
+
+- **Scope the tag matrix to directly-differing packages, again.** Repeats the
+  "Scoping the tag matrix" finding above with narrower numbers: even the
+  narrowest set, `slim`, differs in only 5 packages directly, but pulls in 58
+  of the 165 packages in the test closure because all of them import
+  `internal/router`; `slim,nosqlite` closes to 131/165, `slim,dev` to 118/165.
+  The narrowest closure still retains about 530 s of the 749 s spent in the
+  eight slowest packages. Deriving that closure with `go list -test` costs 10 s
+  on its own, against well under a 15% runtime cut. Settled.
+- **Collapse `cross-build` into one job.** Reconfirms proposal D above: ten
+  sequential builds run about 250 s and would replace `coverage` as the
+  critical path, and GOCACHE cannot be shared across GOOS/GOARCH targets, so
+  per-target cache keys are the correct form regardless of job count.
+- **Drop `-count=1` from the Go test invocations.** The Go test cache has no
+  model of Docker daemon state, container images, allocated ports, or
+  `t.TempDir()` contents, so a cached "pass" from an earlier, differently
+  provisioned run is not evidence that the current environment behaves the
+  same way.
+- **Run only `go vet` across the build-tags matrix.** Already settled above
+  under "What not to cut": each tag changes real behavior (`slim` changes
+  routing and embedding, `nosqlite` swaps the store implementation, `dev`
+  swaps the capability registry), so a vet-only pass keeps the compile check
+  and loses the behavioral one.
+- **Remove `Vet` as its own job because `Lint` already runs govet.** Already
+  settled above: it costs 62 s, runs fully in parallel, and sits off the
+  critical path. Removing it buys nothing worth the argument.
+- **Set `OVERCAST_COMPAT_SKIP_DOCKER` in CI.** `compat.yml:481-485` records why
+  not: the one time it was set there, the Lambda invocation and event-source
+  mapping tests kept passing while the emulator answered from its stub, so the
+  suite reported green on behaviour it had stopped exercising. The flag exists
+  for a contributor's machine without a daemon, never for the runner.
+- **Drop `compat.yml` from `push: main`.** That push run is what produces the
+  baseline-promotion PR (`compat/baseline/*.json`), which item 2 above exists
+  to make cheap to merge. Removing the trigger removes baseline promotion
+  itself, not just its cost.
+- **Add `paths-ignore` to a workflow carrying a required check.** This is the
+  failure mode `ci-scope.py` was built to avoid (see "Tier 3" above): a
+  `paths-ignore`d workflow never reports for a filtered-out PR, and a required
+  check that never reports blocks the PR indefinitely. `compat.yml:31-38`
+  carries a comment recording the #719 incident this caused.
+- **Remove the `run_id` concurrency fallback for non-PR events
+  (`test.yml:29-45`).** Already measured above, under proposal A's 2026-08-23
+  amendment: falling back to `github.ref` for push events dropped 60 of 104
+  push runs to `main` on 2026-08-22, with no job ever started for the dropped
+  runs. The `run_id` fallback is the fix for that incident, not a candidate
+  for removal.
+- **Use `t.Parallel()` on Docker-backed tests.** These tests manage real
+  containers, networks and ports, which is shared mutable state that Go's test
+  parallelism does not coordinate. Running them concurrently would trade the
+  wall clock saved for Docker daemon contention and port collisions.
+- **Make the compat `cli` suite a persistent process instead of one invocation
+  per test.** `aws` has no daemon mode; the equivalent is a resident Python
+  process holding a botocore session. That would exercise botocore, not the
+  CLI: its argument parsing, shorthand syntax, blob handling and `--output`
+  formatting are exactly what the column proves, so this is a coverage change
+  dressed as a speed change. Tune the slot count (item 13) and trim `--debug`
+  where the HTTP status is not the assertion instead.
