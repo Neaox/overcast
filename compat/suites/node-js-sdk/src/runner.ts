@@ -33,6 +33,7 @@ import {
   validateImpls,
 } from "./lib/registry.ts";
 import type { ImplMap } from "./lib/registry.ts";
+import { makeScenarioSupport } from "./lib/scenario/backend.ts";
 import { makeAllGroups, makeImplMap } from "./groups/index.ts";
 
 const SUITE = "node-js-sdk";
@@ -100,11 +101,20 @@ try {
   process.exit(1);
 }
 
+// The generated half of the registry (registry.generated.json): groups with
+// no static impl here, executed from the scenario IR they name. The backend is
+// consulted only for a test nothing above implements, and it supplies the
+// group's setup/teardown from the same scenario file — see lib/scenario/.
+const scenario = makeScenarioSupport(registry, { suite: SUITE });
+Object.assign(setup, scenario.setup);
+Object.assign(teardown, scenario.teardown);
+
 const allGroups = buildGroupsFromRegistry(registry, impls, {
   suite: SUITE,
   capabilities: skipDocker ? [] : ["docker"],
   setup,
   teardown,
+  scenarioBackend: scenario.backend,
 });
 
 const isInteractive = process.env.OVERCAST_COMPAT_INTERACTIVE === "1";

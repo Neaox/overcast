@@ -11,17 +11,22 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// The G0 acceptance gate: an empty generated registry changes nothing
+// The G0 acceptance gate: the generated registry changes nothing
 // ---------------------------------------------------------------------------
 
-// TestEmptyGeneratedRegistryLeavesGatesUnchanged is the phase's acceptance
-// gate, asserted directly. The generated sibling ships empty and stays empty
-// until cmd/compatgen exists, so every gate must produce byte-for-byte the same
-// verdict as it did before the file existed. If this test ever fails, the
-// harness started treating "the file is there" as a signal in itself.
-func TestEmptyGeneratedRegistryLeavesGatesUnchanged(t *testing.T) {
-	// Given: a run with one pass and one fail, and the empty generated
-	// registry that this PR checks in.
+// TestCheckedInGeneratedRegistryLeavesGatesUnchanged is the G0 acceptance
+// gate, asserted directly against the file that is actually checked in.
+//
+// It shipped empty through G0 and asserted emptiness; from G2 it carries the
+// pilot groups, every one of them `candidate` (#1113 phase G2). What the gate
+// was always about survives that unchanged: every gate must produce
+// byte-for-byte the same verdict as it did before the file existed. If this
+// test fails, either the harness started treating "the file is there" as a
+// signal in itself, or a group was promoted to `gated` — which is a real
+// change to what the gates cover, and belongs in the PR that promotes it.
+func TestCheckedInGeneratedRegistryLeavesGatesUnchanged(t *testing.T) {
+	// Given: a run with one pass and one fail, and the generated registry as
+	// checked in.
 	report := reportWithResults(
 		resultSpec{suite: "go-sdk", service: "s3", group: "s3-crud", test: "CreateBucket", status: compat.StatusPass},
 		resultSpec{suite: "go-sdk", service: "s3", group: "s3-crud", test: "DeleteBucket", status: compat.StatusFail},
@@ -35,45 +40,52 @@ func TestEmptyGeneratedRegistryLeavesGatesUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readGeneratedRegistry: %v", err)
 	}
-	if len(gen.Groups) != 0 {
-		t.Fatalf("checked-in generated registry has %d group(s); G0 ships it empty", len(gen.Groups))
+	for _, g := range gen.Groups {
+		if g.State != generatedStateCandidate {
+			t.Fatalf("checked-in generated group %s is %q, not %q — promoting a group changes what the gates cover, so this gate has to be revisited alongside it",
+				g.Name, g.State, generatedStateCandidate)
+		}
 	}
 
-	// When: each gate is asked with the empty registry and with no registry
-	// at all.
-	empty := gen.candidateGroups()
+	// When: each gate is asked with the checked-in registry and with no
+	// registry at all.
+	candidates := gen.candidateGroups()
 	none := candidateSet{}
 
-	withFile := compareBaselineWith(baseline, report, flakySet{}, empty)
+	withFile := compareBaselineWith(baseline, report, flakySet{}, candidates)
 	withoutFile := compareBaselineWith(baseline, report, flakySet{}, none)
 	if !equalStrings(withFile, withoutFile) {
-		t.Errorf("--compare-baseline differs with the empty generated registry:\n with = %#v\n without = %#v", withFile, withoutFile)
+		t.Errorf("--compare-baseline differs with the checked-in generated registry:\n with = %#v\n without = %#v", withFile, withoutFile)
 	}
 	if len(withFile) != 1 {
 		t.Errorf("regressions = %#v, want the DeleteBucket regression", withFile)
 	}
 
-	failWith := failuresOverLimit(report, flakySet{}, empty, 0)
+	failWith := failuresOverLimit(report, flakySet{}, candidates, 0)
 	failWithout := failuresOverLimit(report, flakySet{}, none, 0)
 	if !equalStrings(failWith, failWithout) {
-		t.Errorf("--max-failures differs with the empty generated registry:\n with = %#v\n without = %#v", failWith, failWithout)
+		t.Errorf("--max-failures differs with the checked-in generated registry:\n with = %#v\n without = %#v", failWith, failWithout)
 	}
 	if len(failWith) != 1 {
 		t.Errorf("failures = %#v, want the DeleteBucket failure", failWith)
 	}
 
-	updWith := updateBaselineWith(baseline, report, flakySet{}, empty)
+	updWith := updateBaselineWith(baseline, report, flakySet{}, candidates)
 	updWithout := updateBaselineWith(baseline, report, flakySet{}, none)
 	if len(updWith.Entries) != len(updWithout.Entries) {
-		t.Errorf("--update-baseline differs with the empty generated registry: %d vs %d entries",
+		t.Errorf("--update-baseline differs with the checked-in generated registry: %d vs %d entries",
 			len(updWith.Entries), len(updWithout.Entries))
 	}
 }
 
-// TestEmptyGeneratedRegistryLeavesParityUnchanged is the parity half of the
-// same gate: concatenating an empty sibling must leave the checker's verdict
-// identical, including the reverse (unregistered-result) direction.
-func TestEmptyGeneratedRegistryLeavesParityUnchanged(t *testing.T) {
+// TestCheckedInGeneratedRegistryLeavesParityUnchanged is the parity half of
+// the same gate: concatenating the sibling must leave the checker's verdict
+// identical, including the reverse (unregistered-result) direction. It held
+// trivially while the file was empty; it holds now because `suites` scopes a
+// generated group to the backends that can run it, and rust-sdk is not one —
+// which is the property worth pinning, and the one TestGeneratedSuiteScoping-
+// AddsNoParityDebt proves on a fixture.
+func TestCheckedInGeneratedRegistryLeavesParityUnchanged(t *testing.T) {
 	// Given: the hand-written registry and a run against it.
 	report := reportWithResults(
 		resultSpec{suite: "rust-sdk", service: "s3", group: "s3-crud", test: "CreateBucket", status: compat.StatusPass},
@@ -83,25 +95,25 @@ func TestEmptyGeneratedRegistryLeavesParityUnchanged(t *testing.T) {
 	hand := testRegistry()
 	handOnly := computeParity(hand, report, []string{"rust-sdk"})
 
-	// When: the empty checked-in sibling is concatenated in.
+	// When: the checked-in sibling is concatenated in.
 	concat, err := readParityRegistries(
 		writeTempJSON(t, "registry.json", hand),
 		repoPath(t, "compat", "suites", "registry.generated.json"))
 	if err != nil {
 		t.Fatalf("readParityRegistries: %v", err)
 	}
-	withEmpty := computeParity(concat, report, []string{"rust-sdk"})
+	withSibling := computeParity(concat, report, []string{"rust-sdk"})
 
 	// Then: nothing moves.
-	if withEmpty.Expected != handOnly.Expected || withEmpty.Implemented != handOnly.Implemented {
+	if withSibling.Expected != handOnly.Expected || withSibling.Implemented != handOnly.Implemented {
 		t.Errorf("expected/implemented = %d/%d, want %d/%d",
-			withEmpty.Expected, withEmpty.Implemented, handOnly.Expected, handOnly.Implemented)
+			withSibling.Expected, withSibling.Implemented, handOnly.Expected, handOnly.Implemented)
 	}
-	if len(withEmpty.Debt) != len(handOnly.Debt) {
-		t.Errorf("debt = %#v, want %#v", withEmpty.Debt, handOnly.Debt)
+	if len(withSibling.Debt) != len(handOnly.Debt) {
+		t.Errorf("debt = %#v, want %#v", withSibling.Debt, handOnly.Debt)
 	}
-	if len(withEmpty.Unregistered) != 0 {
-		t.Errorf("unregistered = %#v, want none", withEmpty.Unregistered)
+	if len(withSibling.Unregistered) != 0 {
+		t.Errorf("unregistered = %#v, want none", withSibling.Unregistered)
 	}
 }
 

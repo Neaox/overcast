@@ -45,7 +45,17 @@ const CREDENTIALS = {
   secretAccessKey: "overcast",
 } as const
 
-function baseConfig(ctx: Pick<TestContext, "endpoint" | "region">) {
+/**
+ * The client configuration every group in this suite uses — endpoint,
+ * credentials, region and the HTTP/1.1 handler, and nothing else.
+ *
+ * Exported so the scenario interpreter (lib/scenario/client.ts), which builds
+ * its clients by dynamic import rather than from the map below, configures
+ * them identically instead of keeping a second copy of the rules. There has to
+ * be exactly one answer in this suite to "how is a client configured", or the
+ * separation boundary holds only for the groups that import this file.
+ */
+export function clientConfig(ctx: Pick<TestContext, "endpoint" | "region">) {
   return {
     endpoint: ctx.endpoint,
     region: ctx.region,
@@ -98,7 +108,7 @@ export interface Clients {
  * is needed for test suites.
  */
 export function makeClients(ctx: Pick<TestContext, "endpoint" | "region">): Clients {
-  const cfg = baseConfig(ctx)
+  const cfg = clientConfig(ctx)
   return {
     s3: new S3Client({ ...cfg, forcePathStyle: true }),
     sqs: new SQSClient(cfg),
