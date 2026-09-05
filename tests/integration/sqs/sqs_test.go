@@ -2201,10 +2201,11 @@ func TestReceiveMessage_fifo_messageGroupBlocking(t *testing.T) {
 	})
 	resp2.Body.Close()
 
-	// When: first receive — should get a-0 (first from group-a) and b-0 (first from group-b)
+	// When: a receive takes a single message, putting group-a in flight
 	rcv1 := sqsCall(t, srv, "ReceiveMessage", map[string]any{
 		"QueueUrl":            queueURL,
-		"MaxNumberOfMessages": 10,
+		"MaxNumberOfMessages": 1,
+		"VisibilityTimeout":   60,
 	})
 	defer rcv1.Body.Close()
 	helpers.AssertStatus(t, rcv1, http.StatusOK)
@@ -2216,21 +2217,37 @@ func TestReceiveMessage_fifo_messageGroupBlocking(t *testing.T) {
 	}
 	helpers.DecodeJSON(t, rcv1, &result1)
 
-	// Then: should get 2 messages — one from each group (group-a is blocked after first)
-	if len(result1.Messages) != 2 {
-		t.Fatalf("expected 2 messages (one per group), got %d", len(result1.Messages))
+	// Then: it is a-0, the head of the first group
+	if len(result1.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result1.Messages))
+	}
+	if result1.Messages[0].Body != "a-0" {
+		t.Fatalf("expected a-0 first, got %q", result1.Messages[0].Body)
 	}
 
-	// The two messages should be a-0 and b-0 (group-a[1] is blocked)
-	bodies := map[string]bool{}
-	for _, m := range result1.Messages {
-		bodies[m.Body] = true
+	// When: a second receive asks for everything available
+	rcv2 := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+		"QueueUrl":            queueURL,
+		"MaxNumberOfMessages": 10,
+		"VisibilityTimeout":   60,
+	})
+	defer rcv2.Body.Close()
+	helpers.AssertStatus(t, rcv2, http.StatusOK)
+
+	var result2 struct {
+		Messages []struct {
+			Body string `json:"Body"`
+		} `json:"Messages"`
 	}
-	if !bodies["a-0"] {
-		t.Error("expected message a-0 from group-a")
+	helpers.DecodeJSON(t, rcv2, &result2)
+
+	// Then: only b-0 comes back — a-1 stays behind its group's in-flight a-0,
+	// while group-b is free to be consumed concurrently
+	if len(result2.Messages) != 1 {
+		t.Fatalf("expected 1 message from the unblocked group, got %d", len(result2.Messages))
 	}
-	if !bodies["b-0"] {
-		t.Error("expected message b-0 from group-b")
+	if result2.Messages[0].Body != "b-0" {
+		t.Errorf("expected b-0 from group-b, got %q", result2.Messages[0].Body)
 	}
 }
 

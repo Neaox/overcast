@@ -108,8 +108,8 @@ type messageBackend interface {
 	// path storage-plan.md 3.10 exists to fix.
 	//
 	// Callers must be prepared to see fewer than `limit` results even when
-	// more visible messages exist beyond a group-blocked/duplicate-group
-	// prefix — see selectVisibleMessages' retry-with-larger-limit loop,
+	// more visible messages exist beyond a group-blocked prefix — see
+	// selectVisibleMessages' retry-with-larger-limit loop,
 	// which is how FIFO's group-locking is reconciled with a bounded SQL
 	// fetch without re-implementing AWS ordering/grouping semantics in SQL.
 	receiveCandidates(ctx context.Context, region, queueName string, now time.Time, limit int, fifo bool) ([]*Message, error)
