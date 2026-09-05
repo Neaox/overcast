@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/overcast-sh/overcast/internal/awsmodel"
 )
 
 // Every test here runs against the `widgets` fixture under testdata/ or
@@ -279,17 +281,17 @@ func comment(t *testing.T, block map[string]any) string {
 // sub-noun clustering, the @paginated.items rule and the tag-operation
 // hint are all exercised without the corpus.
 func queueLikeModel() *serviceModel {
-	shape := func(kind string, members map[string]modelMember, traits map[string]json.RawMessage) modelShape {
-		return modelShape{Type: kind, Members: members, Traits: traits}
+	shape := func(kind string, members map[string]awsmodel.SnapshotMember, traits map[string]json.RawMessage) awsmodel.SnapshotShape {
+		return awsmodel.SnapshotShape{Type: kind, Members: members, Traits: traits}
 	}
 	required := map[string]json.RawMessage{"smithy.api#required": json.RawMessage("{}")}
-	str := func(traits map[string]json.RawMessage) modelMember {
-		return modelMember{Target: "smithy.api#String", Traits: traits}
+	str := func(traits map[string]json.RawMessage) awsmodel.SnapshotMember {
+		return awsmodel.SnapshotMember{Target: "smithy.api#String", Traits: traits}
 	}
-	op := func(input, output string, errs ...string) modelShape {
-		return modelShape{Type: "operation", Input: input, Output: output, Errors: errs}
+	op := func(input, output string, errs ...string) awsmodel.SnapshotShape {
+		return awsmodel.SnapshotShape{Type: "operation", Input: input, Output: output, Errors: errs}
 	}
-	shapes := map[string]modelShape{
+	shapes := map[string]awsmodel.SnapshotShape{
 		"CreateQueue":        op("CreateQueueRequest", "CreateQueueResult"),
 		"DeleteQueue":        op("QueueUrlRequest", "smithy.api#Unit", "QueueDoesNotExist"),
 		"GetQueueAttributes": op("QueueUrlRequest", "GetQueueAttributesResult", "InvalidAddress", "QueueDoesNotExist"),
@@ -299,13 +301,13 @@ func queueLikeModel() *serviceModel {
 		"TagQueue":           op("QueueUrlRequest", "smithy.api#Unit"),
 		"UntagQueue":         op("QueueUrlRequest", "smithy.api#Unit"),
 
-		"CreateQueueRequest":       shape("structure", map[string]modelMember{"QueueName": str(required)}, nil),
-		"CreateQueueResult":        shape("structure", map[string]modelMember{"QueueUrl": str(nil)}, nil),
-		"QueueUrlRequest":          shape("structure", map[string]modelMember{"QueueUrl": str(required)}, nil),
-		"GetQueueAttributesResult": shape("structure", map[string]modelMember{"Attributes": {Target: "AttributeMap"}}, nil),
-		"ListQueueTagsResult":      shape("structure", map[string]modelMember{"Tags": {Target: "AttributeMap"}}, nil),
-		"ListQueuesResult":         shape("structure", map[string]modelMember{"NextToken": str(nil), "QueueUrls": {Target: "QueueUrlList"}}, nil),
-		"SetQueueAttributesRequest": shape("structure", map[string]modelMember{
+		"CreateQueueRequest":       shape("structure", map[string]awsmodel.SnapshotMember{"QueueName": str(required)}, nil),
+		"CreateQueueResult":        shape("structure", map[string]awsmodel.SnapshotMember{"QueueUrl": str(nil)}, nil),
+		"QueueUrlRequest":          shape("structure", map[string]awsmodel.SnapshotMember{"QueueUrl": str(required)}, nil),
+		"GetQueueAttributesResult": shape("structure", map[string]awsmodel.SnapshotMember{"Attributes": {Target: "AttributeMap"}}, nil),
+		"ListQueueTagsResult":      shape("structure", map[string]awsmodel.SnapshotMember{"Tags": {Target: "AttributeMap"}}, nil),
+		"ListQueuesResult":         shape("structure", map[string]awsmodel.SnapshotMember{"NextToken": str(nil), "QueueUrls": {Target: "QueueUrlList"}}, nil),
+		"SetQueueAttributesRequest": shape("structure", map[string]awsmodel.SnapshotMember{
 			"Attributes": {Target: "AttributeMap", Traits: required},
 			"QueueUrl":   str(required),
 		}, nil),
@@ -322,7 +324,7 @@ func queueLikeModel() *serviceModel {
 	}
 	shapes["ListQueues"] = listQueues
 
-	model := &serviceModel{shapeSnapshot: shapeSnapshot{Service: "queues", Shapes: shapes}}
+	model := &serviceModel{Snapshot: awsmodel.Snapshot{Service: "queues", Shapes: shapes}}
 	for name, s := range shapes {
 		if s.Type == "operation" {
 			model.operationNames = append(model.operationNames, name)
