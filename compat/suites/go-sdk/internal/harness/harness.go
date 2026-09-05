@@ -180,34 +180,61 @@ type GroupResult struct {
 func RunGroup(ctx context.Context, group TestGroup, t *TestContext) GroupResult {
 	var res GroupResult
 
+	if runSetup(ctx, group, t, &res) {
+		runTests(ctx, group, t, &res)
+	}
+
+	// Teardown phase (always runs). A setup that failed halfway has already
+	// created some of what it was going to create, and that is exactly the
+	// run that leaks: the tests were all skipped, so nothing else will ever
+	// delete it.
+	if group.Teardown != nil {
+		if err := group.Teardown(ctx, t); err != nil {
+			fmt.Fprintf(os.Stderr, "harness: teardown %q: %v\n", group.Name, err)
+		}
+	}
+
+	return res
+}
+
+// runSetup runs a group's setup, if it has one. It reports whether the tests
+// should run: a setup failure emits one skip per test and returns false, and
+// RunGroup still runs teardown — the IR's rule (compat/model/README.md § The
+// scenario file).
+func runSetup(ctx context.Context, group TestGroup, t *TestContext, res *GroupResult) bool {
+	if group.Setup == nil {
+		return true
+	}
+	err := group.Setup(ctx, t)
+	if err == nil {
+		return true
+	}
+	reason := fmt.Sprintf("setup failed: %v", err)
+	for _, tc := range group.Tests {
+		emit(testResultEvent{
+			Event:      "test_result",
+			Suite:      group.Suite,
+			Service:    group.Service,
+			Group:      group.Name,
+			Test:       tc.Name,
+			Status:     "skip",
+			DurationMs: 0,
+			Error:      reason,
+		})
+		res.Skipped++
+	}
+	return false
+}
+
+// runTests runs every test in a group, honouring skips, na, cancellation and
+// the dependency gate.
+func runTests(ctx context.Context, group TestGroup, t *TestContext, res *GroupResult) {
 	// Tests that did not pass, so a test declaring one of them as a dependency
 	// is skipped rather than run against a prerequisite that never happened.
 	// "na" and cancelled are deliberately absent: neither says the resource a
 	// dependent needs is missing.
 	failedOrSkipped := map[string]bool{}
 
-	// Setup phase
-	if group.Setup != nil {
-		if err := group.Setup(ctx, t); err != nil {
-			reason := fmt.Sprintf("setup failed: %v", err)
-			for _, tc := range group.Tests {
-				emit(testResultEvent{
-					Event:      "test_result",
-					Suite:      group.Suite,
-					Service:    group.Service,
-					Group:      group.Name,
-					Test:       tc.Name,
-					Status:     "skip",
-					DurationMs: 0,
-					Error:      reason,
-				})
-				res.Skipped++
-			}
-			return res
-		}
-	}
-
-	// Run tests
 	for _, tc := range group.Tests {
 		if ctx.Err() != nil {
 			emit(cancelledEvent{Event: "cancelled", Suite: group.Suite, Group: group.Name, Test: tc.Name})
@@ -302,15 +329,6 @@ func RunGroup(ctx context.Context, group TestGroup, t *TestContext) GroupResult 
 
 		emit(ev)
 	}
-
-	// Teardown phase (always runs)
-	if group.Teardown != nil {
-		if err := group.Teardown(ctx, t); err != nil {
-			fmt.Fprintf(os.Stderr, "harness: teardown %q: %v\n", group.Name, err)
-		}
-	}
-
-	return res
 }
 
 // RunSuite executes all groups in parallel and emits run_start / run_end events.
