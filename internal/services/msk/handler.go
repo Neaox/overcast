@@ -25,6 +25,10 @@ const (
 	// a caller omit. Both create paths default to the same values.
 	defaultKafkaVersion = "3.5.1"
 	defaultBrokerNodes  = 3
+	// defaultEnhancedMonitoring is CreateCluster's documented default for the
+	// member, and what DescribeCluster reports for a cluster that never named
+	// one.
+	defaultEnhancedMonitoring = "DEFAULT"
 
 	clusterTypeProvisioned = "PROVISIONED"
 	clusterTypeServerless  = "SERVERLESS"
@@ -157,6 +161,24 @@ type provisionedInput struct {
 	KafkaVersion        string              `json:"kafkaVersion"`
 	NumberOfBrokerNodes int                 `json:"numberOfBrokerNodes"`
 	BrokerNodeGroupInfo BrokerNodeGroupInfo `json:"brokerNodeGroupInfo"`
+	// The remaining ProvisionedRequest members. v1 carries these at the top
+	// level and v2 under `provisioned`, exactly like the three above, so they
+	// are stored and echoed for both create paths from here. See Cluster for
+	// why they are recorded rather than acted on.
+	ClientAuthentication map[string]any     `json:"clientAuthentication"`
+	EncryptionInfo       map[string]any     `json:"encryptionInfo"`
+	LoggingInfo          map[string]any     `json:"loggingInfo"`
+	OpenMonitoring       map[string]any     `json:"openMonitoring"`
+	EnhancedMonitoring   string             `json:"enhancedMonitoring"`
+	StorageMode          string             `json:"storageMode"`
+	ConfigurationInfo    *configurationInfo `json:"configurationInfo"`
+}
+
+// configurationInfo is CreateCluster's configurationInfo member: which MSK
+// configuration revision the cluster should run.
+type configurationInfo struct {
+	Arn      string `json:"arn"`
+	Revision int64  `json:"revision"`
 }
 
 // applyTo writes the broker configuration onto a cluster record.
@@ -167,6 +189,41 @@ func (p *provisionedInput) applyTo(c *Cluster) {
 	}
 	c.NumberOfBrokerNodes = serviceutil.DefaultInt(p.NumberOfBrokerNodes, defaultBrokerNodes)
 	c.BrokerNodeGroupInfo = p.BrokerNodeGroupInfo
+	c.ClientAuthentication = p.ClientAuthentication
+	c.EncryptionInfo = p.EncryptionInfo
+	c.LoggingInfo = p.LoggingInfo
+	c.OpenMonitoring = p.OpenMonitoring
+	// DEFAULT is CreateCluster's own documented default for enhancedMonitoring,
+	// and DescribeCluster reports it on a cluster that never named one — so
+	// this reflects the request rather than standing in for it.
+	c.EnhancedMonitoring = p.EnhancedMonitoring
+	if c.EnhancedMonitoring == "" {
+		c.EnhancedMonitoring = defaultEnhancedMonitoring
+	}
+	c.StorageMode = p.StorageMode
+	if p.ConfigurationInfo != nil {
+		c.ConfigurationArn = p.ConfigurationInfo.Arn
+		c.ConfigurationRevision = p.ConfigurationInfo.Revision
+	}
+}
+
+// unenforcedConfigLimitation names the members a create recorded that the
+// Redpanda broker behind the cluster will not act on, or "" when the request
+// asked for none of them.
+//
+// Only the security-shaped pair is reported. A cluster carrying
+// clientAuthentication or encryptionInfo reads as authenticated and encrypted
+// from DescribeCluster while the broker in front of it has one plaintext
+// listener and no authorizer, and someone deploying against it should be told
+// so where they are looking — CloudFormation copies this onto the resource's
+// ResourceStatusReason. Monitoring and log-delivery settings make no such
+// promise about who can connect, so they are echoed without a caveat.
+func unenforcedConfigLimitation(c *Cluster) string {
+	if c.ClientAuthentication == nil && c.EncryptionInfo == nil {
+		return ""
+	}
+	return "Overcast: the cluster's clientAuthentication and encryptionInfo are stored and returned by DescribeCluster, " +
+		"but the broker behind it listens in plaintext with no authentication. Do not rely on this cluster to reject an unauthenticated client."
 }
 
 // mskARN mints an MSK ARN in the request's region. resource is everything after
@@ -328,6 +385,7 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 		h.settleClusterWithoutBroker(cluster.ClusterArn)
 	}
 
+	protocol.MarkLimitation(w, unenforcedConfigLimitation(cluster))
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"clusterArn":  cluster.ClusterArn,
 		"clusterName": cluster.ClusterName,
@@ -397,21 +455,60 @@ func (h *Handler) describeCluster(w http.ResponseWriter, r *http.Request, cluste
 // alongside it.
 func clusterV1View(c *Cluster, tags map[string]string) map[string]any {
 	view := map[string]any{
-		"clusterArn":          c.ClusterArn,
-		"clusterName":         c.ClusterName,
-		"state":               c.State,
-		"creationTime":        c.CreationTime,
-		"currentVersion":      c.CurrentVersion,
-		"numberOfBrokerNodes": c.NumberOfBrokerNodes,
-		"brokerNodeGroupInfo": c.BrokerNodeGroupInfo,
-		"currentBrokerSoftwareInfo": map[string]any{
-			"kafkaVersion": c.KafkaVersion,
-		},
+		"clusterArn":                c.ClusterArn,
+		"clusterName":               c.ClusterName,
+		"state":                     c.State,
+		"creationTime":              c.CreationTime,
+		"currentVersion":            c.CurrentVersion,
+		"numberOfBrokerNodes":       c.NumberOfBrokerNodes,
+		"brokerNodeGroupInfo":       c.BrokerNodeGroupInfo,
+		"currentBrokerSoftwareInfo": brokerSoftwareInfoView(c),
 	}
+	addRecordedClusterConfig(view, c)
 	if len(tags) > 0 {
 		view["tags"] = tags
 	}
 	return view
+}
+
+// brokerSoftwareInfoView is AWS's BrokerSoftwareInfo: the Kafka version and,
+// where a create named one, the MSK configuration revision the cluster runs.
+// It is the only place ClusterInfo exposes a cluster's configuration — AWS
+// binds no top-level configurationInfo member — so a caller reads back what
+// it asked for from here.
+func brokerSoftwareInfoView(c *Cluster) map[string]any {
+	info := map[string]any{"kafkaVersion": c.KafkaVersion}
+	if c.ConfigurationArn != "" {
+		info["configurationArn"] = c.ConfigurationArn
+		info["configurationRevision"] = c.ConfigurationRevision
+	}
+	return info
+}
+
+// addRecordedClusterConfig copies the members a create recorded but the broker
+// does not act on onto a response view. Both the v1 ClusterInfo and the v2
+// Provisioned shape bind all six under these names, so one function serves
+// both; an unset member is omitted rather than reported as a default nobody
+// asked for.
+func addRecordedClusterConfig(view map[string]any, c *Cluster) {
+	if c.ClientAuthentication != nil {
+		view["clientAuthentication"] = c.ClientAuthentication
+	}
+	if c.EncryptionInfo != nil {
+		view["encryptionInfo"] = c.EncryptionInfo
+	}
+	if c.LoggingInfo != nil {
+		view["loggingInfo"] = c.LoggingInfo
+	}
+	if c.OpenMonitoring != nil {
+		view["openMonitoring"] = c.OpenMonitoring
+	}
+	if c.EnhancedMonitoring != "" {
+		view["enhancedMonitoring"] = c.EnhancedMonitoring
+	}
+	if c.StorageMode != "" {
+		view["storageMode"] = c.StorageMode
+	}
 }
 
 // ── deleteCluster ─────────────────────────────────────────────────────────────
@@ -776,6 +873,7 @@ func (h *Handler) createClusterV2(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	protocol.MarkLimitation(w, unenforcedConfigLimitation(cluster))
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"clusterArn":  cluster.ClusterArn,
 		"clusterName": cluster.ClusterName,
@@ -887,13 +985,13 @@ func clusterV2View(c *Cluster, tags map[string]string) map[string]any {
 		view["tags"] = tags
 	}
 	if clusterType == clusterTypeProvisioned {
-		view["provisioned"] = map[string]any{
-			"numberOfBrokerNodes": c.NumberOfBrokerNodes,
-			"brokerNodeGroupInfo": c.BrokerNodeGroupInfo,
-			"currentBrokerSoftwareInfo": map[string]any{
-				"kafkaVersion": c.KafkaVersion,
-			},
+		provisioned := map[string]any{
+			"numberOfBrokerNodes":       c.NumberOfBrokerNodes,
+			"brokerNodeGroupInfo":       c.BrokerNodeGroupInfo,
+			"currentBrokerSoftwareInfo": brokerSoftwareInfoView(c),
 		}
+		addRecordedClusterConfig(provisioned, c)
+		view["provisioned"] = provisioned
 	} else {
 		view["serverless"] = map[string]any{}
 	}

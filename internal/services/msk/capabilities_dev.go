@@ -8,7 +8,7 @@ func init() {
 	capabilities.Default.Register(
 		// Clusters
 		capabilities.Capability{Service: "msk", Operation: "CreateCluster", Category: "Clusters",
-			Status: capabilities.StatusSupported, Notes: "Docker-backed (Redpanda); async CREATING→ACTIVE once the broker answers `ApiVersions`; a broker that never answers ends in `FAILED` with `stateInfo`; port auto-alloc from MSK_PORT_BASE; a cluster name already in use in the region is a `ConflictException`"},
+			Status: capabilities.StatusSupported, Notes: "Docker-backed (Redpanda); async CREATING→ACTIVE once the broker answers `ApiVersions`; a broker that never answers ends in `FAILED` with `stateInfo`; port auto-alloc from MSK_PORT_BASE; a cluster name already in use in the region is a `ConflictException`. `clientAuthentication`, `encryptionInfo`, `configurationInfo`, `loggingInfo`, `enhancedMonitoring`, `openMonitoring` and `storageMode` are stored and echoed by describe but not enforced — the broker listens in plaintext, and a request setting the first two is answered with an emulation-limitation header saying so"},
 		capabilities.Capability{Service: "msk", Operation: "DescribeCluster", Category: "Clusters",
 			Status: capabilities.StatusSupported, Notes: "Look up cluster by ARN"},
 		capabilities.Capability{Service: "msk", Operation: "ListClusters", Category: "Clusters",
@@ -18,7 +18,7 @@ func init() {
 		capabilities.Capability{Service: "msk", Operation: "GetBootstrapBrokers", Category: "Clusters",
 			Status: capabilities.StatusSupported, Notes: "Returns `bootstrapBrokerString` with allocated host:port when Docker container is running"},
 		capabilities.Capability{Service: "msk", Operation: "CreateClusterV2", Category: "Clusters",
-			Status: capabilities.StatusSupported, Notes: "PROVISIONED: same Docker/Redpanda lifecycle as v1; SERVERLESS: metadata-only, immediately ACTIVE; rejects a request naming both or neither; shares one cluster-name namespace with `CreateCluster`, so a name already in use is a `ConflictException`"},
+			Status: capabilities.StatusSupported, Notes: "PROVISIONED: same Docker/Redpanda lifecycle as v1, and the same stored-but-unenforced `provisioned` members as `CreateCluster`; SERVERLESS: metadata-only, immediately ACTIVE; rejects a request naming both or neither; shares one cluster-name namespace with `CreateCluster`, so a name already in use is a `ConflictException`"},
 		capabilities.Capability{Service: "msk", Operation: "DescribeClusterV2", Category: "Clusters",
 			Status: capabilities.StatusSupported, Notes: "Returns v2 shape with `clusterType` and `provisioned`/`serverless` sub-object"},
 		capabilities.Capability{Service: "msk", Operation: "ListClustersV2", Category: "Clusters",
