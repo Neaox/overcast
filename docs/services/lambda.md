@@ -65,7 +65,7 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 | X-Ray tracing      | Traces recorded                    | `TracingConfig` stored and returned; no segment is ever recorded                                                              |
 | `EphemeralStorage` | Size enforced                      | Stored; `/tmp` gets whatever the Docker host gives it                                                                         |
 | `KMSKeyArn`        | Encrypted at rest                  | An association only — environment variables are stored in plaintext                                                           |
-| Resource policies  | Enforced                           | `AddPermission` stores and validates statements; nothing is enforced at invoke time                                           |
+| Resource policies  | Enforced                           | `AddPermission` and `PutResourcePolicy` store and validate statements; nothing is enforced at invoke time                     |
 | Concurrency        | Account-wide quotas and RPS limits | Per-function reserved concurrency only. The instance and memory limits protect your machine; they are not AWS's account quota |
 | Cold-start latency | Real                               | Not simulated                                                                                                                 |
 | SnapStart          | Supported                          | Not emulated; no restore records                                                                                              |
@@ -129,7 +129,7 @@ new SQSClient({ endpoint: process.env.AWS_ENDPOINT_URL });
 
 ## Operations
 
-57 of 59 listed operations are implemented.
+60 of 62 listed operations are implemented.
 Per-operation status, notes and AWS API links: [Lambda operations](lambda/operations.md).
 
 <!-- END overcast:capabilities -->

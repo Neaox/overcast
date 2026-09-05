@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1469,
+  "total_ops": 1472,
   "services": [
     {
       "service": "s3",
@@ -626,8 +626,8 @@
     {
       "service": "lambda",
       "display_name": "Lambda",
-      "total_ops": 59,
-      "implemented_ops": 57,
+      "total_ops": 62,
+      "implemented_ops": 60,
       "operations": [
         {
           "operation": "ListFunctions",
@@ -706,6 +706,24 @@
           "category": "Resource-based policies",
           "status": "✅ Supported",
           "notes": "Removes a statement by ID; supports revision preconditions"
+        },
+        {
+          "operation": "GetResourcePolicy",
+          "category": "Resource-based policies",
+          "status": "✅ Supported",
+          "notes": "Returns the same policy document and revision ID GetPolicy does, addressed by function, version or alias ARN; ResourceNotFoundException when the resource carries no policy"
+        },
+        {
+          "operation": "PutResourcePolicy",
+          "category": "Resource-based policies",
+          "status": "⚠️ Partial",
+          "notes": "Replaces the whole policy, statements AddPermission wrote included, and preserves the full IAM statement grammar — explicit Deny, list-valued Action/Resource/Principal, arbitrary condition keys — so a document survives a Put/Get round trip unchanged; a stale RevisionId answers PreconditionFailedException and a policy over 20 KB PolicyLengthExceededException; a statement allowing every principal with no condition is refused with PublicPolicyException, unconditionally, because there is no PutPublicAccessBlockConfig here to relax it with; statements are never enforced at invoke time (#629)"
+        },
+        {
+          "operation": "DeleteResourcePolicy",
+          "category": "Resource-based policies",
+          "status": "✅ Supported",
+          "notes": "Deletes the whole policy, statements added by AddPermission included; the RevisionId query parameter is a precondition; ResourceNotFoundException when there is no policy to delete"
         },
         {
           "operation": "CreateCodeSigningConfig",

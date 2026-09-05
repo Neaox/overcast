@@ -27,7 +27,7 @@ carries the detail.
 | SnapStart | Not emulated — no restore records; `platform.runtimeDone` reports only `responseLatency` | [Logging](./logging.md) |
 | `LoggingConfig: {}` (explicitly empty) | `UpdateFunctionConfiguration` returns `501` | [Logging](./logging.md) |
 | `TracingConfig` / `EphemeralStorage` / `KMSKeyArn` | Stored and returned, never enforced | Below |
-| Resource policies | `AddPermission` stores and validates; statements are not evaluated at invoke time | Below |
+| Resource policies | Stored and validated; statements are not evaluated at invoke time, and `PutResourcePolicy` always refuses a public policy | Below |
 | Update status | Every update but an image `UpdateFunctionCode` answers `Successful` rather than `InProgress` | Below |
 | Unqualified `DeleteFunction` | Removes the function record; versions, aliases and version counters are left behind | Below |
 | Tagging | Functions and event source mappings only; other taggable resources return `501` | Below |
