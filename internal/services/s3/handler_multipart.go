@@ -398,9 +398,14 @@ func (h *Handler) AbortMultipartUpload(w http.ResponseWriter, r *http.Request) {
 // listMax clamps a requested MaxParts/MaxUploads value to AWS's documented
 // default-and-cap of 1000 for both ListParts and ListMultipartUploads (the
 // same numeric limit also serves as the default when the client omits the
-// parameter or supplies a non-positive value — mirrors the existing
-// max-keys handling in handler_bucket.go, and Cognito's local pageBounds
+// parameter or supplies a non-positive value — Cognito's local pageBounds
 // convention for a non-opaque, per-operation clamp).
+//
+// This is deliberately *not* handler_bucket.go's parseMaxKeys: max-parts and
+// max-uploads have not been reviewed against AWS's validation behaviour yet,
+// so they keep the older permissive reading (a malformed or negative value
+// becomes the default) rather than inheriting max-keys' InvalidArgument
+// rejections on the strength of a family resemblance.
 func listMax(requested int) int {
 	if requested <= 0 || requested > 1000 {
 		return 1000

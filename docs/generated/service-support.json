@@ -119,7 +119,7 @@
           "operation": "ListObjectsV2",
           "category": "Objects",
           "status": "✅ Supported",
-          "notes": "Supports prefix, delimiter, max-keys, start-after, and continuation-token pagination"
+          "notes": "prefix, delimiter, max-keys (validated, clamped to 1000), start-after, continuation-token, encoding-type=url and fetch-owner; x-amz-request-payer and x-amz-optional-object-attributes accepted but Requester Pays and RestoreStatus are not emulated"
         },
         {
           "operation": "DeleteObjects",
@@ -131,7 +131,7 @@
           "operation": "ListObjects",
           "category": "Objects",
           "status": "✅ Supported",
-          "notes": "Marker-based pagination; supports prefix, delimiter"
+          "notes": "Marker-based pagination; supports prefix, delimiter, encoding-type=url and the same max-keys validation as ListObjectsV2"
         },
         {
           "operation": "GetObjectAttributes",
@@ -142,7 +142,8 @@
         {
           "operation": "PutObjectTagging",
           "category": "Objects",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Up to 10 tags, unique keys, key 1-128 and value 0-256 characters; the tag character set is not validated"
         },
         {
           "operation": "GetObjectTagging",
@@ -267,7 +268,8 @@
         {
           "operation": "PutBucketTagging",
           "category": "Tagging",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Up to 50 tags, unique keys, key 1-128 and value 0-256 characters; the tag character set is not validated"
         },
         {
           "operation": "DeleteBucketTagging",
