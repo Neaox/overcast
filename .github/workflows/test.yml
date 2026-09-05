@@ -214,11 +214,46 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.changes.outputs.code == 'true'
 
+      # A cache scope of its own, rather than setup-go's shared one.
+      #
+      # setup-go's `cache: true` keys on runner OS/arch, Go version and
+      # hash(go.sum) and nothing else, so every root-module job in a run
+      # computes the *same* key. Only one of them ever saves it — the first to
+      # miss — and the rest log "Cache hit occurred on the primary key …, not
+      # saving cache". In run 33924023153 the one that saved was
+      # `Docs and capability registry`, 29 s into a 23 s `make docs-check`;
+      # this job, all three `Test suite (-tags …)` legs, Vet, Lint,
+      # `Lambda invoke`, the SQS job and all ten Cross-build legs then restored
+      # what it had compiled and declined to save. The size of main's cache for
+      # a given go.sum says the same thing from the other side: 35.9 MB for the
+      # current generation of the key against 231 MB and 261 MB for two
+      # earlier ones. Which job wins the race decides what everyone restores.
+      #
+      # So the heavy jobs opt out and keep their own. `-race` in the key is not
+      # decoration: a race-instrumented build cache shares no object with a
+      # plain one, and this job compiles the whole module and every test binary
+      # in it that way. The restore-keys prefix means a go.sum bump degrades to
+      # the previous run's cache rather than to nothing, and — unlike the
+      # shared key — a prefix-only restore still saves at the end of the job,
+      # so the cache tracks this job's own output from then on.
+      #
+      # The short jobs stay on setup-go's default. They are the ones the shared
+      # cache was already good enough for.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: needs.changes.outputs.code == 'true'
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        if: needs.changes.outputs.code == 'true'
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-race-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-race-
 
       - name: Install dependencies
         if: needs.changes.outputs.code == 'true'
@@ -261,17 +296,43 @@ jobs:
         # `slim,dev` compiles in the per-service capabilities_dev.go inventories
         # and their //go:build dev cross-check tests (capabilities vs initOps
         # dispatch); without it that drift is invisible to CI.
-        tags: [slim, "slim,nosqlite", "slim,dev"]
+        #
+        # `include:` rather than the bare list this was, so each leg can name a
+        # cache scope below: actions/cache rejects a key containing a comma
+        # ("Key Validation Error: … cannot contain commas"), and the job name
+        # has to keep rendering `matrix.tags` verbatim because all three names
+        # are required checks.
+        include:
+          - tags: slim
+            cache-scope: slim
+          - tags: slim,nosqlite
+            cache-scope: slim-nosqlite
+          - tags: slim,dev
+            cache-scope: slim-dev
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.changes.outputs.code == 'true'
 
+      # A cache scope of its own, per tag set — see the long note on
+      # `coverage`. The same argument applies here and one more with it: each
+      # tag set produces its own objects, so three legs sharing one key would
+      # thrash it even if they were the only jobs using it.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: needs.changes.outputs.code == 'true'
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        if: needs.changes.outputs.code == 'true'
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-tags-${{ matrix.cache-scope }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-tags-${{ matrix.cache-scope }}-
 
       - name: Install dependencies
         if: needs.changes.outputs.code == 'true'
