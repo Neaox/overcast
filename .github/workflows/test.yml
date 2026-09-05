@@ -52,6 +52,31 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Every job below carries a `timeout-minutes` bar one, which cannot — see the
+# end of this note. GitHub's default is 360, so a hung `docker build`,
+# `pnpm install` or `docker pull` — none of which the Go suites' own
+# `-timeout=1200s` covers, because none of them is `go test` — sits on a runner
+# slot for six hours, and on a required check it sits on the pull request with
+# it.
+#
+# Each value is roughly two to three times what that job measured across three
+# green runs (33946645470, 33944965566, 33945978965), rounded up, with a
+# five-minute floor. These are ceilings for catching a hang, not budgets to run
+# against; a job that starts failing on one has grown, and the number should be
+# re-derived rather than nudged.
+#
+# Three sit above that band on purpose. `Lambda invoke (native host binary)`
+# ran 91 s, but its worst legitimate path — three image pulls with backoff, a
+# 30 s health wait and a 120 s wait for Active — is several times its median.
+# `Docker build (…)` ran 136 s, but on a release candidate it also builds two
+# platforms and pushes them, which none of the sampled runs did.
+# `Release candidate summary` was skipped in all three, so it has no
+# measurement at all.
+#
+# `Cross-build` has none and cannot: it calls a reusable workflow, where
+# `timeout-minutes` is not a permitted key — "only following keys are allowed:
+# name, uses, with, secrets, needs, if, and permissions" (actionlint
+# syntax-check). Its ceiling belongs in build-binaries.yml.
 jobs:
   # Does this pull request need the expensive jobs at all?
   #
@@ -87,6 +112,7 @@ jobs:
   changes:
     name: Changed-path scope
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       code: ${{ steps.scope.outputs.code }}
       rc: ${{ steps.rc.outputs.rc }}
@@ -161,6 +187,7 @@ jobs:
     name: Vet
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -209,6 +236,7 @@ jobs:
     name: Full test suite with coverage
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -308,6 +336,7 @@ jobs:
     name: Test suite (-tags ${{ matrix.tags }})
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     # Deliberately no `needs: web` and no download-artifact: dropping the
     # embedded SPA is the whole point of the slim build (embed_slim.go), so this
@@ -445,6 +474,7 @@ jobs:
     name: Lambda invoke (native host binary)
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -622,6 +652,7 @@ jobs:
     name: Lint
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.changes.outputs.code == 'true'
@@ -640,6 +671,7 @@ jobs:
   actionlint:
     name: Actionlint
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
@@ -652,6 +684,7 @@ jobs:
     name: Installers (${{ matrix.os }})
     needs: changes
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -693,6 +726,7 @@ jobs:
   script-tests:
     name: Script tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -769,6 +803,7 @@ jobs:
     name: Compat suite unit tests
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -890,6 +925,7 @@ jobs:
   changelog-check:
     name: Changelog fragments
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Lint fragments and enforce empty [Unreleased]
@@ -911,6 +947,7 @@ jobs:
     name: Docs and AWS operation coverage
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.changes.outputs.code == 'true'
@@ -949,6 +986,7 @@ jobs:
     name: Web UI
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Same two reasons to run as `docker`: a release candidate needs the SPA
     # built whatever the changed paths say, because cross-build consumes this
     # job's artifact.
@@ -1031,6 +1069,7 @@ jobs:
   version-guard:
     name: VERSION guard
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     env:
       RELEASE_BOT: overcast-release[bot]
     steps:
@@ -1088,6 +1127,7 @@ jobs:
     name: Docker build (${{ matrix.image }})
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # One condition, named once, because this job has two reasons to build and
     # six later steps that assume a checkout happened.
     #
@@ -1430,6 +1470,7 @@ jobs:
     needs: [changes, cross-build, docker]
     if: needs.changes.outputs.rc == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       pull-requests: write
       actions: read
