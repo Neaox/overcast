@@ -21,6 +21,7 @@ Generator: [cmd/compatgen/README.md](../../cmd/compatgen/README.md).
 | `promotions.go` | a human | package `compatmodel`: the Go shape of `promotions.json`, its version and its strict reader, shared by the one command that writes the ledger and the one that reads it |
 | `scenarios/<service>.json` | `cmd/compatgen` | the scenario IR, one file per service (`scenario.schema.json`) |
 | `gaps.json` | `cmd/compatgen` | every operation the generator refused, with a reason (`gaps.schema.json`) |
+| `testdata/errors/*.json` | a human | the shared error-matching conformance fixtures every interpreter's unit tests run — see [Errors](#errors) |
 | `../suites/registry.generated.json` | `cmd/compatgen` | the generated registry sibling every loader concatenates |
 
 `<service>` is the Overcast capability key, exactly as a registry group's
@@ -69,12 +70,23 @@ An interpreter runs one group as:
 1. Create an empty **context** — a map from context path to value.
 2. Run every `setup` call in order. A failure (an error, or an unresolvable
    `$ref`) reports every test in the group as `skip` with the reason
-   `setup failed: <error>`, then still runs teardown.
+   `setup failed: <message>`, where `<message>` is the failing step's own
+   [failure message](#failure-messages), all six fields of it.
 3. Run every test in order (the registry's `depends` gives the loader the
    same order and the usual dependency skip).
 4. Run every `teardown` call in order, each one individually wrapped: an
-   error or an unresolvable `$ref` skips that call and continues with the
-   next.
+   error or an unresolvable `$ref` skips that call — logged, not swallowed —
+   and the next one still runs. Teardown never fails a group.
+
+Every group carries both `setup` and `teardown`, and an **empty list is a
+no-op, not a missing phase**: a harness may register a hook that does nothing
+or register none at all, but nothing else may differ with the list's length.
+**Teardown runs after a failed setup**, in every backend. A setup that failed
+on its third step has already created what its first two made, and no test
+will run to remove it, so skipping teardown there is exactly when it is most
+needed. A probe group's two lists are empty by construction, which makes "a
+probe creates nothing" a property of the file rather than a convention each
+interpreter has to remember; each interpreter has a test asserting it.
 
 ### `client`
 
@@ -91,7 +103,7 @@ trait: the service was migrated from the Query protocol, and AWS still returns
 the Query error code in an `x-amzn-query-error` response header alongside the
 JSON body. It is present on every scenario, `true` or `false`, so that `false`
 and "this file predates the field" cannot be confused. What an interpreter
-does with it is under [Assertions](#assertions).
+does with it is under [Errors](#errors).
 
 ### A call
 
@@ -103,8 +115,7 @@ does with it is under [Assertions](#assertions).
 
 `op` is the AWS operation name; `params` is the input, member by member,
 each a [value](#values); `export` (optional) sets context paths from the
-response. An export whose path does not resolve in the response is an error
-for the step that carries it.
+response — see [Exports](#exports).
 
 ### A test
 
@@ -154,39 +165,109 @@ The set is closed. `kind` selects the fields.
 | Check | Holds when |
 | --- | --- |
 | `{"nonEmpty": true}` | the path resolves to a value that is not `null`, `""`, `[]` or `{}`; numbers and booleans are never empty |
-| `{"isList": true}` | the path resolves to a list, **empty or not** — or does not resolve at all. It exists because `nonEmpty` cannot say "this is a page of results": a single-page `List*` legally returns an empty page, and several AWS services (SQS's `ListQueues` among them) omit that member entirely rather than serialize `[]`, so a check that failed on absence would fail against real AWS. Absence is accepted for the same reason a missing list already counts as empty for `absent` and `listContains`; a present value that is not a list still fails the check |
-| `{"equals": <value>}` | the path resolves and the value is equal, as JSON, to the evaluated expression |
-| `{"matches": "<regex>"}` | the path resolves to a string matching the regular expression (RE2-compatible syntax; anchored only where the pattern anchors itself) |
-| `{"missing": true}` | the path does not resolve — any segment absent |
+| `{"isList": true}` | the path resolves to a list, **empty or not** — or does not resolve at all. It exists because `nonEmpty` cannot say "this is a page of results": a single-page `List*` legally returns an empty page |
+| `{"equals": <value>}` | the path resolves and the value is equal, as JSON, to the evaluated expression — by JSON type, with no coercion, so `1` never equals `"1"` and `true` never equals `1` |
+| `{"matches": "<regex>"}` | the path resolves to a string matching the regular expression (RE2-compatible syntax; anchored only where the pattern anchors itself). A pattern the interpreter's own engine will not compile fails the check as an ordinary mismatch — expected `pattern <p>`, actual `unsupported pattern: <why>` — never as an exception out of the evaluator |
+| `{"missing": true}` | the path does not resolve — any segment absent. A member the service sent as JSON `null` **resolves**, so `missing` fails on it, and so does `nonEmpty` |
+
+Everything that reads a list — `listContains`, `absent` in its list form and
+the `isList` check — treats **an absent list and an empty one alike, and a
+present non-list as a failure**. A service that omits an empty list member
+must not read differently from one that serializes `[]`, and several AWS
+services (SQS's `ListQueues` among them) do omit it. So absence passes
+`absent` and `isList` and fails `listContains`; a present value that is not a
+list fails all three.
 
 **`where`** maps an item-relative path to a value; `$` is the item itself
 (`{"$": {"$ref": "queue.url"}}` for a list of strings). An item matches when
 every entry is equal, as JSON.
 
-**`error`** carries the modeled `shape` name and the wire `code` (the
-`awsQueryError` code where the service declares one, else the shape name
-again — for SQS, `QueueDoesNotExist` and
-`AWS.SimpleQueueService.NonExistentQueue`). SDKs disagree on which of the two
-they surface, so an interpreter accepts an error whose reported code **or**
-type name equals **either**. An error whose code matches neither, or a call
-that succeeds, fails the clause.
-
-`client.awsQueryCompatible` says whether a third spelling can reach the
-interpreter. When it is `true`, AWS also returns the Query code in an
-`x-amzn-query-error` response header, as `<code>;<Sender|Receiver>` — a
-missing SQS queue answers
-`AWS.SimpleQueueService.NonExistentQueue;Sender`. An SDK that surfaces that
-header rather than the JSON `__type` therefore reports the code with a fault
-suffix on it, which matches neither accepted value literally, so an
-interpreter that reads the header splits on the first `;` and compares the
-code half on the same terms as the other two. When it is `false` there is no
-such header and the JSON `__type`/`code` is the only carrier.
+**`error`** carries the clause's two accepted spellings of one error — see
+[Errors](#errors).
 
 Equality "as JSON": compare the SDK's value after mapping it to JSON the way
 the SDK itself would (a boto3 `int` is a JSON number, a `bool` a boolean, a
-`dict` an object); the generator only ever emits an `equals` literal of the
-member's modeled kind, so no coercion is needed. Timestamps and blobs are
-never compared.
+`dict` an object), and then compare in the JSON type system directly. There is
+no coercion and none may be added: the generator only ever emits an `equals`
+literal of the member's modeled kind, so a cross-type comparison means the
+response disagrees with the model, which is the disagreement the check exists
+to catch. Timestamps and blobs are never compared. The same rule governs a
+`where` entry.
+
+### Errors
+
+An `error` clause — `errorCode`, and `absent` in its error form — carries the
+modeled `shape` name and the wire `code`: the `awsQueryError` code where the
+service declares one, else the shape name again. For SQS's missing queue those
+are `QueueDoesNotExist` and `AWS.SimpleQueueService.NonExistentQueue`.
+
+SDKs disagree about which of the two they surface and about where they put it,
+so an interpreter accepts an error when **any** of these surfaces equals
+**either** of the clause's two values:
+
+| Surface | Where it comes from |
+| --- | --- |
+| the exception's class or type name | the class an SDK minted for a modeled error, or a `name` field on the error object |
+| `__type`, raw and after the last `#` | the AWS JSON protocols' error body: `com.amazonaws.sqs#QueueDoesNotExist` states the same code as `QueueDoesNotExist` |
+| `Error.Code`, `Code`, `code` | the parsed error body, in whichever spelling the protocol and the SDK use |
+| the `x-amzn-query-error` header, before the first `;` | the header an `awsQueryCompatible` service sends, as `<code>;<Sender\|Receiver>` |
+
+Each backend reads the surfaces it actually has. The CLI's whole view of a
+failure is a process's stderr, so it reads its own banner —
+`An error occurred (<Code>) when calling the <Op> operation:` — and a JSON
+error body the CLI echoed rather than modeled; no response header ever reaches
+it.
+
+The match is an **equality** against a code parsed out of one of those
+surfaces, never containment over the whole message. Containment cannot tell a
+code from a code that ends with it: a clause naming `NotFoundException` would
+be satisfied by a `ResourceNotFoundException`, which is a different error from
+a different branch of the service, and by the word appearing anywhere in the
+SDK's prose. Splitting a surface at `#` and at `;` and nowhere else is what
+keeps that true. An error matching neither accepted value, or a call that
+succeeds, fails the clause.
+
+`client.awsQueryCompatible` says whether the header surface can appear at all.
+When it is `true`, AWS also returns the Query code in `x-amzn-query-error` — a
+missing SQS queue answers `AWS.SimpleQueueService.NonExistentQueue;Sender` —
+so an SDK that surfaces the header rather than the JSON `__type` reports the
+code with a fault suffix on it, matching neither accepted value literally
+until the interpreter splits it. When it is `false` there is no such header
+and the JSON `__type`/`code`, or the CLI banner, is the only carrier. Overcast
+does not send the header yet (#1810), so today the same clause matches through
+the body against the emulator and through either surface against AWS — which
+is exactly why an interpreter may not depend on one carrier.
+
+**The conformance fixtures.** `testdata/errors/` holds one JSON document per
+raw error a suite may observe, and every interpreter runs all of them in its
+own unit tests. A suite that does not observe a fixture's carriers, or the
+carrier a particular expectation matches through, **skips it by name and with
+a reason**: a silently ignored fixture looks exactly like a passing one.
+
+| Field | What it says |
+| --- | --- |
+| `carriers` | which surfaces of `wire` state the code. The vocabulary is closed — `exceptionName`, `bodyType`, `bodyCode`, `queryErrorHeader`, `errorTypeHeader`, `cliBanner` — and each suite asserts it, so a typo cannot skip quietly in all three at once |
+| `wire` | the raw observation: `status`, `headers`, `body` and the `exceptionName` an SDK would mint, or `stderr` for a CLI failure |
+| `expect[]` | one clause each — a clause naming the shape, one naming the code, one naming a near miss. `error` is the clause's `{shape, code}`, `matches` the outcome, `via` the carrier a matching clause matches through |
+
+### Exports
+
+A call's `export` maps a context path to a [path](#paths) in that call's own
+response. An export whose path does not resolve is a failure of the step that
+carries it, naming the path — not a silently unset context value for the next
+`$ref` to be blamed for.
+
+**A clause's exports are applied only once the clause holds.** That is what
+lets a failing attempt inside an `eventually` leave the context bag exactly as
+it found it instead of writing a stale reading for a later clause to `$ref`: a
+`readback`'s exports go in after its checks pass, and a `listContains` or a
+list-form `absent` carrying a call of its own follows the same rule. A primary
+call's exports are applied as soon as that call succeeds, before any clause
+runs.
+
+The error form of `absent` may not carry an `export` at all — its call is
+expected to fail, so there is no response to export from. The loader refuses
+the file rather than letting the run discover it.
 
 ### Paths
 
@@ -195,6 +276,13 @@ selects a list element (zero-based). `$.Attributes.QueueArn`,
 `$.Messages[0].ReceiptHandle`, `$.Tags.compat`. Nothing else — no wildcards,
 filters, quoting or recursive descent. Member names are the modeled names,
 which is what every SDK and the CLI's JSON output use.
+
+A path **resolves** when every segment is present. A member the service sent
+as JSON `null` is present, and resolves to `null`; a member it omitted does
+not resolve, and neither does an index past the end of a list. `undefined` in
+an SDK's object model is absence, not a value. Absent and `null` are different
+answers from the service and the IR keeps them apart: `missing` holds only for
+the first, and `nonEmpty` fails for both.
 
 ### Values
 
@@ -232,6 +320,35 @@ Every interpreter failure message must carry, in this order:
 6. the scenario file and the step index — `compat/model/scenarios/sqs.json`
    `assert[2]` (or `setup[1]`, `call`, `teardown[0]`)
 
+A failure that is not an assertion carries the same six fields, and names one
+of three kinds in field 4: **`call`** — the operation raised; **`params`** — a
+value expression could not be evaluated, and field 3 then shows the params as
+the scenario file writes them, because nothing was sent; **`export`** — an
+export path did not resolve. Routing every failure through one message builder
+is how an interpreter makes that true by construction rather than by
+remembering it at each throw site.
+
+**A 501 is not a failure.** An emulator answering "not implemented" has to
+reach the harness as its own `unimplemented` classification, never as a
+`fail` — it is what the probe groups exist to record. Re-raising the SDK's
+error unchanged and wrapping it while copying the markers the harness sniffs
+are both fine; losing the classification is not.
+
+**`eventually` gives up with the budget in front of the last attempt's
+message**, byte for byte:
+
+```text
+eventually gave up after <N> attempt(s) <M>ms apart; last failure: <the six fields>
+```
+
+No space before `ms`. It is a prefix rather than a suffix because the six-field
+message ends in the scenario file and step index, which is where a reader looks
+next. Bare, the last attempt's failure is indistinguishable from a clause
+evaluated once, and the two want opposite fixes: a real disagreement, or a poll
+budget too short for how long this service takes to settle. All three
+interpreters emit the same string, so one generated group's give-up reads
+identically whichever suite reports it.
+
 `go run -tags dev ./cmd/compatgen -explain sqs-gen-queue/SetQueueAttributes -lang python`
 renders the same test as pseudo-code so a failure can be reproduced by hand.
 
@@ -250,15 +367,21 @@ SDK-specific. Each backend derives what it needs:
 | dotnet-sdk | `Amazon<PascalCase(sdkId)>Client` | `client.<Op>Async(new <Op>Request {…})` |
 | rust-sdk | `aws_sdk_<snake(sdkId)>` | `client.<snake(op)>()…send()` |
 
-Where a derivation is known to break the interpreter needs a small override
+Where a derivation is known to break, the interpreter needs a small override
 table of its own, and the plan asks for those to be recorded as follow-ups
-rather than smuggled into the IR. None breaks for `sqs` or `organizations`.
-Known cases elsewhere: botocore's service name differs from the endpoint
-prefix for a handful of services (`elasticloadbalancing` → `elb`, `monitoring`
-→ `cloudwatch`, `email` → `ses`, `states` → `stepfunctions`); the Go SDK
-package for `Cost Explorer` is `costexplorer` (derivable) but for `SFN` it is
-`sfn` and for `ELB` it is `elasticloadbalancing` (not derivable from the SDK
-id).
+rather than smuggled into the IR. Nothing breaks for `sqs` or `organizations`,
+so nothing is implemented yet:
+
+| Backend | The override it will need | Status |
+| --- | --- | --- |
+| cli | the `aws` command name is the endpoint prefix except for four services: `elasticloadbalancing` → `elb`, `monitoring` → `cloudwatch`, `email` → `ses`, `states` → `stepfunctions` | not yet implemented — no scenario names one of them |
+| python-sdk | botocore's service name differs from the endpoint prefix for the same four | not yet implemented — same reason |
+| go-sdk | the package for `Cost Explorer` is `costexplorer` (derivable), but `SFN` is `sfn` and `ELB` is `elasticloadbalancing`, neither of which follows from the SDK id | not yet implemented |
+
+Each table is added with the first scenario that needs it, in the interpreter
+that needs it, and never by adding a per-SDK name to the IR: carrying `sdkId`,
+`endpointPrefix` and `signingName` is what lets eight backends derive eight
+different things from three model facts.
 
 ## Recipes
 
@@ -494,8 +617,8 @@ off inside a probe group. A probe binds only curated
 literals from `values.json` and constraint-derived ones — syntactically valid
 and deliberately nonexistent — so the call misses rather than lands. The two
 refusals above (`probe-binds-live-resource`, `never-probe`) are the two ways
-that rule shows up in the gap report, and a probe group carries no setup and
-no teardown because it has nothing to set up.
+that rule shows up in the gap report, and a probe group's `setup` and
+`teardown` are empty because it has nothing to set up.
 
 ### What rule 4 will and will not derive
 

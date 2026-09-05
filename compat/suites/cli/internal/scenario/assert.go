@@ -286,7 +286,13 @@ func (e *execution) check(obs observed, path string, c Check, kind, step string)
 		}
 		re, err := regexp.Compile(pattern)
 		if err != nil {
-			return e.fail(obs, step, kind+" matches", path, "a compilable pattern", quote(err.Error()))
+			// The model states its patterns in RE2, which Go's regexp is, so
+			// this is nearly unreachable here — but a pattern the engine will
+			// not compile is a normal six-field mismatch in every interpreter
+			// (compat/model/README.md § Assertions), never an exception out of
+			// the evaluator, and the phrase is the same in all three.
+			return e.fail(obs, step, kind+" matches", path,
+				fmt.Sprintf("pattern %s", pattern), quote("unsupported pattern: "+err.Error()))
 		}
 		s, isStr := got.(string)
 		if !resolved || !isStr || !re.MatchString(s) {

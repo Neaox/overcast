@@ -1,0 +1,27 @@
+{
+  "id": "cli-banner",
+  "title": "The AWS CLI's own error banner, on stderr",
+  "why": "The CLI never hands an interpreter an exception object or a response header: what it gets is the process's stderr, and a modeled error is rendered there as `An error occurred (<Code>) when calling the <Op> operation:`. The banner states the code the CLI resolved, which for an awsQueryCompatible service is the modeled shape, so a clause naming only the Query code does not match here either.",
+  "carriers": ["cliBanner"],
+  "wire": {
+    "stderr": "aws sqs delete-queue: exit status 254: An error occurred (QueueDoesNotExist) when calling the DeleteQueue operation: The specified queue does not exist."
+  },
+  "expect": [
+    {
+      "name": "a clause naming the modeled shape",
+      "error": { "shape": "QueueDoesNotExist", "code": "AWS.SimpleQueueService.NonExistentQueue" },
+      "matches": true,
+      "via": "cliBanner"
+    },
+    {
+      "name": "a clause naming only the Query code",
+      "error": { "shape": "AWS.SimpleQueueService.NonExistentQueue", "code": "AWS.SimpleQueueService.NonExistentQueue" },
+      "matches": false
+    },
+    {
+      "name": "a near miss on the shape",
+      "error": { "shape": "DoesNotExist", "code": "DoesNotExist" },
+      "matches": false
+    }
+  ]
+}

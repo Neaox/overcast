@@ -227,6 +227,16 @@ def _run_checks(ex: Executor, checks: dict, response: dict, ref: StepRef,
                 expected=f"{name} {render(argument)}, once evaluated",
                 actual=str(exc),
             ) from exc
+        except re.error as exc:
+            # A `matches` pattern the model states in RE2 that `re` will not
+            # compile. It is a normal mismatch with the same six fields as any
+            # other, never a raw exception out of the evaluator: the run must
+            # report which test and which pattern, not a traceback.
+            raise ex.fail(
+                ref=ref, op=op, params=params, assertion=assertion, path=path,
+                expected=f"pattern {argument}",
+                actual=f"unsupported pattern: {exc}",
+            ) from exc
         if not holds:
             raise ex.fail(
                 ref=ref, op=op, params=params, assertion=assertion, path=path,
@@ -247,8 +257,11 @@ def _check(name: str, argument: Any, value: Any, ex: Executor) -> tuple[str, boo
         expected = ex.evaluate(argument)
         return f"equals {render(expected)}", json_equal(value, expected)
     if name == "matches":
+        # Compiled before the value is looked at, so a pattern `re` rejects is
+        # reported as an unsupported pattern whatever the response held.
+        pattern = re.compile(argument)
         return (f"matches /{argument}/",
-                isinstance(value, str) and re.search(argument, value) is not None)
+                isinstance(value, str) and pattern.search(value) is not None)
     if name == "missing":
         return "the path not to resolve", value is MISSING
     raise ScenarioFailure(f"unknown check {name!r}")

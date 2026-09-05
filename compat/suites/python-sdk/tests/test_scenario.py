@@ -399,6 +399,25 @@ class TestAssertions(unittest.TestCase):
             run_one(spec_for("$.QueueUrls"), "ListQueues",
                     FakeClient({"list_queues": [{"QueueUrls": "not-a-list"}]}))
 
+    def test_a_pattern_re_rejects_is_a_mismatch_not_a_traceback(self):
+        """The model states its patterns in RE2. One `re` will not compile is a
+        normal six-field mismatch in every interpreter — never an exception out
+        of the evaluator, which would lose the test name and the pattern."""
+        spec = make_group(tests=[{
+            "name": "CreateQueue", "op": "CreateQueue",
+            "call": {"op": "CreateQueue", "params": {}},
+            "assert": [{"kind": "responseField",
+                        "checks": {"$.QueueUrl": {"matches": "a(b"}}}],
+        }])
+        with self.assertRaises(ScenarioFailure) as caught:
+            run_one(spec, "CreateQueue",
+                    FakeClient({"create_queue": [{"QueueUrl": "http://q"}]}))
+        message = str(caught.exception)
+        self.assertIn("unsupported pattern: ", message)
+        self.assertIn("pattern a(b", message)
+        self.assertIn("sqs-gen-queue/CreateQueue", message)
+        self.assertIn(f"{SCENARIO_FILE} assert[0]", message)
+
     def test_non_empty_accepts_zero_and_false(self):
         spec = make_group(tests=[{
             "name": "CancelMessageMoveTask", "op": "CancelMessageMoveTask",

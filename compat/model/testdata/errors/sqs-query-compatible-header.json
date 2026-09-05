@@ -1,0 +1,35 @@
+{
+  "id": "sqs-query-compatible-header",
+  "title": "SQS not-found, awsQueryCompatible, header present",
+  "why": "The awsQueryCompatible case as AWS answers it: the JSON body names the modeled shape and the x-amzn-query-error header carries the legacy Query code with a fault suffix. Nothing but the header states the Query code, so an interpreter that ignores it cannot match a clause that names only that spelling.",
+  "carriers": ["bodyType", "queryErrorHeader"],
+  "wire": {
+    "status": 400,
+    "headers": {
+      "x-amzn-query-error": "AWS.SimpleQueueService.NonExistentQueue;Sender"
+    },
+    "body": {
+      "__type": "com.amazonaws.sqs#QueueDoesNotExist",
+      "message": "The specified queue does not exist."
+    }
+  },
+  "expect": [
+    {
+      "name": "a clause naming the modeled shape",
+      "error": { "shape": "QueueDoesNotExist", "code": "AWS.SimpleQueueService.NonExistentQueue" },
+      "matches": true,
+      "via": "bodyType"
+    },
+    {
+      "name": "a clause naming only the Query code",
+      "error": { "shape": "AWS.SimpleQueueService.NonExistentQueue", "code": "AWS.SimpleQueueService.NonExistentQueue" },
+      "matches": true,
+      "via": "queryErrorHeader"
+    },
+    {
+      "name": "a near miss on the shape",
+      "error": { "shape": "DoesNotExist", "code": "DoesNotExist" },
+      "matches": false
+    }
+  ]
+}

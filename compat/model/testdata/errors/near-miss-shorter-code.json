@@ -1,0 +1,33 @@
+{
+  "id": "near-miss-shorter-code",
+  "title": "Near miss: the clause names a code the observed one ends with",
+  "why": "The mirror of near-miss-longer-code, so neither direction can be satisfied by a substring test. NotFoundException is the error here, and a clause naming ResourceNotFoundException must not match it.",
+  "carriers": ["exceptionName", "bodyType"],
+  "wire": {
+    "status": 400,
+    "exceptionName": "NotFoundException",
+    "headers": {},
+    "body": {
+      "__type": "NotFoundException",
+      "message": "Not found."
+    }
+  },
+  "expect": [
+    {
+      "name": "the code the error states",
+      "error": { "shape": "NotFoundException", "code": "NotFoundException" },
+      "matches": true,
+      "via": "bodyType"
+    },
+    {
+      "name": "a code the observed one is a suffix of",
+      "error": { "shape": "ResourceNotFoundException", "code": "ResourceNotFoundException" },
+      "matches": false
+    },
+    {
+      "name": "a prefix of the observed code",
+      "error": { "shape": "NotFound", "code": "NotFound" },
+      "matches": false
+    }
+  ]
+}

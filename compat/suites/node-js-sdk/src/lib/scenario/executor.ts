@@ -257,7 +257,7 @@ async function runAssertion(
         }
       }
       // The last failure's message is the reported one; say how hard we tried.
-      throw annotateAttempts(last, clause.maxAttempts, delayMs);
+      throw prefixAttempts(last, clause.maxAttempts, delayMs);
     }
   }
 }
@@ -433,9 +433,25 @@ function fail(
   return scenarioFailure(failureMessage(site, detail), cause);
 }
 
-/** Append the retry budget to the last attempt's message. */
-function annotateAttempts(err: unknown, maxAttempts: number, delayMs: number): unknown {
+/**
+ * Put the retry budget in front of the last attempt's message.
+ *
+ * The prefix is byte-for-byte the one compat/model/README.md § Failure
+ * messages fixes, and the sibling interpreters emit the same string, so one
+ * generated group's give-up reads identically whichever suite reports it and
+ * a log search finds all three. It is a prefix rather than a suffix because
+ * the six-field message ends in the scenario file and step index, which is
+ * where a reader looks next.
+ *
+ * The message is rewritten in place rather than rethrown as a new Error: the
+ * unimplemented markers scenarioFailure() copied onto this error are what
+ * keeps a 501 inside an `eventually` classified as unimplemented, and a fresh
+ * Error would drop them.
+ */
+function prefixAttempts(err: unknown, maxAttempts: number, delayMs: number): unknown {
   if (!(err instanceof Error)) return err;
-  err.message += ` [eventually: ${maxAttempts} attempts ${delayMs}ms apart]`;
+  err.message =
+    `eventually gave up after ${maxAttempts} attempt(s) ${delayMs}ms apart; ` +
+    `last failure: ${err.message}`;
   return err;
 }

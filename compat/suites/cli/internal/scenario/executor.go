@@ -410,28 +410,41 @@ func matchesError(err error, want *ErrorClause) bool {
 // Two surfaces, because the CLI has two. Its own rendering of a modeled error
 // is the banner `An error occurred (<Code>) when calling the <Op> operation:`.
 // When it cannot model the response it prints the body instead, and a JSON
-// error body carries the code in `__type` (the AWS JSON protocols) or `Code`
-// (a query-protocol error the CLI printed as JSON) — which is also how an
-// Overcast fallback error arrives.
+// error body carries the code in `__type` (the AWS JSON protocols), `Code`
+// (a query-protocol error the CLI printed as JSON) or `code` (the REST JSON
+// spelling) — which is also how an Overcast fallback error arrives. Response
+// headers are not a surface here: the CLI hands this suite a process's stderr,
+// so `x-amzn-query-error` only ever reaches it already resolved into a banner.
 func errorCodes(msg string) []string {
 	var codes []string
 	for _, m := range cliErrorBannerRe.FindAllStringSubmatch(msg, -1) {
-		codes = append(codes, normaliseErrorCode(m[1]))
+		codes = append(codes, errorCodeSpellings(m[1])...)
 	}
 	for _, m := range jsonErrorCodeRe.FindAllStringSubmatch(msg, -1) {
-		codes = append(codes, normaliseErrorCode(m[1]))
+		codes = append(codes, errorCodeSpellings(m[1])...)
 	}
 	return codes
 }
 
-// normaliseErrorCode strips the namespace an AWS JSON `__type` carries:
-// `com.amazonaws.sqs#QueueDoesNotExist` states the same code as
-// `QueueDoesNotExist`, and the IR only ever names the bare form.
-func normaliseErrorCode(code string) string {
-	if _, after, found := strings.Cut(code, "#"); found {
-		return after
+// errorCodeSpellings returns one observed code in every spelling a clause may
+// name it by, which is the list compat/model/README.md § Errors fixes: the
+// value itself, what follows the last "#" of a Smithy id
+// (`com.amazonaws.sqs#QueueDoesNotExist` states the same code as
+// `QueueDoesNotExist`), and what precedes the first ";" of the
+// `<code>;<fault>` form the x-amzn-query-error header uses — which reaches the
+// CLI only if it ever fails to resolve the header itself.
+//
+// Splitting at those separators and nowhere else is what keeps the match an
+// equality: no spelling of `ResourceNotFoundException` is `NotFoundException`.
+func errorCodeSpellings(code string) []string {
+	out := []string{code}
+	if i := strings.LastIndex(code, "#"); i >= 0 {
+		out = append(out, code[i+1:])
 	}
-	return code
+	if i := strings.Index(code, ";"); i >= 0 {
+		out = append(out, code[:i])
+	}
+	return out
 }
 
 var (
@@ -440,7 +453,7 @@ var (
 	cliErrorBannerRe = regexp.MustCompile(`An error occurred \(([^()]+)\) when calling the `)
 	// jsonErrorCodeRe matches the code member of a JSON error body the CLI
 	// echoed rather than modeled.
-	jsonErrorCodeRe = regexp.MustCompile(`"(?:__type|Code)"\s*:\s*"([^"]+)"`)
+	jsonErrorCodeRe = regexp.MustCompile(`"(?:__type|Code|code)"\s*:\s*"([^"]+)"`)
 )
 
 // acceptedCodes renders both halves of an error clause for a failure message.

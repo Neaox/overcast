@@ -83,6 +83,10 @@ func TestResponseFieldChecks(t *testing.T) {
 		{name: "matches holds", clause: field("$.Nested.Arn", obj{"matches": `^arn:aws:widgets::\d{4}:thing/t-\d+$`}), script: script},
 		{name: "matches fails", clause: field("$.Id", obj{"matches": `^p-`}), script: script, wantErr: "matches"},
 		{name: "matches fails on a non-string", clause: field("$.Count", obj{"matches": `^0$`}), script: script, wantErr: "matches"},
+		// A pattern the engine will not compile is a mismatch like any other,
+		// with the same six fields and the same phrase the sibling
+		// interpreters use — never an exception out of the evaluator.
+		{name: "matches reports a pattern the engine rejects", clause: field("$.Id", obj{"matches": `a(b`}), script: script, wantErr: "unsupported pattern: "},
 
 		{name: "missing holds when absent", clause: field("$.Nope", obj{"missing": true}), script: script},
 		{name: "missing holds for a deep absent segment", clause: field("$.Nested.Nope.Deep", obj{"missing": true}), script: script},

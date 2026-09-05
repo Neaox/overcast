@@ -1,0 +1,34 @@
+{
+  "id": "rest-json-code-member",
+  "title": "REST JSON not-found, code member plus x-amzn-errortype",
+  "why": "The REST JSON spelling: the body names the code in a lowercase `code` member and the same string repeats in x-amzn-errortype. Rule 1 lists `code` among the surfaces an interpreter reads; the header is on the wire but no interpreter reads it, which is why the body must be enough on its own.",
+  "carriers": ["bodyCode", "errorTypeHeader"],
+  "wire": {
+    "status": 404,
+    "headers": {
+      "x-amzn-errortype": "ResourceNotFoundException"
+    },
+    "body": {
+      "code": "ResourceNotFoundException",
+      "message": "The resource was not found."
+    }
+  },
+  "expect": [
+    {
+      "name": "a clause naming the code",
+      "error": { "shape": "ResourceNotFoundException", "code": "ResourceNotFoundException" },
+      "matches": true,
+      "via": "bodyCode"
+    },
+    {
+      "name": "a near miss the observed code ends with",
+      "error": { "shape": "NotFoundException", "code": "NotFoundException" },
+      "matches": false
+    },
+    {
+      "name": "an unrelated code",
+      "error": { "shape": "ValidationException", "code": "ValidationException" },
+      "matches": false
+    }
+  ]
+}
