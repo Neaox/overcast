@@ -1109,6 +1109,26 @@ func eksJSON(ctx context.Context, router http.Handler, region, method, path stri
 
 type eksClusterHandler struct{}
 
+// eksClusterNameFromPhysicalID extracts the cluster name from a physical ID.
+//
+// Per AWS docs (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-eks-cluster.html#aws-resource-eks-cluster-return-values-ref):
+// "Ref returns the resource name" for AWS::EKS::Cluster, so Create below now
+// records the cluster name — not the ARN — as the physical ID.
+//
+// Stacks whose state was persisted before that fix still have the ARN
+// ("arn:...:cluster/<name>") recorded as the physical ID. EKS cluster names
+// can never contain "/" (CreateCluster's Name pattern is
+// `^[0-9A-Za-z][A-Za-z0-9\-_]*`), so a physical ID containing one is
+// unambiguously an old ARN-shaped ID, and the segment after the last "/" is
+// the name. This keeps Stabilize/Delete/Update working against a store
+// written by an older Overcast build without a migration.
+func eksClusterNameFromPhysicalID(physicalID string) string {
+	if idx := strings.LastIndex(physicalID, "/"); idx >= 0 {
+		return physicalID[idx+1:]
+	}
+	return physicalID
+}
+
 func (h *eksClusterHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["Name"].(string)
 	if name == "" {
@@ -1147,7 +1167,10 @@ func (h *eksClusterHandler) Create(ctx context.Context, router http.Handler, cfg
 		arn = fmt.Sprintf("arn:aws:eks:%s:%s:cluster/%s", rCtx.Region, rCtx.AccountID, name)
 	}
 
-	return arn, map[string]string{"Arn": arn}, nil
+	// Ref returns the cluster name on AWS, not the ARN — see
+	// eksClusterNameFromPhysicalID above. The ARN stays available as the Arn
+	// GetAtt attribute.
+	return name, map[string]string{"Arn": arn}, nil
 }
 
 // eksStabilizeTimeout bounds the wait for an EKS control plane to come up. It
@@ -1171,12 +1194,10 @@ var eksClusterStatuses = statusVocabulary{
 // empty until the cluster is ACTIVE, and a kubeconfig fetched against a cluster
 // that is still CREATING is refused outright. See resourceStabilizer.
 func (h *eksClusterHandler) Stabilize(ctx context.Context, router http.Handler, _ *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
-	// The physical ID is the cluster ARN, "arn:…:cluster/{name}"; every call
-	// after create takes the name, the same way Update reads it back.
-	name := physicalID
-	if idx := strings.LastIndex(name, "/"); idx >= 0 {
-		name = name[idx+1:]
-	}
+	// The physical ID is the cluster name (see eksClusterNameFromPhysicalID);
+	// every call after create takes the name, the same way Update reads it
+	// back.
+	name := eksClusterNameFromPhysicalID(physicalID)
 	subject := fmt.Sprintf("EKS cluster %s", name)
 	return awaitResourceReady(ctx, clk, stabilizeWait{
 		subject:  subject,
@@ -1219,24 +1240,18 @@ func (h *eksClusterHandler) Stabilize(ctx context.Context, router http.Handler, 
 }
 
 func (h *eksClusterHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	// Physical ID is the cluster ARN, "arn:…:cluster/{name}".
-	name := physicalID
-	if idx := strings.LastIndex(name, "/"); idx >= 0 {
-		name = name[idx+1:]
-	}
+	// Physical ID is the cluster name (see eksClusterNameFromPhysicalID).
+	name := eksClusterNameFromPhysicalID(physicalID)
 	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
 		"/clusters/"+url.PathEscape(name), "", nil)
 	return teardownError("DeleteCluster", rec, err)
 }
 
 func (h *eksClusterHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	// Physical ID is the cluster ARN, "arn:…:cluster/{name}". Name and
-	// RoleArn replace on real AWS; CreateCluster rejects duplicate names, so
-	// replacing under an unchanged name can never succeed.
-	oldName := physicalID
-	if idx := strings.LastIndex(oldName, "/"); idx >= 0 {
-		oldName = oldName[idx+1:]
-	}
+	// Physical ID is the cluster name (see eksClusterNameFromPhysicalID).
+	// Name and RoleArn replace on real AWS; CreateCluster rejects duplicate
+	// names, so replacing under an unchanged name can never succeed.
+	oldName := eksClusterNameFromPhysicalID(physicalID)
 	if n, ok := props["Name"].(string); ok && n != "" && n != oldName {
 		return "", nil, errReplacementRequired
 	}
@@ -1262,7 +1277,10 @@ func (h *eksClusterHandler) Update(ctx context.Context, router http.Handler, _ *
 			}
 		}
 	}
-	return physicalID, nil, nil
+	// Return the name, not the incoming physicalID: this also normalizes a
+	// physical ID persisted as the ARN by a pre-fix Overcast build back to
+	// the name on the next successful update.
+	return oldName, nil, nil
 }
 
 // ── AWS::EKS::Nodegroup ────────────────────────────────────────────────────
