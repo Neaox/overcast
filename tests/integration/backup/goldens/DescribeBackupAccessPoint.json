@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/x-amz-json-1.0"
+  },
+  "body": "{\"AccessPointArn\":\"arn:aws:backup:us-east-1:000000000000:accesspoint/golden-access-point\",\"AccessPointMetadata\":{\"AccessPointInTime\":\"2021-11-27T03:30:27Z\"},\"CreationTime\":0,\"Name\":\"golden-access-point\",\"RecoveryPointArn\":\"arn:aws:backup:us-east-1:000000000000:recovery-point:1eb3b5e7-9eb0-435a-a80b-108b488b0d45\",\"Status\":\"AVAILABLE\"}"
+}

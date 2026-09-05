@@ -126,14 +126,20 @@ func detectService(r *http.Request, body ...[]byte) string {
 		// disambiguate.
 		return "msk"
 	case strings.HasPrefix(r.URL.Path, "/backup-vaults"),
-		strings.HasPrefix(r.URL.Path, "/backup/plans"):
-		// AWS Backup's two modeled subtrees. Both are claimed at their full
+		strings.HasPrefix(r.URL.Path, "/backup/plans"),
+		strings.HasPrefix(r.URL.Path, "/backup-access-point"):
+		// AWS Backup's three modeled subtrees. Each is claimed at its full
 		// prefix rather than at a "/backup" root, because "backup" is a legal
 		// S3 bucket name and this switch runs ahead of the credential scope:
 		// claiming the root would take every object in a bucket called backup
-		// away from S3. Claiming these two takes only the paths Backup's own
+		// away from S3. Claiming these three takes only the paths Backup's own
 		// routes already answer, so the label agrees with what happened to the
-		// request. No other modeled service binds a URI under either.
+		// request. No other modeled service binds a URI under any of them.
+		//
+		// /backup-access-point is the Backup Access Point operations' root
+		// (#1467). Without it an unsigned request there is labelled — and IAM
+		// authorised — as an s3 request to a bucket called
+		// "backup-access-point".
 		return "backup"
 	case strings.HasPrefix(r.URL.Path, "/v2/email/"):
 		return "ses"

@@ -142,11 +142,13 @@ var registeredRouteClassification = map[string]string{
 	"/api":          "msk",
 	"/apikeys":      "apigateway",
 	"/applications": "appregistry",
-	// AWS Backup's two modeled subtrees, /backup-vaults and /backup/plans. The
-	// second's family is "/backup", but detectService claims the longer prefixes
-	// rather than that root: "backup" is a legal S3 bucket name.
-	"/backup":        "backup",
-	"/backup-vaults": "backup",
+	// AWS Backup's three modeled subtrees, /backup-vaults, /backup/plans and
+	// /backup-access-point (#1467). The second's family is "/backup", but
+	// detectService claims the longer prefixes rather than that root: "backup"
+	// is a legal S3 bucket name.
+	"/backup":              "backup",
+	"/backup-vaults":       "backup",
+	"/backup-access-point": "backup",
 	// Backup's UntagResource (#1195), POST /untag/{ResourceArn} — its own path,
 	// not another member of the shared "/tags" family below. Unsigned it falls
 	// to "s3" for the same reason "/tags" does: "untag" is a legal S3 bucket
