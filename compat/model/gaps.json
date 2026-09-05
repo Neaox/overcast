@@ -208,15 +208,22 @@
       "service": "sqs",
       "operation": "AddPermission",
       "group": "sqs-gen-probe",
-      "reason": "no-output-to-assert",
-      "detail": "AddPermission returns nothing, and reading back the resource it names would assert something the call cannot change, so a probe would assert nothing"
+      "reason": "never-probe",
+      "detail": "AddPermission is not a read operation; probes call unimplemented operations against a live account and must be side-effect free"
+    },
+    {
+      "service": "sqs",
+      "operation": "CancelMessageMoveTask",
+      "group": "sqs-gen-probe",
+      "reason": "never-probe",
+      "detail": "CancelMessageMoveTask is not a read operation; probes call unimplemented operations against a live account and must be side-effect free"
     },
     {
       "service": "sqs",
       "operation": "RemovePermission",
       "group": "sqs-gen-probe",
-      "reason": "no-output-to-assert",
-      "detail": "RemovePermission returns nothing, and reading back the resource it names would assert something the call cannot change, so a probe would assert nothing"
+      "reason": "never-probe",
+      "detail": "RemovePermission is not a read operation; probes call unimplemented operations against a live account and must be side-effect free"
     }
   ]
 }

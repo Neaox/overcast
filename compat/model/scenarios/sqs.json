@@ -1207,26 +1207,6 @@
       "setup": [],
       "tests": [
         {
-          "name": "CancelMessageMoveTask",
-          "op": "CancelMessageMoveTask",
-          "call": {
-            "op": "CancelMessageMoveTask",
-            "params": {
-              "TaskHandle": "eyJ0YXNrSWQiOiJjb21wYXQtc2NlbmFyaW8ifQ=="
-            }
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.ApproximateNumberOfMessagesMoved": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
-        },
-        {
           "name": "ListMessageMoveTasks",
           "op": "ListMessageMoveTasks",
           "call": {

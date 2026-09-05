@@ -324,24 +324,41 @@ different shape, one of the two is wrong — quietly preferring either hides it
 rule: a page can legally sit deeper in the response than a top-level member,
 and the derivation only ever looks at the top level.
 
-One field sits outside the resource list. **`neverProbe`** maps an operation
-the generator may never place in the probe group to the curated reason why,
-which is what `gaps.json` then reports. It is the half of the probe-safety
-rule the binder cannot see: the binder refuses a probe that would bind a value
-exported from a resource the run owns, but an operation that is irreversible
-against *anyone's* identifiers — or that takes no identifier that could miss,
-like `EnableAllFeatures` or `DeleteOrganization` — has to be named. Each entry
-is one sentence saying what the call does that cannot be undone.
+Two fields sit outside the resource list, and both are exceptions to one
+rule: **probes are default-deny by verb**. A probe calls an operation the
+emulator does not implement, so nothing in the scenario undoes it and against
+a real account nothing would. Only a `Describe*`, `List*` or `Get*` — matched
+at a word boundary, so a `Listen*` operation is not a `List*` — is probed at
+all. Everything else is refused `never-probe` before it is bound, with a
+generated sentence saying so.
+
+**`neverProbe`** denies an operation the verb rule would have allowed, and
+**`allowProbe`** allows one it would have refused. Each entry is one sentence,
+and the sentence is the whole of the exception:
 
 ```jsonc
 {
   "service": "organizations",
   "neverProbe": {
+    // A read verb that is not a read. Only a human knows this.
+    "GetSessionToken": "Rotates the token it returns, so every holder of the old one is broken by the call.",
+    // A write the verb rule already refuses. The entry is still worth having:
+    // its sentence replaces the generated one in gaps.json, and "cannot be
+    // reopened" tells a reader far more than "not a read operation".
     "CloseAccount": "Closes a member account. AWS suspends it immediately and permanently deletes its resources; the account cannot be reopened."
+  },
+  "allowProbe": {
+    // A read AWS happens to spell with another verb.
+    "Scan": "Reads a page of items and changes nothing; DynamoDB simply does not call it List."
   },
   "resources": [ ... ]
 }
 ```
+
+An `allowProbe` entry naming an operation that already starts with a read verb
+is refused as saying nothing, and an operation may not appear in both maps.
+`smithy.api#readonly` would settle the question outright, but `cmd/awsmodelgen`
+does not keep the trait, so the committed snapshots do not carry it.
 
 Every `params` object lists only what the binder does not supply: the
 generator binds each remaining required member by rule (an explicit bind,
@@ -369,7 +386,7 @@ service and operation, with a stable reason:
 | `no-readback-path` | the role exists but nothing can verify it: a create whose read, list and authored `create.assert` between them make no call of their own; a delete with neither `notFound` nor `list`, or one whose `notFound` has no non-consuming read to raise it; a mutation whose read consumes |
 | `probe-of-implemented-op` | an implemented operation the recipe gives no role — it may not be probed, so it needs a role |
 | `probe-binds-live-resource:<Member>` | a probe would have bound that member to a value exported from a resource the run owns. Add a curated literal to `values.json` — deliberately nonexistent, so the call misses — or leave the operation refused |
-| `never-probe` | the recipe's `neverProbe` list forbids probing the operation; the detail is the curated reason |
+| `never-probe` | the operation is not a `Describe*`, `List*` or `Get*` and no `allowProbe` entry says it is safe, or the recipe's `neverProbe` names it. The detail is the recipe's curated sentence where it has one, and a generated one where it does not |
 | `ambiguous-list-page` | a `list` with no `itemsPath`, whose operation's output holds two lists with no `@paginated` `items` trait to choose between them, or no list at all. Give the resource an explicit `list.itemsPath` |
 | `no-output-to-assert` | a probe of an operation that returns nothing a probe can assert: no output at all, or no identity member and no single list to check the shape of. Reading back the resource it names would assert something that was already true before the call, so there is nothing honest to assert |
 | `setup-refused:<resource>` | a required resource could not be bound |
@@ -408,8 +425,9 @@ with nothing but a token, is refused (`no-output-to-assert`).
 
 A probe is the one generated call no create/delete pair contains: the
 emulator does not implement the operation, so nothing undoes it, and the same
-scenario file is meant to be runnable against real AWS. Binding rules 1 and 2
-are therefore switched off inside a probe group. A probe binds only curated
+scenario file is meant to be runnable against real AWS. That is why only a
+read verb is probed at all (above), and why binding rules 1 and 2 are switched
+off inside a probe group. A probe binds only curated
 literals from `values.json` and constraint-derived ones — syntactically valid
 and deliberately nonexistent — so the call misses rather than lands. The two
 refusals above (`probe-binds-live-resource`, `never-probe`) are the two ways

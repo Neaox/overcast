@@ -12,7 +12,13 @@
     "model": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "The shape-snapshot service key when it differs from `service` (cognito-identity-provider for cognito)." },
     "neverProbe": {
       "type": "object",
-      "description": "Operations the generator may never place in the probe group, each mapped to the curated reason why, which is what gaps.json reports. This is for operations that are irreversible even against a stranger's identifiers, or that take no identifier that could miss (CloseAccount, EnableAllFeatures, DeleteOrganization). The binder already refuses a probe that would bind a value exported from a resource the run owns; this covers what that rule cannot see.",
+      "description": "Operations the generator may never place in the probe group, each mapped to the curated reason why, which is what gaps.json reports. Probes are default-deny by verb — only `Describe*`, `List*` and `Get*` are probed at all — so this is for a read-verb operation that is not in fact a read (a `Get*` that mutates), and for restating a denial the verb rule already makes when the curated sentence says more than the generated one does.",
+      "propertyNames": { "pattern": "^[A-Z][A-Za-z0-9]*$" },
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "allowProbe": {
+      "type": "object",
+      "description": "The exception in the other direction: operations that are not `Describe*`, `List*` or `Get*` but that a human has judged safe to call against a live account with a curated, deliberately nonexistent identifier, each mapped to the reason why. An entry naming a read-verb operation is refused as saying nothing, and an operation may not appear in both maps.",
       "propertyNames": { "pattern": "^[A-Z][A-Za-z0-9]*$" },
       "additionalProperties": { "type": "string", "minLength": 1 }
     },

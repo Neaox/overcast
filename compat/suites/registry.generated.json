@@ -247,9 +247,6 @@
       ],
       "tests": [
         {
-          "name": "CancelMessageMoveTask"
-        },
-        {
           "name": "ListMessageMoveTasks"
         }
       ]

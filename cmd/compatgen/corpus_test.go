@@ -223,3 +223,80 @@ func writeFile(t *testing.T, path, contents string) {
 		t.Fatal(err)
 	}
 }
+
+// TestOrganizationsProbeGroupIsExactlyItsReads is the #1795 B2 claim, held
+// over the real corpus rather than the fixture: making probes default-deny by
+// verb left the organizations probe group exactly as the 29 curated
+// `neverProbe` sentences had it.
+//
+// Two committed facts prove it without a "before" to compare against. Every
+// operation the probe group holds is a read verb, so the verb rule admitted
+// all of them; and every one of organizations' refusals is a curated
+// `neverProbe` sentence, so the verb rule refused nothing the recipe had not
+// already refused. Between them the set cannot have moved in either
+// direction.
+//
+// It reads the committed files once. There is deliberately no loop that
+// re-parses the corpus per operation.
+func TestOrganizationsProbeGroupIsExactlyItsReads(t *testing.T) {
+	schemas, err := loadSchemas(filepath.Join(repoRoot, filepath.FromSlash(modelDir)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipes, err := loadRecipes(filepath.Join(repoRoot, filepath.FromSlash(recipesDir)), schemas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var organizations recipe
+	for _, r := range recipes {
+		if r.Service == "organizations" {
+			organizations = r
+		}
+	}
+	if len(organizations.NeverProbe) == 0 {
+		t.Fatal("the organizations recipe has no neverProbe entries; this test is about them")
+	}
+
+	var s scenario
+	if err := decodeStrict(readFile(t, filepath.Join(repoRoot, filepath.FromSlash(scenarioPath("organizations")))), &s); err != nil {
+		t.Fatal(err)
+	}
+	probes := 0
+	for _, g := range s.Groups {
+		if g.Kind != groupProbe {
+			continue
+		}
+		for _, tc := range g.Tests {
+			probes++
+			if !isReadVerb(tc.Op) {
+				t.Errorf("%s sits in the probe group but is not a read verb", tc.Op)
+			}
+		}
+	}
+	if probes == 0 {
+		t.Fatal("organizations has no probe group; this test is about it")
+	}
+
+	var gaps gapsDocument
+	if err := decodeStrict(readFile(t, filepath.Join(repoRoot, filepath.FromSlash(gapsPath))), &gaps); err != nil {
+		t.Fatal(err)
+	}
+	curated := 0
+	for _, gp := range gaps.Gaps {
+		if gp.Service != "organizations" {
+			continue
+		}
+		why, named := organizations.NeverProbe[gp.Operation]
+		if gp.Reason != reasonNeverProbe || !named {
+			t.Errorf("organizations/%s is refused %q, which the recipe did not ask for", gp.Operation, gp.Reason)
+			continue
+		}
+		if gp.Detail != why {
+			t.Errorf("organizations/%s reports %q, not the recipe's own sentence", gp.Operation, gp.Detail)
+		}
+		curated++
+	}
+	if curated != len(organizations.NeverProbe) {
+		t.Errorf("%d of the recipe's %d neverProbe sentences reached gaps.json", curated, len(organizations.NeverProbe))
+	}
+}
