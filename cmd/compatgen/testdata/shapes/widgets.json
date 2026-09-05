@@ -61,6 +61,9 @@
 "ListWidgetTagsRequest": {"type":"structure","members":{"WidgetId":{"target":"WidgetId","traits":{"smithy.api#required":{}}}},"traits":{"smithy.api#input":{}}},
 "ListWidgetTagsResponse": {"type":"structure","members":{"Tags":{"target":"TagMap"}},"traits":{"smithy.api#output":{}}},
 "ListWidgets": {"type":"operation","input":"ListWidgetsRequest","output":"ListWidgetsResponse"},
+"ListWidgetsAndCogs": {"type":"operation","input":"ListWidgetsAndCogsRequest","output":"ListWidgetsAndCogsResponse"},
+"ListWidgetsAndCogsRequest": {"type":"structure","traits":{"smithy.api#input":{}}},
+"ListWidgetsAndCogsResponse": {"type":"structure","members":{"Cogs":{"target":"CogList"},"Widgets":{"target":"WidgetList"}},"traits":{"smithy.api#output":{}}},
 "ListWidgetsRequest": {"type":"structure","members":{"NamePrefix":{"target":"smithy.api#String"}},"traits":{"smithy.api#input":{}}},
 "ListWidgetsResponse": {"type":"structure","members":{"Widgets":{"target":"WidgetList"}},"traits":{"smithy.api#output":{}}},
 "PingWidgets": {"type":"operation","input":"PingWidgetsRequest","output":"PingWidgetsResponse"},
@@ -103,7 +106,7 @@
 "WidgetList": {"type":"list","member":"Widget"},
 "WidgetName": {"type":"string","traits":{"smithy.api#length":{"max":64,"min":1},"smithy.api#pattern":"^[a-z0-9-]+$"}},
 "WidgetNotFound": {"type":"structure","members":{"message":{"target":"smithy.api#String"}},"traits":{"aws.protocols#awsQueryError":{"code":"Widget.NotFound","httpResponseCode":404},"smithy.api#error":"client","smithy.api#httpError":404}},
-"WidgetService": {"type":"service","version":"2026-01-01","operations":["ArchiveWidget","CalibrateGauge","CreateCog","CreateSprocket","CreateWidget","DeleteSprocket","DeleteWidget","DescribeGauge","DescribeGizmo","DescribeWidget","FreezeWidget","GetSprocket","GetWidget","ListCogs","ListGauges","ListSprocketTags","ListWidgetTags","ListWidgets","PingWidgets","PolishWidget","PurgeWidgets","RotateWidget","ScanWidgets","SetWidgetSize","SyncWidgets","TagSprocket","TagWidget","UntagSprocket","UntagWidget","UpdateWidget"],"traits":{"aws.api#service":{"endpointPrefix":"widgets","sdkId":"Widgets"},"aws.auth#sigv4":{"name":"widgets"},"aws.protocols#awsJson1_1":{}}},
+"WidgetService": {"type":"service","version":"2026-01-01","operations":["ArchiveWidget","CalibrateGauge","CreateCog","CreateSprocket","CreateWidget","DeleteSprocket","DeleteWidget","DescribeGauge","DescribeGizmo","DescribeWidget","FreezeWidget","GetSprocket","GetWidget","ListCogs","ListGauges","ListSprocketTags","ListWidgetTags","ListWidgets","ListWidgetsAndCogs","PingWidgets","PolishWidget","PurgeWidgets","RotateWidget","ScanWidgets","SetWidgetSize","SyncWidgets","TagSprocket","TagWidget","UntagSprocket","UntagWidget","UpdateWidget"],"traits":{"aws.api#service":{"endpointPrefix":"widgets","sdkId":"Widgets"},"aws.auth#sigv4":{"name":"widgets"},"aws.protocols#awsJson1_1":{}}},
 "WidgetSize": {"type":"integer","traits":{"smithy.api#range":{"max":100,"min":1}}}
 }
 }

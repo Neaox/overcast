@@ -59,13 +59,13 @@
         "reads": { "type": "array", "items": { "$ref": "#/definitions/Read" }, "description": "Further read operations (GetQueueUrl beside GetQueueAttributes)." },
         "list": {
           "type": "object",
-          "required": ["op", "itemsPath", "identityPath", "identity"],
+          "required": ["op", "identityPath", "identity"],
           "additionalProperties": false,
           "properties": {
             "$comment": { "type": "string" },
             "op": { "$ref": "#/definitions/OpName" },
             "params": { "$ref": "#/definitions/Params" },
-            "itemsPath": { "$ref": "scenario.schema.json#/definitions/Path", "description": "Path to the list in the response." },
+            "itemsPath": { "$ref": "scenario.schema.json#/definitions/Path", "description": "Path to the list in the response. Optional: left out, the generator takes the member `@paginated` names as its `items`, else the output's sole top-level list, and refuses the list (`ambiguous-list-page`) when the model settles neither." },
             "identityPath": { "$ref": "scenario.schema.json#/definitions/Path", "description": "Item-relative path carrying the identity; `$` for a list of strings." },
             "identity": { "type": "string", "description": "The export the item's identity equals." },
             "exports": { "$ref": "#/definitions/Exports", "description": "Exports taken from the list response. The list test runs last before delete, so a handle re-read here is the freshest one the delete can carry." }
@@ -119,6 +119,7 @@
           "type": "object",
           "required": ["error"],
           "additionalProperties": false,
+          "description": "Optional: left out, the generator derives the error from the `read` operation's own modeled errors when exactly one of them is not-found-shaped. A value that contradicts such a derivation is an error, not an override.",
           "properties": {
             "error": { "type": "string", "description": "The modeled error shape the read raises after delete." }
           }

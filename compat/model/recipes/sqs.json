@@ -41,7 +41,6 @@
       "list": {
         "op": "ListQueues",
         "params": { "QueueNamePrefix": { "$name": "q" } },
-        "itemsPath": "$.QueueUrls",
         "identityPath": "$",
         "identity": "url"
       },
@@ -54,7 +53,6 @@
         "list": { "op": "ListQueueTags", "path": "$.Tags" }
       },
       "delete": { "op": "DeleteQueue" },
-      "notFound": { "error": "QueueDoesNotExist" },
       "async": { "maxAttempts": 30, "delayMs": 2000 },
       "operations": [
         {
@@ -154,7 +152,6 @@
       "list": {
         "op": "ReceiveMessage",
         "params": { "MaxNumberOfMessages": 10, "WaitTimeSeconds": 1, "VisibilityTimeout": 0 },
-        "itemsPath": "$.Messages",
         "identityPath": "$.MessageId",
         "identity": "id"
       },
@@ -203,7 +200,6 @@
         "$comment": "This receive runs between the visibility change and the delete, and it hands out a newer receipt handle for the same message; AWS asks a delete to carry the most recent handle, so the list re-exports it and DeleteMessageBatch below uses that one.",
         "op": "ReceiveMessage",
         "params": { "MaxNumberOfMessages": 10, "WaitTimeSeconds": 1, "VisibilityTimeout": 0 },
-        "itemsPath": "$.Messages",
         "identityPath": "$.MessageId",
         "identity": "id",
         "exports": { "receiptHandle": "$.Messages[0].ReceiptHandle" }

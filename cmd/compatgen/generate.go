@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -78,7 +79,10 @@ func generate(model *serviceModel, r recipe, values *valuesTable, caps capabilit
 	if err := g.checkRecipeAgainstModel(); err != nil {
 		return nil, err
 	}
-	for _, res := range r.Resources {
+	if err := g.deriveFromModel(); err != nil {
+		return nil, err
+	}
+	for _, res := range g.recipe.Resources {
 		if res.SetupOnly {
 			continue
 		}
@@ -160,6 +164,121 @@ func (g *generator) checkRecipeAgainstModel() error {
 		}
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Model-derived recipe fields
+// ---------------------------------------------------------------------------
+
+// Two recipe fields the model already determines are derived rather than
+// re-typed: the error a read raises once the resource is gone, and the member
+// of a list response that carries the page. Both stay writable — a recipe
+// value is an override and is used as written — because the derivation covers
+// the common shape, not every service. What a recipe may not do is disagree
+// with the model about the not-found error while the model names exactly one:
+// one of the two is wrong, and quietly preferring either hides it.
+//
+// Derivation runs after checkRecipeAgainstModel, so every operation it reads
+// is known to exist, and before any group is built, so the emitter sees one
+// completed recipe rather than a field that is sometimes absent.
+
+// notFoundSuffixes are the shape-name endings AWS gives the error that says
+// "what you named is not there". The match is on the suffix, not anywhere in
+// the name: `KmsNotFound` is a real not-found error and belongs in the set,
+// while a service that spells one of these words in the middle of a longer
+// name is left to the recipe. Under-deriving costs a recipe line;
+// over-deriving would make a delete assert the wrong error.
+var notFoundSuffixes = []string{"NotFound", "NotFoundException", "DoesNotExist", "NonExistent"}
+
+// derivableNotFoundErrors returns the not-found-shaped errors an operation
+// declares, sorted, as OperationErrors gives them. It is deliberately
+// stricter than the scaffolder's notFoundCandidates, which proposes anything
+// with the word anywhere in the name for a human to choose between: this one
+// decides on its own, so it matches only the suffix.
+func derivableNotFoundErrors(model *serviceModel, op string) []string {
+	var out []string
+	for _, shape := range model.OperationErrors(op) {
+		name := bareShapeName(shape)
+		for _, suffix := range notFoundSuffixes {
+			if strings.HasSuffix(name, suffix) {
+				out = append(out, shape)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// derivedNotFound is the error a resource's read raises after its delete,
+// when the model settles it: the read must be one a delete can replay (a
+// consuming read never raises it — it is refused later — and deriving from
+// one would silently move the delete off its list-membership check), and the
+// read must declare exactly one not-found-shaped error.
+func (g *generator) derivedNotFound(res resource) (string, bool) {
+	if res.Read == nil || res.Read.Consuming {
+		return "", false
+	}
+	candidates := derivableNotFoundErrors(g.model, res.Read.Op)
+	if len(candidates) != 1 {
+		return "", false
+	}
+	return candidates[0], true
+}
+
+// deriveFromModel fills in what the model determines and the recipe left out,
+// and refuses a `list` whose page the model does not settle. It replaces
+// g.recipe.Resources rather than editing in place, so a recipe value a caller
+// still holds is never rewritten underneath it.
+func (g *generator) deriveFromModel() error {
+	resources := make([]resource, len(g.recipe.Resources))
+	copy(resources, g.recipe.Resources)
+	for i := range resources {
+		if err := g.deriveNotFound(&resources[i]); err != nil {
+			return err
+		}
+		g.deriveItemsPath(&resources[i])
+	}
+	g.recipe.Resources = resources
+	return nil
+}
+
+func (g *generator) deriveNotFound(res *resource) error {
+	derived, ok := g.derivedNotFound(*res)
+	switch {
+	case res.NotFound != nil:
+		if ok && derived != res.NotFound.Error {
+			return fmt.Errorf("resource %q: notFound.error is %q, but %s declares exactly one not-found error, %s; drop the override or correct it",
+				res.ID, res.NotFound.Error, res.Read.Op, derived)
+		}
+	case ok && res.Delete != nil:
+		// notFound exists to prove absence after a delete; a resource with
+		// no delete has nothing to prove, so nothing is derived.
+		res.NotFound = &notFoundSpec{Error: derived}
+	}
+	return nil
+}
+
+func (g *generator) deriveItemsPath(res *resource) {
+	if res.List == nil || res.List.ItemsPath != "" {
+		return
+	}
+	member, candidates := listPageMember(g.model, res.List.Op, g.model.OutputShape(res.List.Op))
+	if member == "" {
+		// Only 0 or 2-and-more candidates reach here: listPageMember takes a
+		// sole one, so the plural below is always right.
+		held := "no list member at all"
+		if len(candidates) > 0 {
+			held = fmt.Sprintf("%d list members (%s) and no @paginated `items` trait to choose between them", len(candidates), strings.Join(candidates, ", "))
+		}
+		g.refuseOp(g.groupName(res.ID), res.List.Op, refuse(reasonAmbiguousListPage,
+			fmt.Sprintf("%s returns %s, so the model does not say which member is the page of items; give resource %q an explicit list.itemsPath",
+				res.List.Op, held, res.ID)))
+		res.List = nil
+		return
+	}
+	spec := *res.List
+	spec.ItemsPath = "$." + member
+	res.List = &spec
 }
 
 // groupName follows §3.3: <service>-gen-<resource>, <service>-gen-probe.
@@ -1354,29 +1473,35 @@ func isTokenName(name string) bool {
 	return paginationTokenNames[name] || strings.HasSuffix(name, "Token") || strings.HasSuffix(name, "Marker")
 }
 
-// listMember is the one list a probe may check the shape of: the member
+// listPageMember is the output member that carries a page of items: the one
 // @paginated names as its `items`, else the output's sole list-typed
-// top-level member. Two lists and no trait to choose between them is an
-// ambiguity the generator refuses rather than guesses at.
+// top-level member. It also returns every top-level list member, so a caller
+// that has to explain why the model did not settle the question can name the
+// candidates. Two lists and no trait to choose between them is an ambiguity
+// the generator refuses rather than guesses at, and so is no list at all.
+//
+// Two callers share it, and they must agree: the list a probe may check the
+// shape of, and the page a recipe's `list` searches when it does not spell
+// `itemsPath` out.
+func listPageMember(model *serviceModel, op, output string) (member string, candidates []string) {
+	for _, name := range model.Members(output) {
+		if target, ok := model.MemberTarget(output, name); ok && model.Kind(target) == "list" {
+			candidates = append(candidates, name)
+		}
+	}
+	if items := model.Pagination(op).Items; items != "" && slices.Contains(candidates, items) {
+		return items, candidates
+	}
+	if len(candidates) == 1 {
+		return candidates[0], candidates
+	}
+	return "", candidates
+}
+
+// listMember is the one list a probe may check the shape of.
 func listMember(model *serviceModel, op, output string) string {
-	isListMember := func(member string) bool {
-		target, ok := model.MemberTarget(output, member)
-		return ok && model.Kind(target) == "list"
-	}
-	if items := model.Pagination(op).Items; items != "" && isListMember(items) {
-		return items
-	}
-	var only string
-	for _, member := range model.Members(output) {
-		if !isListMember(member) {
-			continue
-		}
-		if only != "" {
-			return ""
-		}
-		only = member
-	}
-	return only
+	member, _ := listPageMember(model, op, output)
+	return member
 }
 
 func isScalar(model *serviceModel, structure, member string) bool {

@@ -29,6 +29,7 @@ import (
 //	ListCogs                        a page and a NextToken       → probe with isList on the page
 //	ListGauges                      @paginated names the token   → probe with isList on the page
 //	ScanWidgets                     a NextToken and nothing else → no-output-to-assert
+//	ListWidgetsAndCogs              two lists, no @paginated     → no-output-to-assert
 //	PurgeWidgets                    listed under neverProbe      → never-probe
 //	RotateWidget                    Unsupported, Angle unbound   → unbound-required-member
 //	DescribeGizmo                   undeclared, GizmoArn unbound → unbound-required-member
@@ -120,16 +121,17 @@ func TestGenerate_lifecycleGroupCoversEveryRole(t *testing.T) {
 func TestGenerate_refusesWithMachineReadableReasons(t *testing.T) {
 	_, gen := generateFixture(t)
 	want := map[string]string{
-		"ArchiveWidget": reasonProbeOfImplementedOp,
-		"CreateCog":     reasonUnboundRequiredMember + ":Name",
-		"CreateWidget":  reasonSetupRefused + ":cog",
-		"DescribeGizmo": reasonUnboundRequiredMember + ":GizmoArn",
-		"FreezeWidget":  reasonProbeBindsLiveResource + ":WidgetId",
-		"PurgeWidgets":  reasonNeverProbe,
-		"RotateWidget":  reasonUnboundRequiredMember + ":Angle",
-		"ScanWidgets":   reasonNoOutputToAssert,
-		"SetWidgetSize": reasonUpdateWithoutMutable,
-		"SyncWidgets":   reasonNoOutputToAssert,
+		"ArchiveWidget":      reasonProbeOfImplementedOp,
+		"CreateCog":          reasonUnboundRequiredMember + ":Name",
+		"CreateWidget":       reasonSetupRefused + ":cog",
+		"DescribeGizmo":      reasonUnboundRequiredMember + ":GizmoArn",
+		"FreezeWidget":       reasonProbeBindsLiveResource + ":WidgetId",
+		"PurgeWidgets":       reasonNeverProbe,
+		"RotateWidget":       reasonUnboundRequiredMember + ":Angle",
+		"ListWidgetsAndCogs": reasonNoOutputToAssert,
+		"ScanWidgets":        reasonNoOutputToAssert,
+		"SetWidgetSize":      reasonUpdateWithoutMutable,
+		"SyncWidgets":        reasonNoOutputToAssert,
 	}
 	got := map[string]string{}
 	for _, gp := range gen.gaps {
@@ -444,7 +446,7 @@ func TestGenerate_recipeContradictingTheModelIsAnError(t *testing.T) {
 	}{
 		{"unknown operation", func(r *recipe) { r.Resources[0].Delete = &recipeCall{Op: "DestroyWidget"} }, "does not model"},
 		{"unknown export path", func(r *recipe) { r.Resources[0].Exports = map[string]string{"id": "$.Widget.Id"} }, "no member"},
-		{"unknown error shape", func(r *recipe) { r.Resources[0].NotFound = &notFoundSpec{Error: "WidgetExists"} }, "does not declare error"},
+		{"notFound naming an error the read does not raise", func(r *recipe) { r.Resources[0].NotFound = &notFoundSpec{Error: "WidgetExists"} }, "declares exactly one not-found error, WidgetNotFound"},
 		{"literal of the wrong kind for the read path", func(r *recipe) { r.Resources[0].Mutable[0].To = json.Number("2") }, "wants a string"},
 	}
 	for _, tc := range cases {
@@ -727,4 +729,153 @@ func TestIdentityMember_skipsTokensAndLists(t *testing.T) {
 	if got := listMember(f.model, "ScanWidgets", "ScanWidgetsResponse"); got != "" {
 		t.Errorf("listMember(ScanWidgets) = %q, want none", got)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Model-derived recipe fields (#1795 B1)
+// ---------------------------------------------------------------------------
+
+// TestGenerate_derivesNotFoundAndItemsPathFromTheModel is the whole claim in
+// one assertion: strip both fields from every resource in the fixture recipe
+// and the generated scenario is byte-for-byte the one the explicit values
+// produce. Derivation and override are therefore the same answer, which is
+// what let the pilot recipes drop the lines.
+func TestGenerate_derivesNotFoundAndItemsPathFromTheModel(t *testing.T) {
+	// Given: the fixture recipe, which spells both fields out.
+	f := loadFixture(t)
+	authored, err := generate(f.model, f.recipe, f.values, fixtureCaps(), fixtureClient)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	// When: every derivable value is removed.
+	stripped := f.recipe
+	stripped.Resources = nil
+	for _, res := range f.recipe.Resources {
+		res.NotFound = nil
+		if res.List != nil {
+			list := *res.List
+			list.ItemsPath = ""
+			res.List = &list
+		}
+		stripped.Resources = append(stripped.Resources, res)
+	}
+	derived, err := generate(f.model, stripped, f.values, fixtureCaps(), fixtureClient)
+	if err != nil {
+		t.Fatalf("generate from the stripped recipe: %v", err)
+	}
+
+	// Then: the same scenario, and the same gaps.
+	if a, b := encoded(t, authored.scenario), encoded(t, derived.scenario); !bytes.Equal(a, b) {
+		t.Errorf("the derived scenario differs from the authored one:\n%s\n%s", a, b)
+	}
+	if a, b := encoded(t, authored.gaps), encoded(t, derived.gaps); !bytes.Equal(a, b) {
+		t.Errorf("the derived gaps differ from the authored ones:\n%s\n%s", a, b)
+	}
+
+	// And: the derivation reached the fields, rather than the two runs
+	// agreeing because neither emitted a delete or a list.
+	_, del, ok := derived.scenario.findTest("widgets-gen-widget", "DeleteWidget")
+	if !ok || del.Assert[0].Error == nil || del.Assert[0].Error.Shape != "WidgetNotFound" {
+		t.Errorf("DeleteWidget asserts %+v, want absence by WidgetNotFound", del.Assert)
+	}
+	_, list, ok := derived.scenario.findTest("widgets-gen-widget", "ListWidgets")
+	if !ok || list.Assert[0].ItemsPath != "$.Widgets" {
+		t.Errorf("ListWidgets searches %q, want $.Widgets", list.Assert[0].ItemsPath)
+	}
+}
+
+func TestGenerate_refusesAListWhosePageTheModelDoesNotSettle(t *testing.T) {
+	cases := []struct {
+		name string
+		op   string
+		want string
+	}{
+		{"two lists and no items trait", "ListWidgetsAndCogs", "2 list members (Cogs, Widgets) and no @paginated `items` trait"},
+		{"no list at all", "ScanWidgets", "no list member at all"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: the widget's list pointed at that operation, with no
+			// itemsPath for the recipe to fall back on.
+			f := loadFixture(t)
+			widget := f.resourceNamed(t, "widget")
+			widget.List = &listSpec{Op: tc.op, IdentityPath: "$.WidgetId", Identity: "id"}
+			r := f.recipe
+			r.Resources = []resource{widget}
+
+			// When: it is generated.
+			gen, err := generate(f.model, r, f.values, fixtureCaps(), fixtureClient)
+			if err != nil {
+				t.Fatalf("generate: %v", err)
+			}
+
+			// Then: the list is refused, naming what the model does say, and
+			// no test searches a page the generator had to guess at.
+			got := gapIn(gen, "widgets-gen-widget", tc.op)
+			if got.Reason != reasonAmbiguousListPage || !strings.Contains(got.Detail, tc.want) {
+				t.Fatalf("gap = %+v, want %s naming %q", got, reasonAmbiguousListPage, tc.want)
+			}
+			if !strings.Contains(got.Detail, "list.itemsPath") {
+				t.Errorf("detail %q does not say how to fix it", got.Detail)
+			}
+			if _, _, ok := gen.scenario.findTest("widgets-gen-widget", tc.op); ok {
+				t.Errorf("%s got a test anyway", tc.op)
+			}
+		})
+	}
+}
+
+// TestModelDerivations_readTheModelAndNothingElse pins the two rules against
+// the fixture model directly, so a change to either is visible as itself
+// rather than as a scenario diff.
+func TestModelDerivations_readTheModelAndNothingElse(t *testing.T) {
+	f := loadFixture(t)
+
+	t.Run("not-found errors", func(t *testing.T) {
+		cases := []struct {
+			op   string
+			want []string
+		}{
+			{"GetWidget", []string{"WidgetNotFound"}},
+			{"GetSprocket", []string{"SprocketNotFound"}},
+			{"CreateWidget", nil},  // WidgetExists is not not-found-shaped
+			{"DescribeGauge", nil}, // declares no errors at all
+		}
+		for _, tc := range cases {
+			if got := derivableNotFoundErrors(f.model, tc.op); strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("%s: %v, want %v", tc.op, got, tc.want)
+			}
+		}
+	})
+
+	t.Run("list page", func(t *testing.T) {
+		cases := []struct {
+			op   string
+			want string
+		}{
+			{"ListWidgets", "Widgets"}, // the sole list member
+			{"ListCogs", "Cogs"},       // the sole list beside a token
+			{"ListGauges", "Gauges"},   // @paginated names it
+			{"ListWidgetsAndCogs", ""}, // two lists, no trait
+			{"ScanWidgets", ""},        // no list at all
+		}
+		for _, tc := range cases {
+			got, _ := listPageMember(f.model, tc.op, f.model.OutputShape(tc.op))
+			if got != tc.want {
+				t.Errorf("%s: %q, want %q", tc.op, got, tc.want)
+			}
+		}
+	})
+}
+
+// encoded renders a generated document the way the generator writes it, so a
+// test can compare two of them byte for byte.
+func encoded(t *testing.T, value any) []byte {
+	t.Helper()
+	contents, err := encodeDocument(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contents
 }
