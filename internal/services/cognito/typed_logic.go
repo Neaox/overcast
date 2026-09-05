@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -688,7 +689,12 @@ func (s *Service) validateAccessTokenTyped(ctx context.Context, tokenStr string)
 	if err != nil {
 		return nil, errNotAuthorized("Invalid access token issuer.")
 	}
-	priv, _, err := s.getOrCreateSigningKey(ctx, poolID)
+	// Read-only: poolID comes from an unverified claim, so a pool with no key
+	// on record must reject rather than mint one (#1731).
+	priv, _, err := s.getSigningKey(ctx, poolID)
+	if errors.Is(err, errNoSigningKey) {
+		return nil, errNotAuthorized("Invalid access token issuer.")
+	}
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
