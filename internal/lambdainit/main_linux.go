@@ -174,11 +174,28 @@ func run(ctx context.Context, opts options) int {
 		s.ship.run(ctx)
 	}()
 
+	// The Telemetry API channel, opened before anything the sandbox runs can
+	// subscribe to it, so the host's very first cut batch has a relay parked and
+	// waiting. It is idle for the life of an environment nothing subscribes on:
+	// one long poll the host answers when a batch exists. See telemetry_linux.go.
+	telDone := make(chan struct{})
+	go func() {
+		defer close(telDone)
+		newTelemetryRelay(opts.hostAddr, diag).run(ctx)
+	}()
+
+	// stop ends both host channels and waits for them, so every exit path
+	// leaves the process with nothing still writing to the host.
+	stop := func() {
+		cancel()
+		<-shipDone
+		<-telDone
+	}
+
 	addr, err := s.proxy.listen(opts.listenAddr)
 	if err != nil {
 		diag.printf("cannot serve the Runtime API on %s: %v", opts.listenAddr, err)
-		cancel()
-		<-shipDone
+		stop()
 		return exitConfig
 	}
 	go func() {
@@ -200,8 +217,7 @@ func run(ctx context.Context, opts options) int {
 	if err != nil {
 		diag.printf("cannot start the runtime %q: %v", opts.child[0], err)
 		s.finish()
-		cancel()
-		<-shipDone
+		stop()
 		return exitCannotExec
 	}
 	diag.printf("runtime started pid=%d argv=%q", runtime.pid(), opts.child)
@@ -215,7 +231,6 @@ func run(ctx context.Context, opts options) int {
 	// finish() flushed and closed the log stream; anything the shipper is
 	// still doing is a retry against a host that is not answering, and the
 	// container is going away regardless.
-	cancel()
-	<-shipDone
+	stop()
 	return code
 }
