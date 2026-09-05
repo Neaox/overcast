@@ -611,11 +611,17 @@ lifecycles), which the manifest deliberately omits. Three options were considere
 **Recommendation (C):** commit `models/aws/shapes/<service>.json` containing, for
 **in-scope services only**, only the shapes reachable from their operations
 (inputs, outputs, errors, resources, and transitively referenced structures/enums/
-lists/maps), with traits filtered to the allowlist the generator actually consumes
-(`required`, `default`, `enum`, `length`, `range`, `pattern`, `http*`, `error`,
-`httpError`, `xmlName`, `xmlFlattened`, `xmlAttribute`, `jsonName`, `paginated`,
-`references`, `resource` lifecycle links). Documentation, examples, waiters,
-smoke tests, and every out-of-scope service are pruned.
+lists/maps), with traits filtered to an allowlist. That allowlist is
+`shapeTraitAllowlist` in [cmd/awsmodelgen/shapes.go](../../cmd/awsmodelgen/shapes.go),
+which is where it is read rather than restated: **46 traits** today, grouped by
+what needs them — structure and member semantics, errors, HTTP bindings,
+serialisation names, pagination, service identity and protocol family, and the
+two `aws.api#` resource traits. It is wider than what ships reads: the
+2026-09-06 audit (#1795) found 12 of the 46 consumed by anything shipped, the
+rest held for the inert generator this plan builds. A resource shape's
+lifecycle links are not traits at all — they are fields of the shape, and the
+pruner keeps them with it. Documentation, examples, waiters, smoke tests, and
+every out-of-scope service are pruned.
 
 Why this satisfies §3 rather than contradicting it:
 
