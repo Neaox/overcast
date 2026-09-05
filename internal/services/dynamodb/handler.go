@@ -13,6 +13,7 @@ import (
 	"github.com/overcast-sh/overcast/internal/clock"
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/lifecycle"
 	"github.com/overcast-sh/overcast/internal/middleware"
 	"github.com/overcast-sh/overcast/internal/protocol"
 	"github.com/overcast-sh/overcast/internal/protocol/op"
@@ -30,6 +31,10 @@ type Handler struct {
 	ops   map[string]http.HandlerFunc
 	rawOp map[string]op.Operation
 
+	// ttlSched drives the asynchronous ENABLING/DISABLING transitions
+	// UpdateTimeToLive starts — see handler_ttl.go.
+	ttlSched *lifecycle.Scheduler
+
 	// metrics is nil until Service.InitMetrics is called (or when automatic
 	// collection is disabled — see config.ServiceMetricsMode). Every call
 	// site in metrics_dynamodb.go is nil-safe, matching Lambda's
@@ -39,7 +44,14 @@ type Handler struct {
 
 // newHandler constructs a Handler from the raw dependencies.
 func newHandler(cfg *config.Config, tables state.Store, items itemBackend, streams streamBackend, bus *events.Bus, log *serviceutil.ServiceLogger, clk clock.Clock, defaultRegion string) *Handler {
-	h := &Handler{cfg: cfg, store: newDynamoStore(tables, items, streams, defaultRegion), bus: bus, log: log, clk: clk}
+	h := &Handler{
+		cfg:      cfg,
+		store:    newDynamoStore(tables, items, streams, defaultRegion),
+		bus:      bus,
+		log:      log,
+		clk:      clk,
+		ttlSched: lifecycle.NewScheduler(clk),
+	}
 	h.initOps()
 	h.rawOp = h.typedOps()
 	return h
@@ -1481,122 +1493,6 @@ func (h *Handler) backfillIndex(ctx context.Context, table *Table, idx *Secondar
 		return aerr
 	}
 	return nil
-}
-
-// ---- TTL -------------------------------------------------------------------
-
-type updateTimeToLiveRequest struct {
-	TableName               string                   `json:"TableName"`
-	TimeToLiveSpecification *TimeToLiveSpecification `json:"TimeToLiveSpecification"`
-}
-
-type updateTimeToLiveResponse struct {
-	TimeToLiveSpecification *TimeToLiveSpecification `json:"TimeToLiveSpecification"`
-}
-
-type describeTimeToLiveRequest struct {
-	TableName string `json:"TableName"`
-}
-
-type describeTimeToLiveResponse struct {
-	TimeToLiveDescription *TimeToLiveDescription `json:"TimeToLiveDescription"`
-}
-
-// UpdateTimeToLive handles the DynamoDB UpdateTimeToLive operation.
-func (h *Handler) UpdateTimeToLive(w http.ResponseWriter, r *http.Request) {
-	var req updateTimeToLiveRequest
-	if !serviceutil.DecodeJSON(w, r, &req) {
-		return
-	}
-	resp, aerr := h.updateTimeToLiveTyped(r.Context(), &req)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	protocol.WriteJSON(w, r, http.StatusOK, resp)
-}
-
-func (h *Handler) updateTimeToLiveTyped(ctx context.Context, req *updateTimeToLiveRequest) (*updateTimeToLiveResponse, *protocol.AWSError) {
-	log := h.log.WithRecorder(ctx)
-	if req.TableName == "" {
-		return nil, protocol.ErrMissingParameter("TableName")
-	}
-	if req.TimeToLiveSpecification == nil {
-		return nil, &protocol.AWSError{
-			Code:       "ValidationException",
-			Message:    "TimeToLiveSpecification is required",
-			HTTPStatus: http.StatusBadRequest,
-		}
-	}
-	if req.TimeToLiveSpecification.Enabled && req.TimeToLiveSpecification.AttributeName == "" {
-		return nil, &protocol.AWSError{
-			Code:       "ValidationException",
-			Message:    "TimeToLiveSpecification.AttributeName must be specified when enabling TTL",
-			HTTPStatus: http.StatusBadRequest,
-		}
-	}
-
-	table, aerr := h.store.getTable(ctx, req.TableName)
-	if aerr != nil {
-		return nil, aerr
-	}
-
-	// AWS rejects enabling TTL if it's already enabled with a different attribute.
-	if req.TimeToLiveSpecification.Enabled && table.ttlEnabled() {
-		if table.TTL.AttributeName != req.TimeToLiveSpecification.AttributeName {
-			return nil, &protocol.AWSError{
-				Code:       "ValidationException",
-				Message:    "TimeToLive is already enabled with AttributeName " + table.TTL.AttributeName,
-				HTTPStatus: http.StatusBadRequest,
-			}
-		}
-		// Already enabled with the same attribute — idempotent.
-	}
-
-	table.TTL = req.TimeToLiveSpecification
-
-	if aerr := h.store.putTable(ctx, table); aerr != nil {
-		return nil, aerr
-	}
-
-	log.Info("table TTL updated",
-		zap.String("table", req.TableName),
-		zap.Bool("enabled", req.TimeToLiveSpecification.Enabled),
-		zap.String("attribute", req.TimeToLiveSpecification.AttributeName),
-	)
-
-	return &updateTimeToLiveResponse{
-		TimeToLiveSpecification: req.TimeToLiveSpecification,
-	}, nil
-}
-
-// DescribeTimeToLive handles the DynamoDB DescribeTimeToLive operation.
-func (h *Handler) DescribeTimeToLive(w http.ResponseWriter, r *http.Request) {
-	var req describeTimeToLiveRequest
-	if !serviceutil.DecodeJSON(w, r, &req) {
-		return
-	}
-	resp, aerr := h.describeTimeToLiveTyped(r.Context(), &req)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	protocol.WriteJSON(w, r, http.StatusOK, resp)
-}
-
-func (h *Handler) describeTimeToLiveTyped(ctx context.Context, req *describeTimeToLiveRequest) (*describeTimeToLiveResponse, *protocol.AWSError) {
-	if req.TableName == "" {
-		return nil, protocol.ErrMissingParameter("TableName")
-	}
-
-	table, aerr := h.store.getTable(ctx, req.TableName)
-	if aerr != nil {
-		return nil, aerr
-	}
-
-	return &describeTimeToLiveResponse{
-		TimeToLiveDescription: table.ttlDescription(),
-	}, nil
 }
 
 // ---- Stream helpers --------------------------------------------------------

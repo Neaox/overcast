@@ -711,7 +711,13 @@ export function makeDynamoDBGroups(suite: string): TestGroup[] {
                 TableName: `${ctx.runId}-ddb-ttl`,
               }),
             );
-            assert.strictEqual(resp.TimeToLiveDescription?.TimeToLiveStatus, "ENABLED", `UpdateTimeToLive: expected ENABLED, got ${resp.TimeToLiveDescription?.TimeToLiveStatus}`);
+            // The change is asynchronous on AWS, so the read straight after
+            // it lands on ENABLING; whether it has settled by now is not
+            // something the API promises either way.
+            assert.ok(
+              ["ENABLED", "ENABLING"].includes(resp.TimeToLiveDescription?.TimeToLiveStatus ?? ""),
+              `UpdateTimeToLive: expected ENABLED or ENABLING, got ${resp.TimeToLiveDescription?.TimeToLiveStatus}`,
+            );
           },
         },
         {
@@ -723,7 +729,10 @@ export function makeDynamoDBGroups(suite: string): TestGroup[] {
                 TableName: `${ctx.runId}-ddb-ttl`,
               }),
             );
-            assert.strictEqual(resp.TimeToLiveDescription?.TimeToLiveStatus, "ENABLED", `DescribeTimeToLive: expected ENABLED, got ${resp.TimeToLiveDescription?.TimeToLiveStatus}`);
+            assert.ok(
+              ["ENABLED", "ENABLING"].includes(resp.TimeToLiveDescription?.TimeToLiveStatus ?? ""),
+              `DescribeTimeToLive: expected ENABLED or ENABLING, got ${resp.TimeToLiveDescription?.TimeToLiveStatus}`,
+            );
             assert.strictEqual(resp.TimeToLiveDescription?.AttributeName, "expires_at", `DescribeTimeToLive: expected expires_at, got ${resp.TimeToLiveDescription?.AttributeName}`);
           },
         },

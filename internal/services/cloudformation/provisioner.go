@@ -4223,10 +4223,18 @@ func (h *dynamodbTableHandler) Create(ctx context.Context, router http.Handler, 
 	return tableName, map[string]string{"TableName": tableName}, nil
 }
 
+// errDynamoDBTTLAttributeChange is AWS's refusal of a TimeToLiveSpecification
+// whose AttributeName changes while TTL is enabled. The AWS::DynamoDB::Table
+// provider rejects the template outright rather than issuing a disable and an
+// enable: DynamoDB would refuse the second call as another UpdateTimeToLive
+// inside the same transition window, leaving TTL disabled and the stack
+// half-applied.
+var errDynamoDBTTLAttributeChange = errors.New(
+	"Invalid request provided: Cannot change time-to-live attribute name. " +
+		"To update this property, you must first disable TTL then enable TTL with the new attribute name.")
+
 // reconcileDynamoDBTableTTL applies the desired CloudFormation TTL state and
-// returns a compensating function when it changed DynamoDB. Attribute names
-// cannot be swapped while TTL is enabled, so the AWS-required transition is
-// disable the old attribute then enable the new one.
+// returns a compensating function when it changed DynamoDB.
 //
 // The bool result is true only when a failed transition could not restore its
 // previous configuration; callers must retain that dirty resource for stack
@@ -4237,19 +4245,7 @@ func reconcileDynamoDBTableTTL(ctx context.Context, router http.Handler, region,
 	}
 
 	if oldConfig.enabled && newConfig.enabled && oldConfig.attributeName != newConfig.attributeName {
-		if err := updateDynamoDBTableTTL(ctx, router, region, tableName, dynamodbTTLDisableSpec(oldConfig)); err != nil {
-			return nil, false, err
-		}
-		if err := updateDynamoDBTableTTL(ctx, router, region, tableName, dynamodbTTLSpec(newConfig)); err != nil {
-			restoreErr := updateDynamoDBTableTTL(ctx, router, region, tableName, dynamodbTTLSpec(oldConfig))
-			if restoreErr != nil {
-				return nil, true, errors.Join(err, fmt.Errorf("restore previous DynamoDB TTL configuration: %w", restoreErr))
-			}
-			return nil, false, err
-		}
-		return func() error {
-			return restoreDynamoDBTableTTL(ctx, router, region, tableName, newConfig, oldConfig)
-		}, false, nil
+		return nil, false, errDynamoDBTTLAttributeChange
 	}
 
 	appliedConfig, changed, err := applyDynamoDBTableTTL(ctx, router, region, tableName, oldConfig, newConfig)
@@ -4257,18 +4253,9 @@ func reconcileDynamoDBTableTTL(ctx context.Context, router http.Handler, region,
 		return nil, false, err
 	}
 	return func() error {
-		return restoreDynamoDBTableTTL(ctx, router, region, tableName, appliedConfig, oldConfig)
+		_, _, restoreErr := applyDynamoDBTableTTL(ctx, router, region, tableName, appliedConfig, oldConfig)
+		return restoreErr
 	}, false, nil
-}
-
-func restoreDynamoDBTableTTL(ctx context.Context, router http.Handler, region, tableName string, current, desired dynamodbTTLConfig) error {
-	if current.enabled && desired.enabled && current.attributeName != desired.attributeName {
-		if err := updateDynamoDBTableTTL(ctx, router, region, tableName, dynamodbTTLDisableSpec(current)); err != nil {
-			return err
-		}
-	}
-	_, _, err := applyDynamoDBTableTTL(ctx, router, region, tableName, current, desired)
-	return err
 }
 
 func applyDynamoDBTableTTL(ctx context.Context, router http.Handler, region, tableName string, current, desired dynamodbTTLConfig) (dynamodbTTLConfig, bool, error) {

@@ -472,13 +472,14 @@
         {
           "operation": "DescribeTimeToLive",
           "category": "Table management",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Reports all four `TimeToLiveStatus` values — a change is `ENABLING`/`DISABLING` until it settles; `AttributeName` is omitted only once the table has settled on `DISABLED`"
         },
         {
           "operation": "UpdateTimeToLive",
           "category": "Table management",
           "status": "✅ Supported",
-          "notes": "TTL-based item expiry; sweeper deletes expired items hourly"
+          "notes": "TTL-based item expiry, with the sweeper deleting expired items hourly once the status reaches `ENABLED`; the change is asynchronous as on AWS, and both members of `TimeToLiveSpecification` are required (`AttributeName` 1..255). A second `UpdateTimeToLive` inside the transition window, re-enabling an `ENABLED` table (renaming the attribute included) and disabling a `DISABLED` one are each a `ValidationException`, so the attribute name only changes by disabling first. Overcast settles in 30 seconds where AWS takes up to an hour"
         },
         {
           "operation": "PutItem",

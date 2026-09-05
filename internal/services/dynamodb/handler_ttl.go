@@ -4,20 +4,305 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"net/http"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"go.uber.org/zap"
 
 	"github.com/overcast-sh/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/protocol"
 	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 const ttlSweepInterval = 1 * time.Hour
 
-// startTTLSweeper starts a background goroutine that periodically scans
-// TTL-enabled tables and deletes expired items (where the TTL attribute
-// value is a Unix epoch timestamp in the past).
+// ttlTransitionDuration is how long a TTL change stays in its intermediate
+// ENABLING/DISABLING state before settling, and — as on AWS — the window in
+// which a second UpdateTimeToLive for the same table is refused.
+//
+// AWS's window is "up to one hour"
+// (https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTimeToLive.html).
+// Waiting an hour is not the behaviour worth emulating: what a caller has to
+// cope with is that the change is *asynchronous* — that DescribeTimeToLive
+// answers ENABLING before ENABLED, that expiry does not start until it
+// settles, and that a second update inside the window is rejected. Thirty
+// seconds reproduces every one of those observably while leaving a poll loop,
+// a CDK deploy or a test suite to finish in seconds rather than blocking for
+// an hour. It is deliberately long enough that a client which updates and
+// immediately reads back sees the intermediate state, rather than a window so
+// short that the asynchrony is invisible and code written against Overcast
+// breaks on AWS.
+const ttlTransitionDuration = 30 * time.Second
+
+// ttlTransitionKey names the per-table transition in the lifecycle scheduler.
+const ttlTransitionKey = "ttl"
+
+// AWS's UpdateTimeToLive rejections. The wording is AWS's own, so a caller
+// matching on the message keeps working here.
+var (
+	errTTLModifiedTooOften = &protocol.AWSError{
+		Code:       "ValidationException",
+		Message:    "Time to live has been modified multiple times within a fixed interval",
+		HTTPStatus: http.StatusBadRequest,
+	}
+	errTTLAlreadyEnabled = &protocol.AWSError{
+		Code:       "ValidationException",
+		Message:    "TimeToLive is already enabled",
+		HTTPStatus: http.StatusBadRequest,
+	}
+	errTTLAlreadyDisabled = &protocol.AWSError{
+		Code:       "ValidationException",
+		Message:    "TimeToLive is already disabled",
+		HTTPStatus: http.StatusBadRequest,
+	}
+)
+
+// ---- Request / response types ----------------------------------------------
+
+// timeToLiveSpecificationInput is the request-side TimeToLiveSpecification.
+// AWS models both members as required, so both are pointers here: an omitted
+// Enabled would otherwise be indistinguishable from false, and an omitted
+// AttributeName from an empty one, and both are rejections AWS makes.
+type timeToLiveSpecificationInput struct {
+	Enabled       *bool   `json:"Enabled"`
+	AttributeName *string `json:"AttributeName"`
+}
+
+type updateTimeToLiveRequest struct {
+	TableName               string                        `json:"TableName"`
+	TimeToLiveSpecification *timeToLiveSpecificationInput `json:"TimeToLiveSpecification"`
+}
+
+type updateTimeToLiveResponse struct {
+	TimeToLiveSpecification *TimeToLiveSpecification `json:"TimeToLiveSpecification"`
+}
+
+type describeTimeToLiveRequest struct {
+	TableName string `json:"TableName"`
+}
+
+type describeTimeToLiveResponse struct {
+	TimeToLiveDescription *TimeToLiveDescription `json:"TimeToLiveDescription"`
+}
+
+// ---- UpdateTimeToLive / DescribeTimeToLive ---------------------------------
+
+// UpdateTimeToLive handles the DynamoDB UpdateTimeToLive operation.
+func (h *Handler) UpdateTimeToLive(w http.ResponseWriter, r *http.Request) {
+	var req updateTimeToLiveRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	resp, aerr := h.updateTimeToLiveTyped(r.Context(), &req)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
+}
+
+func (h *Handler) updateTimeToLiveTyped(ctx context.Context, req *updateTimeToLiveRequest) (*updateTimeToLiveResponse, *protocol.AWSError) {
+	log := h.log.WithRecorder(ctx)
+	if req.TableName == "" {
+		return nil, protocol.ErrMissingParameter("TableName")
+	}
+	// Request shape first, resource second: AWS answers a malformed
+	// TimeToLiveSpecification with a ValidationException even when the table
+	// does not exist.
+	spec, aerr := validateTimeToLiveSpecification(req.TimeToLiveSpecification)
+	if aerr != nil {
+		return nil, aerr
+	}
+
+	table, aerr := h.store.getTable(ctx, req.TableName)
+	if aerr != nil {
+		return nil, aerr
+	}
+
+	// UpdateTimeToLive is not idempotent on AWS, and no request mutates a
+	// table it is refused for.
+	now := h.clk.Now()
+	switch status := table.ttlStatus(now); {
+	case status == ttlStatusEnabling || status == ttlStatusDisabling:
+		return nil, errTTLModifiedTooOften
+	case spec.Enabled && status == ttlStatusEnabled:
+		// Covers a repeat of the same attribute and an attempt to swap it:
+		// the attribute can only change by disabling TTL first.
+		return nil, errTTLAlreadyEnabled
+	case !spec.Enabled && status == ttlStatusDisabled:
+		return nil, errTTLAlreadyDisabled
+	}
+
+	table.TTL = spec
+	table.TTLTransitionAt = now.Add(ttlTransitionDuration).UnixNano()
+	if aerr := h.store.putTable(ctx, table); aerr != nil {
+		return nil, aerr
+	}
+	h.scheduleTTLTransition(h.store.region(ctx), table.TableName, ttlTransitionDuration)
+
+	log.Info("table TTL update accepted",
+		zap.String("table", req.TableName),
+		zap.Bool("enabled", spec.Enabled),
+		zap.String("attribute", spec.AttributeName),
+		zap.String("status", table.ttlStatus(now)),
+	)
+
+	return &updateTimeToLiveResponse{TimeToLiveSpecification: spec}, nil
+}
+
+// DescribeTimeToLive handles the DynamoDB DescribeTimeToLive operation.
+func (h *Handler) DescribeTimeToLive(w http.ResponseWriter, r *http.Request) {
+	var req describeTimeToLiveRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	resp, aerr := h.describeTimeToLiveTyped(r.Context(), &req)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
+}
+
+func (h *Handler) describeTimeToLiveTyped(ctx context.Context, req *describeTimeToLiveRequest) (*describeTimeToLiveResponse, *protocol.AWSError) {
+	if req.TableName == "" {
+		return nil, protocol.ErrMissingParameter("TableName")
+	}
+
+	table, aerr := h.store.getTable(ctx, req.TableName)
+	if aerr != nil {
+		return nil, aerr
+	}
+
+	return &describeTimeToLiveResponse{
+		TimeToLiveDescription: table.ttlDescription(h.clk.Now()),
+	}, nil
+}
+
+// validateTimeToLiveSpecification enforces the shape AWS models: both members
+// required, AttributeName 1..255 characters. It returns the store-side
+// specification so the caller never has to dereference the pointers again.
+func validateTimeToLiveSpecification(in *timeToLiveSpecificationInput) (*TimeToLiveSpecification, *protocol.AWSError) {
+	if in == nil {
+		return nil, ttlNullMemberError("timeToLiveSpecification")
+	}
+	if in.Enabled == nil {
+		return nil, ttlNullMemberError("timeToLiveSpecification.enabled")
+	}
+	if in.AttributeName == nil {
+		return nil, ttlNullMemberError("timeToLiveSpecification.attributeName")
+	}
+	switch length := utf8.RuneCountInString(*in.AttributeName); {
+	case length < 1:
+		return nil, ttlConstraintError("timeToLiveSpecification.attributeName", *in.AttributeName,
+			"Member must have length greater than or equal to 1")
+	case length > 255:
+		return nil, ttlConstraintError("timeToLiveSpecification.attributeName", *in.AttributeName,
+			"Member must have length less than or equal to 255")
+	}
+	return &TimeToLiveSpecification{Enabled: *in.Enabled, AttributeName: *in.AttributeName}, nil
+}
+
+func ttlNullMemberError(member string) *protocol.AWSError {
+	return ttlValidationError("1 validation error detected: Value null at '" + member +
+		"' failed to satisfy constraint: Member must not be null")
+}
+
+func ttlConstraintError(member, value, constraint string) *protocol.AWSError {
+	return ttlValidationError("1 validation error detected: Value '" + value + "' at '" + member +
+		"' failed to satisfy constraint: " + constraint)
+}
+
+func ttlValidationError(message string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ValidationException",
+		Message:    message,
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+// ---- Transition scheduling -------------------------------------------------
+
+// scheduleTTLTransition arms the settle for a table's in-flight TTL change.
+// The scheduler is region-scoped because table records are (dynamoStore
+// .tableKey), so a same-named table in another region neither cancels this
+// transition nor is settled by it.
+func (h *Handler) scheduleTTLTransition(region, tableName string, delay time.Duration) {
+	h.ttlSched.AfterScoped(region, tableName, ttlTransitionKey, delay, func(ctx context.Context) {
+		h.settleTTLTransition(ctx, tableName)
+	})
+}
+
+// settleTTLTransition normalises a table record once its transition window has
+// closed: the pending deadline is dropped, and a completed disable drops the
+// TTL configuration outright so the stored record says what DescribeTimeToLive
+// reports — DISABLED, with no attribute.
+//
+// The status a client reads never depends on this having run (Table.ttlStatus
+// derives it from the deadline), so this is convergence, not the transition
+// itself: it is safe to run late, twice, or never.
+func (h *Handler) settleTTLTransition(ctx context.Context, tableName string) {
+	table, aerr := h.store.getTable(ctx, tableName)
+	if aerr != nil {
+		// Deleted mid-transition, or unreadable — there is nothing to settle.
+		return
+	}
+	if table.TTLTransitionAt == 0 || table.ttlTransitionPending(h.clk.Now()) {
+		return
+	}
+	table.TTLTransitionAt = 0
+	if table.TTL != nil && !table.TTL.Enabled {
+		table.TTL = nil
+	}
+	if aerr := h.store.putTable(ctx, table); aerr != nil {
+		h.log.Error("ttl: settle transition", zap.String("table", tableName), zap.Error(aerr))
+		return
+	}
+	h.log.Debug("ttl: transition settled",
+		zap.String("table", tableName),
+		zap.String("status", table.ttlStatus(h.clk.Now())),
+	)
+}
+
+// rearmTTLTransitions re-arms every TTL transition that was still in flight
+// when the process last stopped. The deadline is persisted with the table, so
+// a window that elapsed while Overcast was down settles immediately and one
+// still open is re-armed for the time it has left — the transition completes
+// across a restart either way, rather than leaving a table stuck ENABLING.
+func (h *Handler) rearmTTLTransitions(ctx context.Context) {
+	pairs, err := h.store.scanAllTables(ctx)
+	if err != nil {
+		h.log.Error("ttl: scan all tables for pending transitions", zap.Error(err))
+		return
+	}
+	now := h.clk.Now()
+	for _, kv := range pairs {
+		region, name := serviceutil.SplitRegionKey(kv.Key)
+		var table Table
+		if err := json.Unmarshal([]byte(kv.Value), &table); err != nil {
+			h.log.Warn("ttl: unmarshal table; skipping", zap.String("key", name), zap.Error(err))
+			continue
+		}
+		if table.TTLTransitionAt == 0 {
+			continue
+		}
+		remaining := time.Unix(0, table.TTLTransitionAt).Sub(now)
+		if remaining <= 0 {
+			h.settleTTLTransition(middleware.ContextWithRegion(ctx, region), table.TableName)
+			continue
+		}
+		h.scheduleTTLTransition(region, table.TableName, remaining)
+	}
+}
+
+// ---- Sweeper ---------------------------------------------------------------
+
+// startTTLSweeper re-arms any transition interrupted by a restart, then starts
+// a background goroutine that periodically scans TTL-enabled tables and
+// deletes expired items (where the TTL attribute value is a Unix epoch
+// timestamp in the past).
 //
 // Real AWS deletes expired items within 48 hours. The emulator sweeps
 // once per hour — close to production behaviour and cheap. Tests use a
@@ -26,6 +311,11 @@ func (h *Handler) startTTLSweeper(ctx context.Context) {
 	ticker := h.clk.Ticker(ttlSweepInterval)
 	go func() {
 		defer ticker.Stop()
+		// Off the constructor's critical path — Service.New does no store I/O
+		// (the startup-budget rule) — but before the first sweep, so a table
+		// whose enable completed while Overcast was down is expiring items by
+		// the time one runs.
+		h.rearmTTLTransitions(ctx)
 		for {
 			select {
 			case <-ctx.Done():
@@ -45,7 +335,7 @@ func (h *Handler) sweepExpiredItems(ctx context.Context) {
 		return
 	}
 
-	now := h.clk.Now().Unix()
+	now := h.clk.Now()
 
 	for _, kv := range pairs {
 		region, name := serviceutil.SplitRegionKey(kv.Key)
@@ -57,7 +347,10 @@ func (h *Handler) sweepExpiredItems(ctx context.Context) {
 			h.log.Warn("ttl: unmarshal table; skipping", zap.String("key", name), zap.Error(err))
 			continue
 		}
-		if !table.ttlEnabled() {
+		// Only a settled ENABLED table expires anything: an enable that is
+		// still ENABLING has not started expiring on AWS either, and a
+		// DISABLING one has already stopped.
+		if !table.ttlActive(now) {
 			continue
 		}
 		// Item storage is region-qualified (dynamoStore.tableKey), and this
@@ -66,7 +359,7 @@ func (h *Handler) sweepExpiredItems(ctx context.Context) {
 		// or every table's sweep would resolve against the default region's
 		// partition and silently delete nothing (or, for a same-named table
 		// there, the wrong region's items).
-		h.sweepTable(middleware.ContextWithRegion(ctx, region), &table, now)
+		h.sweepTable(middleware.ContextWithRegion(ctx, region), &table, now.Unix())
 	}
 }
 

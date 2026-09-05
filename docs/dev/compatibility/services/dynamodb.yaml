@@ -2,7 +2,7 @@ service: dynamodb
 status: not_started
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-09-04
+last_updated: 2026-09-05
 protocols: [aws_json_1_0, rpcv2_cbor]
 implementation: [internal/services/dynamodb]
 integration_tests: [tests/integration/dynamodb]
@@ -21,15 +21,46 @@ findings:
           - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestCreateStack_DynamoDBTableLocalSecondaryIndex
           - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestUpdateStack_DynamoDBTableLocalSecondaryIndexes
           - internal/services/cloudformation/dynamodb_table_update_test.go
-    - scenario: CloudFormation applies AWS::DynamoDB::Table TimeToLiveSpecification with UpdateTimeToLive, including attribute changes and property removal.
+    - scenario: CloudFormation applies AWS::DynamoDB::Table TimeToLiveSpecification with UpdateTimeToLive, including property removal. A template that renames AttributeName while TTL is enabled is refused with AWS's own "Cannot change time-to-live attribute name" message rather than issuing a disable/enable pair, which DynamoDB refuses as a second UpdateTimeToLive inside the transition window. CloudFormation does not wait for ENABLED/DISABLED, matching AWS — which is why a second deployment inside the window fails.
       evidence:
         aws_docs:
           - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-dynamodb-table-timetolivespecification.html
           - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTimeToLive.html
+        community:
+          - https://dev.to/aws-builders/modifying-dynamodb-ttl-with-cdk-3g4e
         tests:
           - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestCreateStack_DynamoDBTableTimeToLive
           - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestUpdateStack_DynamoDBTableTimeToLive
+          - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestUpdateStack_DynamoDBTableTimeToLiveAttributeChange
           - internal/services/cloudformation/dynamodb_ttl_test.go
+    - scenario: >-
+        UpdateTimeToLive is asynchronous and not idempotent. DescribeTimeToLive reports DISABLED with
+        no AttributeName on a fresh table, ENABLING then ENABLED across an enable, and DISABLING (still
+        naming the attribute) then DISABLED across a disable. Inside the transition window a second
+        UpdateTimeToLive is a ValidationException "Time to live has been modified multiple times within
+        a fixed interval"; outside it, re-enabling an ENABLED table — a repeat of the same attribute or
+        a rename — is "TimeToLive is already enabled", and disabling a DISABLED one is "TimeToLive is
+        already disabled". Both TimeToLiveSpecification members are required, AttributeName 1..255, and
+        the request shape is validated before the table is looked up. UpdateTimeToLive answers with
+        TimeToLiveSpecification, DescribeTimeToLive with TimeToLiveDescription. A rejected request
+        mutates nothing, the sweeper expires items only while ENABLED, and a transition in flight when
+        the process stops is re-armed from its persisted deadline at startup. AWS's window is up to one
+        hour; Overcast settles after 30 seconds so the intermediate states stay observable without a
+        test or a deploy waiting an hour.
+      evidence:
+        aws_docs:
+          - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTimeToLive.html
+          - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeTimeToLive.html
+          - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TimeToLiveSpecification.html
+          - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TimeToLiveDescription.html
+        community:
+          - https://github.com/hashicorp/terraform-provider-aws/issues/10304
+          - https://github.com/cloudposse/terraform-aws-dynamodb/issues/94
+          - https://github.com/pynamodb/PynamoDB/issues/1278
+          - https://dev.to/aws-builders/modifying-dynamodb-ttl-with-cdk-3g4e
+        tests:
+          - tests/integration/dynamodb/ttl_transitions_test.go
+          - internal/services/dynamodb/handler_ttl_test.go
     - scenario: CreateTable rejects invalid table names outside the documented 3..255 character alphanumeric, hyphen, underscore, and period rules.
       evidence:
         aws_docs: https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.NamingRulesDataTypes.html
@@ -119,6 +150,7 @@ findings:
           - internal/services/dynamodb/expr_reserved_test.go
   remaining_gaps:
     - Review expression edge cases, pagination semantics, and GSI/LSI behavior.
+    - The TTL transition window is 30 seconds rather than AWS's "up to one hour", so code that assumes an hour-long rejection window sees a shorter one here. Two behaviours in that lifecycle are documented-but-unverified against a real account, both taken from the AWS error messages the community reports rather than from a live call: that DescribeTimeToLive still names AttributeName while DISABLING, and the exact service-side validation text for a TimeToLiveSpecification missing a required member (the SDKs reject that client-side, so the service message is not observable through one).
     - Review CBOR coverage against SDK expectations.
     - UpdateTable applies BillingMode without the throughput validation CreateTable now enforces, so switching a table to PROVISIONED without ProvisionedThroughput is accepted where AWS answers "One or more parameter values were invalid: ProvisionedThroughput must be specified when BillingMode is PROVISIONED".
     - AWS::DynamoDB::Table/GlobalTable SSESpecification, PointInTimeRecoverySpecification, DeletionProtectionEnabled, TableClass, KinesisStreamSpecification, ContributorInsightsSpecification, ImportSourceSpecification, ResourcePolicy, and OnDemandThroughput are not applied — DynamoDB itself has no support for any of them, so CloudFormation cannot honestly forward them either.

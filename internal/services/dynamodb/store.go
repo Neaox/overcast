@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/overcast-sh/overcast/internal/middleware"
 	"github.com/overcast-sh/overcast/internal/protocol"
@@ -70,6 +71,7 @@ type Table struct {
 	LatestStreamArn        string                   `json:"LatestStreamArn,omitempty"`
 	LatestStreamLabel      string                   `json:"LatestStreamLabel,omitempty"`
 	TTL                    *TimeToLiveSpecification `json:"TTL,omitempty"`
+	TTLTransitionAt        int64                    `json:"TTLTransitionAt,omitempty"`
 	GlobalSecondaryIndexes []SecondaryIndex         `json:"GlobalSecondaryIndexes,omitempty"`
 	LocalSecondaryIndexes  []SecondaryIndex         `json:"LocalSecondaryIndexes,omitempty"`
 	Tags                   map[string]string        `json:"Tags,omitempty"`
@@ -150,20 +152,66 @@ func (t *Table) streamEnabled() bool {
 	return t.StreamSpecification != nil && t.StreamSpecification.StreamEnabled
 }
 
-// ttlEnabled reports whether this table has TTL enabled.
-func (t *Table) ttlEnabled() bool {
-	return t.TTL != nil && t.TTL.Enabled
+// TimeToLiveStatus values, as modeled by AWS
+// (dynamodb-2012-08-10.json#TimeToLiveStatus).
+const (
+	ttlStatusEnabling  = "ENABLING"
+	ttlStatusDisabling = "DISABLING"
+	ttlStatusEnabled   = "ENABLED"
+	ttlStatusDisabled  = "DISABLED"
+)
+
+// ttlTransitionPending reports whether the TTL change recorded in TTL is still
+// processing at now. TTLTransitionAt is zero on a settled table — and on every
+// record written before transitions were modeled, which is what makes the
+// field additive: an old row decodes as settled and keeps the status its
+// Enabled flag already implied.
+func (t *Table) ttlTransitionPending(now time.Time) bool {
+	return t.TTLTransitionAt > 0 && now.UnixNano() < t.TTLTransitionAt
+}
+
+// ttlStatus derives the TimeToLiveStatus a client sees, from the target
+// configuration in TTL and the transition deadline in TTLTransitionAt.
+//
+// It is a pure function of the record and the clock rather than a persisted
+// status string, so a read is never racing the scheduled callback that settles
+// the record (handler_ttl.go's settleTTLTransition): once the deadline has
+// passed, every reader agrees on the terminal status whether or not that
+// callback has run yet. That is what keeps a test deterministic when it
+// advances a mock clock and reads back over HTTP, with no scheduler handle to
+// settle against.
+func (t *Table) ttlStatus(now time.Time) string {
+	enabled := t.TTL != nil && t.TTL.Enabled
+	if t.ttlTransitionPending(now) {
+		if enabled {
+			return ttlStatusEnabling
+		}
+		return ttlStatusDisabling
+	}
+	if enabled {
+		return ttlStatusEnabled
+	}
+	return ttlStatusDisabled
+}
+
+// ttlActive reports whether the sweeper may expire this table's items. AWS
+// only begins expiring items once the status reaches ENABLED, so an enable
+// that is still processing — and a disable that is not finished — expires
+// nothing.
+func (t *Table) ttlActive(now time.Time) bool {
+	return t.ttlStatus(now) == ttlStatusEnabled
 }
 
 // ttlDescription returns the TTL description for DescribeTimeToLive responses.
-func (t *Table) ttlDescription() *TimeToLiveDescription {
-	if t.TTL == nil || !t.TTL.Enabled {
-		return &TimeToLiveDescription{TimeToLiveStatus: "DISABLED"}
+// AttributeName is omitted only once the table has settled on DISABLED: a
+// DISABLING table still names the attribute it is switching off.
+func (t *Table) ttlDescription(now time.Time) *TimeToLiveDescription {
+	status := t.ttlStatus(now)
+	desc := &TimeToLiveDescription{TimeToLiveStatus: status}
+	if status != ttlStatusDisabled && t.TTL != nil {
+		desc.AttributeName = t.TTL.AttributeName
 	}
-	return &TimeToLiveDescription{
-		TimeToLiveStatus: "ENABLED",
-		AttributeName:    t.TTL.AttributeName,
-	}
+	return desc
 }
 
 // streamViewType returns the configured view type, or "" when streams are off.
