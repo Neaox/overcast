@@ -1,7 +1,8 @@
 # Model-driven compat coverage — scenario generation across every suite
 
-> Status: **in progress** — G0 complete, G1 partly complete; see the § 2
-> note for what has landed and what has not. Proposed 2026-08-03. Owner: TBD.
+> Status: **in progress** — G0 complete, G1 landing, G2 not started but
+> unblocked once #1709 lands; #1700 is done. See the § 2 note for what has
+> landed and what has not. Proposed 2026-08-03. Owner: TBD.
 > Siblings written concurrently, and part of the same tier programme:
 > [inert-tier-rollout.md](./inert-tier-rollout.md) (Tier 1 implementation — the
 > thing generated tests will mostly exercise),
@@ -109,6 +110,71 @@ at full operation depth (§3.9).
 > artifacts named in this section as authoritative and recompute before
 > acting; do not trust the prose numbers.
 
+> **Re-verified 2026-09-05: G0 is complete and G1 is landing.** Wave 1 of #1113
+> closed G0's loader tail, built `cmd/compatgen`, and turned up one new
+> prerequisite for G2 — so the paragraph above naming `cmd/compatgen`,
+> `compat/model/` and the loader tail as outstanding is superseded. State of the
+> wave at this commit:
+>
+> | Deliverable | Merged | Open |
+> | --- | --- | --- |
+> | **G0 tail** (#1393, closed) — the seven suite loaders and `compat/mcp.go` read `registry.generated.json` | java-sdk #1680, node-js-sdk #1683, python-sdk #1682, go-sdk #1685 (carries `compat/mcp.go`), cli #1687, rust-sdk #1694, dotnet-sdk #1697 | — |
+> | **G1** (#1394) — `sqs` added to the pruned shape snapshot; `cmd/compatgen` and `compat/model/` | #1684 | #1709 |
+> | **G2 prerequisite** (#1700, closed) — every impl key qualified `group:test` | dotnet-sdk #1725, go-sdk #1711, python-sdk #1712, java-sdk #1713, rust-sdk #1714, cli #1715, docs #1716 | — |
+>
+> **The loader contract, decided once so all eight loaders agree.** A
+> missing generated file loads as empty. A present but malformed one — bad JSON,
+> an unsupported `version`, a group missing `generated`/`state`/`suites`, or a
+> group name a hand-written group already owns — is a load error. Concatenation
+> is hand-written first, generated after. Every loader gained an optional
+> **scenario backend** hook, consulted for any test with no static impl,
+> hand-written or generated, so the G6 port of a hand-written group to an
+> authored scenario needs no loader change. Until the G2 interpreters exist, a
+> generated test scoped to a suite with neither an impl nor a backend is a
+> **`fail`** carrying exactly `generated group "<group>" is scoped to <suite>
+> but <suite> has no scenario backend` — never `skip` and never `na`, because
+> `suites` is derived from backend availability (§3.6), so a suite that cannot
+> run a group it is named in is a generator or loader bug. `candidate` state
+> keeps that out of both gates until promotion.
+>
+> **Deviation to record: `suites` scoping is not yet uniform.** `go-sdk`, `cli`,
+> `python-sdk` and `node-js-sdk` honour `suites` for *every* group — it replaced
+> the `service == "cdk"` carve-out, and against today's registry the two are
+> behaviour-identical. `java-sdk`, `dotnet-sdk` and `rust-sdk` honour it for
+> **generated groups only**: all three load `cdk-lifecycle` and record its 35
+> tests as `skip` in `compat/baseline/<suite>.json`, and the PR-time baseline
+> lint rejects a removed expectation. Aligning them means re-seeding those three
+> shards — "changing what CI measures means re-seeding, not comparing"
+> ([compat/AGENTS.md § Baseline & uniformity](../../compat/AGENTS.md#baseline--uniformity-policy))
+> — which is a change of its own, now tracked as **#1737**.
+>
+> **The new G2 prerequisite: #1700, qualify every impl key — done.** Six suites
+> registered bare `"<test>"` keys — `go-sdk` 487, `cli` 513, `python-sdk` 487,
+> `java-sdk` 487, `dotnet-sdk` 208, `rust-sdk` 170; `node-js-sdk` already
+> qualified everything by construction. Every loader refuses a bare key the
+> moment two groups declare that name, so the first generated SQS group —
+> `CreateQueue`, `SendMessage` and the rest beside `sqs-queues` and
+> `sqs-messages`, because a generated test's name is the PascalCase operation
+> name (§3.3) — would have aborted six suites at startup. Each rewrite was
+> mechanical and proved binding-identical, and each suite gained a registration
+> test that refuses a bare key. There is deliberately **no** registry-side
+> ambiguity lint: a shared test name is normal, and a lint against it would fail
+> on the generator's own naming convention at every model refresh, against
+> §3.11's zero-human-actions rule — a first revision of #1716 built one and
+> removed it for exactly that reason. The mechanical pass also found two latent
+> registration faults, neither of which changed a binding: `python-sdk`'s
+> `GetSendQuota` sat under the `ses-identities` section comment while the
+> registry's only owner is `ses-send`, and `cli`'s `lambda.go` carried two dead
+> bare keys duplicating qualified entries for the same two tests.
+>
+> **Recomputed at this commit**, from the checked-in artifacts:
+> `compat/suites/registry.json` is **141 groups / 796 tests / 36 services**;
+> `compat/baseline/` holds **5,467 entries** — 3,281 `pass`, 2,149 `skip`, 36
+> `unimplemented`, 1 `na`, **0 `fail`** — with `dotnet-sdk.json` the largest
+> shard at 128,996 B of the 512 KiB ceiling; `compat/parity-debt.json` holds
+> **327** entries; and `compat/suites/registry.generated.json` is still
+> `groups: []`, which is what keeps G0's empty-file gate meaningful.
+
 Counts below were computed from the checked-in generated artifacts, not from
 `STATUS.md` — **`STATUS.md` prose is stale** (it describes Shield as "Stub — all
 ops return 501" while `internal/capabilities/all.gen.go:*` declares five Shield
@@ -199,11 +265,18 @@ the shared sentinel for anything unimplemented:
 
 The resolution rule is identical everywhere: try `"<group>:<test>"`, then the
 bare test name, else emit `skip: not yet implemented in <suite> test suite`
-([registry.ts:182-195](../../compat/suites/node-js-sdk/src/lib/registry.ts),
-[registry.py:95-102](../../compat/suites/python-sdk/lib/registry.py)). **A
-generic scenario interpreter is one extra fallback in that same lookup** — after
-the hand-written impl, before the not-implemented sentinel. No suite
-architecture changes.
+([registry.ts](../../compat/suites/node-js-sdk/src/lib/registry.ts),
+[registry.py](../../compat/suites/python-sdk/lib/registry.py)). **The qualified
+form is now the only one anyone writes**: #1700 rewrote the six suites that
+still registered bare keys and gave each a registration test that refuses one
+(all seven of its PRs have merged and the issue is closed). The
+bare fallback survives as a second line of defence, and is itself refused for a
+name more than one group declares — which a generated group produces routinely,
+since a generated test's name is the PascalCase operation name (§3.3). **A
+generic scenario interpreter is one extra fallback
+in that same lookup** — after the hand-written impl, before the
+not-implemented sentinel. That hook landed with the G0 tail (#1393), so no
+suite architecture changes.
 
 Other facts the design leans on:
 
@@ -355,6 +428,42 @@ So: **structure is generated, semantics are curated.**
   teardown reverses it, wrapping each delete individually, per the canonical
   teardown rules.
 
+> **The shipped vocabulary is wider than this sketch (#1709, 2026-09-05).**
+> `compat/model/recipe.schema.json` is the authority; the sketch above is the
+> shape, not the field list. What the pilot needed and the schema now carries:
+> `operations` (authored coverage in the IR's own assertion vocabulary, for
+> operations the lifecycle roles do not reach — `PurgeQueue`, the batch calls);
+> `read.consuming` for a read that changes state (`ReceiveMessage`);
+> `read.exports`; a plural `reads`; `setupOnly` for a resource that exists only
+> to be required (the DLQ); a resource with no `create` at all, for one that
+> pre-exists (`DescribeOrganization`); `async`, which wraps in `eventually`
+> every clause that verifies by calling the service again — the derived
+> read-back, list-membership and absence clauses, and authored clauses too,
+> leaving alone a clause that only re-reads the test's own response and an
+> authored `eventually` whose budget its author already chose; `tags`;
+> `mutable.op` and `mutable.readPath`; `create.assert`; and **`neverProbe`**
+> (§3.5). Timestamp, blob and document literals are refused by design — there is
+> no portable literal for them — though no operation in either pilot service
+> reaches that refusal today. The emitter never produces an `errorCode` clause
+> of its own; a recipe may author one, and neither pilot service does.
+>
+> **Authored coverage is held to the guards, not exempted from them.** Only a
+> clause that makes a call of its own — a `readback`, a `listContains` or
+> `absent` carrying its own `call`, or an `eventually` around one — counts as
+> verifying anything. So an authored `create.assert` built only of
+> `responseField` clauses does not satisfy the create's read-back requirement
+> (`no-readback-path`), and an authored update-family operation (`Update*`,
+> `Set*`, `Put*`, `Tag*`, `Untag*` — one classifier, shared with the derived
+> path) whose clauses all read its own response is refused
+> (`update-without-readback`), which is guard 3 applied to `operations`.
+>
+> **One §3.5 lint is still unwritten.** "`$name` used for every user-supplied
+> identifier" is enforced by recipe review today, not by the generator. It has
+> the material to check it — `namesIn` already collects every `$name` suffix,
+> and refuses two resources in a group claiming the same one — but nothing
+> objects to a bare string literal where a `$name` belonged. Add it before G4
+> puts recipe authoring on a per-service cadence.
+
 #### Value expressions (closed, tiny, total)
 
 `$lit`, `$ref` (context path), `$name` (unique name, always
@@ -372,8 +481,8 @@ For each modeled required input member, in order:
    the automatic binding in the diff** so review sees it;
 3. a curated literal in `compat/model/values.json`, keyed
    `(service, op, member)` then `(shapeName)` then `(memberName)`;
-4. a constraint-derived synthetic value (first enum member; shortest legal
-   string for a pattern; range minimum) — only for scalars;
+4. a constraint-derived synthetic value (first enum member; range minimum;
+   `false` for a required boolean) — only for scalars;
 5. otherwise **refuse**. The operation is not generated and appears in
    `compat/model/gaps.json` with a machine-readable reason
    (`unbound-required-member:RoleArn`).
@@ -381,6 +490,25 @@ For each modeled required input member, in order:
 Optional members are left unset except the single `mutable` member on Update
 operations. Refusal is the default and is cheap to fix (one line in a recipe);
 guessing is never allowed.
+
+> **What rule 4 shipped as (#1709).** "First enum member" is the order the
+> shape snapshot carries — which is the model's own order for a
+> `smithy.api#enum` trait, a JSON array, but *not* for a `type: enum` shape,
+> whose members are a JSON object that `cmd/awsmodelgen` writes through
+> `encoding/json` and therefore sorted. Every enum in the committed snapshots
+> is of that second form today, so the pick is in fact the alphabetically first
+> value; recovering declaration order means teaching `cmd/awsmodelgen` to emit
+> an ordered member list. Either way the pick is deterministic, which is what
+> byte-identical regeneration needs. A required boolean is synthesised as
+> **`false`** — the shape has exactly two legal values and `false` is the one
+> asking the service to do less (no dry run, no force, no cascade), so the
+> choice is exhaustive rather than a guess. The fourth candidate above,
+> "shortest legal string for a pattern", is deliberately **not** implemented: a
+> pattern constrains a string's *syntax*, never its *reference*, so the
+> shortest match for `^arn:aws:.*` is a well-formed ARN of something that does
+> not exist. The emulator accepts far more of those than AWS does, which is
+> exactly the class of value §3.10 sends to the gap report — so the member is
+> refused and a human writes the literal.
 
 #### Grouping and naming
 
@@ -412,6 +540,7 @@ The IR has a closed set of assertion kinds:
 | `absent` | `Delete*`/`Untag*` | Delete→absence, or the declared not-found error |
 | `errorCode` | negative-path variants | assertion-contract exception 2 |
 | `eventually` | wraps any of the above, bounded `maxAttempts`/`delayMs` | "no sleep/polling unless strictly necessary" — only when the recipe declares the resource async |
+| `isList` (#1709) | a `checks` entry rather than a clause of its own: a `List*` whose only assertable output is its page — the path resolves to a list, **empty or not**, and a member omitted rather than serialized as `[]` counts too | "observable state is verified", where the state is that the service answered with a page: an empty page is a legal single-page answer, so `nonEmpty` on a list the test did not populate is false by construction |
 
 Emission rules:
 
@@ -449,6 +578,27 @@ Structural guards (the generator physically cannot emit the bad cases):
    informative result. An implemented operation is never allowed in a probe
    group; regeneration moves it into a lifecycle group or refuses it. This is
    what stops "10,000 tests that assert nothing".
+5. **A probe may not touch anything a run — or a real account — owns** (#1709).
+   A probe is the one generated call no create/delete pair contains, so it has
+   two guards of its own. (a) Binding rules 1 and 2 (§3.3) are switched off
+   inside a probe group: it binds only curated `values.json` literals and
+   constraint-derived ones, syntactically valid and deliberately nonexistent, so
+   the call misses rather than lands. A member only a live export could supply
+   refuses the operation (`probe-binds-live-resource:<Member>`). (b) A recipe's
+   **`neverProbe`** map names each operation that is irreversible even against a
+   stranger's identifiers, or that takes no identifier that could miss, with a
+   curated sentence saying what it does that cannot be undone; the generator
+   refuses those before binding them (`never-probe`), and the sentence is what
+   `gaps.json` reports.
+6. **No assertion a probe cannot honestly make** (#1709). A pagination token is
+   never chosen as the identity — the member `@paginated` names as its
+   `outputToken`, or any member named `NextToken`/`Marker`/`NextMarker`/
+   `ContinuationToken`/`NextContinuationToken`/`PaginationToken` or ending in
+   `Token` or `Marker` — because that is precisely the field AWS omits on a
+   single-page answer, so asserting it non-empty asserts the opposite of a
+   correct response. A `List*` left with only its page gets `isList` on that
+   page instead (§3.4); an operation with neither an identity member nor a
+   single list is refused (`no-output-to-assert`).
 
 Review guards (humans review the curated layer, not 5,000 JSON blobs):
 
@@ -657,6 +807,16 @@ Both are explicit repo values and both bite here.
   would pass against AWS; the values table should be reviewed with that question
   in mind, and any operation where the honest answer is "no" belongs in the gap
   report.
+- **A scenario file has to be safe to point at AWS.** That is the same
+  requirement read one step further: a probe "calls the operation once with
+  model-valid literals" (§3.5), and against a real account that single call is
+  `CloseAccount`, `DeleteOrganization` or `LeaveOrganization` — irreversible,
+  and irreversible for the whole organization. So probe safety is not review
+  advice but a structural guard, and it lands with the data rather than with the
+  interpreters: §3.5's guard 5, in its two halves — a probe may never bind a
+  value exported from a live resource, and a recipe's `neverProbe` names what
+  must not be probed at all. `organizations` exercises both, and the result is a
+  probe group that is entirely reads (§4.2).
 - Refusals are a feature. `gaps.json` is a public, reviewed statement of what
   the model cannot mechanically express — it is far more valuable than a test
   that passes for the wrong reason.
@@ -753,6 +913,39 @@ Acceptance criteria:
    four hand-written groups' results are byte-identical to the previous
    baseline.
 
+> **Generated 2026-09-05 (#1709), ahead of the interpreters.** `compat/model/scenarios/sqs.json`
+> covers **21 of the 23 modeled operations** in **23 tests** across four groups:
+> `sqs-gen-queue` (13), `sqs-gen-message` (4), **`sqs-gen-batch`** (4) and
+> `sqs-gen-probe` (2 — `CancelMessageMoveTask`, `ListMessageMoveTasks`). Inputs
+> are one reviewed `recipes/sqs.json` and six curated `values.json` literals in
+> eleven lines, inside criterion 1's fifteen-line budget, and `gaps.json`
+> records **two** refusals for the service.
+>
+> Criteria 1 and 2 are met on the artifacts — 21 clears criterion 2's "≥ 20 of
+> 23" — as is criterion 3's structural half: the IR cannot express a test
+> without an assertion clause. Everything that needs a run — 4, 5 and 6 — waits
+> for a backend and stays open for G2.
+>
+> **Criterion 3's second half no longer holds as written, and should be
+> restated.** The two `StatusUnsupported` operations do *not* land in
+> `sqs-gen-probe` recording `unimplemented`: `AddPermission` and
+> `RemovePermission` both return an empty output, and reading back the queue
+> they name would assert something that was already true before the call, so
+> both are refused `no-output-to-assert` into `gaps.json`. That is the §3.4
+> invariant — no assertion, no test — applied honestly rather than worked
+> around, and it is a better result than a probe that asserts nothing. Read the
+> criterion as: *every generated test has ≥ 1 assertion clause, and every
+> `StatusUnsupported` operation either lands in `sqs-gen-probe` and records
+> `unimplemented` or appears in `gaps.json` with a specific reason.* The probe
+> group's remaining two operations — `CancelMessageMoveTask` and
+> `ListMessageMoveTasks`, modeled but undeclared — are the ones that carry the
+> `unimplemented` demonstration.
+>
+> The fourth group is the one departure from the criteria as written: batch
+> operations fit none of the lifecycle roles, so they are authored as a
+> `sqs-gen-batch` resource of their own rather than refused. The plan asked for
+> two groups; four is what the service's shape produces.
+
 ### 4.2 `organizations` — prove the unimplemented path (Tier 0 → Tier 1)
 
 Chosen because it is the cleanest instance of the problem: **63 modeled
@@ -782,6 +975,52 @@ operations, exactly one declared capability** — `DescribeOrganization`,
 > `internal/capabilities/all.gen.go` when starting G2; do not trust the figures
 > in this section.
 
+> **Generated 2026-09-05 (#1709), and here is the recount.** Of the 63 modeled
+> operations, all nine `StatusInert` ones are covered by lifecycle groups —
+> `organizations-gen-policy` (8 tests: the full
+> Create → Describe → Update → Tag/ListTags/Untag → List → Delete lifecycle) and
+> `organizations-gen-organization` (1: `DescribeOrganization`, asserting
+> `$.Organization.Arn` against the model's own pattern). That leaves **54**
+> undeclared operations, of which `organizations-gen-probe` covers **25** — so
+> **34 of 63** operations covered, by 34 tests in three groups. Criterion 1's
+> "62" reads "25" today.
+>
+> The other **29** are refusals, every one of them `never-probe`, and every one
+> carrying a curated sentence in `gaps.json` saying what the call does that
+> cannot be undone. They are the whole of §3.5's guard 5 landing with the data:
+> `recipes/organizations.json` gained a `neverProbe` map listing every modeled
+> operation that writes — the account-mutating ones (`CloseAccount`,
+> `CreateAccount`, `CreateGovCloudAccount`, `RemoveAccountFromOrganization`,
+> `MoveAccount`), the organization-lifecycle ones (`CreateOrganization`,
+> `DeleteOrganization`, `LeaveOrganization`, `EnableAllFeatures`), the
+> policy-attachment and policy-type toggles (`AttachPolicy`, `DetachPolicy`,
+> `EnablePolicyType`, `DisablePolicyType`), the service-access toggles
+> (`EnableAWSServiceAccess`, `DisableAWSServiceAccess`), the handshake and
+> invitation calls (`AcceptHandshake`, `CancelHandshake`, `DeclineHandshake`,
+> `InviteAccountToOrganization`), the delegated-administrator pair
+> (`RegisterDelegatedAdministrator`, `DeregisterDelegatedAdministrator`), the
+> resource-policy writes (`PutResourcePolicy`, `DeleteResourcePolicy`), the
+> responsibility-transfer calls
+> (`InviteOrganizationToTransferResponsibility`, `UpdateResponsibilityTransfer`,
+> `TerminateResponsibilityTransfer`) and the organizational-unit writes
+> (`CreateOrganizationalUnit`, `UpdateOrganizationalUnit`,
+> `DeleteOrganizationalUnit`). What that buys is a probe group which is entirely
+> reads — nothing in it could damage a real account, which is the condition
+> §3.10 puts on pointing a scenario file at AWS.
+>
+> This **subsumes the earlier refusals** an interim revision of #1709 reported:
+> the six `no-output-to-assert` ones and the
+> `unbound-required-member:StartTimestamp` on
+> `InviteOrganizationToTransferResponsibility` are all in the `neverProbe` list
+> now, and are refused earlier, before anything is bound. `gaps.json` for
+> `organizations` is 29 `never-probe` entries and nothing else.
+>
+> Criterion 3 no longer holds for the service as a whole: the policy lifecycle
+> creates and deletes a real resource, so `organizations-gen-policy` has a
+> teardown. It still holds for `organizations-gen-organization`, which is the
+> group it was written about — and, now, for `organizations-gen-probe`, which
+> carries neither setup nor teardown because a probe has nothing to set up.
+
 Acceptance criteria:
 
 1. `organizations-gen-probe` covers the 62 undeclared operations; **all record
@@ -805,19 +1044,116 @@ The two services add **≤ 90 s** to a full local run and **≤ 2 min** to the
 slowest CI matrix job. Exceeding that means sharding lands before rollout, not
 after.
 
+### 4.4 G2 handoff — what an interpreter author has to agree to
+
+Added 2026-09-05 from #1709's own report. The IR and its contract are settled
+and documented for interpreter authors in
+[compat/model/README.md](../../compat/model/README.md) (new in #1709); what
+follows is the set of decisions three interpreters have to make identically,
+and the places the pilot is expected to bite.
+
+**The contract, in one list.**
+
+- **Error matching.** An `error` clause carries both the modeled `shape` and the
+  wire `code` — for SQS's not-found, `QueueDoesNotExist` and
+  `AWS.SimpleQueueService.NonExistentQueue` — and an interpreter accepts an
+  error whose reported code **or** type name equals **either**, because the
+  SDKs disagree about which of the two they surface. Overcast puts the legacy
+  code in the JSON `__type` and sends no `x-amzn-query-error` header
+  ([internal/services/sqs/store.go](../../internal/services/sqs/store.go));
+  AWS's JSON-protocol SQS is understood to carry it in that header instead, so
+  confirm which one each SDK reports during the soak rather than assuming.
+- **Names.** `$name` is `{OVERCAST_COMPAT_RUN_ID}-{group}-{suffix}`, with the
+  group token the *whole* group name and no shortening anywhere — that is what
+  makes the name-hygiene rule (§2.4) hold by construction.
+- **`eventually`.** Exports from a `readback` inside it are applied on the
+  attempt that passes, and only then.
+- **Setup and teardown.** A setup failure — an error or an unresolvable `$ref` —
+  reports **every** test in the group as `skip` with `setup failed: <error>`,
+  and teardown still runs. Each teardown step is wrapped individually: one
+  failure skips that step and the rest continue.
+- **`equals`** is JSON equality *after* the SDK's own mapping, never string
+  comparison; timestamps and blobs are never compared.
+- **`isList`** holds when the path resolves to a list, empty or not — and when
+  it does not resolve at all, because several AWS services omit an empty list
+  member instead of serializing `[]` (SQS's `ListQueues` among them). A present
+  value that is *not* a list still fails it. It is the check every `List*` probe
+  carries, so getting it wrong fails 16 of the 25 `organizations` probes at
+  once, and `nonEmpty` never substitutes for it.
+- **Probe safety is the interpreter's rule too.** A probe group has no setup and
+  no teardown, and every value it sends is a curated or synthetic literal that
+  names nothing the run owns (§3.5 guard 5). An interpreter must not "helpfully"
+  fill a missing member from context, retry a probe against a different
+  identifier, or clean up after one — there is nothing to clean up, and a probe
+  that reaches a real resource is the one failure mode a scenario file pointed
+  at AWS cannot recover from.
+- **Failure messages** carry, in order, the six fields listed in the README's
+  § Failure messages: `group/test`, the operation, the exact params JSON sent,
+  the assertion kind and path, expected versus actual, and the scenario file
+  plus step index. `cmd/compatgen -explain <group>/<test> -lang <language>`
+  renders the same test as pseudo-code so a failure reproduces by hand.
+- **Landing a backend** means flipping that one suite in `scenarioBackends` in
+  [cmd/compatgen/registry.go](../../cmd/compatgen/registry.go) in the
+  interpreter's own PR, and regenerating. The table is per suite, so each of the
+  three PRs flips its own entry and commits the regenerated
+  `registry.generated.json`; until one suite is in it the generated registry
+  stays `groups: []` by construction (§3.6), so the interpreter and the groups
+  it can run arrive together.
+
+**Where this list is coordinated.** G2 is tracked as **#1768**, which carries
+this contract, the one-PR-per-suite breakdown (`python-sdk`, `node-js-sdk`,
+`cli`) and the §4.1/§4.2 acceptance criteria as its definition of done. The
+normative spec the three interpreters are written against is
+`compat/model/README.md`; this section is the set of decisions they have to make
+identically, not a second copy of it. Take an open question here to #1768 rather
+than settling it in one suite.
+
+**Fidelity assumptions to watch in the soak.** Each is a deliberate choice
+recorded in `recipes/sqs.json`, and each is a plausible source of a first-run
+surprise: the batch group tracks whichever entry arrives first, via
+`Messages[0]`; the queue resource's `async` budget is 30 attempts 2 s apart, so
+`DeleteQueue`'s absence check and the `ApproximateNumberOfMessages` read-back
+each get the full minute AWS documents for those rather than the five seconds a
+queue read-back would otherwise take; the `PurgeQueue` read-back allows a
+minute of its own (12 attempts, 5 s apart) because AWS documents the counters
+as lagging; `DeleteMessageBatch` quotes the receipt handle the `ReceiveMessage`
+list test re-exports, because AWS asks a delete to carry the most recent one;
+and every `ReceiveMessage` that must leave a message visible passes
+`VisibilityTimeout: 0`, while the two that must leave it in flight do not,
+because `ChangeMessageVisibility` on a visible message is `MessageNotInflight`
+on AWS.
+
+**One assertion was already known to fail, and it has since been fixed.**
+Identity fields are asserted against the model's own pattern where RE2 can
+express it. `organizations` models an organization ARN as
+`^arn:aws:organizations::\d{12}:organization\/o-[a-z0-9]{10,32}$`, and the inert
+implementation used to mint the organization as `o-overcast` — eight characters
+after the `o-` where AWS requires ten to thirty-two — so
+`organizations-gen-organization/DescribeOrganization` (§4.2's criterion 2) and
+the ARN check in `organizations-gen-policy/CreatePolicy`, whose ARN embeds the
+same id, both failed against Overcast. That was the generator doing its job: a
+model-derived assertion catching an identifier a hand-written test would have
+been written around. It was filed as **#1736** and fixed by **#1750**, which
+derives the id deterministically from the account id as `o-` plus ten hex
+characters
+([internal/services/organizations/inert_policy.go](../../internal/services/organizations/inert_policy.go),
+with `aws_id_pattern_test.go` holding the pattern). Both assertions should now
+pass; the G2 run is what proves it.
+
 ---
 
 ## 5. Phasing
 
-Status as of 2026-08-23 is in the §2 note: **G0 is done bar its loader tail,
-and G1 is done bar `cmd/compatgen`.** The `Status` column below records that;
-`Contents` is left as written so the original scope stays legible.
+Status as of 2026-09-05 is in the §2 note: **G0 is done, G1 is landing, and G2
+is unblocked once #1709 lands** — #1700 has merged in full. The `Status` column
+below records that; `Contents` is left as written so the original scope stays
+legible.
 
 | Phase | Status | Contents | Effort | Acceptance gate |
 | --- | --- | --- | --- | --- |
-| **G0** Foundations | **Done**, bar the loader tail (#1356, #1357, #1367, #1370) | Shard `compat/baseline.json` → `compat/baseline/<suite>.json` (+ size budget); `--shard i/n` and `--generated-registry-file` in `cmd/compat`; `registry.generated.schema.json`; all 8 loaders read the generated sibling and fall back to a scenario resolver hook; `candidate`/`gated` state honoured by both gates; `compat/AGENTS.md` amendment for generated `suites` scoping + the lint that bounds it | M | With an **empty** generated registry, every gate, report and dashboard behaves exactly as today; baseline shards aggregate byte-identically; the scoping lint rejects a hand-written group that adds `suites` |
-| **G1** Model layer | **Partly done** — `internal/awsmodel` #1359, shape snapshot via inert-tier I1; `cmd/compatgen` outstanding | Extract `internal/awsmodel` AST reader; `cmd/compatgen` skeleton; the pruned shape snapshot `models/aws/shapes/` + `shapes-sha256` (shared deliverable with [inert-tier-rollout.md](./inert-tier-rollout.md) Phase I1 — build once, whichever plan gets there first); IR + recipe JSON schemas; `--scaffold`, `--review-report`, `--explain`; `gaps.json` | M | `make compat-model-check` regenerates byte-identically offline; the sha gate catches a hand edit; the snapshot is within its size budget; scaffolding a service produces a recipe skeleton a human can complete |
-| **G2** Pilot | Not started | `python-sdk`, `node-js-sdk` and `cli` interpreters; `recipes/sqs.json` + `recipes/organizations.json`; the §4 acceptance criteria | L | Every §4.1 and §4.2 criterion met, including the regeneration demonstration in §4.2.5 |
+| **G0** Foundations | **Done** — #1356, #1357, #1367, #1370, and the loader tail under #1393, all seven suite PRs merged and the issue closed. One deviation: `suites` scoping is honoured for every group in four suites and for generated groups only in `java-sdk`, `dotnet-sdk` and `rust-sdk`, pending the baseline re-seed tracked as #1737 — see the §2 note | Shard `compat/baseline.json` → `compat/baseline/<suite>.json` (+ size budget); `--shard i/n` and `--generated-registry-file` in `cmd/compat`; `registry.generated.schema.json`; all 8 loaders read the generated sibling and fall back to a scenario resolver hook; `candidate`/`gated` state honoured by both gates; `compat/AGENTS.md` amendment for generated `suites` scoping + the lint that bounds it | M | With an **empty** generated registry, every gate, report and dashboard behaves exactly as today; baseline shards aggregate byte-identically; the scoping lint rejects a hand-written group that adds `suites` |
+| **G1** Model layer | **Done**, pending #1709's merge — `internal/awsmodel` #1359, shape snapshot via inert-tier I1 with `sqs` added in #1684, `cmd/compatgen` and `compat/model/` in #1709 | Extract `internal/awsmodel` AST reader; `cmd/compatgen` skeleton; the pruned shape snapshot `models/aws/shapes/` + `shapes-sha256` (shared deliverable with [inert-tier-rollout.md](./inert-tier-rollout.md) Phase I1 — build once, whichever plan gets there first); IR + recipe JSON schemas; `--scaffold`, `--review-report`, `--explain`; `gaps.json` | M | `make compat-model-check` regenerates byte-identically offline; the sha gate catches a hand edit; the snapshot is within its size budget; scaffolding a service produces a recipe skeleton a human can complete |
+| **G2** Pilot | Not started, tracked as **#1768** — **gated on #1709** alone now that #1700 and #1750 have merged. Both recipes and both scenario files already exist (#1709); what is missing is the three interpreters, one PR each. Start from §4.4 | `python-sdk`, `node-js-sdk` and `cli` interpreters; `recipes/sqs.json` + `recipes/organizations.json`; the §4 acceptance criteria | L | Every §4.1 and §4.2 criterion met, including the regeneration demonstration in §4.2.5 |
 | **G3** Typed backends | Not started | Source emitters for `go-sdk`, then `java-sdk`, `dotnet-sdk`, `rust-sdk` (one suite per PR); member→field naming rules per language | L each | Generated source compiles in the suite's normal build; the pilot groups produce **identical** results to the interpreter suites; generated `suites` scoping widens automatically on regeneration |
 | **G4** Tier-1 fleet rollout | Not started | One service per PR, ordered by [inert-tier-rollout.md](./inert-tier-rollout.md) then [full-emulation-priority.md](./full-emulation-priority.md); capped probe groups for [services-never-emulated.md](./services-never-emulated.md) | L, parallelizable per service | Per service: recipe reviewed, no unexplained refusal in `gaps.json`, soak passed, CI wall-clock within budget, coverage metric moves |
 | **G5** Steady state | Not started | Weekly model-refresh PR regenerates scenarios; coverage becomes the dashboard headline; `--slowest N` latency census | S | A model-refresh PR shows added/removed operations per service and cannot break the gate; coverage per service/tier is published |
@@ -858,22 +1194,39 @@ Done means all of the following hold simultaneously:
 
 ## 7. Open questions
 
-1. **`shapes.json` size budget and contents.** How much of the Smithy shape
-   graph must be distilled before recursive member types force effectively the
-   whole AST into the tree? Propose a depth limit and measure on the allowlist
-   during G1 — if it does not fit comfortably, the alternative is deriving
-   shapes at generation time from a required `AWS_MODELS_DIR` checkout and
-   committing only the scenarios (losing offline scaffolding, keeping offline
-   test execution).
+1. **`shapes.json` size budget and contents — resolved 2026-09-05, measured.**
+   No depth limit is needed at this scope, and the fallback of deriving shapes
+   at generation time is not required. On the five committed services the
+   snapshot is **307,497 B of the 336 KiB budget** — `batch` 102,309,
+   `organizations` 96,119, `servicediscovery` 39,316,
+   `elastic-load-balancing` 35,614, `sqs` 34,139 — which is roughly 1.2–2.3 KB
+   per operation. Maximum reference depth is 6–7 for four of the five and
+   **16** for `batch`. There is exactly one recursive shape in the set
+   (`organizations`'s `HandshakeResource.Resources` → `HandshakeResources` →
+   `HandshakeResource`), and the pruner terminates on it by taking the closure
+   rather than by bounding depth, so recursion costs nothing to allow.
+   Re-measure when the allowlist widens: the budget, not a depth cap, is the
+   thing that has to hold.
 2. **The `suites`-scoping amendment** to `compat/AGENTS.md` (§3.6) changes a rule
    that currently reads as absolute. It needs explicit reviewer agreement before
    G0 lands, not after.
-3. **One name-mapping table, four consumers.** Smithy service → Overcast key →
-   `aws` CLI command name → npm package (`@aws-sdk/client-*`) → Go module path →
-   Java/C#/Rust client class. The alias table at
-   [internal/awsapi/registry_data.go:71-84](../../internal/awsapi/registry_data.go)
-   covers only the first mapping. Where does the full table live, and what
-   detects drift when an SDK renames a package?
+3. **One name-mapping table, four consumers — decided 2026-09-05: there is no
+   table.** The scenario header carries `sdkId`, `endpointPrefix`,
+   `signingName`, `protocol`, `apiVersion` and `targetPrefix` and nothing
+   SDK-specific; each backend derives its own package or class name from those,
+   by the per-backend rules in
+   [compat/model/README.md § Naming](../../compat/model/README.md). A table
+   would need seven columns maintained by hand for every service the allowlist
+   gains, which is the enumeration §3.11 exists to avoid.
+   **The residual is a short list of known derivation breaks**, recorded in that
+   section as per-backend follow-ups rather than smuggled into the IR: botocore's
+   service name differs from the endpoint prefix for `elasticloadbalancing`
+   → `elb`, `monitoring` → `cloudwatch`, `email` → `ses` and `states` →
+   `stepfunctions`; and the Go SDK package is `sfn` for `SFN` and
+   `elasticloadbalancing` for `ELB`, neither derivable from the SDK id. Neither
+   pilot service breaks. Drift detection is still unbuilt: the first backend
+   that needs an override should land the override table and a test that the
+   client it names actually constructs.
 4. **Should `na` be derivable?** When the CLI or an SDK genuinely lacks an
    operation, the registry wants `na`. That is partly mechanical (botocore knows
    what the CLI exposes) and partly not. Deriving it would remove a class of
