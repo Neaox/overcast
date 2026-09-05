@@ -1,6 +1,6 @@
 ---
 title: "ACM operations"
-description: "Every ACM operation Overcast declares — 10 of 10 implemented — with status, behaviour notes and a link to the AWS API reference for each."
+description: "Every ACM operation Overcast declares — 11 of 11 implemented — with status, behaviour notes and a link to the AWS API reference for each."
 section: "Service Reference"
 tags:
   - acm
@@ -13,14 +13,14 @@ tags:
 
 # ACM operations
 
-All 10 listed operations are implemented. Back to [ACM](../acm.md).
+All 11 listed operations are implemented. Back to [ACM](../acm.md).
 
 ## Summary
 
-| Category     | ✅ Supported |
-| ------------ | ------------ |
-| Certificates | 4            |
-| Tags         | 6            |
+| Category     | ✅ Supported | ⚠️ Partial |
+| ------------ | ------------ | ---------- |
+| Certificates | 4            | 1          |
+| Tags         | 6            |            |
 
 ---
 
@@ -28,12 +28,13 @@ All 10 listed operations are implemented. Back to [ACM](../acm.md).
 
 ### Certificates
 
-| Operation             | Status       | Notes                                                                        | AWS Docs                                                                                 |
-| --------------------- | ------------ | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `RequestCertificate`  | ✅ Supported | Creates a certificate; immediately ISSUED; inline `Tags` applied at creation | [docs](https://docs.aws.amazon.com/acm/latest/APIReference/API_RequestCertificate.html)  |
-| `DescribeCertificate` | ✅ Supported | Returns certificate details                                                  | [docs](https://docs.aws.amazon.com/acm/latest/APIReference/API_DescribeCertificate.html) |
-| `ListCertificates`    | ✅ Supported | Lists all certificates                                                       | [docs](https://docs.aws.amazon.com/acm/latest/APIReference/API_ListCertificates.html)    |
-| `DeleteCertificate`   | ✅ Supported | Deletes a certificate by ARN                                                 | [docs](https://docs.aws.amazon.com/acm/latest/APIReference/API_DeleteCertificate.html)   |
+| Operation                          | Status       | Notes                                                                                                                                                         | AWS Docs                                                                                              |
+| ---------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `RequestCertificate`               | ✅ Supported | Creates a certificate; immediately ISSUED; inline `Tags` applied at creation                                                                                  | [docs](https://docs.aws.amazon.com/acm/latest/APIReference/API_RequestCertificate.html)               |
+| `DescribeCertificate`              | ✅ Supported | Returns certificate details                                                                                                                                   | [docs](https://docs.aws.amazon.com/acm/latest/APIReference/API_DescribeCertificate.html)              |
+| `ListCertificates`                 | ✅ Supported | Lists all certificates                                                                                                                                        | [docs](https://docs.aws.amazon.com/acm/latest/APIReference/API_ListCertificates.html)                 |
+| `ListCertificateDomainValidations` | ⚠️ Partial   | One synthesized SUCCESS entry per DomainName/SAN; no ValidationMethod or DNS/email challenge data — Overcast issues certificates without ever validating them | [docs](https://docs.aws.amazon.com/acm/latest/APIReference/API_ListCertificateDomainValidations.html) |
+| `DeleteCertificate`                | ✅ Supported | Deletes a certificate by ARN                                                                                                                                  | [docs](https://docs.aws.amazon.com/acm/latest/APIReference/API_DeleteCertificate.html)                |
 
 ### Tags
 

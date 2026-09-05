@@ -1,8 +1,8 @@
 // Package acm provides a basic emulation of AWS Certificate Manager (ACM).
 //
 // Implemented operations: RequestCertificate, DescribeCertificate,
-// ListCertificates, DeleteCertificate, ListTagsForCertificate,
-// AddTagsToCertificate, RemoveTagsFromCertificate.
+// ListCertificates, ListCertificateDomainValidations, DeleteCertificate,
+// ListTagsForCertificate, AddTagsToCertificate, RemoveTagsFromCertificate.
 //
 // Certificates are issued immediately in ISSUED state — no validation required.
 package acm

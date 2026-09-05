@@ -35,13 +35,14 @@ func (h *Handler) initOps() {
 		// typed functions, and reached from the JSON path through an adapter.
 		// Keeping two copies is how the tag handlers drifted into not checking
 		// that the certificate exists.
-		"RequestCertificate":        serveTyped(h.requestCertificateTyped),
-		"ListTagsForCertificate":    serveTyped(h.listTagsForCertificateTyped),
-		"AddTagsToCertificate":      serveTyped(h.addTagsToCertificateTyped),
-		"RemoveTagsFromCertificate": serveTyped(h.removeTagsFromCertificateTyped),
-		"TagResource":               serveTyped(h.tagResourceTyped),
-		"UntagResource":             serveTyped(h.untagResourceTyped),
-		"ListTagsForResource":       serveTyped(h.listTagsForResourceTyped),
+		"RequestCertificate":               serveTyped(h.requestCertificateTyped),
+		"ListCertificateDomainValidations": serveTyped(h.listCertificateDomainValidationsTyped),
+		"ListTagsForCertificate":           serveTyped(h.listTagsForCertificateTyped),
+		"AddTagsToCertificate":             serveTyped(h.addTagsToCertificateTyped),
+		"RemoveTagsFromCertificate":        serveTyped(h.removeTagsFromCertificateTyped),
+		"TagResource":                      serveTyped(h.tagResourceTyped),
+		"UntagResource":                    serveTyped(h.untagResourceTyped),
+		"ListTagsForResource":              serveTyped(h.listTagsForResourceTyped),
 	}
 	h.typedOp = h.typedOps()
 }
