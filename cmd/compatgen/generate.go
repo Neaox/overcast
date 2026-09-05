@@ -1257,7 +1257,8 @@ func (g *generator) probeGroup() error {
 // time, so `nonEmpty` on it is false by construction (§3.10 wants assertions
 // that are AWS-legal), and `nonEmpty` on a list this call did not populate is
 // the same mistake one member over. `isList` is what is left that is true of
-// a correct response and false of a broken one.
+// a correct response — present or, as several services legally do, omitted
+// entirely — and false of a broken one.
 func (gb *groupBuilder) probeAssertion(op string) (assertion, *refusal) {
 	output := gb.g.model.OutputShape(op)
 	if output == "" {

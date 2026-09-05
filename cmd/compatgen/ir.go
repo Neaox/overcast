@@ -108,8 +108,13 @@ type assertion struct {
 //
 // isList exists because nonEmpty cannot say "this is a page of results" — a
 // single-page List* legally returns an empty one, so nonEmpty on a list the
-// test did not populate is false by construction. isList is the strongest
-// check that is still true of a correct empty answer.
+// test did not populate is false by construction. isList also holds when the
+// path does not resolve at all: several AWS services omit an empty list
+// member instead of serializing [] (SQS's ListQueues among them), and a
+// missing list already counts as empty for absent and listContains, so isList
+// treats it the same way. A present value that is not a list still fails it —
+// isList is the strongest check that is true of a correct answer, present or
+// omitted, and false of everything else.
 type check struct {
 	NonEmpty bool   `json:"nonEmpty,omitempty"`
 	IsList   bool   `json:"isList,omitempty"`

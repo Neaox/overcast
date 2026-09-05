@@ -219,7 +219,7 @@ func (e *explainer) checkLines(root string, checks map[string]check) {
 		case c.NonEmpty:
 			e.linef("assert %s is present and not empty", access)
 		case c.IsList:
-			e.linef("assert %s is a list (an empty page satisfies this)", access)
+			e.linef("assert %s is absent or a list (an omitted or empty page satisfies this)", access)
 		case c.Equals != nil:
 			e.linef("assert %s == %s", access, e.st.value(c.Equals))
 		case c.Matches != "":

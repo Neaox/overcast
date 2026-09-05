@@ -643,12 +643,19 @@ func TestGenerate_probeNeverAssertsAPaginationToken(t *testing.T) {
 	// ListCogs returns {Cogs, NextToken} and declares no @paginated trait:
 	// the member name alone rules the token out, and the sole list is what is
 	// left to assert.
-	_, cogs, ok := gen.scenario.findTest("widgets-gen-probe", "ListCogs")
+	cogsGroup, cogs, ok := gen.scenario.findTest("widgets-gen-probe", "ListCogs")
 	if !ok {
 		t.Fatal("ListCogs was not probed")
 	}
 	if len(cogs.Assert[0].Checks) != 1 || !cogs.Assert[0].Checks["$.Cogs"].IsList {
 		t.Errorf("ListCogs probe asserts %+v, want isList on $.Cogs", cogs.Assert[0].Checks)
+	}
+	// isList holds for an omitted page as well as an empty one — several AWS
+	// services (SQS's ListQueues among them) omit an empty list member
+	// instead of serializing [] — so -explain must render it that way rather
+	// than requiring the member to be present.
+	if rendered := renderPython(gen.scenario, cogsGroup, cogs); !strings.Contains(rendered, "is absent or a list") {
+		t.Errorf("explain rendering of ListCogs does not accept an absent page:\n%s", rendered)
 	}
 
 	// ListGauges names its token `Cursor`, which no name rule would catch:

@@ -116,9 +116,10 @@ entries and the gap report.
   `Marker`, anything ending in `Token` or `Marker`): that field is precisely
   what AWS omits on a single-page answer, so asserting it non-empty asserts
   the opposite of a correct response. A `List*` left with only its page gets
-  `{"isList": true}` on that list instead — true of an empty page, false of a
-  response that is not a list — and one with neither an identity nor a single
-  list is refused (`no-output-to-assert`).
+  `{"isList": true}` on that list instead — true of an empty or omitted page
+  (some services omit the member instead of serializing `[]`), false of a
+  present response that is not a list — and one with neither an identity nor
+  a single list is refused (`no-output-to-assert`).
 - Emit a timestamp, blob or document literal: the SDKs disagree on how those
   are passed and an interpreter has no model to convert with, so such a
   member stays unbound and the operation is refused.

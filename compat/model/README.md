@@ -133,7 +133,7 @@ The set is closed. `kind` selects the fields.
 | Check | Holds when |
 | --- | --- |
 | `{"nonEmpty": true}` | the path resolves to a value that is not `null`, `""`, `[]` or `{}`; numbers and booleans are never empty |
-| `{"isList": true}` | the path resolves to a list, **empty or not**. It exists because `nonEmpty` cannot say "this is a page of results": a single-page `List*` legally returns an empty page, so `nonEmpty` on a list the test did not populate is false by construction |
+| `{"isList": true}` | the path resolves to a list, **empty or not** — or does not resolve at all. It exists because `nonEmpty` cannot say "this is a page of results": a single-page `List*` legally returns an empty page, and several AWS services (SQS's `ListQueues` among them) omit that member entirely rather than serialize `[]`, so a check that failed on absence would fail against real AWS. Absence is accepted for the same reason a missing list already counts as empty for `absent` and `listContains`; a present value that is not a list still fails the check |
 | `{"equals": <value>}` | the path resolves and the value is equal, as JSON, to the evaluated expression |
 | `{"matches": "<regex>"}` | the path resolves to a string matching the regular expression (RE2-compatible syntax; anchored only where the pattern anchors itself) |
 | `{"missing": true}` | the path does not resolve — any segment absent |
@@ -360,8 +360,11 @@ its length says nothing about the service.
 That leaves the `List*` operations, whose only assertable output *is* a list.
 They get `{"isList": true}` on the page — the member `@paginated` names as
 its `items`, else the output's sole list-typed top-level member — which is
-true of a correct empty page and false of a response that is not a list at
-all. An operation with two lists and no `items` to choose between them, or
+true of a correct empty page, true of an omitted one, and false of a present
+response that is not a list at all. Absence is accepted because several AWS
+services omit an empty list member instead of serializing `[]` (SQS's
+`ListQueues` among them), and a probe run against real AWS must pass there
+too. An operation with two lists and no `items` to choose between them, or
 with nothing but a token, is refused (`no-output-to-assert`).
 
 ### What a probe may bind
