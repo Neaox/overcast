@@ -3,7 +3,7 @@ package sqs
 // queryerror.go renders the x-amzn-query-error header SQS carries on every
 // JSON-protocol error response.
 //
-// SQS's service shape in models/aws/shapes/sqs.json carries
+// SQS's service shape in the pinned Smithy model carries
 // aws.protocols#awsQueryCompatible: the JSON protocol (x-amz-target /
 // application/x-amz-json-1.0) is layered over the same operations the older
 // Query protocol (form-encoded Action=, XML response — see query.go) used to
@@ -34,12 +34,12 @@ import (
 
 // sqsQueryErrorMapping records one error's legacy Query-protocol code
 // alongside the modeled shape it comes from, so queryerror_model_test.go can
-// look the shape up in models/aws/shapes/sqs.json and confirm LegacyCode is
-// really what that shape's aws.protocols#awsQueryError trait says (or, for a
-// shape with no such trait, that LegacyCode is the shape's own name — AWS's
-// documented fallback).
+// look the shape up against the pinned Smithy model's
+// aws.protocols#awsQueryError traits and confirm LegacyCode is really what
+// that shape's trait says (or, for a shape with no such trait, that
+// LegacyCode is the shape's own name — AWS's documented fallback).
 type sqsQueryErrorMapping struct {
-	// Shape is the modeled shape name in models/aws/shapes/sqs.json, e.g.
+	// Shape is the modeled shape name, per the pinned Smithy model, e.g.
 	// "QueueDoesNotExist".
 	Shape string
 	// LegacyCode is the value AWS sends as the code half of
