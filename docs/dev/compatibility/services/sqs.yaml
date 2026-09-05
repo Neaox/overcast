@@ -2,7 +2,7 @@ service: sqs
 status: in_progress
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-04
+last_updated: 2026-09-05
 protocols:
   - aws_json_1_0
   - query
@@ -46,7 +46,49 @@ operations:
         status: fixed
         tests:
           - tests/integration/sqs/sqs_test.go
+          - tests/integration/sqs/receive_semantics_test.go
         notes: FIFO receive respects per-group blocking, validates ReceiveRequestAttemptId length/characters, and retries with the same ReceiveRequestAttemptId return the same in-flight message IDs and receipt handles while resetting visibility.
+      - name: FIFO batch retrieval within one message group
+        status: fixed
+        tests:
+          - tests/integration/sqs/receive_semantics_test.go
+          - tests/integration/sqs/sqs_test.go
+        notes: A single ReceiveMessage now returns as many messages from the same MessageGroupId as MaxNumberOfMessages allows, in sequence order, and fills the rest of the batch from other unblocked groups. Overcast previously capped a call at one message per group, so a five-message group answered MaxNumberOfMessages=10 with a single message.
+      - name: no duplicate message within one batch under VisibilityTimeout=0
+        status: fixed
+        tests:
+          - tests/integration/sqs/receive_semantics_test.go
+        notes: A receive that cannot fill MaxNumberOfMessages from the first candidate page refetches with a larger limit. Messages handed out with VisibilityTimeout=0 are visible again immediately, so the refetch sees them; the delivered set is now tracked per call so one response never lists the same MessageId twice. The old one-message-per-group cap masked this for FIFO queues.
+      - name: FIFO group blocked by in-flight messages
+        status: reviewed
+        tests:
+          - tests/integration/sqs/sqs_test.go
+          - tests/integration/sqs/receive_semantics_test.go
+        notes: While any message of a group is invisible, no other message of that group is returned; other groups stay consumable, and the whole group returns in FIFO order once the visibility timeout expires.
+      - name: ReceiveRequestAttemptId five-minute deduplication window
+        status: reviewed
+        tests:
+          - tests/integration/sqs/receive_semantics_test.go
+        notes: A retry inside the window replays the same messages and receipt handles and resets the visibility timeout; once five minutes from the original receive have passed the stored attempt is discarded and the call is an ordinary receive again, so an in-flight message yields nothing. The window is anchored to the original receive and is not extended by a replay.
+      - name: ReceiveRequestAttemptId on a standard queue
+        status: reviewed
+        tests:
+          - tests/integration/sqs/receive_semantics_test.go
+        notes: The parameter applies only to FIFO queues, so no replay record is kept and two receives sharing one token return different messages. Overcast still validates the token's length and character set on standard queues, which is stricter than the documented behaviour but fails locally rather than in an AWS account.
+      - name: per-receive VisibilityTimeout does not mutate the queue attribute
+        status: reviewed
+        tests:
+          - tests/integration/sqs/receive_semantics_test.go
+        notes: An explicit VisibilityTimeout applies only to the messages that call returns; GetQueueAttributes still reports the queue default and a later receive that omits the parameter uses it.
+      - name: Query-wire VisibilityTimeout range validation
+        status: reviewed
+        tests:
+          - tests/integration/sqs/receive_semantics_test.go
+        notes: The Query protocol decodes VisibilityTimeout on its own path, so -1 and 43201 are rejected with InvalidParameterValue there too and 0/43200 are accepted.
+      - name: in-flight message quota (OverLimit)
+        status: intentionally_partial
+        tests: []
+        notes: AWS caps in-flight messages at approximately 120,000 per standard queue and 20,000 per FIFO queue and returns OverLimit to a short poll that exceeds it, with long polls getting no error. Overcast does not enforce either cap. It is a service quota, and quota emulation is an explicit repository non-goal (AGENTS.md "Not a performance testing tool"); code written against the cap exercises AWS's capacity limits rather than its semantics.
       - name: queue with DLQ redrive policy
         status: fixed
         tests:
@@ -103,8 +145,11 @@ operations:
       - AWS API Reference ReceiveMessage documents ReceiveRequestAttemptId for FIFO queues: retries with the same token during visibility timeout return the same messages and receipt handles for five minutes, provided messages have not been deleted or had visibility changed.
       - AWS API Reference CreateQueue documents RedrivePolicy maxReceiveCount as the threshold that must be exceeded before SQS moves a message to the dead-letter queue.
       - AWS API Reference and Developer Guide document that ReceiveMessage VisibilityTimeout applies to returned messages, omitted values use the queue default, and VisibilityTimeout=0 immediately terminates invisibility.
+      - AWS Developer Guide "FIFO queue delivery logic" states that a receive attempts to return as many messages as possible with the same message group ID in a single call, that you may receive multiple messages from the same message group ID in one batch (up to 10 with MaxNumberOfMessages), and that further messages from that group are withheld only from subsequent requests until the received ones are deleted or become visible again.
+      - AWS API Reference documents ReceiveRequestAttemptId as FIFO-only, at most 128 characters drawn from alphanumerics and punctuation (together exactly printable ASCII excluding space), and usable only for 5 minutes after a ReceiveMessage action.
+      - AWS Developer Guide quotas document approximately 120,000 in-flight messages per standard queue (20,000 per FIFO queue), with OverLimit returned to short polls only.
     gaps: []
-    next_action: Review ReceiveMessage ReceiveRequestAttemptId same-group retry semantics.
+    next_action: Review SendMessage/SendMessageBatch FIFO sequence-number and deduplication-window semantics.
   CreateQueue:
     status: fixed
     aws_docs:
@@ -233,8 +278,12 @@ findings:
     - SendMessage now validates DelaySeconds range (0-900), rejects DelaySeconds on FIFO queues, and enforces the 1 MiB message body size limit.
     - PurgeQueue's 60-second window no longer discards writes to the queue. It had been treated as "drop everything for a minute", which silently killed SendMessage, SNS/EventBridge/Scheduler/S3 deliveries, and DLQ moves into a recently purged queue while every producer still saw success.
     - DeleteQueue now clears the queue's purge window, FIFO deduplication IDs, and receive-attempt replay records, so a queue recreated under the same name does not inherit the deleted queue's state.
+    - FIFO ReceiveMessage now returns multiple messages from the same message group in one call, up to MaxNumberOfMessages and in sequence order, instead of capping a call at one message per group.
+    - ReceiveMessage tracks the messages it has already delivered within a call, so a candidate refetch cannot list the same MessageId twice in one response when VisibilityTimeout=0 leaves delivered messages visible.
   remaining_gaps: []
-  intentionally_partial: []
+  intentionally_partial:
+    - The in-flight message quota (approximately 120,000 per standard queue, 20,000 per FIFO queue) is not enforced, so ReceiveMessage never returns OverLimit. Quota emulation is a repository non-goal; the cap measures AWS capacity rather than API semantics.
+    - ReceiveRequestAttemptId's length and character set are validated on standard queues as well as FIFO ones. AWS documents the parameter as FIFO-only and Overcast ignores its value there, but a malformed token is rejected rather than silently dropped.
 verification:
   commands:
     - go test -count=1 ./internal/services/sqs/... ./tests/integration/sqs/...
@@ -248,6 +297,10 @@ verification:
   do_not_redo:
     - Context-cancellation long-poll fix unless the regression fails.
     - ReceiveRequestAttemptId deleted/visibility-modified edge cases (now covered).
+    - ReceiveRequestAttemptId five-minute window, visibility reset on replay, and standard-queue behaviour (now covered).
+    - FIFO batch retrieval within a message group and group blocking (now covered).
+    - ReceiveMessage VisibilityTimeout range validation on both wires, and its non-mutation of the queue attribute (now covered).
+    - The in-flight OverLimit quota, unless the non-goal on quota emulation changes.
     - FIFO-only attributes on standard queues (now covered).
     - Idempotent create with different attributes (now covered).
   commands:

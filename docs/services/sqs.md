@@ -38,6 +38,7 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 | Queues             | Idempotent `CreateQueue`, FIFO queues via the `.fifo` suffix, inline tags, all standard attributes                            |
 | Sending            | `SendMessage` and `SendMessageBatch` (10 per call) with `DelaySeconds` and message attributes                                 |
 | Receiving          | `MaxNumberOfMessages`, per-call and queue-default long polling, per-call `VisibilityTimeout`, FIFO `ReceiveRequestAttemptId`  |
+| FIFO ordering      | A batch drains a message group in sequence order and fills from other groups; a group with in-flight messages returns nothing more until they are deleted or become visible |
 | Visibility         | `ChangeMessageVisibility` and its batch form on in-flight messages                                                           |
 | Dead-letter queues | `RedrivePolicy`, `ListDeadLetterSourceQueues`, and `StartMessageMoveTask` to redrive back to the source                       |
 | Metrics            | `AWS/SQS` CloudWatch metrics, including depth gauges sampled every minute whether or not the queue has traffic                |
@@ -78,6 +79,7 @@ deploy baking `queue.queueUrl` into a function's environment, see
 | `AddPermission` / `RemovePermission` | Manage a queue's access policy                | Not implemented — `501 Not Implemented`                 |
 | `redrivePermission`                  | Restricts which queues may redrive from a DLQ | Accepted, validated and round-tripped, but not enforced |
 | Message attribute types              | `Binary` and `Number` values are validated    | Stored as given; the `DataType` is not checked          |
+| In-flight message quota              | ~120,000 per standard queue and 20,000 per FIFO queue; a short poll past the cap gets `OverLimit` | Not enforced — quotas are outside Overcast's scope, so `ReceiveMessage` never returns `OverLimit` |
 | Queue URL host                       | A fixed regional endpoint                     | The origin of the request that minted it                |
 
 <!-- BEGIN overcast:capabilities -->

@@ -1031,13 +1031,13 @@ const maxCandidateFetchLimit = 5000
 // fetching more than necessary on the common path; the retry loop still
 // covers the pathological "every candidate is DLQ-eligible" case.
 //
-// FIFO queues must over-fetch more aggressively: group-locking and
-// same-receive-call group dedup (see selectVisibleMessages) can skip many
-// candidates before finding maxMessages deliverable ones from distinct
-// groups. This is the accepted "over-fetch and select in Go" trade-off
-// storage-plan.md 3.10 calls for — group selection is AWS behavioral
-// semantics, not a structural predicate SQL should encode (see
-// docs/plans/storage-access-plan.md's "fidelity principle").
+// FIFO queues must over-fetch more aggressively: group-locking (see
+// selectVisibleMessages) can skip a long prefix of candidates belonging to
+// blocked groups before finding maxMessages deliverable ones. This is the
+// accepted "over-fetch and select in Go" trade-off storage-plan.md 3.10 calls
+// for — group selection is AWS behavioral semantics, not a structural
+// predicate SQL should encode (see docs/plans/storage-access-plan.md's
+// "fidelity principle").
 func candidateFetchLimit(maxMessages int, fifo bool) int {
 	if fifo {
 		if base := maxMessages * 20; base > 100 {
@@ -1056,18 +1056,18 @@ func candidateFetchLimit(maxMessages int, fifo bool) int {
 //
 // Storage access is a bounded, indexed candidate fetch
 // (h.store.receiveCandidates — docs/plans/storage-plan.md item 3.10) rather
-// than a full-queue scan. FIFO's per-group locking and per-receive-call
-// group dedup are AWS behavioral semantics that stay in Go (never
-// re-implemented in SQL — see docs/plans/storage-access-plan.md's fidelity
-// principle): candidates are over-fetched and filtered here exactly as they
-// were when the input was the whole queue, so wire-observable behavior is
-// unchanged; only how many storage rows get inspected per call differs. When
-// the initial fetch doesn't yield enough deliverable messages (e.g. many
-// candidates skipped for a blocked/already-delivered FIFO group, or DLQ
-// redirects), the fetch limit doubles and retries — already-delivered or
-// already-DLQ'd messages naturally drop out of the next fetch (their
-// visible_at moved to the future, or the row was deleted), so no
-// already-processed message can be double-delivered across retries.
+// than a full-queue scan. FIFO's per-group locking is an AWS behavioral
+// semantic that stays in Go (never re-implemented in SQL — see
+// docs/plans/storage-access-plan.md's fidelity principle): candidates are
+// over-fetched and filtered here exactly as they were when the input was the
+// whole queue, so wire-observable behavior is unchanged; only how many
+// storage rows get inspected per call differs. When the initial fetch doesn't
+// yield enough deliverable messages (e.g. many candidates skipped for a
+// blocked FIFO group, or DLQ redirects), the fetch limit doubles and retries.
+// Already-DLQ'd messages drop out of the next fetch because their row is
+// gone, and already-delivered ones because their visible_at moved into the
+// future — except under VisibilityTimeout=0, which leaves them visible, so
+// the delivered set is tracked explicitly rather than inferred.
 //
 // systemAttrNames and messageAttrNames control which system attributes and
 // user-defined message attributes are included in the response, mirroring AWS
@@ -1091,8 +1091,10 @@ func (h *Handler) selectVisibleMessages(ctx context.Context, queueName string, q
 		}
 	}
 
-	deliveredGroups := map[string]bool{}
 	var received []receivedMessage
+	// Message IDs already delivered by this call, so a retry round with a
+	// larger fetch limit cannot return one of them twice in one response.
+	delivered := map[string]bool{}
 
 	limit := candidateFetchLimit(maxMessages, fifo)
 	for {
@@ -1106,13 +1108,19 @@ func (h *Handler) selectVisibleMessages(ctx context.Context, queueName string, q
 				break
 			}
 
-			// FIFO: skip this message if its group is blocked (has an
-			// in-flight message) or if we already delivered a message from
-			// this group in this receive call.
-			if fifo && msg.MessageGroupId != "" {
-				if blockedGroups[msg.MessageGroupId] || deliveredGroups[msg.MessageGroupId] {
-					continue
-				}
+			// FIFO: skip this message if its group was already blocked by an
+			// in-flight (or delayed) message when this call started. A group
+			// this call has itself delivered from is NOT blocked: AWS returns
+			// "as many messages as possible with the same message group ID in
+			// a single call", up to MaxNumberOfMessages, and only refuses
+			// *subsequent* requests until those messages are deleted or become
+			// visible again. Candidates arrive in sequence-number order, so
+			// taking them as they come preserves each group's FIFO order.
+			if fifo && msg.MessageGroupId != "" && blockedGroups[msg.MessageGroupId] {
+				continue
+			}
+			if delivered[msg.MessageID] {
+				continue
 			}
 
 			// Generate a fresh receipt handle for this receive. AWS issues a
@@ -1164,12 +1172,7 @@ func (h *Handler) selectVisibleMessages(ctx context.Context, queueName string, q
 			}
 
 			received = append(received, receivedMessageFromStored(msg, systemAttrNames, messageAttrNames))
-
-			// FIFO: mark this group as delivered so no more messages from it
-			// are returned in this receive call.
-			if fifo && msg.MessageGroupId != "" {
-				deliveredGroups[msg.MessageGroupId] = true
-			}
+			delivered[msg.MessageID] = true
 		}
 
 		if len(received) >= maxMessages {
