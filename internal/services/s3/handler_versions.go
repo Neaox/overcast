@@ -93,7 +93,11 @@ func (h *Handler) ListObjectVersions(w http.ResponseWriter, r *http.Request) {
 	delimiter := serviceutil.QueryString(r, "delimiter", "")
 	keyMarker := serviceutil.QueryString(r, "key-marker", "")
 	versionIDMarker := serviceutil.QueryString(r, "version-id-marker", "")
-	maxKeys := serviceutil.QueryInt(r, "max-keys", 1000)
+	maxKeys, aerr := parseMaxKeys(r)
+	if aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
+	}
 
 	b, aerr := h.store.getBucket(r.Context(), bucket)
 	if aerr != nil {
@@ -121,10 +125,7 @@ func (h *Handler) ListObjectVersions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	truncated := len(entries) > maxKeys
-	if truncated {
-		entries = entries[:maxKeys]
-	}
+	entries, truncated := trimListPage(entries, maxKeys)
 
 	owner := ownerXML{ID: h.cfg.AccountID, DisplayName: "overcast"}
 	resp := &listVersionsResult{
