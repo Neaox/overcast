@@ -14,12 +14,12 @@ func STS() ServiceGroup {
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
 			// sts-identity
-			"GetCallerIdentity":  g.GetCallerIdentity,
-			"GetSessionToken":    g.GetSessionToken,
-			"GetFederationToken": g.GetFederationToken,
+			"sts-identity:GetCallerIdentity":  g.GetCallerIdentity,
+			"sts-identity:GetSessionToken":    g.GetSessionToken,
+			"sts-identity:GetFederationToken": g.GetFederationToken,
 			// sts-assume
-			"AssumeRole":                g.AssumeRole,
-			"AssumeRoleWithWebIdentity": g.AssumeRoleWithWebIdentity,
+			"sts-assume:AssumeRole":                g.AssumeRole,
+			"sts-assume:AssumeRoleWithWebIdentity": g.AssumeRoleWithWebIdentity,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"sts-identity": g.setupIdentity,

@@ -15,22 +15,22 @@ func Kinesis() ServiceGroup {
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
 			// kinesis-streams
-			"CreateStream":          g.CreateStream,
-			"DescribeStream":        g.DescribeStream,
-			"DescribeStreamSummary": g.DescribeStreamSummary,
-			"ListStreams":           g.ListStreams,
-			"AddTagsToStream":       g.AddTagsToStream,
-			"ListTagsForStream":     g.ListTagsForStream,
-			"DeleteStream":          g.DeleteStream,
+			"kinesis-streams:CreateStream":          g.CreateStream,
+			"kinesis-streams:DescribeStream":        g.DescribeStream,
+			"kinesis-streams:DescribeStreamSummary": g.DescribeStreamSummary,
+			"kinesis-streams:ListStreams":           g.ListStreams,
+			"kinesis-streams:AddTagsToStream":       g.AddTagsToStream,
+			"kinesis-streams:ListTagsForStream":     g.ListTagsForStream,
+			"kinesis-streams:DeleteStream":          g.DeleteStream,
 			// kinesis-records
-			"PutRecord":        g.PutRecord,
-			"PutRecords":       g.PutRecords,
-			"GetShardIterator": g.GetShardIterator,
-			"GetRecords":       g.GetRecords,
+			"kinesis-records:PutRecord":        g.PutRecord,
+			"kinesis-records:PutRecords":       g.PutRecords,
+			"kinesis-records:GetShardIterator": g.GetShardIterator,
+			"kinesis-records:GetRecords":       g.GetRecords,
 			// kinesis-shards
-			"ListShards":  g.ListShards,
-			"SplitShard":  g.SplitShard,
-			"MergeShards": g.MergeShards,
+			"kinesis-shards:ListShards":  g.ListShards,
+			"kinesis-shards:SplitShard":  g.SplitShard,
+			"kinesis-shards:MergeShards": g.MergeShards,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"kinesis-streams": g.setupStreams,

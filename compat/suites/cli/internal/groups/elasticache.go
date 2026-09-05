@@ -15,22 +15,22 @@ func ElastiCache() ServiceGroup {
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
 			// elasticache-clusters
-			"CreateCacheCluster":    g.CreateCacheCluster,
-			"DescribeCacheClusters": g.DescribeCacheClusters,
-			"DeleteCacheCluster":    g.DeleteCacheCluster,
+			"elasticache-clusters:CreateCacheCluster":    g.CreateCacheCluster,
+			"elasticache-clusters:DescribeCacheClusters": g.DescribeCacheClusters,
+			"elasticache-clusters:DeleteCacheCluster":    g.DeleteCacheCluster,
 			// elasticache-modify
-			"ModifyCacheCluster":     g.ModifyCacheCluster,
-			"ModifyReplicationGroup": g.ModifyReplicationGroup,
+			"elasticache-modify:ModifyCacheCluster":     g.ModifyCacheCluster,
+			"elasticache-modify:ModifyReplicationGroup": g.ModifyReplicationGroup,
 			// elasticache-replication-groups
-			"CreateReplicationGroup":    g.CreateReplicationGroup,
-			"DescribeReplicationGroups": g.DescribeReplicationGroups,
+			"elasticache-replication-groups:CreateReplicationGroup":    g.CreateReplicationGroup,
+			"elasticache-replication-groups:DescribeReplicationGroups": g.DescribeReplicationGroups,
 			// elasticache-subnet-groups
-			"CreateCacheSubnetGroup":    g.CreateCacheSubnetGroup,
-			"DescribeCacheSubnetGroups": g.DescribeCacheSubnetGroups,
+			"elasticache-subnet-groups:CreateCacheSubnetGroup":    g.CreateCacheSubnetGroup,
+			"elasticache-subnet-groups:DescribeCacheSubnetGroups": g.DescribeCacheSubnetGroups,
 			// elasticache-parameter-groups
-			"CreateCacheParameterGroup":    g.CreateCacheParameterGroup,
-			"DescribeCacheParameterGroups": g.DescribeCacheParameterGroups,
-			"DeleteCacheParameterGroup":    g.DeleteCacheParameterGroup,
+			"elasticache-parameter-groups:CreateCacheParameterGroup":    g.CreateCacheParameterGroup,
+			"elasticache-parameter-groups:DescribeCacheParameterGroups": g.DescribeCacheParameterGroups,
+			"elasticache-parameter-groups:DeleteCacheParameterGroup":    g.DeleteCacheParameterGroup,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"elasticache-clusters":           g.setupClusters,

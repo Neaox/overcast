@@ -14,20 +14,20 @@ func CloudWatchLogs() ServiceGroup {
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
 			// logs-groups
-			"CreateLogGroup":        g.CreateLogGroup,
-			"DescribeLogGroups":     g.DescribeLogGroups,
-			"PutRetentionPolicy":    g.PutRetentionPolicy,
-			"VerifyRetentionPolicy": g.VerifyRetentionPolicy,
-			"DeleteRetentionPolicy": g.DeleteRetentionPolicy,
-			"CreateLogStream":       g.CreateLogStream,
-			"TagLogGroup":           g.TagLogGroup,
-			"DeleteLogGroup":        g.DeleteLogGroup,
+			"logs-groups:CreateLogGroup":        g.CreateLogGroup,
+			"logs-groups:DescribeLogGroups":     g.DescribeLogGroups,
+			"logs-groups:PutRetentionPolicy":    g.PutRetentionPolicy,
+			"logs-groups:VerifyRetentionPolicy": g.VerifyRetentionPolicy,
+			"logs-groups:DeleteRetentionPolicy": g.DeleteRetentionPolicy,
+			"logs-groups:CreateLogStream":       g.CreateLogStream,
+			"logs-groups:TagLogGroup":           g.TagLogGroup,
+			"logs-groups:DeleteLogGroup":        g.DeleteLogGroup,
 			// logs-events
-			"PutLogEvents":       g.PutLogEvents,
-			"GetLogEvents":       g.GetLogEvents,
-			"FilterLogEvents":    g.FilterLogEvents,
-			"DescribeLogStreams": g.DescribeLogStreams,
-			"DeleteLogStream":    g.DeleteLogStream,
+			"logs-events:PutLogEvents":       g.PutLogEvents,
+			"logs-events:GetLogEvents":       g.GetLogEvents,
+			"logs-events:FilterLogEvents":    g.FilterLogEvents,
+			"logs-events:DescribeLogStreams": g.DescribeLogStreams,
+			"logs-events:DeleteLogStream":    g.DeleteLogStream,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"logs-groups": g.setupGroups,

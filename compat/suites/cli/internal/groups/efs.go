@@ -14,11 +14,11 @@ func EFS() ServiceGroup {
 	g := &efsCliGroup{}
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
-			"CreateMountTarget":                 g.CreateMountTarget,
-			"DescribeMountTargets":              g.DescribeMountTargets,
-			"DescribeMountTargetSecurityGroups": g.DescribeMountTargetSecurityGroups,
-			"ModifyMountTargetSecurityGroups":   g.ModifyMountTargetSecurityGroups,
-			"DeleteMountTarget":                 g.DeleteMountTarget,
+			"efs-mount-targets:CreateMountTarget":                 g.CreateMountTarget,
+			"efs-mount-targets:DescribeMountTargets":              g.DescribeMountTargets,
+			"efs-mount-targets:DescribeMountTargetSecurityGroups": g.DescribeMountTargetSecurityGroups,
+			"efs-mount-targets:ModifyMountTargetSecurityGroups":   g.ModifyMountTargetSecurityGroups,
+			"efs-mount-targets:DeleteMountTarget":                 g.DeleteMountTarget,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"efs-mount-targets": g.setupMountTargets,

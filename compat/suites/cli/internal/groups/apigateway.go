@@ -14,12 +14,12 @@ func APIGateway() ServiceGroup {
 	g := &apigwCliGroup{}
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
-			"CreateRestApi": g.CreateRestApi,
-			"GetRestApis":   g.GetRestApis,
-			"DeleteRestApi": g.DeleteRestApi,
-			"CreateApi":     g.CreateApi,
-			"GetApis":       g.GetApis,
-			"DeleteApi":     g.DeleteApi,
+			"apigateway-rest:CreateRestApi": g.CreateRestApi,
+			"apigateway-rest:GetRestApis":   g.GetRestApis,
+			"apigateway-rest:DeleteRestApi": g.DeleteRestApi,
+			"apigateway-http:CreateApi":     g.CreateApi,
+			"apigateway-http:GetApis":       g.GetApis,
+			"apigateway-http:DeleteApi":     g.DeleteApi,
 			// Group-qualified: CreateApiKey and GetUsagePlan are generic
 			// enough that another service's group could claim the bare name.
 			"apigateway-usage-plans:CreateUsagePlanWithLimits": g.CreateUsagePlanWithLimits,
