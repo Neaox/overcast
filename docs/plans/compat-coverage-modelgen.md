@@ -143,11 +143,16 @@ at full operation depth (§3.9).
 > `java-sdk`, `dotnet-sdk` and `rust-sdk` honoured it for **generated groups
 > only** until #1737, because all three loaded `cdk-lifecycle` and recorded its
 > 35 tests as `skip` in `compat/baseline/<suite>.json`, and the PR-time baseline
-> lint rejects a removed expectation. Aligning them therefore meant re-seeding
-> those three shards — "changing what CI measures means re-seeding, not
-> comparing"
+> lint rejected every removed expectation outright. Aligning them therefore meant
+> re-seeding those three shards — "changing what CI measures means re-seeding,
+> not comparing"
 > ([compat/AGENTS.md § Baseline & uniformity](../../compat/AGENTS.md#baseline--uniformity-policy))
-> — which #1737 did in one PR alongside the loader change.
+> — which #1737 did in one PR alongside the loader change. The same PR made that
+> lint registry-aware: a removal is now an issue only while the pull request's
+> own registry still asks that suite to run the test, so scoping a group away
+> reports an informational line instead of 105 phantom downgrades. Re-seeding
+> remains the route for a configuration change, where the row is one a run would
+> still produce.
 >
 > **The new G2 prerequisite: #1700, qualify every impl key — done.** Six suites
 > registered bare `"<test>"` keys — `go-sdk` 487, `cli` 513, `python-sdk` 487,

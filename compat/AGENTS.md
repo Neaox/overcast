@@ -807,7 +807,14 @@ against a stub. A baseline seeded before that change described a configuration
 that no longer existed.
 
 `--lint-baseline-from/--lint-baseline-to` runs on PRs and rejects a baseline
-edit that downgrades an expectation, removes one, or adds a new `fail`.
+edit that downgrades an expectation, adds a new `fail`, or removes an
+expectation **the registry still asks that suite to produce**. A removal is
+allowed exactly when the pull request's own registry — hand-written plus
+generated — no longer asks for it: the group is gone, the test is gone from the
+group, or the group's `suites` no longer names the suite. Those are reported as
+`compat baseline: <key> dropped — no longer in scope for <suite>` and pass. Any
+other configuration change still takes the re-seed route above, because the row
+is one a run would still produce.
 
 ### Generated groups soak in before they gate — never hand-edit them in
 

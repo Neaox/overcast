@@ -74,6 +74,62 @@ func (g parityGroup) expects(suite string) bool {
 	return !nonUniformSuites[suite]
 }
 
+// registryScope answers, for one (suite, group, test) cell, whether the
+// registry still asks that suite to run that test. It is the concatenated
+// registry — hand-written plus generated — indexed for lookup.
+//
+// The baseline change lint is its only caller, and the question it answers
+// there is what separates a removed expectation that launders a result from
+// one that is simply no longer measured: a group deleted from the registry, a
+// test dropped from a group, or a group scoped away from the suite.
+type registryScope struct {
+	groups map[string]parityGroup
+	tests  map[string]map[string]bool
+}
+
+func newRegistryScope(reg *parityRegistry) *registryScope {
+	scope := &registryScope{
+		groups: make(map[string]parityGroup, len(reg.Groups)),
+		tests:  make(map[string]map[string]bool, len(reg.Groups)),
+	}
+	// Two groups sharing a name is a load error upstream — lintGeneratedRegistry
+	// refuses it, and that refusal is what makes concatenation safe at all.
+	// Unioning their tests rather than letting the later one win is the
+	// fail-closed reading if one ever slipped through: a removal is then judged
+	// against more tests, not fewer.
+	for _, group := range reg.Groups {
+		scope.groups[group.Name] = group
+		tests := scope.tests[group.Name]
+		if tests == nil {
+			tests = make(map[string]bool, len(group.Tests))
+			scope.tests[group.Name] = tests
+		}
+		for _, test := range group.Tests {
+			tests[test.Name] = true
+		}
+	}
+	return scope
+}
+
+// expects reports whether the registry requires suite to run group/test.
+//
+// A nil scope — no registry was available to the caller — answers yes to
+// everything. That is the fail-closed direction: without a registry to consult,
+// the lint keeps judging every removal as it did before it could ask.
+func (s *registryScope) expects(suite, group, test string) bool {
+	if s == nil {
+		return true
+	}
+	g, ok := s.groups[group]
+	if !ok {
+		return false
+	}
+	if !s.tests[group][test] {
+		return false
+	}
+	return g.expects(suite)
+}
+
 // ---------------------------------------------------------------------------
 // parity-debt.json
 // ---------------------------------------------------------------------------

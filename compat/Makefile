@@ -64,9 +64,13 @@ baseline-update:
 	go run ../cmd/compat --update-baseline --baseline-file baseline --results-file ../compat-results.json
 
 ## baseline-lint — reject baseline downgrades; OLD_BASELINE is the baseline to compare against (a shard directory or a single file)
+# The registry paths are relative to this directory, and are the working tree's:
+# they say whether a removed expectation is one a suite is still asked to
+# produce, so they must describe the change being linted, not the old baseline.
 baseline-lint:
 	@if [ -z "$(OLD_BASELINE)" ]; then echo "OLD_BASELINE is required" >&2; exit 2; fi
-	go run ../cmd/compat --lint-baseline-from "$(OLD_BASELINE)" --lint-baseline-to baseline
+	go run ../cmd/compat --lint-baseline-from "$(OLD_BASELINE)" --lint-baseline-to baseline \
+		--registry-file suites/registry.json --generated-registry-file suites/registry.generated.json
 
 ## baseline-size — fail if any per-suite baseline shard has outgrown its size budget
 baseline-size:
