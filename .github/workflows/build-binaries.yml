@@ -29,6 +29,15 @@ jobs:
   binary:
     name: ${{ matrix.asset }}
     runs-on: ubuntu-latest
+    # 70-93 s per leg on test.yml run 33945978965, 70-95 s on release run
+    # 33353263076. Ten rather than 3x that: the sample is all warm caches,
+    # and a leg that misses both the module and the per-target build cache
+    # compiles the standard library for its GOOS/GOARCH from nothing.
+    #
+    # This is also the timeout release.yml's `binaries` job runs under —
+    # `timeout-minutes` cannot be set on a job that calls a reusable
+    # workflow, so the called workflow has to carry it.
+    timeout-minutes: 10
     strategy:
       # The one matrix in the repository that should fail fast, and the reason
       # is what each job's failure would tell you. Every other matrix here is

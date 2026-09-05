@@ -51,6 +51,10 @@ jobs:
     # on PRs into a release branch, which is the shape it exists to refuse.
     name: Release branch base
     runs-on: ubuntu-latest
+    # Never measured, because it has never run: nobody has opened a pull
+    # request into a release/** branch since this landed, which is the point
+    # of it. A checkout, one template render and `exit 1`.
+    timeout-minutes: 10
     steps:
       # The default branch, never the PR's merge ref: this reads one message
       # template and must not run anything the pull request brought with it.

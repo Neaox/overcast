@@ -93,6 +93,12 @@ jobs:
   changes:
     name: Changed-path scope
     runs-on: ubuntu-latest
+    # 6 s on the last two real runs (33945978853, 33944965489): a shallow
+    # checkout and one paginated API call. Five minutes is the floor this
+    # file uses for a job whose work is seconds — enough that a slow runner
+    # or a retried API call never trips it, short enough that a wedged one
+    # does not hold a concurrency slot for six hours.
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
@@ -137,6 +143,8 @@ jobs:
   prepare-matrix:
     name: Prepare suite matrix
     runs-on: ubuntu-latest
+    # 3-4 s: one python step, no checkout.
+    timeout-minutes: 5
     outputs:
       suites: ${{ steps.suites.outputs.suites }}
     steps:
@@ -181,6 +189,12 @@ jobs:
     needs: [changes, prepare-matrix]
     if: needs.changes.outputs.code != 'false' && contains(needs.prepare-matrix.outputs.suites, '"rust-sdk"')
     runs-on: ubuntu-latest
+    # 7-12 s when it decides nothing changed, which is almost always; 115 s
+    # the last time it actually built (run 33944335768). Thirty rather than
+    # 3x that, deliberately: 115 s was a warm `type=gha` buildx cache, and a
+    # cold one compiles the Rust SDK suite from source. This is the one job
+    # here whose worst case is not in the sample.
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -296,6 +310,9 @@ jobs:
     name: Build Overcast compat binaries
     needs: [changes, prepare-matrix]
     runs-on: ubuntu-latest
+    # 82 s (33945978853) and 70 s (33944965489), before the SPA build came
+    # out of it and the Lambda init started coming from cache.
+    timeout-minutes: 10
     # Named once, read by every step below. `!= 'false'` and not `== 'true'`:
     # see the note on the `changes` job — anything other than a definite "this
     # is prose" runs the suites.
@@ -363,6 +380,13 @@ jobs:
       - rust-sdk-image
     if: always() && needs.prepare-matrix.result == 'success' && needs.build-binaries.result == 'success'
     runs-on: ubuntu-latest
+    # One value for every leg, so it has to fit the slowest: `cli` at 476 s
+    # (33945978853) and 363 s (33944965489), against 44-103 s for the other
+    # seven. Thirty is above compat/runner.go's own `suiteHardTimeout` of 25
+    # minutes on purpose — the runner's per-suite net should fire first,
+    # because it kills the subprocess and writes a result that says which
+    # suite hung, where this cancels the job and says nothing.
+    timeout-minutes: 30
     # The job keeps its name and still reports; only the steps are conditional.
     # A gated-off build-binaries still concludes `success`, so the guard above
     # is unaffected.
@@ -580,6 +604,11 @@ jobs:
       - compat
     if: always() && needs.prepare-matrix.result == 'success'
     runs-on: ubuntu-latest
+    # 43 s (33945978853) and 29 s (33944965489). Ten because the promotion
+    # path on main does more than the sample ever measured — a force-push,
+    # `gh pr create` and arming auto-merge — and each of those is a network
+    # call that can retry.
+    timeout-minutes: 10
     env:
       RUN_SUITES: ${{ needs.changes.outputs.code != 'false' }}
     permissions:

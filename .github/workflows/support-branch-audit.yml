@@ -38,6 +38,9 @@ jobs:
   unreleased-tips:
     name: Unreleased support branch tips
     runs-on: ubuntu-latest
+    # 7-8 s (runs 32697449291, 33365680044), with no support branch to walk.
+    # Ten covers the checkout and the tag fetch on a line that has some.
+    timeout-minutes: 10
     steps:
       # fetch-depth: 0 for the tags and the full history both checks need:
       # `git tag --contains` walks from every tag, and the ahead-count is a

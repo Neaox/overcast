@@ -70,6 +70,10 @@ jobs:
     name: Refresh the open release PR
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    # 11-12 s (runs 33948334692, 33948558114), both of which exited early
+    # because no release was in flight — the usual case. The full path adds a
+    # merge, a fold, a push and a comment, all bounded.
+    timeout-minutes: 10
     steps:
       - name: Require the release App credentials
         env:
@@ -206,6 +210,9 @@ jobs:
     name: Prepare release PR
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    # 15-16 s on the last two dispatches (runs 33696389399, 33804728010),
+    # which is the whole path: edit, validate, commit, push, open the PR.
+    timeout-minutes: 10
     steps:
       # A PR opened with the default GITHUB_TOKEN does not trigger
       # pull_request workflows, so a release PR created that way would arrive

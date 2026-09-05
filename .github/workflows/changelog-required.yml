@@ -47,6 +47,10 @@ jobs:
     # stops enforcing the gate, because branch protection matches by name.
     name: Changelog entry
     runs-on: ubuntu-latest
+    # 11-13 s (runs 33948464233, 33948656879). Ten, not five: the variable
+    # cost is the full-history checkout above and the comment API calls, both
+    # of which the action retries rather than failing on the first blip.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
