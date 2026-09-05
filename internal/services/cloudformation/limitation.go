@@ -60,6 +60,26 @@ func noteLimitations(ctx context.Context, rec *httptest.ResponseRecorder) {
 	collector.add(messages...)
 }
 
+// noteLimitation records something the *resource handler* itself knows
+// Overcast will not do, for handlers whose gap has no dispatched response to
+// carry it: a template property with no member on the service's API can only be
+// reported by the handler that decided not to send it. See
+// noteUnconsumedProperties in provisioner_properties.go, its only caller today.
+//
+// Same collector, same destination — the resource's ResourceStatusReason — as
+// the header path above, so the two cannot report the same thing twice under
+// different wording.
+func noteLimitation(ctx context.Context, message string) {
+	if message == "" {
+		return
+	}
+	collector, ok := ctx.Value(limitationCollectorKey{}).(*limitationCollector)
+	if !ok || collector == nil {
+		return
+	}
+	collector.add(message)
+}
+
 func (c *limitationCollector) add(messages ...string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
