@@ -80,54 +80,41 @@ func AlphaNumericHyphenUnderscorePeriod(c rune) bool {
 }
 
 // BucketName validates an S3 bucket name against AWS naming rules.
-// Returns nil if valid, or a *protocol.AWSError with code "InvalidBucketName".
+// Returns nil if valid, or a *protocol.AWSError with code "InvalidBucketName"
+// — the code S3's documented error list gives for a name that breaks the
+// rules; protocol.ErrInvalidBucketName carries the citation.
+//
+// The MESSAGE deliberately names the rule that was broken rather than
+// repeating AWS's one-line "The specified bucket is not valid.". Two reasons.
+// That sentence is the error list's *Description* of the condition, not the
+// bytes S3 puts in <Message>, so adopting it would trade an evidenced code for
+// an unevidenced message. And an SDK branches on the code while the message is
+// the whole diagnostic a human gets when `cdk deploy` stops on a generated
+// name — "must not contain two adjacent periods" is worth more there than a
+// sentence that does not say which of seven rules was hit.
 func BucketName(name string) *protocol.AWSError {
 	if len(name) < 3 || len(name) > 63 {
-		return &protocol.AWSError{
-			Code:       "InvalidBucketName",
-			Message:    "The specified bucket name is not valid. Bucket names must be between 3 and 63 characters.",
-			HTTPStatus: http.StatusBadRequest,
-		}
+		return protocol.ErrInvalidBucketName("The specified bucket name is not valid. Bucket names must be between 3 and 63 characters.")
 	}
 	if !validBucketName.MatchString(name) {
-		return &protocol.AWSError{
-			Code:       "InvalidBucketName",
-			Message:    "The specified bucket name is not valid. Bucket names can consist only of lowercase letters, numbers, periods (.), and hyphens (-), and must begin and end with a letter or number.",
-			HTTPStatus: http.StatusBadRequest,
-		}
+		return protocol.ErrInvalidBucketName("The specified bucket name is not valid. Bucket names can consist only of lowercase letters, numbers, periods (.), and hyphens (-), and must begin and end with a letter or number.")
 	}
 	// AWS forbids two adjacent PERIODS. Adjacent hyphens are legal — its own
 	// reserved suffixes (--ol-s3, --x-s3, --table-s3) contain them.
 	if strings.Contains(name, "..") {
-		return &protocol.AWSError{
-			Code:       "InvalidBucketName",
-			Message:    "The specified bucket name is not valid. Bucket names must not contain two adjacent periods.",
-			HTTPStatus: http.StatusBadRequest,
-		}
+		return protocol.ErrInvalidBucketName("The specified bucket name is not valid. Bucket names must not contain two adjacent periods.")
 	}
 	if ipAddress.MatchString(name) {
-		return &protocol.AWSError{
-			Code:       "InvalidBucketName",
-			Message:    "The specified bucket name is not valid. Bucket names must not be formatted as an IP address.",
-			HTTPStatus: http.StatusBadRequest,
-		}
+		return protocol.ErrInvalidBucketName("The specified bucket name is not valid. Bucket names must not be formatted as an IP address.")
 	}
 	for _, prefix := range reservedBucketPrefixes {
 		if strings.HasPrefix(name, prefix) {
-			return &protocol.AWSError{
-				Code:       "InvalidBucketName",
-				Message:    "The specified bucket name is not valid. Bucket names must not start with the prefix " + prefix + ".",
-				HTTPStatus: http.StatusBadRequest,
-			}
+			return protocol.ErrInvalidBucketName("The specified bucket name is not valid. Bucket names must not start with the prefix " + prefix + ".")
 		}
 	}
 	for _, suffix := range reservedBucketSuffixes {
 		if strings.HasSuffix(name, suffix) {
-			return &protocol.AWSError{
-				Code:       "InvalidBucketName",
-				Message:    "The specified bucket name is not valid. Bucket names must not end with the suffix " + suffix + ".",
-				HTTPStatus: http.StatusBadRequest,
-			}
+			return protocol.ErrInvalidBucketName("The specified bucket name is not valid. Bucket names must not end with the suffix " + suffix + ".")
 		}
 	}
 	// Not enforced: "bucket names can only end with the suffix -an when you
@@ -181,11 +168,7 @@ func ValidateAccountRegionalBucketName(name, accountID, region string) *protocol
 	}
 	suffix := AccountRegionalBucketSuffix(accountID, region)
 	if !strings.HasSuffix(name, suffix) {
-		return &protocol.AWSError{
-			Code:       "InvalidBucketName",
-			Message:    "The specified bucket name is not valid. Account regional namespace bucket names must end with " + suffix + ".",
-			HTTPStatus: http.StatusBadRequest,
-		}
+		return protocol.ErrInvalidBucketName("The specified bucket name is not valid. Account regional namespace bucket names must end with " + suffix + ".")
 	}
 	return nil
 }
