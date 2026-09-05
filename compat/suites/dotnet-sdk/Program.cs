@@ -10,20 +10,7 @@ var region = EnvOr("OVERCAST_DEFAULT_REGION", "us-east-1");
 var skipDocker = Environment.GetEnvironmentVariable("OVERCAST_COMPAT_SKIP_DOCKER") == "1";
 
 var clients = new AwsClients(endpoint, region);
-var serviceGroups = new IServiceGroup[]
-{
-    new S3Group(clients),
-    new SqsGroup(clients),
-    new DynamoDbGroup(clients),
-    new SnsGroup(clients),
-    new LambdaGroup(clients),
-    new StsGroup(clients),
-    new KmsGroup(clients),
-    new SecretsManagerGroup(clients),
-    new SsmGroup(clients),
-    new IamGroup(clients),
-    new EventBridgeGroup(clients),
-};
+var serviceGroups = ServiceGroups.All(clients);
 
 var setups = new Dictionary<string, SetupFn>(StringComparer.Ordinal);
 var teardowns = new Dictionary<string, SetupFn>(StringComparer.Ordinal);

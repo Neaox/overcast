@@ -27,8 +27,8 @@ public sealed class EventBridgeGroup(AwsClients clients) : IServiceGroup
 
     public IReadOnlyDictionary<string, TestFn> Impls() => new Dictionary<string, TestFn>(StringComparer.Ordinal)
     {
-        ["TestEventPattern"] = TestEventPatternAsync,
-        ["TestEventPatternNoMatch"] = TestEventPatternNoMatchAsync,
+        ["eventbridge-patterns:TestEventPattern"] = TestEventPatternAsync,
+        ["eventbridge-patterns:TestEventPatternNoMatch"] = TestEventPatternNoMatchAsync,
     };
 
     public IReadOnlyDictionary<string, SetupFn> Setups() => new Dictionary<string, SetupFn>(StringComparer.Ordinal);

@@ -9,20 +9,20 @@ public sealed class SnsGroup(AwsClients clients) : IServiceGroup
 {
     public IReadOnlyDictionary<string, TestFn> Impls() => new Dictionary<string, TestFn>(StringComparer.Ordinal)
     {
-        ["CreateTopic"] = CreateTopicAsync,
-        ["ListTopics"] = ListTopicsAsync,
-        ["GetTopicAttributes"] = GetTopicAttributesAsync,
-        ["SetTopicAttributes"] = SetTopicAttributesAsync,
-        ["DeleteTopic"] = DeleteTopicAsync,
-        ["Publish"] = PublishAsync,
-        ["PublishWithAttributes"] = PublishWithAttributesAsync,
-        ["PublishBatch"] = PublishBatchAsync,
-        ["SubscribeSQS"] = SubscribeSQSAsync,
-        ["ListSubscriptionsByTopic"] = ListSubscriptionsByTopicAsync,
-        ["GetSubscriptionAttributes"] = GetSubscriptionAttributesAsync,
-        ["PublishDeliveredToSQS"] = PublishDeliveredToSQSAsync,
-        ["SetSubscriptionAttributes"] = SetSubscriptionAttributesAsync,
-        ["Unsubscribe"] = UnsubscribeAsync,
+        ["sns-topics:CreateTopic"] = CreateTopicAsync,
+        ["sns-topics:ListTopics"] = ListTopicsAsync,
+        ["sns-topics:GetTopicAttributes"] = GetTopicAttributesAsync,
+        ["sns-topics:SetTopicAttributes"] = SetTopicAttributesAsync,
+        ["sns-topics:DeleteTopic"] = DeleteTopicAsync,
+        ["sns-publish:Publish"] = PublishAsync,
+        ["sns-publish:PublishWithAttributes"] = PublishWithAttributesAsync,
+        ["sns-publish:PublishBatch"] = PublishBatchAsync,
+        ["sns-subscriptions:SubscribeSQS"] = SubscribeSQSAsync,
+        ["sns-subscriptions:ListSubscriptionsByTopic"] = ListSubscriptionsByTopicAsync,
+        ["sns-subscriptions:GetSubscriptionAttributes"] = GetSubscriptionAttributesAsync,
+        ["sns-subscriptions:PublishDeliveredToSQS"] = PublishDeliveredToSQSAsync,
+        ["sns-subscriptions:SetSubscriptionAttributes"] = SetSubscriptionAttributesAsync,
+        ["sns-subscriptions:Unsubscribe"] = UnsubscribeAsync,
     };
 
     public IReadOnlyDictionary<string, SetupFn> Setups() => new Dictionary<string, SetupFn>(StringComparer.Ordinal)
