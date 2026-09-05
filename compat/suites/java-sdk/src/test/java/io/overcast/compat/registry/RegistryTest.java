@@ -141,6 +141,45 @@ class RegistryTest {
                 "iam-users/CreateUser should bind via its bare key");
     }
 
+    // ── "suites" scoping applies to every group ───────────────────────────────
+
+    /**
+     * A hand-written group scoped to another suite is not loaded at all (#1737).
+     *
+     * <p>{@code cdk-lifecycle} is the only such group in the real registry, and
+     * java-sdk is not in its {@code suites}: it contributes no tests, no skips
+     * and no results here, which is what took its 35 rows out of
+     * {@code compat/baseline/java-sdk.json}.
+     */
+    @Test
+    void handWrittenGroupScopedToAnotherSuiteIsNotLoaded() {
+        Registry.RegistryRoot root = new Registry.RegistryRoot(List.of(
+                new Registry.RegistryGroup("s3", "s3-crud", List.of(
+                        new Registry.RegistryTest("CreateBucket", null, null, null, null))),
+                new Registry.RegistryGroup("cdk", "cdk-lifecycle", List.of(
+                        new Registry.RegistryTest("Deploy", null, null, null, null)),
+                        List.of("cdk"), false, null, null)));
+
+        List<TestGroup> groups = Registry.buildGroups("java-sdk",
+                root, Map.of(), Map.of(), Map.of(), Set.of());
+
+        assertEquals(List.of("s3-crud"), groups.stream().map(TestGroup::name).toList());
+    }
+
+    /** The same group is loaded by the suite it names. */
+    @Test
+    void handWrittenGroupIsLoadedBySuiteItNames() {
+        Registry.RegistryRoot root = new Registry.RegistryRoot(List.of(
+                new Registry.RegistryGroup("cdk", "cdk-lifecycle", List.of(
+                        new Registry.RegistryTest("Deploy", null, null, null, null)),
+                        List.of("cdk"), false, null, null)));
+
+        List<TestGroup> groups = Registry.buildGroups("cdk",
+                root, Map.of(), Map.of(), Map.of(), Set.of());
+
+        assertEquals(List.of("cdk-lifecycle"), groups.stream().map(TestGroup::name).toList());
+    }
+
     // ── Duplicate registrations must abort ────────────────────────────────────
 
     /**

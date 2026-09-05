@@ -750,6 +750,13 @@ jobs:
       # before it. --baseline-file reads both, so both are offered here — a
       # base commit older than the split must still be lintable against, or
       # every long-lived branch loses its downgrade gate on rebase.
+      #
+      # The registry, by contrast, is deliberately the *pull request's* — the
+      # unprefixed paths, not `base/` ones. It is what decides whether a removed
+      # expectation is one the suite is still asked to produce, and the pull
+      # request is what changes that scope: judging its baseline against the base
+      # commit's registry would report every legitimate scope change as a
+      # downgrade, which is the fault reading the registry exists to avoid.
       - name: Lint compat baseline changes
         id: baseline-lint
         if: env.RUN_SUITES == 'true' && github.event_name == 'pull_request'
@@ -765,6 +772,8 @@ jobs:
             go run ./cmd/compat \
               --lint-baseline-from "$from" \
               --lint-baseline-to compat/baseline \
+              --registry-file compat/suites/registry.json \
+              --generated-registry-file compat/suites/registry.generated.json \
               --annotate
           else
             echo "No baseline exists on the base commit yet; skipping downgrade lint."

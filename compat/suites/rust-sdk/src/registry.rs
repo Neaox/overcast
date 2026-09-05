@@ -167,7 +167,7 @@ pub fn build_groups(
     capabilities: &HashSet<String>,
     backend: Option<&dyn ScenarioBackend>,
 ) -> Result<Vec<TestGroup>, String> {
-    let registry = load(suite)?;
+    let registry = load()?;
     assemble(
         suite,
         registry,
@@ -194,6 +194,11 @@ fn assemble(
     Ok(registry
         .groups
         .into_iter()
+        // A group scoped to specific suites (`suites` in the registry) is out
+        // of scope for every other suite: no tests, no skips, no results. The
+        // rule is general and covers both halves of the registry — see
+        // [`in_scope`].
+        .filter(|group| in_scope(group, suite))
         .map(|group| {
             let RegistryGroup {
                 service,
@@ -392,11 +397,11 @@ fn missing_scenario_backend(group: &str, suite: &str) -> TestFn {
     })
 }
 
-fn load(suite: &str) -> Result<RegistryRoot, String> {
+fn load() -> Result<RegistryRoot, String> {
     let path = registry_path();
     let mut registry: RegistryRoot = read_json(&path)?;
     let generated = read_generated(&generated_sibling(&path))?;
-    append_generated(&mut registry, generated, suite)?;
+    append_generated(&mut registry, generated)?;
     Ok(registry)
 }
 
@@ -457,18 +462,13 @@ fn parse_generated(body: &str, path: &Path) -> Result<Vec<RegistryGroup>, String
 /// second line of defence, the same posture as the ambiguous-name defence in
 /// [`validate_impls`].
 ///
-/// `suites` is scoped here rather than over every group because rust-sdk has
-/// never filtered hand-written groups by it: `cdk-lifecycle` is loaded today and
-/// its 35 tests are recorded as `skip` in `compat/baseline/rust-sdk.json`, so
-/// dropping it here would turn every one of them into a
-/// "compat baseline missing result" regression. De-scoping it is a baseline
-/// change of its own, across rust-sdk, java-sdk and dotnet-sdk together
-/// (go-sdk, cli, python-sdk and node-js-sdk already exclude it), and it is not
-/// this change.
+/// This concatenates and validates only. `suites` scoping is applied once, over
+/// the joined registry, in [`assemble`] — a generated group out of scope here is
+/// no different from `cdk-lifecycle` out of scope in an SDK suite, and both
+/// halves are filtered by the same rule.
 fn append_generated(
     registry: &mut RegistryRoot,
     generated: Vec<RegistryGroup>,
-    suite: &str,
 ) -> Result<(), String> {
     let hand_written: HashSet<String> = registry
         .groups
@@ -494,9 +494,7 @@ fn append_generated(
         ));
     }
 
-    registry
-        .groups
-        .extend(generated.into_iter().filter(|group| in_scope(group, suite)));
+    registry.groups.extend(generated);
     Ok(())
 }
 
@@ -505,7 +503,11 @@ fn append_generated(
 /// A group declaring `suites` runs only in the suites it names; elsewhere it is
 /// out of scope rather than in debt, which is what keeps a suite with no
 /// scenario backend from reporting anything at all about a group it was never
-/// asked to run.
+/// asked to run. The rule is the same for both halves of the registry: a
+/// generated group's list is derived from backend availability by
+/// `cmd/compatgen`, and on a hand-written group it is reserved for
+/// `cdk-lifecycle` — which is why applying it here stopped rust-sdk reporting
+/// that group's 35 skips and re-seeded its baseline shard (#1737).
 fn in_scope(group: &RegistryGroup, suite: &str) -> bool {
     group.suites.is_empty() || group.suites.iter().any(|scoped| scoped == suite)
 }
@@ -980,10 +982,10 @@ mod tests {
 
     /// Loads `body` as the generated registry and concatenates it onto the
     /// hand-written fixture, as [`load`] does with the two real files.
-    fn concatenated(body: &str, suite: &str) -> Result<RegistryRoot, String> {
+    fn concatenated(body: &str) -> Result<RegistryRoot, String> {
         let mut registry = two_groups_one_name();
         let generated = parse_generated(body, &generated_path())?;
-        append_generated(&mut registry, generated, suite)?;
+        append_generated(&mut registry, generated)?;
         Ok(registry)
     }
 
@@ -1011,13 +1013,13 @@ mod tests {
 
         let mut registry = two_groups_one_name();
         let before = group_names(&registry).join(",");
-        append_generated(&mut registry, generated, "rust-sdk").expect("nothing to concatenate");
+        append_generated(&mut registry, generated).expect("nothing to concatenate");
         assert_eq!(group_names(&registry).join(","), before);
     }
 
     #[test]
     fn an_empty_generated_registry_is_a_no_op() {
-        let registry = concatenated(EMPTY_GENERATED, "rust-sdk").expect("empty file must load");
+        let registry = concatenated(EMPTY_GENERATED).expect("empty file must load");
         assert_eq!(group_names(&registry), ["iam-users", "cognito-userpools"]);
     }
 
@@ -1027,7 +1029,7 @@ mod tests {
             ("sqs-scenario-b", &["rust-sdk"]),
             ("sqs-scenario-a", &["rust-sdk", "python-sdk"]),
         ]);
-        let registry = concatenated(&body, "rust-sdk").expect("generated file must load");
+        let registry = concatenated(&body).expect("generated file must load");
         assert_eq!(
             group_names(&registry),
             [
@@ -1044,8 +1046,50 @@ mod tests {
     #[test]
     fn a_generated_group_scoped_elsewhere_is_not_loaded() {
         let body = generated_json(&[("sqs-scenario", &["python-sdk", "node-js-sdk"])]);
-        let registry = concatenated(&body, "rust-sdk").expect("generated file must load");
-        assert_eq!(group_names(&registry), ["iam-users", "cognito-userpools"]);
+        let registry = concatenated(&body).expect("generated file must load");
+        assert_eq!(
+            assembled_names(registry, "rust-sdk"),
+            ["iam-users", "cognito-userpools"]
+        );
+    }
+
+    /// The same rule on the other half of the registry (#1737). `cdk-lifecycle`
+    /// is the only hand-written group that declares `suites`, and rust-sdk is
+    /// not in that list, so it is not loaded here either — no tests, no skips,
+    /// no results, which is what took its 35 rows out of
+    /// `compat/baseline/rust-sdk.json`.
+    #[test]
+    fn a_hand_written_group_scoped_elsewhere_is_not_loaded() {
+        let mut registry = two_groups_one_name();
+        registry.groups.push(RegistryGroup {
+            service: "cdk".to_string(),
+            name: "cdk-lifecycle".to_string(),
+            suites: vec!["cdk".to_string()],
+            tests: vec![test_entry("Deploy")],
+            generated: None,
+        });
+        assert_eq!(
+            assembled_names(registry, "rust-sdk"),
+            ["iam-users", "cognito-userpools"]
+        );
+    }
+
+    /// The group names [`assemble`] builds for `suite`, which is where `suites`
+    /// scoping is applied.
+    fn assembled_names(registry: RegistryRoot, suite: &str) -> Vec<String> {
+        assemble(
+            suite,
+            registry,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashSet::new(),
+            None,
+        )
+        .expect("groups must build")
+        .into_iter()
+        .map(|group| group.name)
+        .collect()
     }
 
     /// The interim rule: scoped to this suite, no impl, no backend ⇒ a `fail`
@@ -1053,7 +1097,7 @@ mod tests {
     #[tokio::test]
     async fn a_scoped_generated_group_without_a_backend_fails_loudly() {
         let body = generated_json(&[("sqs-scenario", &["rust-sdk"])]);
-        let registry = concatenated(&body, "rust-sdk").expect("generated file must load");
+        let registry = concatenated(&body).expect("generated file must load");
         let groups = assemble(
             "rust-sdk",
             registry,
@@ -1101,7 +1145,7 @@ mod tests {
     fn a_generated_group_may_not_reuse_a_hand_written_name() {
         let body = generated_json(&[("iam-users", &["rust-sdk"])]);
         // Not `expect_err`: the Ok type is a RegistryRoot, which is not Debug.
-        let err = concatenated(&body, "rust-sdk")
+        let err = concatenated(&body)
             .err()
             .expect("the collision must be refused");
         assert!(err.contains("iam-users"), "{err}");
@@ -1166,7 +1210,7 @@ mod tests {
     #[tokio::test]
     async fn a_backend_resolves_a_generated_group_before_the_fail() {
         let body = generated_json(&[("sqs-scenario", &["rust-sdk"])]);
-        let registry = concatenated(&body, "rust-sdk").expect("generated file must load");
+        let registry = concatenated(&body).expect("generated file must load");
         let groups = assemble(
             "rust-sdk",
             registry,

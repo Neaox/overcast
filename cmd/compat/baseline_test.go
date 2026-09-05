@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -69,10 +70,14 @@ func TestLintBaselineChange_downgrade(t *testing.T) {
 		Status: compat.StatusUnimplemented,
 	}}}
 
-	// When: the baseline change is linted.
-	issues := lintBaselineChange(oldBaseline, newBaseline)
+	// When: the baseline change is linted. No registry is needed: the scope
+	// only ever decides whether a *removal* is legitimate.
+	issues, notes := lintBaselineChange(oldBaseline, newBaseline, nil)
 
 	// Then: the downgrade is rejected.
+	if len(notes) != 0 {
+		t.Fatalf("notes = %#v, want none", notes)
+	}
 	if len(issues) != 1 {
 		t.Fatalf("issues len = %d, want 1: %#v", len(issues), issues)
 	}
@@ -91,10 +96,16 @@ func TestLintBaselineChange_removal(t *testing.T) {
 	}}}
 	newBaseline := &compatBaseline{Version: baselineVersion}
 
-	// When: the baseline change is linted.
-	issues := lintBaselineChange(oldBaseline, newBaseline)
+	// When: the baseline change is linted against a registry that still asks
+	// go-sdk to run the test.
+	issues, notes := lintBaselineChange(oldBaseline, newBaseline, scopeFor(parityGroup{
+		Service: "s3", Name: "s3-crud", Tests: []parityTest{{Name: "CreateBucket"}},
+	}))
 
 	// Then: removing the expectation is rejected.
+	if len(notes) != 0 {
+		t.Fatalf("notes = %#v, want none", notes)
+	}
 	if len(issues) != 1 {
 		t.Fatalf("issues len = %d, want 1: %#v", len(issues), issues)
 	}
@@ -177,7 +188,7 @@ func TestLintBaselineChange_newFailEntryRejected(t *testing.T) {
 	}}
 
 	// When: the change is linted
-	issues := lintBaselineChange(oldBaseline, newBaseline)
+	issues, _ := lintBaselineChange(oldBaseline, newBaseline, nil)
 
 	// Then: the new fail expectation is rejected. Iterating only the old
 	// baseline let contributors grandfather fresh failures by adding them.
@@ -199,7 +210,7 @@ func TestLintBaselineChange_seedingAnEmptyBaselineIsAllowed(t *testing.T) {
 	}}
 
 	// When: the seeding change is linted
-	issues := lintBaselineChange(oldBaseline, newBaseline)
+	issues, _ := lintBaselineChange(oldBaseline, newBaseline, nil)
 
 	// Then: it is allowed. There is nothing to regress from, and the burn-down
 	// starts from whatever the first run measured.
@@ -219,9 +230,150 @@ func TestLintBaselineChange_emptyingAPopulatedBaselineIsRejected(t *testing.T) {
 
 	// When/Then: every dropped expectation is reported, so the seeding
 	// exemption cannot be reached by wiping the file first.
-	issues := lintBaselineChange(oldBaseline, newBaseline)
+	issues, _ := lintBaselineChange(oldBaseline, newBaseline, scopeFor(parityGroup{
+		Service: "s3", Name: "s3-crud",
+		Tests: []parityTest{{Name: "CreateBucket"}, {Name: "DeleteBucket"}},
+	}))
 	if len(issues) != 2 {
 		t.Fatalf("issues = %#v, want one per removed expectation", issues)
+	}
+}
+
+// scopeFor builds the registry scope from the groups a test cares about. The
+// concatenated hand-written and generated registries are one list by the time
+// the lint sees them, so a generated group is just a group carrying
+// Generated: true.
+func scopeFor(groups ...parityGroup) *registryScope {
+	return newRegistryScope(&parityRegistry{Groups: groups})
+}
+
+// TestLintBaselineChange_removalAgainstRegistryScope covers the one thing that
+// separates a removal that launders a result from a removal that is simply no
+// longer measured: whether the registry still asks that suite to run the test.
+func TestLintBaselineChange_removalAgainstRegistryScope(t *testing.T) {
+	removed := baselineEntry{Suite: "java-sdk", Service: "cdk", Group: "cdk-lifecycle", Test: "DeployStack", Status: compat.StatusSkip}
+
+	tests := []struct {
+		name  string
+		old   []baselineEntry
+		new   []baselineEntry
+		scope *registryScope
+		// want is "issue" for a lint failure, or "note" for an informational
+		// out-of-scope removal.
+		want string
+	}{
+		{
+			name:  "still expected is a removed expectation",
+			old:   []baselineEntry{removed},
+			scope: scopeFor(parityGroup{Service: "cdk", Name: "cdk-lifecycle", Tests: []parityTest{{Name: "DeployStack"}}}),
+			want:  "issue",
+		},
+		{
+			name: "group scoped to another suite is out of scope",
+			old:  []baselineEntry{removed},
+			scope: scopeFor(parityGroup{
+				Service: "cdk", Name: "cdk-lifecycle", Suites: []string{"cdk"},
+				Tests: []parityTest{{Name: "DeployStack"}},
+			}),
+			want: "note",
+		},
+		{
+			name:  "test deleted from the group is out of scope",
+			old:   []baselineEntry{removed},
+			scope: scopeFor(parityGroup{Service: "cdk", Name: "cdk-lifecycle", Tests: []parityTest{{Name: "DestroyStack"}}}),
+			want:  "note",
+		},
+		{
+			name:  "group deleted from the registry is out of scope",
+			old:   []baselineEntry{removed},
+			scope: scopeFor(parityGroup{Service: "s3", Name: "s3-crud", Tests: []parityTest{{Name: "CreateBucket"}}}),
+			want:  "note",
+		},
+		{
+			name: "generated group scoped away is out of scope",
+			old: []baselineEntry{{
+				Suite: "rust-sdk", Service: "sqs", Group: "sqs-queues-generated",
+				Test: "CreateQueue", Status: compat.StatusUnimplemented,
+			}},
+			scope: scopeFor(parityGroup{
+				Service: "sqs", Name: "sqs-queues-generated", Generated: true,
+				State: "gated", Suites: []string{"node-js-sdk"},
+				Tests: []parityTest{{Name: "CreateQueue"}},
+			}),
+			want: "note",
+		},
+		{
+			name:  "no registry available keeps judging every removal",
+			old:   []baselineEntry{removed},
+			scope: nil,
+			want:  "issue",
+		},
+		{
+			name: "an out-of-scope group still may not be downgraded",
+			old:  []baselineEntry{{Suite: "java-sdk", Service: "cdk", Group: "cdk-lifecycle", Test: "DeployStack", Status: compat.StatusPass}},
+			new:  []baselineEntry{{Suite: "java-sdk", Service: "cdk", Group: "cdk-lifecycle", Test: "DeployStack", Status: compat.StatusFail}},
+			scope: scopeFor(parityGroup{
+				Service: "cdk", Name: "cdk-lifecycle", Suites: []string{"cdk"},
+				Tests: []parityTest{{Name: "DeployStack"}},
+			}),
+			want: "issue",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given/When: the proposed baseline change is linted against the
+			// registry the pull request itself carries.
+			oldBaseline := &compatBaseline{Version: baselineVersion, Entries: tc.old}
+			newBaseline := &compatBaseline{Version: baselineVersion, Entries: tc.new}
+			issues, notes := lintBaselineChange(oldBaseline, newBaseline, tc.scope)
+
+			// Then: the removal either fails the gate or is reported for
+			// information, never both and never neither.
+			switch tc.want {
+			case "issue":
+				if len(issues) != 1 || len(notes) != 0 {
+					t.Fatalf("issues = %#v, notes = %#v; want exactly one issue", issues, notes)
+				}
+			case "note":
+				if len(notes) != 1 || len(issues) != 0 {
+					t.Fatalf("issues = %#v, notes = %#v; want exactly one note", issues, notes)
+				}
+				if !strings.Contains(notes[0], "no longer in scope for") {
+					t.Fatalf("note = %q, want it to say the suite no longer runs the test", notes[0])
+				}
+			default:
+				t.Fatalf("unknown want %q", tc.want)
+			}
+		})
+	}
+}
+
+// TestLintBaselineChangeFiles_readsTheRegistryFlags is the plumbing test: the
+// scope has to come from --registry-file and --generated-registry-file, or the
+// lint would answer from a registry nobody passed it.
+func TestLintBaselineChangeFiles_readsTheRegistryFlags(t *testing.T) {
+	// Given: a baseline that drops a group the registry scopes to cdk alone,
+	// and one that drops a test cli is still asked to run.
+	oldBaseline := writeTempJSON(t, "old-baseline.json", &compatBaseline{Version: baselineVersion, Entries: []baselineEntry{
+		{Suite: "java-sdk", Service: "cdk", Group: "cdk-lifecycle", Test: "DeployStack", Status: compat.StatusSkip},
+		{Suite: "cli", Service: "s3", Group: "s3-crud", Test: "CreateBucket", Status: compat.StatusPass},
+	}})
+	newBaseline := writeTempJSON(t, "new-baseline.json", &compatBaseline{Version: baselineVersion})
+	registry := writeTempJSON(t, "registry.json", &parityRegistry{Groups: []parityGroup{
+		{Service: "cdk", Name: "cdk-lifecycle", Suites: []string{"cdk"}, Tests: []parityTest{{Name: "DeployStack"}}},
+		{Service: "s3", Name: "s3-crud", Tests: []parityTest{{Name: "CreateBucket"}}},
+	}})
+	defer swapFlag(registryFile, registry)()
+	defer swapFlag(generatedRegistryFile, filepath.Join(t.TempDir(), "absent.json"))()
+
+	// When/Then: the cli removal fails the lint and the cdk-scoped one does not.
+	err := lintBaselineChangeFiles(oldBaseline, newBaseline)
+	if err == nil {
+		t.Fatal("lint passed, want the in-scope removal to fail it")
+	}
+	if !strings.Contains(err.Error(), "1 compat baseline downgrade(s)") {
+		t.Fatalf("error = %v, want exactly one issue", err)
 	}
 }
 

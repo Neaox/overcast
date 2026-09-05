@@ -159,7 +159,21 @@ func lintBaselineChangeFiles(oldPath, newPath string) error {
 	if err != nil {
 		return err
 	}
-	issues := lintBaselineChange(oldBaseline, newBaseline)
+	scope, err := loadRegistryScope()
+	if err != nil {
+		return err
+	}
+	issues, notes := lintBaselineChange(oldBaseline, newBaseline, scope)
+	// Notes print whether or not the lint passes. A removal the registry no
+	// longer asks for is exactly what a reviewer wants named, and suppressing
+	// it because some other entry tripped the gate would hide the half of the
+	// diff nothing else reports.
+	for _, note := range notes {
+		fmt.Println(note)
+	}
+	if *annotate && len(notes) > 0 {
+		fmt.Print(outOfScopeAnnotation(notes))
+	}
 	if len(issues) > 0 {
 		for _, issue := range issues {
 			fmt.Fprintln(os.Stderr, issue)
@@ -169,8 +183,30 @@ func lintBaselineChangeFiles(oldPath, newPath string) error {
 		}
 		return fmt.Errorf("%d compat baseline downgrade(s)", len(issues))
 	}
-	fmt.Printf("compat: baseline change lint passed (%d expected result(s))\n", len(newBaseline.Entries))
+	fmt.Printf("compat: baseline change lint passed (%d expected result(s), %d out-of-scope removal(s))\n",
+		len(newBaseline.Entries), len(notes))
 	return nil
+}
+
+// loadRegistryScope reads the registry pair the removal check consults.
+//
+// A registry that is not there at all yields a nil scope, and a nil scope
+// judges every removal exactly as the lint did before it could ask — the safe
+// direction, and the one that keeps the lint usable wherever
+// compat/suites/registry.json is not at the default path. A registry that is
+// there but unreadable, or whose generated sibling collides with it, is an
+// error: falling back silently would turn a broken file into a weaker gate.
+func loadRegistryScope() (*registryScope, error) {
+	if _, err := os.Stat(*registryFile); errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(os.Stderr,
+			"compat: no registry at %s — every removed expectation will be reported\n", *registryFile)
+		return nil, nil
+	}
+	reg, err := readParityRegistries(*registryFile, *generatedRegistryFile)
+	if err != nil {
+		return nil, err
+	}
+	return newRegistryScope(reg), nil
 }
 
 // flakySet is the set of baseline keys quarantined as intermittent.
@@ -506,13 +542,31 @@ func updateBaselineWith(baseline *compatBaseline, report *compat.RunReport, flak
 	return baselineFromMap(merged)
 }
 
-func lintBaselineChange(oldBaseline, newBaseline *compatBaseline) []string {
+// lintBaselineChange rejects a baseline edit that makes the recorded
+// expectations weaker: a downgraded status, a removed expectation the registry
+// still asks for, or a freshly added `fail`. It returns the issues that fail
+// the lint and, separately, informational notes naming removals that are
+// legitimate.
+//
+// A removal is legitimate exactly when the registry — hand-written groups plus
+// the generated sibling — no longer asks that suite to run that test: the group
+// is gone, the test is gone from the group, or the group's `suites` no longer
+// names the suite. Such a row has nothing to compare against on the new side
+// because nothing measures it any more, so holding the baseline to it would
+// make re-seeding every shard the only way to change what CI measures. This
+// does not weaken the gate: a row for a test the suite is still expected to run
+// is still a removed expectation, which is the whole anti-laundering property.
+func lintBaselineChange(oldBaseline, newBaseline *compatBaseline, scope *registryScope) (issues, notes []string) {
 	newByKey := baselineEntryMap(newBaseline.Entries)
 	oldByKey := baselineEntryMap(oldBaseline.Entries)
-	var issues []string
 	for _, oldEntry := range oldBaseline.Entries {
 		newEntry, ok := newByKey[baselineKey(oldEntry)]
 		if !ok {
+			if !scope.expects(oldEntry.Suite, oldEntry.Group, oldEntry.Test) {
+				notes = append(notes, fmt.Sprintf("compat baseline: %s dropped — no longer in scope for %s",
+					baselineKey(oldEntry), oldEntry.Suite))
+				continue
+			}
 			issues = append(issues, fmt.Sprintf("compat baseline removed expectation: %s was %s", baselineKey(oldEntry), oldEntry.Status))
 			continue
 		}
@@ -529,10 +583,12 @@ func lintBaselineChange(oldBaseline, newBaseline *compatBaseline) []string {
 	// get worse than, and the first population necessarily records reality
 	// including its known failures. This cannot be abused to launder failures
 	// later — emptying a populated baseline trips the removed-expectation check
-	// above for every entry it dropped.
+	// above for every dropped entry the registry still asks for, which is every
+	// entry that measures anything.
 	if len(oldBaseline.Entries) == 0 {
 		sort.Strings(issues)
-		return issues
+		sort.Strings(notes)
+		return issues, notes
 	}
 	for _, newEntry := range newBaseline.Entries {
 		if newEntry.Status != compat.StatusFail {
@@ -544,7 +600,36 @@ func lintBaselineChange(oldBaseline, newBaseline *compatBaseline) []string {
 		issues = append(issues, fmt.Sprintf("compat baseline new fail expectation: %s may not be added as fail", baselineKey(newEntry)))
 	}
 	sort.Strings(issues)
-	return issues
+	sort.Strings(notes)
+	return issues, notes
+}
+
+// outOfScopeAnnotationLimit is how many dropped keys the summary annotation
+// names before deferring to the step log. A scope change drops a whole group
+// across several suites at once — 105 rows in #1737 — and GitHub keeps only
+// ten notice annotations per step anyway, so one annotation that says how many
+// and shows a sample beats a hundred that are silently truncated.
+const outOfScopeAnnotationLimit = 10
+
+// outOfScopeAnnotation renders the legitimate removals as a single ::notice.
+// They are not failures, so they must not compete with the ::error annotations
+// a reviewer is meant to read first.
+func outOfScopeAnnotation(notes []string) string {
+	shown := notes
+	if len(shown) > outOfScopeAnnotationLimit {
+		shown = shown[:outOfScopeAnnotationLimit]
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d baseline expectation(s) dropped because the registry no longer asks those suites to run them:\n",
+		len(notes))
+	for _, note := range shown {
+		b.WriteString(strings.TrimPrefix(note, "compat baseline: "))
+		b.WriteString("\n")
+	}
+	if len(notes) > len(shown) {
+		fmt.Fprintf(&b, "and %d more — the full list is in the step log\n", len(notes)-len(shown))
+	}
+	return "::notice title=Compat baseline::" + escapeAnnotationData(strings.TrimRight(b.String(), "\n")) + "\n"
 }
 
 // baselineAnnotations renders regression messages as GitHub workflow commands
