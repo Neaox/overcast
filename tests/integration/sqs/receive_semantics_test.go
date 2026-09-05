@@ -1,5 +1,7 @@
 // ReceiveMessage semantics that the AWS docs spell out but that the happy-path
-// tests in sqs_test.go do not reach.
+// tests in sqs_test.go do not reach: FIFO batch retrieval across and within
+// message groups, the five-minute ReceiveRequestAttemptId deduplication window,
+// and the in-flight/visibility rules a per-receive VisibilityTimeout implies.
 //
 // Sources:
 //   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ReceiveMessage.html
@@ -9,6 +11,7 @@ package sqs_test
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -203,5 +206,203 @@ func TestReceiveMessage_fifo_zeroVisibilityTimeoutBatchHasNoDuplicates(t *testin
 		if m.Attributes["MessageGroupId"] != "free" {
 			t.Errorf("expected only the unblocked group, got %q from %q", m.Body, m.Attributes["MessageGroupId"])
 		}
+	}
+}
+
+// ---- ReceiveRequestAttemptId deduplication window --------------------------
+
+// AWS: "You can use ReceiveRequestAttemptId only for 5 minutes after a
+// ReceiveMessage action."
+func TestReceiveMessage_fifo_receiveRequestAttemptIdExpiresAfterFiveMinutes(t *testing.T) {
+	// Given: a FIFO queue whose only message was received under an attempt ID
+	// and hidden for far longer than the deduplication window.
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+	queueURL := createQueue(t, srv, "attempt-window.fifo")
+	sendFifoMessage(t, srv, queueURL, "group-a", "windowed")
+
+	request := map[string]any{
+		"QueueUrl":                queueURL,
+		"ReceiveRequestAttemptId": "attempt-window",
+		"VisibilityTimeout":       3600,
+	}
+	first := receiveFifo(t, srv, request)
+	if len(first) != 1 {
+		t.Fatalf("expected the first receive to return 1 message, got %d", len(first))
+	}
+
+	// When: the same attempt ID is retried just inside the five-minute window.
+	srv.Clock.Add(4*time.Minute + 59*time.Second)
+	inside := receiveFifo(t, srv, request)
+
+	// Then: the retry replays the same message and receipt handle.
+	if len(inside) != 1 {
+		t.Fatalf("expected a replay inside the window to return 1 message, got %d", len(inside))
+	}
+	if inside[0].ReceiptHandle != first[0].ReceiptHandle {
+		t.Errorf("expected the replayed receipt handle %q, got %q", first[0].ReceiptHandle, inside[0].ReceiptHandle)
+	}
+
+	// When: the same attempt ID is retried after the window has closed.
+	srv.Clock.Add(2 * time.Second)
+	outside := receiveFifo(t, srv, request)
+
+	// Then: it is an ordinary receive again — the message is still in flight, so
+	// nothing comes back rather than a replay.
+	if len(outside) != 0 {
+		t.Fatalf("expected no replay once the 5-minute window closed, got %d messages", len(outside))
+	}
+}
+
+// AWS: "During a visibility timeout, subsequent calls with the same
+// ReceiveRequestAttemptId return the same messages and receipt handles. If a
+// retry occurs within the deduplication interval, it resets the visibility
+// timeout."
+func TestReceiveMessage_fifo_receiveRequestAttemptIdRetryResetsVisibilityTimeout(t *testing.T) {
+	// Given: a FIFO message received under an attempt ID with a 30s timeout.
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+	queueURL := createQueue(t, srv, "attempt-reset.fifo")
+	sendFifoMessage(t, srv, queueURL, "group-a", "reset-me")
+
+	request := map[string]any{
+		"QueueUrl":                queueURL,
+		"ReceiveRequestAttemptId": "attempt-reset",
+		"VisibilityTimeout":       30,
+	}
+	if first := receiveFifo(t, srv, request); len(first) != 1 {
+		t.Fatalf("expected the first receive to return 1 message, got %d", len(first))
+	}
+
+	// When: the attempt is retried 20 seconds in.
+	srv.Clock.Add(20 * time.Second)
+	if replay := receiveFifo(t, srv, request); len(replay) != 1 {
+		t.Fatalf("expected the retry to replay 1 message, got %d", len(replay))
+	}
+
+	// Then: 20 more seconds on — past the original 30s deadline — the message is
+	// still invisible to an ordinary consumer, because the retry reset it.
+	srv.Clock.Add(20 * time.Second)
+	during := receiveFifo(t, srv, map[string]any{"QueueUrl": queueURL})
+	if len(during) != 0 {
+		t.Fatalf("expected the retry to reset the visibility timeout, got %d messages", len(during))
+	}
+
+	// And: it returns 30 seconds after the retry, not after the first receive.
+	srv.Clock.Add(11 * time.Second)
+	after := receiveFifo(t, srv, map[string]any{"QueueUrl": queueURL})
+	if len(after) != 1 {
+		t.Fatalf("expected the message back once the reset timeout expired, got %d", len(after))
+	}
+}
+
+// AWS: "This parameter applies only to FIFO (first-in-first-out) queues."
+func TestReceiveMessage_receiveRequestAttemptIdIsIgnoredOnStandardQueue(t *testing.T) {
+	// Given: a standard queue holding two messages.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "attempt-standard")
+	sendMessage(t, srv, queueURL, "first")
+	sendMessage(t, srv, queueURL, "second")
+
+	request := map[string]any{
+		"QueueUrl":                queueURL,
+		"ReceiveRequestAttemptId": "attempt-standard",
+		"MaxNumberOfMessages":     1,
+		"VisibilityTimeout":       60,
+	}
+
+	// When: two receives share one ReceiveRequestAttemptId.
+	first := receiveFifo(t, srv, request)
+	second := receiveFifo(t, srv, request)
+
+	// Then: no deduplication happens — the second call returns the other message.
+	if len(first) != 1 || len(second) != 1 {
+		t.Fatalf("expected 1 message per receive, got %d then %d", len(first), len(second))
+	}
+	if first[0].MessageId == second[0].MessageId {
+		t.Error("expected ReceiveRequestAttemptId to be ignored on a standard queue, got a replay")
+	}
+}
+
+// ---- VisibilityTimeout in-flight semantics ---------------------------------
+
+// AWS applies a request's VisibilityTimeout only "to the messages that Amazon
+// SQS returns in the response" — it is not a write to the queue attribute.
+func TestReceiveMessage_visibilityTimeoutDoesNotChangeTheQueueDefault(t *testing.T) {
+	// Given: a queue whose default visibility timeout is 30 seconds, holding one
+	// message.
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+	queueURL := createQueueWithAttrs(t, srv, "vt-no-write", map[string]string{"VisibilityTimeout": "30"})
+	sendMessage(t, srv, queueURL, "overridden")
+
+	// When: one receive overrides the timeout for the message it returns.
+	overridden := receiveFifo(t, srv, map[string]any{
+		"QueueUrl":            queueURL,
+		"MaxNumberOfMessages": 1,
+		"VisibilityTimeout":   600,
+	})
+	if len(overridden) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(overridden))
+	}
+
+	// Then: the queue attribute is untouched.
+	attrsResp := sqsCall(t, srv, "GetQueueAttributes", map[string]any{
+		"QueueUrl":       queueURL,
+		"AttributeNames": []string{"VisibilityTimeout"},
+	})
+	defer attrsResp.Body.Close()
+	helpers.AssertStatus(t, attrsResp, http.StatusOK)
+	var attrs struct {
+		Attributes map[string]string `json:"Attributes"`
+	}
+	helpers.DecodeJSON(t, attrsResp, &attrs)
+	if attrs.Attributes["VisibilityTimeout"] != "30" {
+		t.Errorf("expected the queue default to stay 30, got %q", attrs.Attributes["VisibilityTimeout"])
+	}
+
+	// And: a later receive that sends no VisibilityTimeout hides its own message
+	// for the queue's 30 seconds rather than the previous call's 600 — after 31
+	// seconds only that message is back, the overridden one still in flight.
+	sendMessage(t, srv, queueURL, "default")
+	if got := receiveFifo(t, srv, map[string]any{"QueueUrl": queueURL, "MaxNumberOfMessages": 10}); len(got) != 1 {
+		t.Fatalf("expected only the newly sent message, got %d", len(got))
+	}
+	srv.Clock.Add(31 * time.Second)
+	back := receiveFifo(t, srv, map[string]any{"QueueUrl": queueURL, "MaxNumberOfMessages": 10})
+	if len(back) != 1 {
+		t.Fatalf("expected only the queue-default message back after 31s, got %d", len(back))
+	}
+	if back[0].Body != "default" {
+		t.Errorf("expected the queue-default message back, got %q", back[0].Body)
+	}
+}
+
+// The Query protocol decodes VisibilityTimeout separately from the JSON one, so
+// the 0..43200 range has to be enforced on both wires.
+func TestReceiveMessage_queryWireVisibilityTimeoutValidation(t *testing.T) {
+	// Given: a queue with a message.
+	srv := helpers.NewTestServer(t)
+	queueURL := createQueue(t, srv, "vt-query-validation")
+	sendMessage(t, srv, queueURL, "message")
+
+	// When + Then: values outside 0..43200 are rejected on the Query wire.
+	for _, value := range []string{"-1", "43201"} {
+		resp := sqsQueryCall(t, srv, url.Values{
+			"Action":            {"ReceiveMessage"},
+			"QueueUrl":          {queueURL},
+			"VisibilityTimeout": {value},
+		})
+		helpers.AssertStatus(t, resp, http.StatusBadRequest)
+		helpers.AssertQueryXMLError(t, resp, "InvalidParameterValue")
+		resp.Body.Close()
+	}
+
+	// And: the boundary values are accepted.
+	for _, value := range []string{"0", "43200"} {
+		resp := sqsQueryCall(t, srv, url.Values{
+			"Action":            {"ReceiveMessage"},
+			"QueueUrl":          {queueURL},
+			"VisibilityTimeout": {value},
+		})
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		resp.Body.Close()
 	}
 }

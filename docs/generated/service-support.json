@@ -383,7 +383,7 @@
           "operation": "ReceiveMessage",
           "category": "Message operations",
           "status": "✅ Supported",
-          "notes": "MaxNumberOfMessages, VisibilityTimeout, WaitTimeSeconds, queue default long polling, FIFO ReceiveRequestAttemptId; records NumberOfMessagesReceived (non-empty) or NumberOfEmptyReceives (zero messages) once per call, after any long-poll retry settles"
+          "notes": "MaxNumberOfMessages, VisibilityTimeout, WaitTimeSeconds, queue default long polling, FIFO ReceiveRequestAttemptId with its 5-minute replay window; a FIFO batch drains one message group in sequence order before filling from other unblocked groups; the in-flight OverLimit quota is not enforced; records NumberOfMessagesReceived (non-empty) or NumberOfEmptyReceives (zero messages) once per call, after any long-poll retry settles"
         },
         {
           "operation": "DeleteMessage",

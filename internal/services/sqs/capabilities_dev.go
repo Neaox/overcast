@@ -34,7 +34,7 @@ func init() {
 		capabilities.Capability{Service: "sqs", Operation: "SendMessageBatch", Category: "Message operations",
 			Status: capabilities.StatusSupported, Notes: "Up to 10 messages per batch; records NumberOfMessagesSent/SentMessageSize per successful entry"},
 		capabilities.Capability{Service: "sqs", Operation: "ReceiveMessage", Category: "Message operations",
-			Status: capabilities.StatusSupported, Notes: "MaxNumberOfMessages, VisibilityTimeout, WaitTimeSeconds, queue default long polling, FIFO ReceiveRequestAttemptId; records NumberOfMessagesReceived (non-empty) or NumberOfEmptyReceives (zero messages) once per call, after any long-poll retry settles"},
+			Status: capabilities.StatusSupported, Notes: "MaxNumberOfMessages, VisibilityTimeout, WaitTimeSeconds, queue default long polling, FIFO ReceiveRequestAttemptId with its 5-minute replay window; a FIFO batch drains one message group in sequence order before filling from other unblocked groups; the in-flight OverLimit quota is not enforced; records NumberOfMessagesReceived (non-empty) or NumberOfEmptyReceives (zero messages) once per call, after any long-poll retry settles"},
 		capabilities.Capability{Service: "sqs", Operation: "DeleteMessage", Category: "Message operations",
 			Status: capabilities.StatusSupported, Notes: "Records NumberOfMessagesDeleted"},
 		capabilities.Capability{Service: "sqs", Operation: "DeleteMessageBatch", Category: "Message operations",
