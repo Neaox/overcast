@@ -85,19 +85,42 @@ describe("the scenario backend", () => {
     assert.equal(support.backend("sqs-queues", "CreateQueue", undefined), undefined);
   });
 
-  it("registers setup and teardown only where the scenario has steps", () => {
+  it("registers setup and teardown for every generated group", () => {
     assert.equal(typeof support.setup["sqs-gen-queue"], "function");
     assert.equal(typeof support.teardown["sqs-gen-queue"], "function");
-    // A probe group carries neither, and must not acquire one: it creates
-    // nothing, so there is nothing to clean up.
-    assert.equal(support.setup["sqs-gen-probe"], undefined);
-    assert.equal(support.teardown["sqs-gen-probe"], undefined);
-    assert.equal(support.setup["organizations-gen-probe"], undefined);
-    assert.equal(support.teardown["organizations-gen-probe"], undefined);
+    // A probe group's scenario carries no setup/teardown calls, but the hook
+    // is registered all the same — an empty calls list makes it a no-op
+    // rather than a reason to withhold the hook (backend.ts, #1788 review).
+    assert.equal(typeof support.setup["sqs-gen-probe"], "function");
+    assert.equal(typeof support.teardown["sqs-gen-probe"], "function");
+    assert.equal(typeof support.setup["organizations-gen-probe"], "function");
+    assert.equal(typeof support.teardown["organizations-gen-probe"], "function");
     // organizations-gen-policy creates its policy in the CreatePolicy test,
-    // not in setup, but still has to delete it.
-    assert.equal(support.setup["organizations-gen-policy"], undefined);
+    // not in setup, but still has to delete it — so its setup hook is
+    // registered too, and it is the one that turns out to run nothing.
+    assert.equal(typeof support.setup["organizations-gen-policy"], "function");
     assert.equal(typeof support.teardown["organizations-gen-policy"], "function");
+  });
+
+  it("a probe group's setup and teardown hooks run nothing", async () => {
+    const ctx = {
+      endpoint: "http://unused.invalid",
+      region: "us-east-1",
+      runId: "oc-test",
+      log: () => {
+        throw new Error("a no-op hook must not log anything");
+      },
+    };
+    // Neither hook evaluates a call or touches the SDK sender: if it did, it
+    // would need a real endpoint and this would hang or reject instead of
+    // resolving immediately.
+    await support.setup["sqs-gen-probe"](ctx);
+    await support.teardown["sqs-gen-probe"](ctx);
+    await support.setup["organizations-gen-probe"](ctx);
+    await support.teardown["organizations-gen-probe"](ctx);
+    // organizations-gen-policy's setup hook is registered (previous test) but
+    // the scenario gives it no setup calls, so it must also run nothing.
+    await support.setup["organizations-gen-policy"](ctx);
   });
 
   it("reports an unreadable scenario file per test instead of aborting the suite", async () => {

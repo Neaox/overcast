@@ -12,6 +12,8 @@ import { describe, it } from "node:test";
 
 import {
   ExpressionError,
+  MAX_DESCRIBE,
+  describeClipped,
   evaluateParams,
   evaluateValue,
   isEmpty,
@@ -205,6 +207,19 @@ describe("jsonEquals", () => {
     const when = new Date(0);
     assert.ok(!jsonEquals(when, new Date(0)));
     assert.ok(!jsonEquals(new Uint8Array([1]), new Uint8Array([1])));
+  });
+});
+
+describe("describeClipped", () => {
+  it("passes a short value through unchanged", () => {
+    assert.equal(describeClipped({ QueueUrl: "http://q/1" }), '{"QueueUrl":"http://q/1"}');
+  });
+
+  it("elides a value past MAX_DESCRIBE characters, one helper for every caller", () => {
+    const big = { QueueUrls: Array.from({ length: 500 }, (_, i) => `http://q/${i}`) };
+    const out = describeClipped(big);
+    assert.ok(out.endsWith("… (elided)"));
+    assert.equal(out.length, MAX_DESCRIBE + "… (elided)".length);
   });
 });
 

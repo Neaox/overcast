@@ -15,7 +15,7 @@
  */
 
 import {
-  describe,
+  describeClipped,
   evaluateValue,
   isEmpty,
   jsonEquals,
@@ -32,13 +32,8 @@ export interface Mismatch {
   actual: string;
 }
 
-/** Longest rendered `actual` before it is elided. A ListQueues page is big. */
-const MAX_ACTUAL = 2000;
-
-function render(value: unknown): string {
-  const s = describe(value);
-  return s.length <= MAX_ACTUAL ? s : `${s.slice(0, MAX_ACTUAL)}… (elided)`;
-}
+/** `actual`'s rendering — the shared clip helper, so a big page is elided. */
+const render = describeClipped;
 
 /**
  * Every check against one response, in declaration order. The first that
@@ -93,7 +88,21 @@ function evaluateCheck(
     if (typeof found.value !== "string") {
       return { path, expected: `a string matching /${check.matches}/`, actual };
     }
-    if (new RegExp(check.matches).test(found.value)) return null;
+    let re: RegExp;
+    try {
+      re = new RegExp(check.matches);
+    } catch (err) {
+      // The model's patterns are RE2-compatible; a pattern legal there but not
+      // in JS (a `(?P<name>…)` named group, say) must not throw out of the
+      // evaluator — it has to fail the clause like any other mismatch, with
+      // the same six-field message everything else gets.
+      return {
+        path,
+        expected: `pattern ${check.matches}`,
+        actual: `unsupported pattern: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+    if (re.test(found.value)) return null;
     return { path, expected: `a string matching /${check.matches}/`, actual };
   }
 

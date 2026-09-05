@@ -15,7 +15,7 @@
  *   6. the scenario file and the step index
  */
 
-import { describe } from "./expressions.ts";
+import { describeClipped } from "./expressions.ts";
 
 /** Fields 1 and 6: where in the scenario the failure happened. */
 export interface FailureSite {
@@ -49,7 +49,7 @@ export function failureMessage(
   const where = detail.path === undefined ? "" : ` at ${detail.path}`;
   return (
     `${site.group}/${site.test}: ${detail.op} ` +
-    `params=${describe(detail.params)} — ` +
+    `params=${describeClipped(detail.params)} — ` +
     `${detail.kind}${where}: ` +
     `expected ${detail.expected}, actual ${detail.actual} ` +
     `(${site.scenarioFile} ${site.step})`

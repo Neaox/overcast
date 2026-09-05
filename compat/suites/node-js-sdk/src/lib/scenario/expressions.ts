@@ -293,3 +293,16 @@ export function describe(v: unknown): string {
     return String(v);
   }
 }
+
+/**
+ * Longest rendered value before it is elided. A ListQueues page, or a
+ * scenario's params object, can both be big — one clip helper covers both,
+ * so nothing in a failure message is allowed to run away unbounded.
+ */
+export const MAX_DESCRIBE = 2000;
+
+/** `describe()`, elided past `MAX_DESCRIBE` characters. */
+export function describeClipped(v: unknown): string {
+  const s = describe(v);
+  return s.length <= MAX_DESCRIBE ? s : `${s.slice(0, MAX_DESCRIBE)}… (elided)`;
+}

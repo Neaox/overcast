@@ -108,6 +108,38 @@ describe("parseScenario", () => {
     assert.throws(() => parseScenario(raw, "test.json"), /eventually wraps/);
   });
 
+  it("refuses an export on an absent clause's error-form call", () => {
+    const raw = clone() as { groups: Array<{ tests: Array<{ assert: unknown[] }> }> };
+    raw.groups[0].tests[0].assert = [
+      {
+        kind: "absent",
+        call: {
+          op: "GetQueueUrl",
+          params: { QueueName: { $name: "dlq" } },
+          export: { "queue.url": "$.QueueUrl" },
+        },
+        error: { shape: "QueueDoesNotExist", code: "QueueDoesNotExist" },
+      },
+    ];
+    assert.throws(
+      () => parseScenario(raw, "test.json"),
+      /call\/export: an absent clause's error-form call.*no response to export from/,
+    );
+  });
+
+  it("accepts an absent clause's error-form call with no export", () => {
+    const raw = clone() as { groups: Array<{ tests: Array<{ assert: unknown[] }> }> };
+    raw.groups[0].tests[0].assert = [
+      {
+        kind: "absent",
+        call: { op: "GetQueueUrl", params: { QueueName: { $name: "dlq" } } },
+        error: { shape: "QueueDoesNotExist", code: "QueueDoesNotExist" },
+      },
+    ];
+    const scenario = parseScenario(raw, "test.json");
+    assert.equal(scenario.groups[0].tests[0].assert[0].kind, "absent");
+  });
+
   it("takes a $lit payload verbatim, `$`-keys and all", () => {
     const raw = clone() as {
       groups: Array<{ tests: Array<{ call: { params: Record<string, unknown> } }> }>;
