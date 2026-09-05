@@ -137,16 +137,17 @@ at full operation depth (§3.9).
 > run a group it is named in is a generator or loader bug. `candidate` state
 > keeps that out of both gates until promotion.
 >
-> **Deviation to record: `suites` scoping is not yet uniform.** `go-sdk`, `cli`,
-> `python-sdk` and `node-js-sdk` honour `suites` for *every* group — it replaced
-> the `service == "cdk"` carve-out, and against today's registry the two are
-> behaviour-identical. `java-sdk`, `dotnet-sdk` and `rust-sdk` honour it for
-> **generated groups only**: all three load `cdk-lifecycle` and record its 35
-> tests as `skip` in `compat/baseline/<suite>.json`, and the PR-time baseline
-> lint rejects a removed expectation. Aligning them means re-seeding those three
-> shards — "changing what CI measures means re-seeding, not comparing"
+> **`suites` scoping is uniform across all eight loaders (#1737).** `go-sdk`,
+> `cli`, `python-sdk` and `node-js-sdk` honoured `suites` for *every* group from
+> the start of G0 — it replaced their `service == "cdk"` carve-out.
+> `java-sdk`, `dotnet-sdk` and `rust-sdk` honoured it for **generated groups
+> only** until #1737, because all three loaded `cdk-lifecycle` and recorded its
+> 35 tests as `skip` in `compat/baseline/<suite>.json`, and the PR-time baseline
+> lint rejects a removed expectation. Aligning them therefore meant re-seeding
+> those three shards — "changing what CI measures means re-seeding, not
+> comparing"
 > ([compat/AGENTS.md § Baseline & uniformity](../../compat/AGENTS.md#baseline--uniformity-policy))
-> — which is a change of its own, now tracked as **#1737**.
+> — which #1737 did in one PR alongside the loader change.
 >
 > **The new G2 prerequisite: #1700, qualify every impl key — done.** Six suites
 > registered bare `"<test>"` keys — `go-sdk` 487, `cli` 513, `python-sdk` 487,
@@ -1161,7 +1162,7 @@ legible.
 
 | Phase | Status | Contents | Effort | Acceptance gate |
 | --- | --- | --- | --- | --- |
-| **G0** Foundations | **Done** — #1356, #1357, #1367, #1370, and the loader tail under #1393, all seven suite PRs merged and the issue closed. One deviation: `suites` scoping is honoured for every group in four suites and for generated groups only in `java-sdk`, `dotnet-sdk` and `rust-sdk`, pending the baseline re-seed tracked as #1737 — see the §2 note | Shard `compat/baseline.json` → `compat/baseline/<suite>.json` (+ size budget); `--shard i/n` and `--generated-registry-file` in `cmd/compat`; `registry.generated.schema.json`; all 8 loaders read the generated sibling and fall back to a scenario resolver hook; `candidate`/`gated` state honoured by both gates; `compat/AGENTS.md` amendment for generated `suites` scoping + the lint that bounds it | M | With an **empty** generated registry, every gate, report and dashboard behaves exactly as today; baseline shards aggregate byte-identically; the scoping lint rejects a hand-written group that adds `suites` |
+| **G0** Foundations | **Done** — #1356, #1357, #1367, #1370, and the loader tail under #1393, all seven suite PRs merged and the issue closed. `suites` scoping was honoured for every group in four suites and for generated groups only in `java-sdk`, `dotnet-sdk` and `rust-sdk` until #1737 aligned the three and re-seeded their baseline shards — see the §2 note | Shard `compat/baseline.json` → `compat/baseline/<suite>.json` (+ size budget); `--shard i/n` and `--generated-registry-file` in `cmd/compat`; `registry.generated.schema.json`; all 8 loaders read the generated sibling and fall back to a scenario resolver hook; `candidate`/`gated` state honoured by both gates; `compat/AGENTS.md` amendment for generated `suites` scoping + the lint that bounds it | M | With an **empty** generated registry, every gate, report and dashboard behaves exactly as today; baseline shards aggregate byte-identically; the scoping lint rejects a hand-written group that adds `suites` |
 | **G1** Model layer | **Done**, pending #1709's merge — `internal/awsmodel` #1359, shape snapshot via inert-tier I1 with `sqs` added in #1684, `cmd/compatgen` and `compat/model/` in #1709 | Extract `internal/awsmodel` AST reader; `cmd/compatgen` skeleton; the pruned shape snapshot `models/aws/shapes/` + `shapes-sha256` (shared deliverable with [inert-tier-rollout.md](./inert-tier-rollout.md) Phase I1 — build once, whichever plan gets there first); IR + recipe JSON schemas; `--scaffold`, `--review-report`, `--explain`; `gaps.json` | M | `make compat-model-check` regenerates byte-identically offline; the sha gate catches a hand edit; the snapshot is within its size budget; scaffolding a service produces a recipe skeleton a human can complete |
 | **G2** Pilot | Not started, tracked as **#1768** — **gated on #1709** alone now that #1700 and #1750 have merged. Both recipes and both scenario files already exist (#1709); what is missing is the three interpreters, one PR each. Start from §4.4 | `python-sdk`, `node-js-sdk` and `cli` interpreters; `recipes/sqs.json` + `recipes/organizations.json`; the §4 acceptance criteria | L | Every §4.1 and §4.2 criterion met, including the regeneration demonstration in §4.2.5 |
 | **G3** Typed backends | Not started | Source emitters for `go-sdk`, then `java-sdk`, `dotnet-sdk`, `rust-sdk` (one suite per PR); member→field naming rules per language | L each | Generated source compiles in the suite's normal build; the pilot groups produce **identical** results to the interpreter suites; generated `suites` scoping widens automatically on regeneration |

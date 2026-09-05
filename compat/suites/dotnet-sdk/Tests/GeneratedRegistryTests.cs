@@ -45,10 +45,12 @@ public sealed class GeneratedRegistryTests : IDisposable
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
-    private string HandWrittenRegistry()
+    private string HandWrittenRegistry() => HandWrittenRegistry(HandWritten);
+
+    private string HandWrittenRegistry(string json)
     {
         var path = Path.Combine(_directory, "registry.json");
-        File.WriteAllText(path, HandWritten);
+        File.WriteAllText(path, json);
         return path;
     }
 
@@ -130,6 +132,29 @@ public sealed class GeneratedRegistryTests : IDisposable
             """);
 
         // Out of scope, not in debt: no tests, no skips, no results.
+        Assert.Equal(["s3-crud"], GroupNames(Build(registry)));
+    }
+
+    /// <summary>
+    /// The same rule on the other half of the registry (#1737). cdk-lifecycle is
+    /// the only hand-written group that declares "suites", and dotnet-sdk is not
+    /// in that list, so it contributes no tests, no skips and no results here -
+    /// which is what took its 35 rows out of compat/baseline/dotnet-sdk.json.
+    /// </summary>
+    [Fact]
+    public void HandWrittenGroupScopedToAnotherSuiteIsNotLoaded()
+    {
+        var registry = HandWrittenRegistry("""
+            {
+              "version": 1,
+              "groups": [
+                {"service": "s3", "name": "s3-crud", "tests": [{"name": "CreateBucket"}]},
+                {"service": "cdk", "name": "cdk-lifecycle", "suites": ["cdk"],
+                 "tests": [{"name": "Deploy"}]}
+              ]
+            }
+            """);
+
         Assert.Equal(["s3-crud"], GroupNames(Build(registry)));
     }
 

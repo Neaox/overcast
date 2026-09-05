@@ -992,14 +992,10 @@ the recipes that produce it and the refusal report, and
   but must still use the `name` field as the test identifier.
 
 **Every loader concatenates `registry.generated.json`** onto `registry.json`
-(hand-written groups first) and honours `"suites"` on a **generated** group
-(#1393). Four of them — `go-sdk`, `cli`, `python-sdk` and `node-js-sdk` —
-honour it for every group, generated or hand-written, which is what replaced
-their `service == "cdk"` carve-out. `java-sdk`, `dotnet-sdk` and `rust-sdk` do
-not yet: all three load `cdk-lifecycle` and record its 35 tests as `skip` in
-`compat/baseline/<suite>.json`, so de-scoping it there is a baseline re-seed of
-its own (see [§ Baseline & uniformity policy](#baseline--uniformity-policy)),
-tracked as #1737, rather than part of reading the generated sibling.
+(hand-written groups first) and honours `"suites"` on **every** group, generated
+or hand-written (#1393, #1737) — one general rule, which is what replaced each
+loader's `service == "cdk"` carve-out. A group whose `suites` does not name the
+running suite is not loaded there at all: no tests, no skips, no results.
 
 Interim rule, until the G2 interpreters land:
 a generated group with no static impl **and** no scenario backend must never

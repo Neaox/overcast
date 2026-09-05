@@ -78,16 +78,15 @@ public static class RegistryLoader
         var ambiguous = AmbiguousTestNames(registry);
 
         return registry.Groups
-            // A generated group names the backends that can execute it, so a
-            // suite absent from that list is out of scope and loads nothing.
-            //
-            // Hand-written groups are deliberately not filtered. The only one
-            // that declares "suites" is cdk-lifecycle, which this suite has
-            // always loaded and reported as skips that
-            // compat/baseline/dotnet-sdk.json records - so scoping it out is a
-            // behaviour change of its own, not part of reading the generated
-            // registry.
-            .Where(group => !group.Generated || group.InScopeFor(suite))
+            // A group scoped to specific suites ("suites" in the registry) is
+            // out of scope for every other suite: no tests, no skips, no
+            // results. The rule is general and covers both halves of the
+            // registry. On a generated group the list names the backends that
+            // can execute it (always present - enforced in LoadGenerated); on a
+            // hand-written group it is reserved for cdk-lifecycle, which is why
+            // applying this to every group stopped this suite reporting that
+            // group's 35 skips and re-seeded its baseline shard (#1737).
+            .Where(group => group.InScopeFor(suite))
             .Select(group => new TestGroup(
                 suite,
                 group.Service,
