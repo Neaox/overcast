@@ -646,7 +646,9 @@ class GeneratedRegistryLoading(unittest.TestCase):
     These assert the *invariant* ("a missing/empty generated file changes
     nothing"), never a fact about the checked-in file's current contents —
     see the loader contract's note on not pinning a fact another in-flight
-    branch (the compatgen generator) is about to change.
+    branch (the compatgen generator) is about to change. That branch has
+    landed: the file carries the G2 pilot groups now, so the case that reads
+    it checks the shape every group must have rather than how many there are.
     """
 
     def test_missing_file_is_a_no_op(self):
@@ -668,12 +670,22 @@ class GeneratedRegistryLoading(unittest.TestCase):
             merged = build_groups_from_registry(with_generated, {}, "python-sdk")
             self.assertEqual([g.name for g in without], [g.name for g in merged])
 
-    def test_checked_in_empty_file_is_a_no_op(self):
+    def test_checked_in_file_loads_from_its_default_location(self):
         # Exercises the real, checked-in registry.generated.json at its
-        # default sibling-of-registry.json location — but asserts only that
-        # an empty file is inert, not that the file stays empty forever.
+        # default sibling-of-registry.json location. It was empty through G0
+        # and this case asserted emptiness; from G2 it carries the pilot
+        # groups (#1113), so what is asserted is the invariant that outlives
+        # the contents: it loads, and every group in it carries the three
+        # fields the loader requires plus a scenario file for a backend to
+        # execute.
         generated = load_generated_registry()
-        self.assertEqual([], generated["groups"])
+        self.assertEqual(1, generated["version"])
+        for group in generated["groups"]:
+            self.assertIs(True, group["generated"], group["name"])
+            self.assertIn(group["state"], ("candidate", "gated"), group["name"])
+            self.assertTrue(group["suites"], group["name"])
+            self.assertTrue(group["scenario"], group["name"])
+            self.assertTrue(group["tests"], group["name"])
 
     def test_synthetic_file_is_concatenated_after_hand_written(self):
         hand_written = {

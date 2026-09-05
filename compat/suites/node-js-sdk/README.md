@@ -107,6 +107,15 @@ node-js-sdk/
                        validates impl keys (mergeImpls, validateImpls)
       commands.ts   ← stdin NDJSON command loop for interactive mode
       cleanup.ts    ← sweepAll(): post-run resource sweep, scoped to the runId
+      scenario/     ← the scenario interpreter for generated groups
+        ir.ts       ← TypeScript types for the scenario IR
+        loader.ts   ← read, validate and cache compat/model/scenarios/*.json
+        expressions.ts ← $lit/$ref/$name/$concat/$index, paths, JSON equality
+        assertions.ts  ← the closed assertion set's predicates
+        executor.ts ← run a group's setup, tests and teardown
+        client.ts   ← @aws-sdk/client-<kebab(sdkId)> by dynamic import
+        failure.ts  ← the six-field failure message
+        backend.ts  ← makeScenarioSupport(): the hook runner.ts passes in
     groups/
       index.ts      ← makeAllGroups() + makeImplMap() — the registration point
       apigateway.ts       elasticache.ts     ses.ts
@@ -174,6 +183,38 @@ never ran:
   or a bare name that several groups declare, which cannot say which group it
   implements (`validateImpls`). `ListUsers` belongs to both `iam-users` and
   `cognito-userpools`, so it must be qualified.
+
+### Generated groups (`lib/scenario/`)
+
+Some registry groups have no implementation here and are not meant to: they
+come from [`compat/suites/registry.generated.json`](../registry.generated.json),
+carry `generated: true` and name a **scenario file** under
+`compat/model/scenarios/`. `runner.ts` passes `buildGroupsFromRegistry` a
+`scenarioBackend`, which resolves those tests by interpreting the scenario IR —
+the closed vocabulary of calls, value expressions, response paths and
+assertions described normatively in
+[compat/model/README.md](../../model/README.md).
+
+The interpreter uses the SDK exactly as a hand-written group does. It derives
+`@aws-sdk/client-<kebab(sdkId)>` from the scenario's `client.sdkId`, imports it
+once per service, constructs `new <Op>Command(params)`, and configures the
+client with `clientConfig()` from `lib/clients.ts` — the same endpoint,
+credentials, region and HTTP/1.1 handler every other group gets. There is no
+Overcast-specific code path, and the group's `setup`/`teardown` come from the
+same scenario file.
+
+What this means day to day:
+
+- **Never edit `compat/model/scenarios/*.json`.** They are generated wholly by
+  `cmd/compatgen` from the recipes; fix a recipe, or `values.json`, and
+  regenerate (`make generate-compat-model`).
+- **A generated test's failure names everything you need**: the group and test,
+  the operation, the exact params JSON sent, the assertion kind and path,
+  expected versus actual, and the scenario file plus step index.
+  `go run -tags dev ./cmd/compatgen -explain <group>/<test> -lang node` renders
+  the same test as pseudo-code.
+- **Adding this suite to a service is a recipe change, not a code change** —
+  which is the point of the whole mechanism.
 
 ---
 

@@ -63,7 +63,8 @@ compat/suites/node-js-sdk/
     runner.ts      ← entry point; imports all group factories; NDJSON orchestration
     lib/
       harness.ts   ← TestGroup, TestContext, runSuite(), emitEvent()
-      clients.ts   ← makeClients(ctx) → typed client map
+      clients.ts   ← makeClients(ctx) → typed client map; clientConfig(ctx)
+      scenario/    ← the scenario interpreter for generated groups (see below)
     groups/
       s3.ts
       sqs.ts
@@ -168,6 +169,40 @@ export function makeS3Groups(suite: string): TestGroup[] {
 | Resource prefix | `` `${ctx.runId}-<group-short-name>` `` (no trailing slash/dash)  |
 | Export function | `make<Service>Groups(suite: string): TestGroup[]`                 |
 | File name       | Lowercase service name: `s3.ts`, `cloudwatch-logs.ts`             |
+
+---
+
+## Generated groups — `lib/scenario/`
+
+A registry group carrying `generated: true` has no implementation under
+`src/groups/` and must not acquire one. It names a scenario file under
+`compat/model/scenarios/`, and `runner.ts` hands
+`buildGroupsFromRegistry` a `scenarioBackend` (plus the group's
+`setup`/`teardown`) built by `lib/scenario/backend.ts`, which interprets that
+file. The normative description of the IR is
+[compat/model/README.md](../../model/README.md); the modules split by
+responsibility (`ir`, `loader`, `expressions`, `assertions`, `executor`,
+`client`, `failure`, `backend`) and every one of them is unit-tested without an
+emulator.
+
+Rules that apply to this directory in particular:
+
+- **The separation boundary holds here too.** The interpreter builds its
+  clients by dynamic `import("@aws-sdk/client-<kebab(sdkId)>")` and configures
+  them with `clientConfig()` from `lib/clients.ts` — never a second copy of the
+  configuration rules, never an Overcast-specific header or code path.
+- **A service the scenarios cover needs its `@aws-sdk/client-*` package in
+  `package.json`**, at the suite's pinned version line. A missing one is
+  reported as "add it to package.json", not as a failing test.
+- **Never edit a scenario file, and never edit `registry.generated.json`.**
+  Both are rewritten wholly by `cmd/compatgen`; change a recipe and regenerate.
+- **Never special-case a group, a service or an error inside the interpreter.**
+  If a scenario cannot be executed faithfully, that is a recipe or an IR
+  question, not a branch in `executor.ts`.
+- **Failure messages carry the six fields** `compat/model/README.md`
+  § Failure messages lists, assembled in exactly one place (`failure.ts`), and
+  an SDK error's unimplemented markers are copied onto the thrown error so a
+  probe of an unimplemented operation still records `unimplemented`.
 
 ---
 

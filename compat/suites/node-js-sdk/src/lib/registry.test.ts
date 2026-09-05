@@ -376,12 +376,22 @@ describe("generated registry loading", () => {
     }
   });
 
-  it("the checked-in empty file is a no-op", () => {
+  it("the checked-in file loads from its default location", () => {
     // Exercises the real, checked-in registry.generated.json at its default
-    // sibling-of-registry.json location — but asserts only that an empty
-    // file is inert, not that the file stays empty forever.
+    // sibling-of-registry.json location. It was empty through G0 and this
+    // case asserted emptiness; from G2 it carries the pilot groups, so what
+    // is asserted is the invariant that outlives the contents: it loads, and
+    // every group in it carries the three fields the loader requires and a
+    // scenario file for the backend to execute.
     const generated = loadGeneratedRegistry();
-    assert.deepEqual(generated.groups, []);
+    assert.equal(generated.version, 1);
+    for (const group of generated.groups) {
+      assert.equal(group.generated, true, group.name);
+      assert.ok(["candidate", "gated"].includes(group.state), group.name);
+      assert.ok(group.suites.length > 0, group.name);
+      assert.ok(group.scenario, `${group.name} names a scenario file`);
+      assert.ok(group.tests.length > 0, group.name);
+    }
   });
 
   it("a synthetic non-empty file is concatenated after hand-written groups", () => {
