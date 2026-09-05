@@ -23,6 +23,7 @@ import (
 	"fmt"
 
 	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 // ─── Wire shapes ───────────────────────────────────────────────────────────
@@ -244,39 +245,15 @@ func parsePolicyDocument(raw string) (*policyDocument, []validationErrorEntry) {
 }
 
 // grantsPublicAccess reports whether any Allow statement names every principal
-// without narrowing it by a Condition — what BlockPublicPolicy refuses.
+// without narrowing it by a Condition — what BlockPublicPolicy refuses. The
+// check itself is shared with Lambda's PutResourcePolicy in serviceutil.
 func (d *policyDocument) grantsPublicAccess() bool {
 	if d == nil {
 		return false
 	}
 	for _, st := range d.Statement {
-		if st.Effect != "Allow" || st.Condition != nil {
-			continue
-		}
-		if principalIsWildcard(st.Principal) {
+		if serviceutil.StatementGrantsPublicAccess(st.Effect, st.Principal, st.Condition) {
 			return true
-		}
-	}
-	return false
-}
-
-// principalIsWildcard recognises the two spellings of "everyone": the bare
-// "*" string, and {"AWS": "*"} (or a list containing it).
-func principalIsWildcard(principal any) bool {
-	switch p := principal.(type) {
-	case string:
-		return p == "*"
-	case []any:
-		for _, item := range p {
-			if principalIsWildcard(item) {
-				return true
-			}
-		}
-	case map[string]any:
-		for _, v := range p {
-			if principalIsWildcard(v) {
-				return true
-			}
 		}
 	}
 	return false
