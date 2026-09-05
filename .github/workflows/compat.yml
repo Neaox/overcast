@@ -313,22 +313,24 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-        if: env.RUN_SUITES == 'true'
-        with:
-          package_json_file: web/package.json
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        if: env.RUN_SUITES == 'true'
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
-
-      - name: Build web assets
-        if: env.RUN_SUITES == 'true'
-        run: pnpm install --frozen-lockfile && VITE_BUNDLED=true pnpm run build
-        working-directory: web
-
+      # No SPA build, and no pnpm at all. `bin/overcast` is untagged, so it
+      # embeds `all:web/dist` — but the committed `web/dist/.gitkeep` is what
+      # keeps that pattern resolving, and a binary without a real SPA serves
+      # the API normally and answers 503 on the UI port. That is documented
+      # behaviour, not a broken build (test.yml says the same thing above its
+      # `vet` job, and docs/plans/ci-streamlining.md § C is where it was first
+      # established).
+      #
+      # Nothing the suites do could tell the difference. None of the eight
+      # touches the UI port or asks for SPA content: grepping every suite for
+      # `4567` finds only CloudFront key-group ids (`K1234567890ABCDE`) and an
+      # EC2 AMI id, `index.html` finds only the S3
+      # PutBucketWebsite/GetBucketWebsite configuration literal, and `web/dist`
+      # finds nothing. The suites speak to the API over 4566.
+      #
+      # compat-flake-detection.yml already had this shape — it builds
+      # `-tags slim,nosqlite` and has never set up Node — so there is nothing
+      # to remove there.
       - name: Build binaries
         if: env.RUN_SUITES == 'true'
         run: |
