@@ -202,8 +202,15 @@ type extensionEvent struct {
 }
 
 type extensionLogDelivery struct {
-	URI  string
-	Body []byte
+	// ContainerIP is the execution environment whose subscriber this batch is
+	// for. It is identity, never a destination: the POST is made by that
+	// environment's init, from inside the sandbox, and nothing here dials a
+	// container. It is also what keeps two environments' subscribers apart
+	// when they subscribe the same loopback address, which — now that the
+	// address is no longer rewritten per container — they routinely do.
+	ContainerIP string
+	URI         string
+	Body        []byte
 	// Events is how many records the body carries, for the drop accounting
 	// when the delivery fails every attempt.
 	Events int64
@@ -299,6 +306,15 @@ type RuntimeAPIServer struct {
 	logsDeliveries   chan extensionLogDelivery
 	buffersMu        sync.Mutex
 	telemetryBuffers map[string]*telemetryBuffer
+	// telemetryRelayPorts and telemetryRelays are the same relays under the two
+	// identities a Runtime API call is attributed by: the per-environment
+	// listener it arrives on, and the container address a publisher knows the
+	// environment as. The port index is populated with the listener, before the
+	// container exists, so the init's first poll is answered; the address index
+	// follows when Docker reports it, which is before any extension can have
+	// registered. See telemetry_relay.go.
+	telemetryRelayPorts map[int]*telemetryRelay
+	telemetryRelays     map[string]*telemetryRelay
 
 	// OnFirstNext is called (in a goroutine) the first time a container's RIC
 	// issues GET /next — the moment that container's INIT phase ends. It is
@@ -348,29 +364,31 @@ func NewRuntimeAPIServerFromListeners(lns []net.Listener, containerAddr string, 
 		containerHost = containerAddr
 	}
 	s := &RuntimeAPIServer{
-		pending:          make(map[string]*pendingInvocation),
-		funcQueues:       make(map[string][]*pendingInvocation),
-		waiting:          make(map[string][]*runtimeWaiter),
-		containers:       make(map[string]string),
-		containerConfigs: make(map[string]runtimeContainerConfig),
-		containerExts:    make(map[string]map[string]bool),
-		containerErrors:  make(map[string]string),
-		extensions:       make(map[string]*extensionState),
-		seenNext:         make(map[string]bool),
-		firstNextAt:      make(map[string]time.Time),
-		ready:            make(map[string]chan struct{}),
-		containerPorts:   make(map[int]string),
-		logSinks:         make(map[int]*logSink),
-		initRecords:      make(map[string][]json.RawMessage),
-		logger:           logger,
-		addr:             containerAddr,
-		containerHost:    containerHost,
-		bindHosts:        bindHostsOf(lns),
-		registrationWait: registrationWaitFor(initTimeout),
-		done:             make(chan struct{}),
-		clk:              clk,
-		logsDeliveries:   make(chan extensionLogDelivery, logsDeliveryQueueSize),
-		telemetryBuffers: make(map[string]*telemetryBuffer),
+		pending:             make(map[string]*pendingInvocation),
+		funcQueues:          make(map[string][]*pendingInvocation),
+		waiting:             make(map[string][]*runtimeWaiter),
+		containers:          make(map[string]string),
+		containerConfigs:    make(map[string]runtimeContainerConfig),
+		containerExts:       make(map[string]map[string]bool),
+		containerErrors:     make(map[string]string),
+		extensions:          make(map[string]*extensionState),
+		seenNext:            make(map[string]bool),
+		firstNextAt:         make(map[string]time.Time),
+		ready:               make(map[string]chan struct{}),
+		containerPorts:      make(map[int]string),
+		logSinks:            make(map[int]*logSink),
+		initRecords:         make(map[string][]json.RawMessage),
+		logger:              logger,
+		addr:                containerAddr,
+		containerHost:       containerHost,
+		bindHosts:           bindHostsOf(lns),
+		registrationWait:    registrationWaitFor(initTimeout),
+		done:                make(chan struct{}),
+		clk:                 clk,
+		logsDeliveries:      make(chan extensionLogDelivery, logsDeliveryQueueSize),
+		telemetryBuffers:    make(map[string]*telemetryBuffer),
+		telemetryRelayPorts: make(map[int]*telemetryRelay),
+		telemetryRelays:     make(map[string]*telemetryRelay),
 	}
 	for i := 0; i < logsDeliveryWorkers; i++ {
 		go s.logsDeliveryWorker()
@@ -394,6 +412,10 @@ func NewRuntimeAPIServerFromListeners(lns []net.Listener, containerAddr string, 
 	// init. It is on this mux because this is the listener a Lambda container
 	// can reach and the one that identifies it. See log_ingest.go.
 	mux.HandleFunc(initproto.LogsPath, s.handleContainerLogs)
+	// Likewise emulator-internal, and the same listener for the same reason:
+	// the init's poll for the Telemetry API batches it carries into the
+	// sandbox. See telemetry_relay.go.
+	mux.HandleFunc(initproto.TelemetryPath, s.handleTelemetryRelay)
 
 	s.server = &http.Server{Handler: mux}
 
@@ -562,6 +584,11 @@ type containerListener struct {
 	addr string
 	once sync.Once
 
+	// relay is this environment's telemetry delivery channel, created with the
+	// listener because the init opens its poll as the container starts — long
+	// before Docker will say what address it has. See telemetry_relay.go.
+	relay *telemetryRelay
+
 	// accepted counts the connections this endpoint has taken, over every
 	// address it is bound on. See countingListener.
 	accepted atomic.Int64
@@ -608,11 +635,15 @@ func (s *RuntimeAPIServer) AddContainerListener() (*containerListener, error) {
 		return nil, fmt.Errorf("runtime api: per-container listen: not a TCP address")
 	}
 	cl := &containerListener{
-		srv:  s,
-		lns:  lns,
-		port: bound.Port,
-		addr: net.JoinHostPort(s.containerHost, strconv.Itoa(bound.Port)),
+		srv:   s,
+		lns:   lns,
+		port:  bound.Port,
+		addr:  net.JoinHostPort(s.containerHost, strconv.Itoa(bound.Port)),
+		relay: newTelemetryRelay(),
 	}
+	s.mu.Lock()
+	s.telemetryRelayPorts[cl.port] = cl.relay
+	s.mu.Unlock()
 	for _, ln := range lns {
 		go s.serve(countingListener{Listener: ln, accepted: &cl.accepted})
 	}
@@ -663,7 +694,18 @@ func (l *containerListener) Attach(containerIP string) {
 	}
 	l.srv.mu.Lock()
 	l.srv.containerPorts[l.port] = containerIP
+	// The publishers know an environment by its address, so the relay the init
+	// is already polling on gets its second name here.
+	l.srv.telemetryRelays[containerIP] = l.relay
 	l.srv.mu.Unlock()
+}
+
+// telemetryRelayForPort returns the relay of the environment that owns a
+// listener. See telemetry_relay.go.
+func (s *RuntimeAPIServer) telemetryRelayForPort(port int) *telemetryRelay {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.telemetryRelayPorts[port]
 }
 
 // Close retires the environment's endpoint. Idempotent: Close runs on every
@@ -676,6 +718,12 @@ func (l *containerListener) Close() error {
 		l.srv.mu.Lock()
 		delete(l.srv.containerPorts, l.port)
 		delete(l.srv.logSinks, l.port)
+		delete(l.srv.telemetryRelayPorts, l.port)
+		for ip, relay := range l.srv.telemetryRelays {
+			if relay == l.relay {
+				delete(l.srv.telemetryRelays, ip)
+			}
+		}
 		l.srv.mu.Unlock()
 		for _, ln := range l.lns {
 			_ = ln.Close()
@@ -736,8 +784,15 @@ func (s *RuntimeAPIServer) FirstNextAt(containerIP string) (time.Time, bool) {
 
 // UnregisterContainer removes the container IP from the registry.
 func (s *RuntimeAPIServer) UnregisterContainer(containerIP string) {
+	// Before the lock, and outside it: the buffers have their own. A buffer is
+	// per (environment, destination), so an environment that goes away takes
+	// its buffers with it rather than leaving one behind per subscriber for the
+	// life of the process.
+	s.dropTelemetryBuffers(containerIP)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	delete(s.telemetryRelays, containerIP)
 	delete(s.containers, containerIP)
 	delete(s.containerConfigs, containerIP)
 	delete(s.containerExts, containerIP)
@@ -1313,7 +1368,13 @@ func (s *RuntimeAPIServer) handleSubscribe(w http.ResponseWriter, r *http.Reques
 		if ext.Logs != nil && ext.Logs.API != api {
 			existingAPI = ext.Logs.API
 		} else {
-			deliveryURI = normalizeExtensionLogURI(in.Destination.URI, ext.ContainerIP)
+			// The destination is stored exactly as the extension subscribed
+			// it. It used to be rewritten from loopback to the container's
+			// bridge IP, because the POST was made from this process; it is
+			// made by the environment's own init now, from inside the sandbox
+			// where that loopback address is the listener the extension
+			// actually stood up. See telemetry_relay.go.
+			deliveryURI = in.Destination.URI
 			ext.Logs = &extensionLogsSubscription{
 				Types:         types,
 				URI:           deliveryURI,
@@ -1321,7 +1382,7 @@ func (s *RuntimeAPIServer) handleSubscribe(w http.ResponseWriter, r *http.Reques
 				API:           api,
 				RecordObjects: recordObjects,
 			}
-			replayTarget = telemetryTarget{uri: deliveryURI, recordObjects: recordObjects, buffering: ext.Logs.Buffering}
+			replayTarget = telemetryTarget{containerIP: ext.ContainerIP, uri: deliveryURI, recordObjects: recordObjects, buffering: ext.Logs.Buffering}
 			containerIP = ext.ContainerIP
 		}
 	}
@@ -1371,23 +1432,6 @@ func (s *RuntimeAPIServer) handleSubscribe(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-}
-
-func normalizeExtensionLogURI(rawURI, containerIP string) string {
-	parsed, err := url.Parse(rawURI)
-	if err != nil {
-		return rawURI
-	}
-	host := parsed.Hostname()
-	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
-		return rawURI
-	}
-	port := parsed.Port()
-	if port == "" || containerIP == "" {
-		return rawURI
-	}
-	parsed.Host = net.JoinHostPort(containerIP, port)
-	return parsed.String()
 }
 
 // PublishExtensionLog publishes one log line — a "function" or "extension"
@@ -1449,10 +1493,24 @@ func isJSONObjectLine(line string) bool {
 // telemetryTarget is one subscriber's delivery destination, record shape and
 // batching bounds.
 type telemetryTarget struct {
+	// containerIP is the execution environment the subscriber belongs to. It
+	// is part of a destination's identity, not a place anything is sent: two
+	// environments' extensions routinely subscribe the same loopback address,
+	// and before the delivery moved into the sandbox they were told apart only
+	// because the host rewrote each to its own container IP.
+	containerIP   string
 	uri           string
 	recordObjects bool
 	buffering     bufferingConfig
 }
+
+// key names one destination's buffer: a destination is a subscriber's URI
+// *within* an execution environment.
+func (t telemetryTarget) key() string { return telemetryBufferKey(t.containerIP, t.uri) }
+
+// telemetryBufferKey names a destination. The separator cannot appear in the
+// address half, so no pair of (environment, URI) can collide with another.
+func telemetryBufferKey(containerIP, uri string) string { return containerIP + "|" + uri }
 
 // telemetryTargets returns every subscriber to typ on this container, and
 // whether the container's function logs in JSON format — the two facts a
@@ -1465,7 +1523,7 @@ func (s *RuntimeAPIServer) telemetryTargets(containerIP, typ string) ([]telemetr
 		if ext.ContainerIP != containerIP || ext.Logs == nil || !ext.Logs.Types[typ] {
 			continue
 		}
-		targets = append(targets, telemetryTarget{uri: ext.Logs.URI, recordObjects: ext.Logs.RecordObjects, buffering: ext.Logs.Buffering})
+		targets = append(targets, telemetryTarget{containerIP: containerIP, uri: ext.Logs.URI, recordObjects: ext.Logs.RecordObjects, buffering: ext.Logs.Buffering})
 	}
 	return targets, s.containerConfigs[containerIP].LogFormat == logFormatJSON
 }
@@ -1573,12 +1631,13 @@ func (s *RuntimeAPIServer) publishTelemetryEvent(containerIP, typ string, event 
 // back into the counters, and a destination that never recovers accumulates
 // numbers rather than events.
 type telemetryBuffer struct {
-	mu     sync.Mutex
-	uri    string
-	cfg    bufferingConfig
-	events []json.RawMessage
-	bytes  int64
-	timer  *clock.Timer
+	mu          sync.Mutex
+	containerIP string
+	uri         string
+	cfg         bufferingConfig
+	events      []json.RawMessage
+	bytes       int64
+	timer       *clock.Timer
 
 	droppedRecords int64
 	droppedBytes   int64
@@ -1588,10 +1647,11 @@ type telemetryBuffer struct {
 func (s *RuntimeAPIServer) telemetryBufferFor(target telemetryTarget) *telemetryBuffer {
 	s.buffersMu.Lock()
 	defer s.buffersMu.Unlock()
-	buf, ok := s.telemetryBuffers[target.uri]
+	key := target.key()
+	buf, ok := s.telemetryBuffers[key]
 	if !ok {
-		buf = &telemetryBuffer{uri: target.uri, cfg: target.buffering}
-		s.telemetryBuffers[target.uri] = buf
+		buf = &telemetryBuffer{containerIP: target.containerIP, uri: target.uri, cfg: target.buffering}
+		s.telemetryBuffers[key] = buf
 		return buf
 	}
 	buf.mu.Lock()
@@ -1663,7 +1723,7 @@ func (s *RuntimeAPIServer) cutBatchLocked(buf *telemetryBuffer) {
 		return
 	}
 	select {
-	case s.logsDeliveries <- extensionLogDelivery{URI: buf.uri, Body: body, Events: int64(len(events))}:
+	case s.logsDeliveries <- extensionLogDelivery{ContainerIP: buf.containerIP, URI: buf.uri, Body: body, Events: int64(len(events))}:
 	default:
 		// The queue itself is the backpressure of last resort — shed the
 		// batch and let the counters carry the news on the next cut.
@@ -1680,9 +1740,9 @@ func (s *RuntimeAPIServer) noteDroppedLocked(buf *telemetryBuffer, records, byte
 }
 
 // noteDeliveryDropped is the worker-side report: a batch failed every attempt.
-func (s *RuntimeAPIServer) noteDeliveryDropped(uri string, records, bytes int64) {
+func (s *RuntimeAPIServer) noteDeliveryDropped(containerIP, uri string, records, bytes int64) {
 	s.buffersMu.Lock()
-	buf, ok := s.telemetryBuffers[uri]
+	buf, ok := s.telemetryBuffers[telemetryBufferKey(containerIP, uri)]
 	s.buffersMu.Unlock()
 	if !ok {
 		return
@@ -1690,6 +1750,22 @@ func (s *RuntimeAPIServer) noteDeliveryDropped(uri string, records, bytes int64)
 	buf.mu.Lock()
 	s.noteDroppedLocked(buf, records, bytes)
 	buf.mu.Unlock()
+}
+
+// dropTelemetryBuffers forgets an environment's destinations. Called as the
+// environment is unregistered: its subscribers went with it, and a buffer kept
+// past that point would hold drop counters nothing will ever report.
+func (s *RuntimeAPIServer) dropTelemetryBuffers(containerIP string) {
+	if containerIP == "" {
+		return
+	}
+	s.buffersMu.Lock()
+	defer s.buffersMu.Unlock()
+	for key, buf := range s.telemetryBuffers {
+		if buf.containerIP == containerIP {
+			delete(s.telemetryBuffers, key)
+		}
+	}
 }
 
 // flushTelemetryBuffers cuts every destination's pending batch — the shutdown
@@ -1739,7 +1815,7 @@ func (s *RuntimeAPIServer) deliverExtensionLog(client *http.Client, delivery ext
 			// The destination's own stream carries the news: the counts fold
 			// into its buffer and the next cut batch opens with a
 			// platform.logsDropped event.
-			s.noteDeliveryDropped(delivery.URI, delivery.Events, int64(len(delivery.Body)))
+			s.noteDeliveryDropped(delivery.ContainerIP, delivery.URI, delivery.Events, int64(len(delivery.Body)))
 			return
 		}
 		s.logger.Debug("runtime api: telemetry delivery failed, retrying",
@@ -1753,7 +1829,26 @@ func (s *RuntimeAPIServer) deliverExtensionLog(client *http.Client, delivery ext
 }
 
 // postExtensionLog is one delivery attempt.
+//
+// The batch reaches an extension's listener the way AWS's platform delivers it:
+// from inside the execution environment, over the channel the environment's own
+// init opened. Nothing here connects to a container — which is what makes
+// telemetry work on Docker Desktop, where the engine is in a VM the host has no
+// route into (#1799).
+//
+// The direct POST below is what remains for a Runtime API server with no
+// per-environment listeners, which is no container at all: it is the surface
+// the unit tests drive, where the subscribed destination is a server on this
+// host and is reached exactly as subscribed. A real environment always has a
+// listener, so it always has a relay, and an init too old to poll it costs the
+// batch its attempts and is reported as a drop — never a POST at a loopback
+// address that means something else entirely on this side of the sandbox.
 func (s *RuntimeAPIServer) postExtensionLog(client *http.Client, delivery extensionLogDelivery) error {
+	if relay := s.telemetryRelayFor(delivery.ContainerIP); relay != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), telemetryRelayAttempt)
+		defer cancel()
+		return relay.deliver(ctx, s.done, delivery)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, delivery.URI, bytes.NewReader(delivery.Body))
