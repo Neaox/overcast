@@ -88,14 +88,14 @@ class FakeClient:
 
 
 def client_error(code: str, *, status: int = 400, op: str = "Op",
-                 headers: dict | None = None, wire_type: str | None = None
-                 ) -> ClientError:
+                 headers: dict | None = None) -> ClientError:
+    """A ClientError shaped the way botocore shapes one: a single ``Error.Code``
+    and the response headers. Nothing sets ``Error.__type`` — botocore never
+    does, and a fixture that did would be testing itself."""
     response = {
         "Error": {"Code": code, "Message": f"{code} raised by the fake"},
         "ResponseMetadata": {"HTTPStatusCode": status, "HTTPHeaders": headers or {}},
     }
-    if wire_type is not None:
-        response["Error"]["__type"] = wire_type
     return ClientError(response, op)
 
 
@@ -294,7 +294,11 @@ class TestErrorNames(unittest.TestCase):
         self.assertTrue(error_matches(client_error("QueueDoesNotExist"), self.ERROR))
 
     def test_a_json_protocol_type_uri_is_stripped(self):
-        exc = client_error("Other", wire_type="com.amazonaws.sqs#QueueDoesNotExist")
+        # botocore strips the namespace itself before it fills Error.Code, so
+        # this is the rule holding for a surface that arrives unstripped —
+        # another SDK, or an emulator answering in a spelling botocore's parser
+        # never sees — not a shape boto3 produces.
+        exc = client_error("com.amazonaws.sqs#QueueDoesNotExist")
         self.assertIn("QueueDoesNotExist", error_names(exc))
         self.assertTrue(error_matches(exc, self.ERROR))
 

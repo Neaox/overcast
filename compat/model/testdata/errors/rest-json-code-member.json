@@ -1,13 +1,11 @@
 {
   "id": "rest-json-code-member",
-  "title": "REST JSON not-found, code member plus x-amzn-errortype",
-  "why": "The REST JSON spelling: the body names the code in a lowercase `code` member and the same string repeats in x-amzn-errortype. Rule 1 lists `code` among the surfaces an interpreter reads; the header is on the wire but no interpreter reads it, which is why the body must be enough on its own.",
-  "carriers": ["bodyCode", "errorTypeHeader"],
+  "title": "REST JSON not-found, the body's lowercase code member",
+  "why": "The REST JSON spelling: the body names the code in a lowercase `code` member, which is the third of the parsed-body spellings the Errors table lists. The x-amzn-errortype header a REST JSON service usually sends alongside it is deliberately not on this wire: botocore's RestJSONParser._inject_error_code prefers the header and falls back to the body member, so a wire carrying both would have every suite matching through the header while the fixture claimed the body. Stripped to the body alone, the fixture pins what it says it pins.",
+  "carriers": ["bodyCode"],
   "wire": {
     "status": 404,
-    "headers": {
-      "x-amzn-errortype": "ResourceNotFoundException"
-    },
+    "headers": {},
     "body": {
       "code": "ResourceNotFoundException",
       "message": "The resource was not found."

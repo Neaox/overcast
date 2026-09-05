@@ -382,26 +382,27 @@ func wait(ctx context.Context, delayMs int) error {
 // from a different branch of the service, and by a NotFoundException named
 // anywhere else in the CLI's prose.
 //
-// errorCodes below reads the two places a code can appear. Only when neither is
-// present — the CLI failed before it reached the wire, or printed something
-// this parser does not know — does the match fall back to containment, which is
-// what every hand-written group in this suite does (internal/groups/util.go)
-// and is better than reporting no match at all.
+// errorCodes below reads the two places a code can appear. When it finds none —
+// the CLI died before it reached the wire, or printed something this parser
+// does not know — the clause does **not** match. There is no containment
+// fallback, and the absence of one is the rule rather than an omission: a
+// message with no code surface in it is no evidence that the service raised the
+// named error, and matching it by containment would reinstate the near miss
+// this equality exists to exclude, on exactly the inputs where nothing has
+// checked the string's shape. `aws sqs delete-queue: … Could not connect to the
+// endpoint URL: "…/000000000000/QueueDoesNotExist-probe"` contains the code and
+// states none. The clause then fails naming the raw stderr, which is what the
+// reader needs: the CLI never got far enough to state a code.
 func matchesError(err error, want *ErrorClause) bool {
 	if err == nil || want == nil {
 		return false
 	}
-	msg := err.Error()
-	if codes := errorCodes(msg); len(codes) > 0 {
-		for _, got := range codes {
-			if (want.Shape != "" && got == want.Shape) || (want.Code != "" && got == want.Code) {
-				return true
-			}
+	for _, got := range errorCodes(err.Error()) {
+		if (want.Shape != "" && got == want.Shape) || (want.Code != "" && got == want.Code) {
+			return true
 		}
-		return false
 	}
-	return (want.Shape != "" && strings.Contains(msg, want.Shape)) ||
-		(want.Code != "" && strings.Contains(msg, want.Code))
+	return false
 }
 
 // errorCodes returns every error code the CLI's output states, in the order

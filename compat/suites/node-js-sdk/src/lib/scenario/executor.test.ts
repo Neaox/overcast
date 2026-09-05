@@ -399,7 +399,7 @@ describe("setup and teardown", () => {
     assert.equal(h.env.ctx.bag.get("dlq.arn"), "arn:dlq");
   });
 
-  it("throws the bare message so the harness reads `setup failed: <error>`", async () => {
+  it("throws the bare message so the harness reads `setup failed: <message>`", async () => {
     const h = harness({
       CreateQueue: () => {
         throw sdkError("ServiceUnavailable");

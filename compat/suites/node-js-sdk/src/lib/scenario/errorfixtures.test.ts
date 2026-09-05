@@ -40,16 +40,13 @@ const KNOWN_CARRIERS = new Set([
   "bodyType",
   "bodyCode",
   "queryErrorHeader",
-  "errorTypeHeader",
   "cliBanner",
 ]);
 
 /**
  * What the AWS SDK for JavaScript puts in front of this suite: the error class
- * it minted, the deserialized body members, and `$response.headers`.
- * `x-amzn-errortype` is on the wire but the SDK has already folded it into the
- * error by then, so it is not a surface of its own here; the AWS CLI's stderr
- * banner belongs to another suite.
+ * it minted, the deserialized body members, and `$response.headers`. The AWS
+ * CLI's stderr banner belongs to another suite.
  */
 const OBSERVED_CARRIERS = new Set([
   "exceptionName",
@@ -61,6 +58,33 @@ const OBSERVED_CARRIERS = new Set([
 const WHAT_THIS_SUITE_SEES =
   "the SDK hands the interpreter an error object and $response.headers, " +
   "never a process's stderr";
+
+/**
+ * The strict reader. The cli suite decodes a fixture with
+ * DisallowUnknownFields, so a key none of the three recognises has to be an
+ * error here too: a field added to a fixture and silently ignored by two of
+ * the backends is the drift these documents exist to prevent.
+ */
+const FIXTURE_KEYS = ["id", "title", "why", "carriers", "wire", "expect"];
+const WIRE_KEYS = ["status", "exceptionName", "headers", "body", "stderr"];
+const CASE_KEYS = ["name", "error", "matches", "via"];
+const ERROR_KEYS = ["shape", "code"];
+
+function strict(value: unknown, allowed: string[], where: string): void {
+  assert.ok(
+    value !== null && typeof value === "object" && !Array.isArray(value),
+    `${where}: expected an object`,
+  );
+  const unknown = Object.keys(value as object)
+    .filter((key) => !allowed.includes(key))
+    .sort();
+  assert.deepEqual(
+    unknown,
+    [],
+    `${where}: unknown key(s) ${JSON.stringify(unknown)}; the fixture format ` +
+      "is fixed by compat/model/README.md § Errors",
+  );
+}
 
 interface FixtureWire {
   status?: number;
@@ -86,16 +110,29 @@ interface Fixture {
   expect: FixtureCase[];
 }
 
+/**
+ * Every fixture, in file-name order. Called from inside a test rather than at
+ * module scope: a missing directory here would otherwise throw during import
+ * and take the whole file's tests with it, when what should fail is the one
+ * assertion that says the conformance set is present.
+ */
 function loadFixtures(): Fixture[] {
   return readdirSync(FIXTURE_DIR)
     .filter((name) => name.endsWith(".json"))
     .sort()
-    .map(
-      (name) =>
-        JSON.parse(
-          readFileSync(new URL(name, FIXTURE_DIR_URL), "utf8"),
-        ) as Fixture,
-    );
+    .map((name) => {
+      const fixture = JSON.parse(
+        readFileSync(new URL(name, FIXTURE_DIR_URL), "utf8"),
+      ) as Fixture;
+      strict(fixture, FIXTURE_KEYS, name);
+      strict(fixture.wire, WIRE_KEYS, `${name}: wire`);
+      for (const testCase of fixture.expect) {
+        const where = `${name}: expect[${JSON.stringify(testCase.name)}]`;
+        strict(testCase, CASE_KEYS, where);
+        strict(testCase.error, ERROR_KEYS, `${where}.error`);
+      }
+      return fixture;
+    });
 }
 
 /**
@@ -118,19 +155,38 @@ function asSdkError(wire: FixtureWire): Error {
   return err;
 }
 
-const fixtures = loadFixtures();
+/**
+ * Why this suite must skip an expectation, or undefined when it must run it.
+ * A fixture with no carriers states no code anywhere: every suite runs it,
+ * because there is nothing to miss and every expectation on it is negative.
+ */
+function skipReason(fixture: Fixture, testCase: FixtureCase): string | undefined {
+  if (
+    fixture.carriers.length > 0 &&
+    !fixture.carriers.some((c) => OBSERVED_CARRIERS.has(c))
+  ) {
+    return `this suite reads none of the fixture's surfaces (${fixture.carriers.join(", ")}): ${WHAT_THIS_SUITE_SEES}`;
+  }
+  if (
+    testCase.matches &&
+    (testCase.via === undefined || !OBSERVED_CARRIERS.has(testCase.via))
+  ) {
+    return `this expectation matches through ${JSON.stringify(testCase.via)}, which this suite does not observe: ${WHAT_THIS_SUITE_SEES}`;
+  }
+  return undefined;
+}
 
 describe("the shared error fixtures", () => {
   it("has fixtures to run", () => {
     assert.ok(
-      fixtures.length > 0,
+      loadFixtures().length > 0,
       `no fixtures in ${FIXTURE_DIR}: the shared conformance set may not be ` +
         "skipped by deleting it",
     );
   });
 
   it("names only carriers the vocabulary declares", () => {
-    for (const fixture of fixtures) {
+    for (const fixture of loadFixtures()) {
       for (const carrier of fixture.carriers) {
         assert.ok(
           KNOWN_CARRIERS.has(carrier),
@@ -141,20 +197,13 @@ describe("the shared error fixtures", () => {
     }
   });
 
-  for (const fixture of fixtures) {
-    const observesFixture = fixture.carriers.some((c) =>
-      OBSERVED_CARRIERS.has(c),
-    );
-    describe(fixture.id, () => {
+  it("agrees with every fixture", async (t) => {
+    let checked = 0;
+    for (const fixture of loadFixtures()) {
       for (const testCase of fixture.expect) {
-        const skip = !observesFixture
-          ? `this suite reads none of the fixture's surfaces (${fixture.carriers.join(", ")}): ${WHAT_THIS_SUITE_SEES}`
-          : testCase.matches &&
-              (testCase.via === undefined ||
-                !OBSERVED_CARRIERS.has(testCase.via))
-            ? `this expectation matches through ${JSON.stringify(testCase.via)}, which this suite does not observe: ${WHAT_THIS_SUITE_SEES}`
-            : undefined;
-        it(testCase.name, { skip }, () => {
+        const skip = skipReason(fixture, testCase);
+        if (skip === undefined) checked++;
+        await t.test(`${fixture.id}: ${testCase.name}`, { skip }, () => {
           const observed = asSdkError(fixture.wire);
           assert.equal(
             errorMatches(observed, testCase.error),
@@ -164,6 +213,11 @@ describe("the shared error fixtures", () => {
           );
         });
       }
-    });
-  }
+    }
+    assert.ok(
+      checked > 0,
+      "every fixture was skipped: this suite is asserting nothing about " +
+        "error matching",
+    );
+  });
 });

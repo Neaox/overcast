@@ -5,7 +5,8 @@
  *
  *   1. an empty context;
  *   2. every setup call — a failure reports every test as `skip` with
- *      `setup failed: <error>`, and teardown still runs;
+ *      `setup failed: <message>`, where `<message>` is the failing step's own
+ *      six-field failure message, and teardown still runs;
  *   3. every test in order (the registry's `depends` gives the loader the
  *      order and the usual dependency skip);
  *   4. every teardown call, each individually wrapped: an error or an

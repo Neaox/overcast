@@ -1,0 +1,26 @@
+{
+  "id": "cli-no-parseable-code",
+  "title": "A CLI failure that states no code at all, in a message that contains one",
+  "why": "The case a containment fallback gets wrong. The `aws` process died before it reached the wire, so there is no banner and no JSON body — but the queue it was called with is named after the test, and the endpoint URL in the message therefore has `QueueDoesNotExist` inside it. Nothing here states an error code, so no clause may be satisfied: a message with no code surface is no evidence the service raised anything, and accepting it would let exactly the near miss this fixture set exists to exclude through on the one input where nothing checked the string's shape. `carriers` is empty, which is the whole point of the fixture, so every suite runs it rather than skipping it.",
+  "carriers": [],
+  "wire": {
+    "stderr": "aws sqs delete-queue: exit status 255: Could not connect to the endpoint URL: \"http://127.0.0.1:4566/000000000000/QueueDoesNotExist-probe\""
+  },
+  "expect": [
+    {
+      "name": "a clause naming a code the message merely contains",
+      "error": { "shape": "QueueDoesNotExist", "code": "AWS.SimpleQueueService.NonExistentQueue" },
+      "matches": false
+    },
+    {
+      "name": "a clause naming the whole substring, both halves alike",
+      "error": { "shape": "QueueDoesNotExist", "code": "QueueDoesNotExist" },
+      "matches": false
+    },
+    {
+      "name": "a clause naming a code nothing in the message resembles",
+      "error": { "shape": "PolicyNotFoundException", "code": "PolicyNotFoundException" },
+      "matches": false
+    }
+  ]
+}

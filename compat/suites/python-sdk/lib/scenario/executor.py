@@ -209,23 +209,32 @@ def error_names(exc: Exception) -> list[str]:
 
     The SDKs disagree about whether they surface the modeled shape name or the
     wire code, so compat/model/README.md § Errors has an interpreter accept
-    either against either, over a fixed list of surfaces. For boto3 those are:
-    the exception class botocore minted (the shape name, when the code matched
-    a modeled error), the parsed ``Error.Code``/``Error.code``/``Error.__type``
-    (which for a JSON protocol comes from the body's ``__type``, and which
-    Overcast fills with SQS's legacy ``AWS.SimpleQueueService.*`` code), the
-    body's own ``__type``, and the ``x-amzn-query-error`` header AWS uses for
-    the same purpose. Each is read in every spelling ``_spellings`` lists.
+    either against either, over a fixed list of surfaces. This reads the three
+    boto3 actually has:
 
-    The shared fixtures under ``compat/model/testdata/errors`` pin the
-    outcomes; ``tests/test_error_fixtures.py`` runs them against this."""
+    * the exception class botocore minted, which is the modeled shape's name
+      whenever ``Error.Code`` matched a modeled error's code;
+    * ``Error.Code`` — one field, wherever the code came from. botocore
+      resolves it from the body's ``__type`` (namespace already stripped), from
+      ``x-amzn-errortype`` or the body's ``code``/``Code`` member for REST JSON,
+      and replaces it with the ``x-amzn-query-error`` code for a
+      query-compatible service. There is no ``Error.__type`` and no top-level
+      ``__type`` to read: botocore never sets either, so looking for them would
+      be reading a key only a test fixture could put there. ``Error.code`` is
+      read because the Errors table names that spelling, but botocore does not
+      use it;
+    * the ``x-amzn-query-error`` header itself, which is on the response
+      whether or not the parser preferred it.
+
+    Each is read in every spelling ``_spellings`` lists. The shared fixtures
+    under ``compat/model/testdata/errors`` pin the outcomes;
+    ``tests/test_error_fixtures.py`` runs them against this."""
     names = [type(exc).__name__]
     response = getattr(exc, "response", None)
     if isinstance(response, dict):
         error = response.get("Error") or {}
-        for key in ("Code", "code", "__type"):
+        for key in ("Code", "code"):
             names.extend(_spellings(error.get(key)))
-        names.extend(_spellings(response.get("__type")))
         headers = (response.get("ResponseMetadata") or {}).get("HTTPHeaders") or {}
         names.extend(_spellings(headers.get("x-amzn-query-error")))
     seen: list[str] = []

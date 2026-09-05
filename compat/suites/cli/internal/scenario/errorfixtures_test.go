@@ -31,7 +31,6 @@ var knownCarriers = map[string]bool{
 	"bodyType":         true,
 	"bodyCode":         true,
 	"queryErrorHeader": true,
-	"errorTypeHeader":  true,
 	"cliBanner":        true,
 }
 
@@ -138,7 +137,15 @@ func TestSharedErrorFixtures(t *testing.T) {
 	}
 }
 
+// observesAny reports whether this suite can see any surface the fixture
+// states the code on. A fixture that states none — `carriers: []` — is
+// observed by everyone: there is nothing to miss, and its expectations are all
+// negative, so a suite that cannot see the wire at all still answers them
+// correctly.
 func observesAny(carriers []string) bool {
+	if len(carriers) == 0 {
+		return true
+	}
 	for _, c := range carriers {
 		if observedCarriers[c] {
 			return true

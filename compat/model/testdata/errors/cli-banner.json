@@ -1,7 +1,7 @@
 {
   "id": "cli-banner",
-  "title": "The AWS CLI's own error banner, on stderr",
-  "why": "The CLI never hands an interpreter an exception object or a response header: what it gets is the process's stderr, and a modeled error is rendered there as `An error occurred (<Code>) when calling the <Op> operation:`. The banner states the code the CLI resolved, which for an awsQueryCompatible service is the modeled shape, so a clause naming only the Query code does not match here either.",
+  "title": "The AWS CLI's own error banner, awsQueryCompatible with the header absent",
+  "why": "The CLI never hands an interpreter an exception object or a response header: what it gets is the process's stderr, and a modeled error is rendered there as `An error occurred (<Code>) when calling the <Op> operation:`. The banner states botocore's resolved `Error.Code`, which is a different string depending on whether x-amzn-query-error was on the response — so the banner is one surface with two readings, not a fixed spelling. Here the header is absent, botocore takes the body's __type, and the banner names the modeled shape, so a clause naming only the Query code does not match. That is Overcast today (#1810, header pending in #1816); cli-banner-query-compatible is the same error once the header is sent.",
   "carriers": ["cliBanner"],
   "wire": {
     "stderr": "aws sqs delete-queue: exit status 254: An error occurred (QueueDoesNotExist) when calling the DeleteQueue operation: The specified queue does not exist."

@@ -227,6 +227,16 @@ SDK's prose. Splitting a surface at `#` and at `;` and nowhere else is what
 keeps that true. An error matching neither accepted value, or a call that
 succeeds, fails the clause.
 
+**A failure that states no code on any surface matches nothing.** There is no
+containment fallback for it, and the absence of one is the rule rather than an
+omission: an SDK error or a CLI stderr with no parseable code is no evidence
+that the service raised the named error, and matching it by containment would
+reinstate the near miss above on exactly the inputs where nothing has checked
+the string's shape. `Could not connect to the endpoint URL:
+"…/000000000000/QueueDoesNotExist-probe"` contains a code and states none. The
+clause fails, and field 5 of its message names the raw text, which is what a
+reader needs to see: the call never got far enough to state a code.
+
 `client.awsQueryCompatible` says whether the header surface can appear at all.
 When it is `true`, AWS also returns the Query code in `x-amzn-query-error` — a
 missing SQS queue answers `AWS.SimpleQueueService.NonExistentQueue;Sender` —
@@ -234,9 +244,31 @@ so an SDK that surfaces the header rather than the JSON `__type` reports the
 code with a fault suffix on it, matching neither accepted value literally
 until the interpreter splits it. When it is `false` there is no such header
 and the JSON `__type`/`code`, or the CLI banner, is the only carrier. Overcast
-does not send the header yet (#1810), so today the same clause matches through
-the body against the emulator and through either surface against AWS — which
-is exactly why an interpreter may not depend on one carrier.
+does not send the header yet (#1810; #1816 adds it), so today the same clause
+matches through the body against the emulator and through the header against
+AWS — which is exactly why an interpreter may not depend on one carrier.
+
+In an SDK that resolves one code per response the header **replaces** the
+body's, rather than sitting beside it, and that is what makes one surface's two
+readings worth stating rather than assuming.
+`botocore.parsers.BaseJSONParser._do_query_compatible_error_parse` overwrites
+the `__type`-derived `Error.Code` with the Query code whenever
+`x-amzn-query-error` is present, so boto3 reports
+`AWS.SimpleQueueService.NonExistentQueue` and the modeled shape is no longer
+readable from the body at all — it survives as the exception class botocore
+mints, and as `Error.QueryErrorCode`. The AWS CLI renders that same
+`Error.Code` in its banner, so one `aws sqs delete-queue` prints two different
+codes for one error:
+
+```text
+An error occurred (QueueDoesNotExist) when calling the DeleteQueue operation
+An error occurred (AWS.SimpleQueueService.NonExistentQueue) when calling the DeleteQueue operation
+```
+
+The first is Overcast today, the second AWS — measured with aws-cli 2.36.18 and
+botocore 1.43.67 against a stub answering the same body with and without the
+header. Neither is a spelling an interpreter may assume, which is why a
+generated clause always carries both.
 
 **The conformance fixtures.** `testdata/errors/` holds one JSON document per
 raw error a suite may observe, and every interpreter runs all of them in its
@@ -246,9 +278,31 @@ a reason**: a silently ignored fixture looks exactly like a passing one.
 
 | Field | What it says |
 | --- | --- |
-| `carriers` | which surfaces of `wire` state the code. The vocabulary is closed — `exceptionName`, `bodyType`, `bodyCode`, `queryErrorHeader`, `errorTypeHeader`, `cliBanner` — and each suite asserts it, so a typo cannot skip quietly in all three at once |
+| `carriers` | which surfaces of `wire` state the code. The vocabulary is closed — `exceptionName`, `bodyType`, `bodyCode`, `queryErrorHeader`, `cliBanner` — and each suite asserts it, so a typo cannot skip quietly in all three at once |
 | `wire` | the raw observation: `status`, `headers`, `body` and the `exceptionName` an SDK would mint, or `stderr` for a CLI failure |
 | `expect[]` | one clause each — a clause naming the shape, one naming the code, one naming a near miss. `error` is the clause's `{shape, code}`, `matches` the outcome, `via` the carrier a matching clause matches through |
+
+Every reader is strict: an unknown key anywhere in a fixture is an error, not
+a field the suite that added it happens to ignore. A carrier stays in the
+vocabulary only while some expectation matches through it. `x-amzn-errortype`
+did not: it sat on `rest-json-code-member`'s wire beside the body member that
+fixture is about, where `RestJSONParser._inject_error_code` would in fact have
+preferred it — so a suite would have matched through the header while the
+fixture claimed the body. The header is off that wire and out of the list.
+
+`via` names the carrier the expectation matches through, and a suite that does
+not observe that carrier skips the expectation rather than asserting it. Where
+one wire would let two suites match through two different carriers, the
+fixture names the one without which the match is unreachable: with
+`x-amzn-query-error` present, the body no longer carries the shape for
+botocore, so both of `sqs-query-compatible-header`'s positive expectations are
+`via` the header, and the cli suite — which cannot see a header — skips them
+and reads the same error from its own banner in `cli-banner-query-compatible`.
+
+A fixture with **no** carriers states no code anywhere, and every suite runs
+it: there is nothing to observe and so nothing to skip, and its expectations
+are necessarily all `matches: false`. `cli-no-parseable-code` is the one, and
+the rule above is what it pins.
 
 ### Exports
 

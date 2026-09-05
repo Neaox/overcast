@@ -1,7 +1,7 @@
 {
   "id": "sqs-query-compatible-header",
   "title": "SQS not-found, awsQueryCompatible, header present",
-  "why": "The awsQueryCompatible case as AWS answers it: the JSON body names the modeled shape and the x-amzn-query-error header carries the legacy Query code with a fault suffix. Nothing but the header states the Query code, so an interpreter that ignores it cannot match a clause that names only that spelling.",
+  "why": "The awsQueryCompatible case as AWS answers it: the JSON body names the modeled shape and the x-amzn-query-error header carries the legacy Query code with a fault suffix. Nothing but the header states the Query code, so an interpreter that ignores it cannot match a clause that names only that spelling. The header also takes the body's place rather than sitting beside it in an SDK that folds one code out of a response: botocore's _do_query_compatible_error_parse overwrites the __type-derived Error.Code with the Query code (verified against botocore 1.43.67), so boto3 reports AWS.SimpleQueueService.NonExistentQueue and QueueDoesNotExist is no longer readable from the body at all. Both expectations that hold here therefore hold through the header, whatever else the wire carries.",
   "carriers": ["bodyType", "queryErrorHeader"],
   "wire": {
     "status": 400,
@@ -18,7 +18,7 @@
       "name": "a clause naming the modeled shape",
       "error": { "shape": "QueueDoesNotExist", "code": "AWS.SimpleQueueService.NonExistentQueue" },
       "matches": true,
-      "via": "bodyType"
+      "via": "queryErrorHeader"
     },
     {
       "name": "a clause naming only the Query code",
