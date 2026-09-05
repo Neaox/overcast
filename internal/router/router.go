@@ -606,7 +606,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// ---- Event notification wiring ----------------------------------------
 	// S3 notifications → SQS + SNS + Lambda + EventBridge: connect after all
 	// services are constructed.
-	s3Svc.InitNotifications(sqsSvc.Enqueuer(), snsSvc.TopicPublisher(), lambdaSvc.Invoker(), ebSvc.BusPublisher(), bus, logger)
+	s3Svc.InitNotifications(sqsSvc.Enqueuer(), snsSvc.TopicPublisher(), lambdaSvc.Invoker(), lambdaSvc, ebSvc.BusPublisher(), bus, logger)
 	// Lambda → CloudWatch Logs: wire log writer so Lambda can write invocation logs.
 	lambdaSvc.InitLogWriter(logsSvc.LogWriter())
 	// Lambda bus: lifecycle events for topology / UI.
@@ -650,7 +650,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// SNS → SQS: wire enqueuer for Publish fan-out (and subscription DLQs).
 	snsSvc.InitSQSDelivery(sqsSvc.Enqueuer())
 	// SNS → Lambda: wire the invoker for lambda-protocol subscriptions.
-	snsSvc.InitLambdaDelivery(lambdaSvc.Invoker())
+	snsSvc.InitLambdaDelivery(lambdaSvc.Invoker(), lambdaSvc)
 	// SNS/SES → email: wire SMTP mailer. The mock capture server (if enabled) is
 	// started as a background goroutine; its lifecycle is tied to the process.
 	mailStore := smtp.NewMailStore(cfg.SMTPInboxMax)
@@ -782,6 +782,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	ec2Svc.InitBus(bus)
 	// EventBridge: wire bus for bus/rule lifecycle events.
 	ebSvc.InitBus(bus)
+	ebSvc.InitLambdaAuthorizer(lambdaSvc)
 	ebSvc.InitRouter(r)
 	// EC2 and ECS: wire the EventBridge bus publisher so instance/task state
 	// transitions emit the same service-originated events real AWS does
@@ -831,7 +832,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// API Gateway: wire bus + Lambda invoker for proxy execution.
 	apigwSvc.InitBus(bus)
 	apigwSvc.InitDomainRegistry(domainReg)
-	apigwSvc.InitLambdaInvoker(lambdaSvc.SyncInvoker())
+	apigwSvc.InitLambdaInvoker(lambdaSvc.SyncInvoker(), lambdaSvc)
 	// Lambda ← API GW / AppSync: proactive-init trigger evidence — these
 	// services can attest a function is wired to receive traffic. Queried
 	// only when a function's configuration settles after a deploy.

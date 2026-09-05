@@ -1031,6 +1031,17 @@ func (h *Handler) deliverToLambda(ctx context.Context, d delivery, msgAttrs map[
 		h.failDelivery(ctx, d, "subscription has no function ARN")
 		return
 	}
+	// AWS checks the function's resource-based policy at delivery time, not at
+	// Subscribe: a subscription whose function stops granting
+	// sns.amazonaws.com is a client-side error SNS does not retry, so the
+	// message is discarded unless the subscription has a dead-letter queue.
+	// https://docs.aws.amazon.com/sns/latest/dg/sns-dead-letter-queues.html
+	if h.lambdaAuth != nil {
+		if aerr := h.lambdaAuth.AuthorizeServiceInvoke(ctx, d.sub.Endpoint, snsServicePrincipal, d.sub.TopicARN, h.cfg.AccountID); aerr != nil {
+			h.failDelivery(ctx, d, "the function's resource policy does not allow sns.amazonaws.com to invoke it")
+			return
+		}
+	}
 	payload, err := buildLambdaEvent(d.envelope, d.sub.SubscriptionARN, msgAttrs)
 	if err != nil {
 		h.failDelivery(ctx, d, "building the Lambda event failed: "+err.Error())
@@ -1059,6 +1070,13 @@ func (h *Handler) deliverToLambda(ctx context.Context, d delivery, msgAttrs map[
 	}
 	h.recordNotificationDelivered(ctx, d.topicName)
 }
+
+// snsServicePrincipal is the principal an SNS subscription delivery invokes a
+// Lambda function as, and the value `add-permission --principal` is given for
+// one.
+//
+// https://docs.aws.amazon.com/lambda/latest/dg/with-sns.html
+const snsServicePrincipal = "sns.amazonaws.com"
 
 // failDelivery records a notification that did not reach its subscriber. It
 // logs the failure, redirects the message to the subscription's dead-letter
@@ -1166,8 +1184,9 @@ func (h *Handler) setEnqueuer(eq events.MessageEnqueuer) {
 }
 
 // setLambdaInvoker injects the Lambda invoker for SNS→Lambda delivery.
-func (h *Handler) setLambdaInvoker(inv events.FunctionEventInvoker) {
+func (h *Handler) setLambdaInvoker(inv events.FunctionEventInvoker, auth events.FunctionInvokeAuthorizer) {
 	h.invoker = inv
+	h.lambdaAuth = auth
 }
 
 // setMailer injects the SMTP mailer for SNS→email delivery.

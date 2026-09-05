@@ -10,6 +10,7 @@ package s3
 import (
 	"encoding/xml"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -120,12 +121,27 @@ func (h *Handler) PutBucketNotificationConfiguration(w http.ResponseWriter, r *h
 	bucketRegion := middleware.RegionFromContext(r.Context(), h.cfg.Region)
 	for _, lc := range in.LambdaConfigurations {
 		if fnRegion := serviceutil.ARNRegion(lc.Function); fnRegion != "" && fnRegion != bucketRegion {
-			protocol.WriteXMLError(w, r, &protocol.AWSError{
-				Code:       "InvalidArgument",
-				Message:    "Unable to validate the following destination configurations: Lambda function ARN must be in the same region as the S3 bucket.",
-				HTTPStatus: http.StatusBadRequest,
-			})
+			protocol.WriteXMLError(w, r, destinationValidationFailed(
+				"Lambda function ARN must be in the same region as the S3 bucket."))
 			return
+		}
+	}
+
+	// "In the case of AWS Lambda destinations, Amazon S3 verifies that the
+	// Lambda function permissions grant Amazon S3 permission to invoke the
+	// function from the Amazon S3 bucket." The PUT is atomic, so one
+	// unverifiable destination refuses the whole configuration.
+	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketNotificationConfiguration.html
+	if h.lambdaAuth != nil && !skipDestinationValidation(r) {
+		bucketARN := protocol.ARN("", "", "s3", bucket)
+		for _, lc := range in.LambdaConfigurations {
+			if aerr := h.lambdaAuth.AuthorizeServiceInvoke(
+				r.Context(), lc.Function, s3ServicePrincipal, bucketARN, h.cfg.AccountID,
+			); aerr != nil {
+				protocol.WriteXMLError(w, r, destinationValidationFailed(
+					"Not authorized to invoke function ["+lc.Function+"]"))
+				return
+			}
 		}
 	}
 
@@ -144,6 +160,24 @@ func (h *Handler) PutBucketNotificationConfiguration(w http.ResponseWriter, r *h
 		})
 	}
 	protocol.WriteEmpty(w, r, http.StatusOK)
+}
+
+// destinationValidationFailed is what S3 answers when it cannot verify a
+// notification destination. The configuration is not stored — the PUT
+// notification is an atomic operation, so if one destination fails the entire
+// PUT fails and S3 adds nothing to the bucket.
+func destinationValidationFailed(detail string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidArgument",
+		Message:    "Unable to validate the following destination configurations: " + detail,
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+// skipDestinationValidation reports whether the caller asked S3 to store the
+// configuration without checking that its destinations are reachable.
+func skipDestinationValidation(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("x-amz-skip-destination-validation"), "true")
 }
 
 // ---- Conversion helpers ----------------------------------------------------

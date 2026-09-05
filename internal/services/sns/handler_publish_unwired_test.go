@@ -270,7 +270,7 @@ func TestFanOut_wiredProtocolsNeverWarnUnwired(t *testing.T) {
 
 	eq := newFakeEnqueuer()
 	svc.InitSQSDelivery(eq)
-	svc.InitLambdaDelivery(&fakeInvoker{})
+	svc.InitLambdaDelivery(&fakeInvoker{}, nil)
 	svc.InitEmailDelivery(fakeMailer{})
 	mailStore := smtp.NewMailStore(10)
 	svc.InitSMSDelivery(smtp.NewMockSMSSender(mailStore))

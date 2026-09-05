@@ -108,11 +108,15 @@ func (s *Service) Stop(ctx context.Context) {
 // services so the router can pass their narrow sink interfaces without
 // creating an import cycle between services.
 //
-// topics is nil only in tests that wire notifications without SNS, invoker
-// only in tests that wire them without Lambda, and eventBus only in tests
+// topics is nil only in tests that wire notifications without SNS, invoker and
+// auth only in tests that wire them without Lambda, and eventBus only in tests
 // that wire them without EventBridge.
-func (s *Service) InitNotifications(enqueuer events.MessageEnqueuer, topics events.TopicPublisher, invoker events.FunctionInvoker, eventBus events.BusPublisher, bus *events.Bus, logger *zap.Logger) {
-	NewNotificationDispatcher(s.handler.store, enqueuer, topics, invoker, eventBus, bus, logger, s.cfg.Region)
+func (s *Service) InitNotifications(enqueuer events.MessageEnqueuer, topics events.TopicPublisher, invoker events.FunctionInvoker, auth events.FunctionInvokeAuthorizer, eventBus events.BusPublisher, bus *events.Bus, logger *zap.Logger) {
+	// PutBucketNotificationConfiguration validates a Lambda destination before
+	// it is stored, so the handler needs the same authorizer the dispatcher
+	// consults at delivery time.
+	s.handler.lambdaAuth = auth
+	NewNotificationDispatcher(s.handler.store, enqueuer, topics, invoker, auth, eventBus, bus, logger, s.cfg.Region, s.cfg.AccountID)
 }
 
 // GetObjectBytes returns the full body of an S3 object for internal callers

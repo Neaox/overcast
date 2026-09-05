@@ -87,9 +87,13 @@ func (s *Service) InitBus(bus *events.Bus) {
 	s.handler.bus = bus
 }
 
-// InitLambdaInvoker wires the synchronous Lambda invoker for request execution.
-func (s *Service) InitLambdaInvoker(invoker events.FunctionSyncInvoker) {
+// InitLambdaInvoker wires the synchronous Lambda invoker for request execution,
+// and the same service's resource-policy authorizer: with
+// OVERCAST_ENFORCE_LAMBDA_RESOURCE_POLICY set, an integration whose function
+// does not grant apigateway.amazonaws.com answers 500 instead of invoking.
+func (s *Service) InitLambdaInvoker(invoker events.FunctionSyncInvoker, auth events.FunctionInvokeAuthorizer) {
 	s.handler.invoker = invoker
+	s.handler.lambdaAuth = auth
 }
 
 // InitCognitoValidator wires the Cognito JWT validator for authorizer enforcement.

@@ -59,6 +59,9 @@ type Service struct {
 	// targets dispatches to the sinks a rule's targets name. Built once from
 	// the root router in InitRouter; nil until then.
 	targets *eventtarget.Dispatcher
+	// lambdaAuth answers whether events.amazonaws.com may invoke a Lambda
+	// target. nil when the server was wired without Lambda.
+	lambdaAuth events.FunctionInvokeAuthorizer
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -88,6 +91,14 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 func (s *Service) InitRouter(router http.Handler) {
 	s.targets = eventtarget.NewDispatcher(router, s.cfg.Region)
 	s.startEngine()
+}
+
+// InitLambdaAuthorizer wires Lambda's resource-policy authorizer. With
+// OVERCAST_ENFORCE_LAMBDA_RESOURCE_POLICY set, a Lambda target whose function
+// does not grant events.amazonaws.com fails delivery — retried, then
+// dead-lettered or dropped — instead of invoking.
+func (s *Service) InitLambdaAuthorizer(auth events.FunctionInvokeAuthorizer) {
+	s.lambdaAuth = auth
 }
 
 // dispatcher returns the target dispatcher, or nil before InitRouter has run.

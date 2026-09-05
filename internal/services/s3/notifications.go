@@ -27,6 +27,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // NotificationDispatcher reads per-bucket notification configs and routes
@@ -36,9 +37,15 @@ type NotificationDispatcher struct {
 	enqueuer events.MessageEnqueuer
 	topics   events.TopicPublisher  // nil only when wired without SNS (tests)
 	invoker  events.FunctionInvoker // nil only when wired without Lambda (tests)
-	bus      events.BusPublisher    // nil only when wired without EventBridge (tests)
-	logger   *zap.Logger
-	region   string
+	// auth answers whether the bucket's own service principal may invoke a
+	// Lambda destination. nil only when wired without Lambda (tests).
+	auth   events.FunctionInvokeAuthorizer
+	bus    events.BusPublisher // nil only when wired without EventBridge (tests)
+	logger *zap.Logger
+	region string
+	// accountID owns every bucket here, and is the aws:SourceAccount value a
+	// Lambda destination's resource policy may be conditioned on.
+	accountID string
 }
 
 // NewNotificationDispatcher creates a dispatcher and subscribes it to the
@@ -55,19 +62,23 @@ func NewNotificationDispatcher(
 	enqueuer events.MessageEnqueuer,
 	topics events.TopicPublisher,
 	invoker events.FunctionInvoker,
+	auth events.FunctionInvokeAuthorizer,
 	eventBus events.BusPublisher,
 	bus *events.Bus,
 	logger *zap.Logger,
 	region string,
+	accountID string,
 ) (d *NotificationDispatcher, cancel func()) {
 	d = &NotificationDispatcher{
-		store:    store,
-		enqueuer: enqueuer,
-		topics:   topics,
-		invoker:  invoker,
-		bus:      eventBus,
-		logger:   logger,
-		region:   region,
+		store:     store,
+		enqueuer:  enqueuer,
+		topics:    topics,
+		invoker:   invoker,
+		auth:      auth,
+		bus:       eventBus,
+		logger:    logger,
+		region:    region,
+		accountID: accountID,
 	}
 
 	c1 := bus.Subscribe(events.S3ObjectCreated, d.handle)
@@ -167,6 +178,19 @@ func (d *NotificationDispatcher) handle(ctx context.Context, e events.Event) {
 				continue
 			}
 
+			// Real S3 checks the function's resource-based policy when the
+			// configuration is put, but a permission removed afterwards makes
+			// delivery fail silently rather than un-configuring the bucket.
+			// Overcast does the same: log it and move on.
+			if aerr := d.authorizeLambda(ctx, lc.ARN, p.Bucket); aerr != nil {
+				d.logger.Warn("s3: notification delivery to Lambda refused by the function's resource policy",
+					zap.String("function", lc.ARN),
+					zap.String("bucket", p.Bucket),
+					zap.String("reason", aerr.Message),
+				)
+				continue
+			}
+
 			body := buildNotificationJSON(p, e.Time, lc.ID, d.region)
 			if err := d.invoker.InvokeAsync(ctx, lc.ARN, []byte(body)); err != nil {
 				d.logger.Warn("s3: notification delivery to Lambda failed",
@@ -177,6 +201,23 @@ func (d *NotificationDispatcher) handle(ctx context.Context, e events.Event) {
 		}
 	}
 }
+
+// authorizeLambda asks Lambda whether s3.amazonaws.com may invoke this
+// destination, supplying the two condition-key values AWS documents an S3
+// notification as contributing: the bucket ARN and the bucket's owning account.
+//
+// https://docs.aws.amazon.com/lambda/latest/dg/with-s3-tutorial.html
+func (d *NotificationDispatcher) authorizeLambda(ctx context.Context, functionARN, bucket string) *protocol.AWSError {
+	if d.auth == nil {
+		return nil
+	}
+	return d.auth.AuthorizeServiceInvoke(ctx, functionARN, s3ServicePrincipal, protocol.ARN("", "", "s3", bucket), d.accountID)
+}
+
+// s3ServicePrincipal is the principal an S3 bucket notification invokes a
+// Lambda function as, and the value `add-permission --principal` is given for
+// one.
+const s3ServicePrincipal = "s3.amazonaws.com"
 
 // snsNotificationSubject is the Subject real S3 sets on every notification it
 // publishes to an SNS topic.
