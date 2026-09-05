@@ -31,6 +31,10 @@ import (
 // can validate it with no network and no model checkout.
 //
 // One pruner, one digest, two consumers: do not build a second distillation.
+//
+// The emitted document's vocabulary — awsmodel.Snapshot, awsmodel.SnapshotShape
+// and awsmodel.SnapshotMember — is declared in internal/awsmodel/snapshot.go,
+// where the consumer side can import the same types instead of restating them.
 
 // shapeTraitAllowlist names every Smithy trait the snapshot keeps. Everything
 // else — documentation, examples, waiters, smoke tests, endpoint rule sets — is
@@ -138,55 +142,6 @@ type rawModel struct {
 	Shapes map[string]rawShape `json:"shapes"`
 }
 
-// prunedShape is the emitted form. Field order is declaration order, which
-// encoding/json preserves, so the output is byte-stable; maps are emitted with
-// sorted keys by encoding/json itself.
-//
-// Shape references are namespace-relative: every reference into the service's
-// own namespace loses the `com.amazonaws.<svc>#` prefix, which is recorded once
-// in the document header. References into another namespace stay fully
-// qualified, so a relative name is unambiguous (it never contains '#').
-type prunedShape struct {
-	Type                 string                     `json:"type"`
-	Version              string                     `json:"version,omitempty"`
-	Input                string                     `json:"input,omitempty"`
-	Output               string                     `json:"output,omitempty"`
-	Errors               []string                   `json:"errors,omitempty"`
-	Member               string                     `json:"member,omitempty"`
-	Key                  string                     `json:"key,omitempty"`
-	Value                string                     `json:"value,omitempty"`
-	Identifiers          map[string]string          `json:"identifiers,omitempty"`
-	Properties           map[string]string          `json:"properties,omitempty"`
-	Create               string                     `json:"create,omitempty"`
-	Put                  string                     `json:"put,omitempty"`
-	Read                 string                     `json:"read,omitempty"`
-	Update               string                     `json:"update,omitempty"`
-	Delete               string                     `json:"delete,omitempty"`
-	List                 string                     `json:"list,omitempty"`
-	Operations           []string                   `json:"operations,omitempty"`
-	CollectionOperations []string                   `json:"collectionOperations,omitempty"`
-	Resources            []string                   `json:"resources,omitempty"`
-	Members              map[string]prunedMember    `json:"members,omitempty"`
-	Traits               map[string]json.RawMessage `json:"traits,omitempty"`
-}
-
-type prunedMember struct {
-	Target string                     `json:"target"`
-	Traits map[string]json.RawMessage `json:"traits,omitempty"`
-}
-
-// shapeSnapshot is one service's pruned document, before rendering.
-type shapeSnapshot struct {
-	Service      string
-	Smithy       string
-	Namespace    string
-	ServiceShape string
-	SDKID        string
-	APIVersion   string
-	Protocols    []string
-	Shapes       map[string]prunedShape
-}
-
 // readShapeServices parses the reviewed in-scope service list: one canonical
 // service key per line, '#' comments and blank lines ignored. Reviewed data,
 // not a heuristic — a service enters the snapshot because someone put it here.
@@ -263,7 +218,7 @@ func buildShapeSnapshots(modelsDir string, services []string) (map[string][]byte
 }
 
 // pruneModel returns a snapshot for each in-scope service the file defines.
-func pruneModel(path string, wanted map[string]struct{}) ([]shapeSnapshot, error) {
+func pruneModel(path string, wanted map[string]struct{}) ([]awsmodel.Snapshot, error) {
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
@@ -279,7 +234,7 @@ func pruneModel(path string, wanted map[string]struct{}) ([]shapeSnapshot, error
 		}
 	}
 	sort.Strings(serviceIDs)
-	var snapshots []shapeSnapshot
+	var snapshots []awsmodel.Snapshot
 	for _, shapeID := range serviceIDs {
 		svc := parsed.Shapes[shapeID]
 		rawTrait, ok := svc.Traits["aws.api#service"]
@@ -304,9 +259,9 @@ func pruneModel(path string, wanted map[string]struct{}) ([]shapeSnapshot, error
 }
 
 // pruneService walks everything reachable from the service shape.
-func pruneService(parsed rawModel, serviceID, service, sdkID string) (shapeSnapshot, error) {
+func pruneService(parsed rawModel, serviceID, service, sdkID string) (awsmodel.Snapshot, error) {
 	namespace := serviceID[:strings.LastIndex(serviceID, "#")]
-	snapshot := shapeSnapshot{
+	snapshot := awsmodel.Snapshot{
 		Service:      service,
 		Smithy:       parsed.Smithy,
 		Namespace:    namespace,
@@ -314,7 +269,7 @@ func pruneService(parsed rawModel, serviceID, service, sdkID string) (shapeSnaps
 		SDKID:        sdkID,
 		APIVersion:   parsed.Shapes[serviceID].Version,
 		Protocols:    awsmodel.ModelProtocols(parsed.Shapes[serviceID].Traits),
-		Shapes:       make(map[string]prunedShape),
+		Shapes:       make(map[string]awsmodel.SnapshotShape),
 	}
 	relative := func(id string) string {
 		if after, ok := strings.CutPrefix(id, namespace+"#"); ok {
@@ -379,7 +334,7 @@ func pruneService(parsed rawModel, serviceID, service, sdkID string) (shapeSnaps
 		}
 		visited[id] = struct{}{}
 
-		out := prunedShape{Type: raw.Type, Version: raw.Version}
+		out := awsmodel.SnapshotShape{Type: raw.Type, Version: raw.Version}
 		var err error
 		for _, link := range []struct {
 			ref  *awsmodel.Reference
@@ -412,7 +367,7 @@ func pruneService(parsed rawModel, serviceID, service, sdkID string) (shapeSnaps
 			return err
 		}
 		if len(raw.Members) > 0 {
-			out.Members = make(map[string]prunedMember, len(raw.Members))
+			out.Members = make(map[string]awsmodel.SnapshotMember, len(raw.Members))
 			for name, member := range raw.Members {
 				if err := visit(member.Target); err != nil {
 					return err
@@ -421,7 +376,7 @@ func pruneService(parsed rawModel, serviceID, service, sdkID string) (shapeSnaps
 				if err != nil {
 					return fmt.Errorf("member %s of %s: %w", name, id, err)
 				}
-				out.Members[name] = prunedMember{Target: relative(member.Target), Traits: traits}
+				out.Members[name] = awsmodel.SnapshotMember{Target: relative(member.Target), Traits: traits}
 			}
 		}
 		if out.Traits, err = filterTraits(raw.Traits); err != nil {
@@ -431,7 +386,7 @@ func pruneService(parsed rawModel, serviceID, service, sdkID string) (shapeSnaps
 		return nil
 	}
 	if err := visit(serviceID); err != nil {
-		return shapeSnapshot{}, err
+		return awsmodel.Snapshot{}, err
 	}
 	return snapshot, nil
 }
@@ -493,7 +448,7 @@ func encodeJSON(value any) ([]byte, error) {
 // make a model refresh an unreviewable single-line diff; indenting the whole
 // document costs about 40% more bytes for a file no human edits. Line-per-shape
 // costs one byte per shape and makes the diff read as "these shapes changed".
-func renderShapeSnapshot(snapshot shapeSnapshot) ([]byte, error) {
+func renderShapeSnapshot(snapshot awsmodel.Snapshot) ([]byte, error) {
 	var out bytes.Buffer
 	out.WriteString("{\n")
 	for _, field := range []struct {

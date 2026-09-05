@@ -83,7 +83,11 @@ Shapes keep the Smithy AST vocabulary — `type`, `members`, `member`/`key`/`val
 `input`/`output`/`errors`, and the full resource lifecycle (`identifiers`,
 `properties`, `create`, `put`, `read`, `update`, `delete`, `list`, `operations`,
 `collectionOperations`, `resources`) — so a consumer decodes it with the same
-structs it would use for the raw AST. Two differences from upstream:
+structs it would use for the raw AST. Those structs are
+[`internal/awsmodel/snapshot.go`](../../internal/awsmodel/snapshot.go):
+`Snapshot`, `SnapshotShape` and `SnapshotMember` are declared once and imported
+by both the pruner and `cmd/compatgen`, so the writer's field set and the
+reader's cannot drift. Two differences from upstream:
 
 - **Namespace-relative IDs.** A reference into the service's own namespace loses
   its `com.amazonaws.<svc>#` prefix, which the header records once. References

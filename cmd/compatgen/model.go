@@ -10,65 +10,26 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+
+	"github.com/overcast-sh/overcast/internal/awsmodel"
 )
 
 // The pruned shape snapshot, read back.
 //
 // cmd/awsmodelgen writes models/aws/shapes/<service>.json (see its README for
-// the layout); this file is the consumer side. It decodes the snapshot with the
-// same vocabulary the raw Smithy AST uses, then answers the questions the
-// generator asks of a model: which operations exist, which input members are
-// required and of what kind, what a response path resolves to, what an error
-// shape's wire code is, and what constraints a literal must satisfy.
+// the layout); this file is the consumer side. It decodes the snapshot into
+// awsmodel.Snapshot — the pruner's own declaration, so writer and reader cannot
+// drift — and then answers the questions the generator asks of a model: which
+// operations exist, which input members are required and of what kind, what a
+// response path resolves to, what an error shape's wire code is, and what
+// constraints a literal must satisfy.
 //
 // Nothing here reads the raw corpus. A service the snapshot does not cover is
 // refused with the instruction to widen models/aws/shapes-services.txt.
 
-// shapeSnapshot is one service's snapshot document.
-type shapeSnapshot struct {
-	Smithy       string                `json:"smithy"`
-	Service      string                `json:"service"`
-	Namespace    string                `json:"namespace"`
-	ServiceShape string                `json:"serviceShape"`
-	SDKID        string                `json:"sdkId"`
-	APIVersion   string                `json:"apiVersion"`
-	Protocols    []string              `json:"protocols"`
-	Shapes       map[string]modelShape `json:"shapes"`
-}
-
-// modelShape mirrors cmd/awsmodelgen's prunedShape.
-type modelShape struct {
-	Type                 string                     `json:"type"`
-	Version              string                     `json:"version,omitempty"`
-	Input                string                     `json:"input,omitempty"`
-	Output               string                     `json:"output,omitempty"`
-	Errors               []string                   `json:"errors,omitempty"`
-	Member               string                     `json:"member,omitempty"`
-	Key                  string                     `json:"key,omitempty"`
-	Value                string                     `json:"value,omitempty"`
-	Identifiers          map[string]string          `json:"identifiers,omitempty"`
-	Properties           map[string]string          `json:"properties,omitempty"`
-	Create               string                     `json:"create,omitempty"`
-	Put                  string                     `json:"put,omitempty"`
-	Read                 string                     `json:"read,omitempty"`
-	Update               string                     `json:"update,omitempty"`
-	Delete               string                     `json:"delete,omitempty"`
-	List                 string                     `json:"list,omitempty"`
-	Operations           []string                   `json:"operations,omitempty"`
-	CollectionOperations []string                   `json:"collectionOperations,omitempty"`
-	Resources            []string                   `json:"resources,omitempty"`
-	Members              map[string]modelMember     `json:"members,omitempty"`
-	Traits               map[string]json.RawMessage `json:"traits,omitempty"`
-}
-
-type modelMember struct {
-	Target string                     `json:"target"`
-	Traits map[string]json.RawMessage `json:"traits,omitempty"`
-}
-
 // serviceModel is the snapshot plus the derived facts the generator needs.
 type serviceModel struct {
-	shapeSnapshot
+	awsmodel.Snapshot
 	// EndpointPrefix and SigningName come from the service shape's traits; the
 	// interpreters need them to build a client without a table of their own.
 	EndpointPrefix string
@@ -113,14 +74,14 @@ func loadModel(shapesDir, modelService string) (*serviceModel, error) {
 		}
 		return nil, fmt.Errorf("read shape snapshot %s: %w", path, err)
 	}
-	var snapshot shapeSnapshot
+	var snapshot awsmodel.Snapshot
 	if err := json.Unmarshal(contents, &snapshot); err != nil {
 		return nil, fmt.Errorf("parse shape snapshot %s: %w", path, err)
 	}
 	if snapshot.Service != modelService {
 		return nil, fmt.Errorf("shape snapshot %s declares service %q", path, snapshot.Service)
 	}
-	model := &serviceModel{shapeSnapshot: snapshot}
+	model := &serviceModel{Snapshot: snapshot}
 	service, ok := snapshot.Shapes[snapshot.ServiceShape]
 	if !ok || service.Type != "service" {
 		return nil, fmt.Errorf("shape snapshot %s has no service shape %q", path, snapshot.ServiceShape)
@@ -136,7 +97,7 @@ func loadModel(shapesDir, modelService string) (*serviceModel, error) {
 	return model, nil
 }
 
-func (m *serviceModel) readServiceTraits(service modelShape) error {
+func (m *serviceModel) readServiceTraits(service awsmodel.SnapshotShape) error {
 	var trait struct {
 		EndpointPrefix string `json:"endpointPrefix"`
 	}
