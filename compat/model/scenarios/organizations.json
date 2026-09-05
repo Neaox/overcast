@@ -1,0 +1,840 @@
+{
+  "version": 1,
+  "service": "organizations",
+  "client": {
+    "sdkId": "Organizations",
+    "endpointPrefix": "organizations",
+    "signingName": "organizations",
+    "protocol": "awsJson1_1",
+    "apiVersion": "2016-11-28",
+    "targetPrefix": "AWSOrganizationsV20161128"
+  },
+  "groups": [
+    {
+      "name": "organizations-gen-policy",
+      "kind": "lifecycle",
+      "setup": [],
+      "tests": [
+        {
+          "name": "CreatePolicy",
+          "op": "CreatePolicy",
+          "call": {
+            "op": "CreatePolicy",
+            "params": {
+              "Content": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}]}",
+              "Description": "compat scenario policy",
+              "Name": {
+                "$name": "policy"
+              },
+              "Type": "SERVICE_CONTROL_POLICY"
+            },
+            "export": {
+              "policy.arn": "$.Policy.PolicySummary.Arn",
+              "policy.id": "$.Policy.PolicySummary.Id"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Policy.PolicySummary.Arn": {
+                  "matches": "^(arn:aws:organizations::\\d{12}:policy\\/o-[a-z0-9]{10,32}\\/[0-9a-z_]+\\/p-[0-9a-z]{10,32})|(arn:aws:organizations::aws:policy\\/[0-9a-z_]+\\/p-[0-9a-zA-Z_]{10,128})$"
+                },
+                "$.Policy.PolicySummary.Id": {
+                  "matches": "^p-[0-9a-zA-Z_]{8,128}$"
+                }
+              }
+            },
+            {
+              "kind": "readback",
+              "call": {
+                "op": "DescribePolicy",
+                "params": {
+                  "PolicyId": {
+                    "$ref": "policy.id"
+                  }
+                }
+              },
+              "checks": {
+                "$.Policy.PolicySummary.Description": {
+                  "equals": "compat scenario policy"
+                },
+                "$.Policy.PolicySummary.Id": {
+                  "equals": {
+                    "$ref": "policy.id"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "listContains",
+              "call": {
+                "op": "ListPolicies",
+                "params": {
+                  "Filter": "SERVICE_CONTROL_POLICY"
+                }
+              },
+              "itemsPath": "$.Policies",
+              "where": {
+                "$.Id": {
+                  "$ref": "policy.id"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribePolicy",
+          "op": "DescribePolicy",
+          "call": {
+            "op": "DescribePolicy",
+            "params": {
+              "PolicyId": {
+                "$ref": "policy.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Policy.PolicySummary.Id": {
+                  "equals": {
+                    "$ref": "policy.id"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreatePolicy"
+          ]
+        },
+        {
+          "name": "UpdatePolicy",
+          "op": "UpdatePolicy",
+          "call": {
+            "op": "UpdatePolicy",
+            "params": {
+              "Description": "compat scenario policy, updated",
+              "PolicyId": {
+                "$ref": "policy.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "DescribePolicy",
+                "params": {
+                  "PolicyId": {
+                    "$ref": "policy.id"
+                  }
+                }
+              },
+              "checks": {
+                "$.Policy.PolicySummary.Description": {
+                  "equals": "compat scenario policy, updated"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreatePolicy"
+          ]
+        },
+        {
+          "name": "TagResource",
+          "op": "TagResource",
+          "call": {
+            "op": "TagResource",
+            "params": {
+              "ResourceId": {
+                "$ref": "policy.id"
+              },
+              "Tags": [
+                {
+                  "Key": "compat",
+                  "Value": "scenario"
+                }
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "call": {
+                "op": "ListTagsForResource",
+                "params": {
+                  "ResourceId": {
+                    "$ref": "policy.id"
+                  }
+                }
+              },
+              "itemsPath": "$.Tags",
+              "where": {
+                "$.Key": "compat",
+                "$.Value": "scenario"
+              }
+            }
+          ],
+          "depends": [
+            "CreatePolicy"
+          ]
+        },
+        {
+          "name": "ListTagsForResource",
+          "op": "ListTagsForResource",
+          "call": {
+            "op": "ListTagsForResource",
+            "params": {
+              "ResourceId": {
+                "$ref": "policy.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.Tags",
+              "where": {
+                "$.Key": "compat",
+                "$.Value": "scenario"
+              }
+            }
+          ],
+          "depends": [
+            "CreatePolicy"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "op": "UntagResource",
+          "call": {
+            "op": "UntagResource",
+            "params": {
+              "ResourceId": {
+                "$ref": "policy.id"
+              },
+              "TagKeys": [
+                "compat"
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "absent",
+              "call": {
+                "op": "ListTagsForResource",
+                "params": {
+                  "ResourceId": {
+                    "$ref": "policy.id"
+                  }
+                }
+              },
+              "itemsPath": "$.Tags",
+              "where": {
+                "$.Key": "compat"
+              }
+            }
+          ],
+          "depends": [
+            "CreatePolicy"
+          ]
+        },
+        {
+          "name": "ListPolicies",
+          "op": "ListPolicies",
+          "call": {
+            "op": "ListPolicies",
+            "params": {
+              "Filter": "SERVICE_CONTROL_POLICY"
+            }
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.Policies",
+              "where": {
+                "$.Id": {
+                  "$ref": "policy.id"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreatePolicy"
+          ]
+        },
+        {
+          "name": "DeletePolicy",
+          "op": "DeletePolicy",
+          "call": {
+            "op": "DeletePolicy",
+            "params": {
+              "PolicyId": {
+                "$ref": "policy.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "absent",
+              "call": {
+                "op": "DescribePolicy",
+                "params": {
+                  "PolicyId": {
+                    "$ref": "policy.id"
+                  }
+                }
+              },
+              "error": {
+                "shape": "PolicyNotFoundException",
+                "code": "PolicyNotFoundException"
+              }
+            }
+          ],
+          "depends": [
+            "CreatePolicy"
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeletePolicy",
+          "params": {
+            "PolicyId": {
+              "$ref": "policy.id"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "organizations-gen-organization",
+      "kind": "lifecycle",
+      "setup": [],
+      "tests": [
+        {
+          "name": "DescribeOrganization",
+          "op": "DescribeOrganization",
+          "call": {
+            "op": "DescribeOrganization",
+            "params": {},
+            "export": {
+              "organization.arn": "$.Organization.Arn",
+              "organization.id": "$.Organization.Id"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Organization.Arn": {
+                  "matches": "^arn:aws:organizations::\\d{12}:organization\\/o-[a-z0-9]{10,32}$"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "teardown": []
+    },
+    {
+      "name": "organizations-gen-probe",
+      "kind": "probe",
+      "setup": [],
+      "tests": [
+        {
+          "name": "DescribeAccount",
+          "op": "DescribeAccount",
+          "call": {
+            "op": "DescribeAccount",
+            "params": {
+              "AccountId": "123456789012"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Account": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeCreateAccountStatus",
+          "op": "DescribeCreateAccountStatus",
+          "call": {
+            "op": "DescribeCreateAccountStatus",
+            "params": {
+              "CreateAccountRequestId": "car-abcdefgh12345678"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.CreateAccountStatus": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeEffectivePolicy",
+          "op": "DescribeEffectivePolicy",
+          "call": {
+            "op": "DescribeEffectivePolicy",
+            "params": {
+              "PolicyType": "AISERVICES_OPT_OUT_POLICY"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.EffectivePolicy": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeHandshake",
+          "op": "DescribeHandshake",
+          "call": {
+            "op": "DescribeHandshake",
+            "params": {
+              "HandshakeId": "h-abcdefgh12345678"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Handshake": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeOrganizationalUnit",
+          "op": "DescribeOrganizationalUnit",
+          "call": {
+            "op": "DescribeOrganizationalUnit",
+            "params": {
+              "OrganizationalUnitId": "ou-abcd-12345678"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.OrganizationalUnit": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeResourcePolicy",
+          "op": "DescribeResourcePolicy",
+          "call": {
+            "op": "DescribeResourcePolicy",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.ResourcePolicy": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeResponsibilityTransfer",
+          "op": "DescribeResponsibilityTransfer",
+          "call": {
+            "op": "DescribeResponsibilityTransfer",
+            "params": {
+              "Id": "rt-abcdefgh12345678"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.ResponsibilityTransfer": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListAWSServiceAccessForOrganization",
+          "op": "ListAWSServiceAccessForOrganization",
+          "call": {
+            "op": "ListAWSServiceAccessForOrganization",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.EnabledServicePrincipals": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListAccounts",
+          "op": "ListAccounts",
+          "call": {
+            "op": "ListAccounts",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Accounts": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListAccountsForParent",
+          "op": "ListAccountsForParent",
+          "call": {
+            "op": "ListAccountsForParent",
+            "params": {
+              "ParentId": "r-abcd"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Accounts": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListAccountsWithInvalidEffectivePolicy",
+          "op": "ListAccountsWithInvalidEffectivePolicy",
+          "call": {
+            "op": "ListAccountsWithInvalidEffectivePolicy",
+            "params": {
+              "PolicyType": "AISERVICES_OPT_OUT_POLICY"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.PolicyType": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListChildren",
+          "op": "ListChildren",
+          "call": {
+            "op": "ListChildren",
+            "params": {
+              "ChildType": "ACCOUNT",
+              "ParentId": "r-abcd"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Children": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListCreateAccountStatus",
+          "op": "ListCreateAccountStatus",
+          "call": {
+            "op": "ListCreateAccountStatus",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.CreateAccountStatuses": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListDelegatedAdministrators",
+          "op": "ListDelegatedAdministrators",
+          "call": {
+            "op": "ListDelegatedAdministrators",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.DelegatedAdministrators": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListDelegatedServicesForAccount",
+          "op": "ListDelegatedServicesForAccount",
+          "call": {
+            "op": "ListDelegatedServicesForAccount",
+            "params": {
+              "AccountId": "123456789012"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.DelegatedServices": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListEffectivePolicyValidationErrors",
+          "op": "ListEffectivePolicyValidationErrors",
+          "call": {
+            "op": "ListEffectivePolicyValidationErrors",
+            "params": {
+              "AccountId": "123456789012",
+              "PolicyType": "AISERVICES_OPT_OUT_POLICY"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.AccountId": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListHandshakesForAccount",
+          "op": "ListHandshakesForAccount",
+          "call": {
+            "op": "ListHandshakesForAccount",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Handshakes": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListHandshakesForOrganization",
+          "op": "ListHandshakesForOrganization",
+          "call": {
+            "op": "ListHandshakesForOrganization",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Handshakes": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListInboundResponsibilityTransfers",
+          "op": "ListInboundResponsibilityTransfers",
+          "call": {
+            "op": "ListInboundResponsibilityTransfers",
+            "params": {
+              "Type": "BILLING"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.ResponsibilityTransfers": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListOrganizationalUnitsForParent",
+          "op": "ListOrganizationalUnitsForParent",
+          "call": {
+            "op": "ListOrganizationalUnitsForParent",
+            "params": {
+              "ParentId": "r-abcd"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.OrganizationalUnits": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListOutboundResponsibilityTransfers",
+          "op": "ListOutboundResponsibilityTransfers",
+          "call": {
+            "op": "ListOutboundResponsibilityTransfers",
+            "params": {
+              "Type": "BILLING"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.ResponsibilityTransfers": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListParents",
+          "op": "ListParents",
+          "call": {
+            "op": "ListParents",
+            "params": {
+              "ChildId": "ou-abcd-12345678"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Parents": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListPoliciesForTarget",
+          "op": "ListPoliciesForTarget",
+          "call": {
+            "op": "ListPoliciesForTarget",
+            "params": {
+              "Filter": "AISERVICES_OPT_OUT_POLICY",
+              "TargetId": "r-abcd"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Policies": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListRoots",
+          "op": "ListRoots",
+          "call": {
+            "op": "ListRoots",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Roots": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListTargetsForPolicy",
+          "op": "ListTargetsForPolicy",
+          "call": {
+            "op": "ListTargetsForPolicy",
+            "params": {
+              "PolicyId": "p-abcd1234"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Targets": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "teardown": []
+    }
+  ]
+}

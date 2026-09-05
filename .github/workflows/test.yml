@@ -789,6 +789,8 @@ jobs:
           cache: true
       - name: Validate generated operation ownership
         run: make aws-models-check-ci
+      - name: Validate the generated compat model
+        run: make compat-model-check
 
   # Gated like the Go jobs from `Lint` down, with one extra consequence: this
   # job produces the web-dist artifact, so anything downstream of it has to be

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/overcast-dev/overcast/compat/suites/registry.generated.schema.json",
+  "$id": "https://github.com/overcast-sh/overcast/compat/suites/registry.generated.schema.json",
   "title": "Overcast Compat Generated Test Registry",
   "description": "Machine-generated sibling of registry.json. Every loader concatenates the two; the join key (group name, test name) is shared, so a generated group may never reuse a hand-written name. Rewritten wholly by cmd/compatgen — never hand-edited. See docs/plans/compat-coverage-modelgen.md § 3.6.",
   "type": "object",

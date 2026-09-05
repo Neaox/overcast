@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/overcast-dev/overcast/compat/suites/registry.schema.json",
+  "$id": "https://github.com/overcast-sh/overcast/compat/suites/registry.schema.json",
   "title": "Overcast Compat Test Registry",
   "description": "Canonical list of test groups and tests shared across all SDK/CLI compat suites.",
   "type": "object",

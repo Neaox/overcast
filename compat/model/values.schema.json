@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/overcast-sh/overcast/compat/model/values.schema.json",
+  "title": "Overcast Compat Curated Values",
+  "description": "compat/model/values.json — binding rule 3 of docs/plans/compat-coverage-modelgen.md § 3.3. Plain JSON literals (never expressions) for required input members the recipes do not bind, looked up as (service, operation, member), then (service, target shape), then (service, member name). Every value must be legal on AWS, not merely accepted by the emulator; the generator checks it against the model's enum, length, range and pattern constraints.",
+  "type": "object",
+  "required": ["version", "services"],
+  "additionalProperties": false,
+  "properties": {
+    "$comment": { "type": "string" },
+    "version": { "type": "integer", "const": 1 },
+    "services": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "$comment": { "type": "string" },
+          "operations": {
+            "type": "object",
+            "description": "Operation → member → literal.",
+            "propertyNames": { "pattern": "^[A-Z][A-Za-z0-9]*$" },
+            "additionalProperties": {
+              "type": "object",
+              "propertyNames": { "pattern": "^[A-Za-z][A-Za-z0-9]*$" },
+              "additionalProperties": { "$ref": "#/definitions/Literal" }
+            }
+          },
+          "shapes": {
+            "type": "object",
+            "description": "Target shape name → literal, for every member of that shape in any operation.",
+            "propertyNames": { "pattern": "^[A-Za-z][A-Za-z0-9_]*$" },
+            "additionalProperties": { "$ref": "#/definitions/Literal" }
+          },
+          "members": {
+            "type": "object",
+            "description": "Member name → literal, for a member of that name in any operation.",
+            "propertyNames": { "pattern": "^[A-Za-z][A-Za-z0-9]*$" },
+            "additionalProperties": { "$ref": "#/definitions/Literal" }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "Literal": {
+      "description": "Any JSON with no $-prefixed object key anywhere inside it.",
+      "oneOf": [
+        { "type": ["string", "number", "boolean", "null"] },
+        { "type": "array", "items": { "$ref": "#/definitions/Literal" } },
+        {
+          "type": "object",
+          "propertyNames": { "pattern": "^[^$]" },
+          "additionalProperties": { "$ref": "#/definitions/Literal" }
+        }
+      ]
+    }
+  }
+}

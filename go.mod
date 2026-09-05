@@ -17,6 +17,7 @@ require (
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/google/uuid v1.6.0
 	github.com/mattn/go-isatty v0.0.24
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/stretchr/testify v1.12.1
 	github.com/tidwall/btree v1.8.1
 	github.com/vektah/gqlparser/v2 v2.5.36

@@ -1,0 +1,83 @@
+{
+  "$comment": "Organizations pilot recipe (docs/plans/compat-coverage-modelgen.md §4.2). The policy is the one real lifecycle the emulator implements; the organization is pre-existing and read-only. Everything else is a probe, and organizations is the service where that is dangerous: its operations act on accounts and on the organization itself, and several of them cannot be undone. Two rules keep them safe. A probe never binds a value exported from a resource the run owns, so no probe can name the caller's own management account — which is why this recipe exports no account id and binds no AccountId, and a curated, deliberately nonexistent account id in values.json stands in. And the neverProbe list below refuses outright every modeled operation that writes: the destructive and irreversible ones, the account-mutating ones, the ones that take no identifier that could miss, and the ones that would merely create something no teardown removes — because a probe binds curated identifiers that are deliberately nonexistent rather than provably so, and a probe group has no teardown. What survives is a probe group of reads.",
+  "service": "organizations",
+  "neverProbe": {
+    "AcceptHandshake": "Accepting a handshake is irreversible: it joins an account to an organization, or enables all features, and AWS documents neither as reversible.",
+    "AttachPolicy": "A policy attachment takes effect immediately for every account under the target; an SCP attached to a root can deny actions across the whole organization.",
+    "CancelHandshake": "Cancels an outstanding invitation permanently: AWS moves the handshake to CANCELED, and it cannot be reinstated.",
+    "CloseAccount": "Closes a member account. AWS suspends it immediately and permanently deletes its resources after the post-closure period; the account cannot be reopened.",
+    "CreateAccount": "Creates a real, billable AWS account inside the organization. An AWS account can be closed but never deleted, and it counts against the organization's account quota for good.",
+    "CreateGovCloudAccount": "Creates a linked AWS GovCloud (US) account together with its commercial account; both are real, billable and permanent.",
+    "CreateOrganization": "Makes the calling account the management account of a new organization. An account can belong to only one organization, so this either fails or permanently changes the caller's own account.",
+    "CreateOrganizationalUnit": "Creates an organizational unit under whichever root the call names. A probe group has no teardown, so anything a probe creates is left behind, and the curated parent id is only deliberately nonexistent, never provably so.",
+    "DeclineHandshake": "Declines an invitation permanently: AWS moves the handshake to DECLINED, and it can no longer be accepted.",
+    "DeleteOrganization": "Deletes the organization itself, along with every policy, organizational unit and setting in it. There is no undo.",
+    "DeleteOrganizationalUnit": "Deletes an organizational unit. Nothing recreates it, and the curated id it would carry is deliberately nonexistent rather than provably so.",
+    "DeleteResourcePolicy": "Deletes the organization's delegation resource policy, which may be the only grant giving delegated administrators their access; the document is not recoverable.",
+    "DeregisterDelegatedAdministrator": "Immediately withdraws an account's delegated administrator role for a service, and with it that account's access to the service's organization-wide data.",
+    "DetachPolicy": "Detaching a policy takes effect immediately and can remove the guardrail every account under the target relies on.",
+    "DisableAWSServiceAccess": "Disables trusted access for a service across the organization. AWS documents that the service loses access to organization data, and that re-enabling it does not restore what the service removed on the way out.",
+    "DisablePolicyType": "Disabling a policy type in a root detaches every policy of that type from every target beneath it.",
+    "EnableAWSServiceAccess": "Grants a service organization-wide access and lets it create service-linked roles in member accounts.",
+    "EnableAllFeatures": "Migrates the organization from consolidated billing to all features. AWS documents the change as one that cannot be reversed.",
+    "EnablePolicyType": "Enables a policy type in a root, changing what every account beneath it may do; the paired disable then detaches every policy of that type.",
+    "InviteAccountToOrganization": "Sends a real invitation to another AWS account, which its owner sees and has to act on. Nothing about the call can safely miss.",
+    "InviteOrganizationToTransferResponsibility": "Starts a transfer of management responsibility to another organization — an ownership and billing change the recipient can accept.",
+    "LeaveOrganization": "Removes the calling account from its organization. AWS requires the account to be able to operate standalone afterwards, and rejoining needs a fresh invitation.",
+    "MoveAccount": "Moves an account between roots or organizational units, which immediately changes the policies that apply to everything in it.",
+    "PutResourcePolicy": "Replaces the organization's delegation resource policy wholesale; the document it overwrites is not recoverable.",
+    "RegisterDelegatedAdministrator": "Grants an account delegated administrator rights over a service for the entire organization.",
+    "RemoveAccountFromOrganization": "Removes a member account from the organization. The account must be able to operate standalone, and rejoining needs a fresh invitation.",
+    "TerminateResponsibilityTransfer": "Terminates an in-flight responsibility transfer; the transfer cannot be resumed afterwards.",
+    "UpdateOrganizationalUnit": "Renames an organizational unit. The curated id it would carry is deliberately nonexistent, not provably so, and a rename is not something a stranger's organization should absorb.",
+    "UpdateResponsibilityTransfer": "Mutates an in-flight responsibility transfer — a billing-ownership change already under way."
+  },
+  "resources": [
+    {
+      "id": "policy",
+      "create": {
+        "op": "CreatePolicy",
+        "params": {
+          "Name": { "$name": "policy" },
+          "Type": "SERVICE_CONTROL_POLICY",
+          "Content": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}]}"
+        }
+      },
+      "exports": { "id": "$.Policy.PolicySummary.Id", "arn": "$.Policy.PolicySummary.Arn" },
+      "binds": { "PolicyId": "policy.id", "ResourceId": "policy.id" },
+      "read": { "op": "DescribePolicy", "identityPath": "$.Policy.PolicySummary.Id", "identity": "id" },
+      "list": {
+        "op": "ListPolicies",
+        "params": { "Filter": "SERVICE_CONTROL_POLICY" },
+        "itemsPath": "$.Policies",
+        "identityPath": "$.Id",
+        "identity": "id"
+      },
+      "mutable": [
+        {
+          "op": "UpdatePolicy",
+          "member": "Description",
+          "from": "compat scenario policy",
+          "to": "compat scenario policy, updated",
+          "readPath": "$.Policy.PolicySummary.Description"
+        }
+      ],
+      "tags": {
+        "tag": { "op": "TagResource", "member": "Tags" },
+        "untag": { "op": "UntagResource", "member": "TagKeys" },
+        "list": { "op": "ListTagsForResource", "path": "$.Tags" }
+      },
+      "delete": { "op": "DeletePolicy" },
+      "notFound": { "error": "PolicyNotFoundException" }
+    },
+    {
+      "$comment": "Pre-existing: an organization is never created or deleted by a test, so its read is the whole of its group. It deliberately exports only the organization's own id and ARN. The management account id used to be exported here and bound to AccountId, which is precisely what would have let the probe group aim CloseAccount, RemoveAccountFromOrganization and MoveAccount at the caller's real management account.",
+      "id": "organization",
+      "read": {
+        "op": "DescribeOrganization",
+        "identityPath": "$.Organization.Arn",
+        "exports": { "id": "$.Organization.Id", "arn": "$.Organization.Arn" }
+      }
+    }
+  ]
+}

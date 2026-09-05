@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "services": {
+    "widgets": {
+      "operations": { "PingWidgets": {} },
+      "shapes": {},
+      "members": {}
+    }
+  }
+}

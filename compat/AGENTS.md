@@ -169,6 +169,16 @@ The following are the **only** acceptable cases for a test with no roundtrip:
    code and message is the assertion.
 3. The operation is on a service that is entirely stubbed (returns 501) — in
    that case the test is expected to fail and there is nothing to assert.
+4. The test is a **generated probe** (`<service>-gen-probe` in
+   `registry.generated.json`): it calls an operation the emulator does not
+   implement, with deliberately nonexistent identifiers, so it created nothing
+   to read back. It asserts one clause on its own response — the output's
+   identity member non-empty, or, for a `List*` whose only assertable output is
+   a page, `{"isList": true}` on that page. The "list is non-empty" bar above
+   applies to a list the test itself populated; a probe populated nothing, and
+   `nonEmpty` on a pagination token or an unpopulated page would be false by
+   construction. See [compat/model/README.md](model/README.md) § What a probe
+   asserts.
 
 ### Anti-patterns to reject in code review
 
@@ -907,6 +917,15 @@ compat/suites/
   registry.json         ← canonical list of all groups + tests
   registry.schema.json  ← JSON Schema for the registry
 ```
+
+**The generated sibling.** `registry.generated.json` is the other half of the
+matrix: `cmd/compatgen` rewrites it wholly from the scenario IR under
+`compat/model/scenarios/`, and every loader concatenates it with
+`registry.json`. Never hand-edit it, and never add a generated group to
+`registry.json` — see [compat/model/README.md](./model/README.md) for the IR,
+the recipes that produce it and the refusal report, and
+[cmd/compatgen/README.md](../cmd/compatgen/README.md) for the workflow
+(`make generate-compat-model`, `make compat-model-check`).
 
 **Rules for every suite:**
 

@@ -1,0 +1,286 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/overcast-sh/overcast/compat/model/recipe.schema.json",
+  "title": "Overcast Compat Recipe",
+  "description": "The hand-curated input to cmd/compatgen: one file per service under compat/model/recipes/<service>.json. A recipe says what the model cannot — which operation creates a resource, what identifies it, how it is read back, mutated and deleted. Structure is generated from that; semantics stay curated. See README.md § Recipes.",
+  "type": "object",
+  "required": ["service", "resources"],
+  "additionalProperties": false,
+  "properties": {
+    "$comment": { "type": "string" },
+    "service": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "The Overcast capability service key; must match the file name." },
+    "model": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "The shape-snapshot service key when it differs from `service` (cognito-identity-provider for cognito)." },
+    "neverProbe": {
+      "type": "object",
+      "description": "Operations the generator may never place in the probe group, each mapped to the curated reason why, which is what gaps.json reports. This is for operations that are irreversible even against a stranger's identifiers, or that take no identifier that could miss (CloseAccount, EnableAllFeatures, DeleteOrganization). The binder already refuses a probe that would bind a value exported from a resource the run owns; this covers what that rule cannot see.",
+      "propertyNames": { "pattern": "^[A-Z][A-Za-z0-9]*$" },
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "resources": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/Resource" }
+    }
+  },
+  "definitions": {
+    "Resource": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "$comment": { "type": "string" },
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9]*$", "description": "The resource's name in context paths (`queue.url`) and its group (`<service>-gen-<id>`)." },
+        "setupOnly": { "type": "boolean", "description": "A resource that exists to be required by others; it gets no lifecycle group of its own." },
+        "requires": { "type": "array", "items": { "type": "string" }, "description": "Resources created in setup before this one, in dependency order." },
+        "create": { "$ref": "#/definitions/CreateCall" },
+        "exports": { "$ref": "#/definitions/Exports", "description": "Export name → path in the create response." },
+        "derived": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["export", "op", "path"],
+            "additionalProperties": false,
+            "properties": {
+              "export": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9]*$" },
+              "op": { "$ref": "#/definitions/OpName" },
+              "params": { "$ref": "#/definitions/Params" },
+              "path": { "$ref": "scenario.schema.json#/definitions/Path" }
+            }
+          },
+          "description": "Exports that need a second call after create (an ARN only GetQueueAttributes returns)."
+        },
+        "binds": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[A-Za-z][A-Za-z0-9]*$" },
+          "additionalProperties": { "type": "string", "pattern": "^[a-z][a-z0-9]*\\.[a-zA-Z][a-zA-Z0-9]*$" },
+          "description": "Input member name → context path. Binding rule 1."
+        },
+        "read": { "$ref": "#/definitions/Read" },
+        "reads": { "type": "array", "items": { "$ref": "#/definitions/Read" }, "description": "Further read operations (GetQueueUrl beside GetQueueAttributes)." },
+        "list": {
+          "type": "object",
+          "required": ["op", "itemsPath", "identityPath", "identity"],
+          "additionalProperties": false,
+          "properties": {
+            "$comment": { "type": "string" },
+            "op": { "$ref": "#/definitions/OpName" },
+            "params": { "$ref": "#/definitions/Params" },
+            "itemsPath": { "$ref": "scenario.schema.json#/definitions/Path", "description": "Path to the list in the response." },
+            "identityPath": { "$ref": "scenario.schema.json#/definitions/Path", "description": "Item-relative path carrying the identity; `$` for a list of strings." },
+            "identity": { "type": "string", "description": "The export the item's identity equals." },
+            "exports": { "$ref": "#/definitions/Exports", "description": "Exports taken from the list response. The list test runs last before delete, so a handle re-read here is the freshest one the delete can carry." }
+          }
+        },
+        "mutable": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["op", "member", "to", "readPath"],
+            "additionalProperties": false,
+            "properties": {
+              "op": { "$ref": "#/definitions/OpName" },
+              "params": { "$ref": "#/definitions/Params" },
+              "member": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*(\\.[A-Za-z][A-Za-z0-9]*)*$", "description": "Dotted input member path the update sets (`Attributes.VisibilityTimeout`)." },
+              "from": { "$ref": "scenario.schema.json#/definitions/Value", "description": "Initial value, merged into the create params so the update is a real change." },
+              "to": { "$ref": "scenario.schema.json#/definitions/Value" },
+              "readPath": { "$ref": "scenario.schema.json#/definitions/Path", "description": "Path in the `read` response that reflects the member." }
+            }
+          }
+        },
+        "tags": {
+          "type": "object",
+          "required": ["tag", "untag", "list"],
+          "additionalProperties": false,
+          "properties": {
+            "tag": { "$ref": "#/definitions/TagCall" },
+            "untag": { "$ref": "#/definitions/TagCall" },
+            "list": {
+              "type": "object",
+              "required": ["op", "path"],
+              "additionalProperties": false,
+              "properties": {
+                "op": { "$ref": "#/definitions/OpName" },
+                "params": { "$ref": "#/definitions/Params" },
+                "path": { "$ref": "scenario.schema.json#/definitions/Path", "description": "Path to the tags (a string map or a list of {Key, Value}) in the list response." }
+              }
+            }
+          }
+        },
+        "delete": {
+          "type": "object",
+          "required": ["op"],
+          "additionalProperties": false,
+          "properties": {
+            "op": { "$ref": "#/definitions/OpName" },
+            "params": { "$ref": "#/definitions/Params" }
+          }
+        },
+        "notFound": {
+          "type": "object",
+          "required": ["error"],
+          "additionalProperties": false,
+          "properties": {
+            "error": { "type": "string", "description": "The modeled error shape the read raises after delete." }
+          }
+        },
+        "async": {
+          "type": "object",
+          "required": ["maxAttempts", "delayMs"],
+          "additionalProperties": false,
+          "properties": {
+            "maxAttempts": { "type": "integer", "minimum": 1 },
+            "delayMs": { "type": "integer", "minimum": 0 }
+          },
+          "description": "Declares the resource eventually consistent: every clause that verifies by calling the service again — derived read-back, list-membership and absence clauses, and authored ones too — is wrapped in `eventually`. A clause that only reads the test's own response, and an authored `eventually` whose budget its author already chose, are left alone."
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["op", "assert"],
+            "additionalProperties": false,
+            "properties": {
+              "$comment": { "type": "string" },
+              "name": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]+$", "description": "Variant test name when the operation already has a test in the group." },
+              "op": { "$ref": "#/definitions/OpName" },
+              "params": { "$ref": "#/definitions/Params" },
+              "export": { "$ref": "#/definitions/ContextExports" },
+              "assert": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "$ref": "#/definitions/AuthoredAssertion" }
+              }
+            }
+          },
+          "description": "Authored coverage for operations outside the lifecycle vocabulary, written in the IR's own assertion vocabulary."
+        }
+      }
+    },
+    "CreateCall": {
+      "type": "object",
+      "required": ["op"],
+      "additionalProperties": false,
+      "properties": {
+        "op": { "$ref": "#/definitions/OpName" },
+        "params": { "$ref": "#/definitions/Params" },
+        "assert": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/AuthoredAssertion" },
+          "description": "Authored clauses added to the create test, replacing the derived read-back and list-membership, for a resource whose read cannot simply be replayed. At least one of them must call the service again or the create is refused with no-readback-path."
+        }
+      }
+    },
+    "Read": {
+      "type": "object",
+      "required": ["op", "identityPath"],
+      "additionalProperties": false,
+      "properties": {
+        "op": { "$ref": "#/definitions/OpName" },
+        "params": { "$ref": "#/definitions/Params" },
+        "identityPath": { "$ref": "scenario.schema.json#/definitions/Path" },
+        "identity": { "type": "string", "description": "The export the identity path equals; omitted means merely present." },
+        "consuming": { "type": "boolean", "description": "The read changes state (SQS ReceiveMessage). It is emitted once, as its own test, never as a read-back." },
+        "exports": { "$ref": "#/definitions/Exports", "description": "Exports taken from the read response (a receipt handle)." }
+      }
+    },
+    "TagCall": {
+      "type": "object",
+      "required": ["op", "member"],
+      "additionalProperties": false,
+      "properties": {
+        "op": { "$ref": "#/definitions/OpName" },
+        "member": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*$", "description": "The input member carrying the tags (tag) or the keys (untag)." }
+      }
+    },
+    "AuthoredAssertion": {
+      "description": "A scenario assertion as written by hand: the same shapes as the IR, except that an error names only its shape (the generator fills in the wire code) and calls list only the params the binder does not supply.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "checks"],
+          "additionalProperties": false,
+          "properties": { "$comment": { "type": "string" }, "kind": { "const": "responseField" }, "checks": { "$ref": "scenario.schema.json#/definitions/Checks" } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "call", "checks"],
+          "additionalProperties": false,
+          "properties": { "$comment": { "type": "string" }, "kind": { "const": "readback" }, "call": { "$ref": "#/definitions/AuthoredCall" }, "checks": { "$ref": "scenario.schema.json#/definitions/Checks" } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "itemsPath", "where"],
+          "additionalProperties": false,
+          "properties": { "$comment": { "type": "string" }, "kind": { "enum": ["listContains", "absent"] }, "call": { "$ref": "#/definitions/AuthoredCall" }, "itemsPath": { "$ref": "scenario.schema.json#/definitions/Path" }, "where": { "$ref": "scenario.schema.json#/definitions/Where" } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "call", "error"],
+          "additionalProperties": false,
+          "properties": { "$comment": { "type": "string" }, "kind": { "const": "absent" }, "call": { "$ref": "#/definitions/AuthoredCall" }, "error": { "$ref": "#/definitions/AuthoredError" } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "error"],
+          "additionalProperties": false,
+          "properties": { "$comment": { "type": "string" }, "kind": { "const": "errorCode" }, "error": { "$ref": "#/definitions/AuthoredError" } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "maxAttempts", "assert"],
+          "additionalProperties": false,
+          "properties": {
+            "$comment": { "type": "string" },
+            "kind": { "const": "eventually" },
+            "maxAttempts": { "type": "integer", "minimum": 1 },
+            "delayMs": { "type": "integer", "minimum": 0 },
+            "assert": {
+              "allOf": [
+                { "$ref": "#/definitions/AuthoredAssertion" },
+                { "properties": { "$comment": { "type": "string" }, "kind": { "enum": ["readback", "listContains", "absent"] } } }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "AuthoredCall": {
+      "type": "object",
+      "required": ["op"],
+      "additionalProperties": false,
+      "properties": {
+        "op": { "$ref": "#/definitions/OpName" },
+        "params": { "$ref": "#/definitions/Params" },
+        "export": { "$ref": "#/definitions/ContextExports" }
+      }
+    },
+    "AuthoredError": {
+      "type": "object",
+      "required": ["shape"],
+      "additionalProperties": false,
+      "properties": {
+        "shape": { "type": "string" },
+        "code": { "type": "string", "description": "Filled in by the generator from the model; may be omitted." }
+      }
+    },
+    "OpName": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]*$" },
+    "Params": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z][A-Za-z0-9]*$" },
+      "additionalProperties": { "$ref": "scenario.schema.json#/definitions/Value" }
+    },
+    "Exports": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-zA-Z][a-zA-Z0-9]*$" },
+      "additionalProperties": { "$ref": "scenario.schema.json#/definitions/Path" }
+    },
+    "ContextExports": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9]*\\.[a-zA-Z][a-zA-Z0-9]*$" },
+      "additionalProperties": { "$ref": "scenario.schema.json#/definitions/Path" }
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "$comment": "Curated literals for required input members no recipe binds (docs/plans/compat-coverage-modelgen.md §3.3 rule 3). Every value must be legal on AWS, not merely accepted by the emulator; the generator checks each against the model's enum, length, range and pattern constraints. Identifiers here are syntactically valid and deliberately nonexistent — they bind probes of operations the emulator does not implement, where the call is expected to fail before the value is looked at. That is also why they are the only thing a probe may bind: a probe is the one generated call no delete undoes, so it must never name a resource the run owns.",
+  "version": 1,
+  "services": {
+    "sqs": {
+      "$comment": "TaskHandle is base64 on AWS — StartMessageMoveTask hands back an opaque encoded handle — so the placeholder is base64 too: an unencoded string is answered with a validation error rather than the not-found the probe is written for. This one decodes to {\"taskId\":\"compat-scenario\"}. QueueUrl and SourceArn name a queue in an account that is not the caller's, so a probe of AddPermission, RemovePermission, CancelMessageMoveTask or ListMessageMoveTasks cannot reach the queue the run created.",
+      "operations": {
+        "AddPermission": { "AWSAccountIds": ["123456789012"], "Actions": ["SendMessage"] },
+        "CancelMessageMoveTask": { "TaskHandle": "eyJ0YXNrSWQiOiJjb21wYXQtc2NlbmFyaW8ifQ==" }
+      },
+      "members": {
+        "Label": "compat-scenario",
+        "QueueUrl": "https://sqs.us-east-1.amazonaws.com/123456789012/compat-scenario-nonexistent",
+        "SourceArn": "arn:aws:sqs:us-east-1:123456789012:compat-scenario-nonexistent"
+      }
+    },
+    "organizations": {
+      "$comment": "AccountId is the documentation account id, never the caller's: every account-scoped probe names an account this organization does not contain, so the only answer it can get is a not-found.",
+      "operations": {
+        "InviteAccountToOrganization": { "Target": { "Id": "123456789012", "Type": "ACCOUNT" } },
+        "InviteOrganizationToTransferResponsibility": { "Target": { "Id": "123456789012", "Type": "ACCOUNT" } },
+        "MoveAccount": { "SourceParentId": "r-abcd", "DestinationParentId": "ou-abcd-12345678" }
+      },
+      "shapes": {
+        "AccountId": "123456789012",
+        "CreateAccountName": "compat-scenario-account",
+        "CreateAccountRequestId": "car-abcdefgh12345678",
+        "ChildId": "ou-abcd-12345678",
+        "Email": "compat-scenario@example.com",
+        "HandshakeId": "h-abcdefgh12345678",
+        "OrganizationalUnitId": "ou-abcd-12345678",
+        "OrganizationalUnitName": "compat-scenario-ou",
+        "ParentId": "r-abcd",
+        "PolicyId": "p-abcd1234",
+        "PolicyTargetId": "r-abcd",
+        "ResourcePolicyContent": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"123456789012\"},\"Action\":\"organizations:DescribeOrganization\",\"Resource\":\"*\"}]}",
+        "ResponsibilityTransferId": "rt-abcdefgh12345678",
+        "ResponsibilityTransferName": "compat-scenario-transfer",
+        "RootId": "r-abcd",
+        "ServicePrincipal": "config.amazonaws.com"
+      }
+    }
+  }
+}
