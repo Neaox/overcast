@@ -156,6 +156,11 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 	if az == "" {
 		az = h.cfg.Region + "a"
 	}
+	// #1722 gap, shared with the typed body (typed_logic.go): real EC2
+	// derives the instance's zone from SubnetId when Placement.AvailabilityZone
+	// is absent (the subnet pins the zone). Neither body does that here — both
+	// simply fall back to region+"a" regardless of which subnet's zone that
+	// contradicts — so they still agree with each other, just not with AWS.
 	resolvedVpcID := ""
 	if subnetID != "" {
 		if sub, aerr := h.store.getSubnet(r.Context(), subnetID); aerr == nil {
