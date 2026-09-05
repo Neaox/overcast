@@ -415,9 +415,10 @@ rather than their symptoms re-run.
 The one thing that was left — adding `Test suite (-tags slim,dev)` to the
 required set — has since been made. As of 2026-08-21 the `Protect Main`
 ruleset requires it (the required set has also since gained `Script tests`,
-`Lambda invoke (native host binary)` and `Docs and capability registry`, and
-classic branch protection separately requires `Aggregate Compatibility
-Results`; as read on 2026-09-05 it does not list `VERSION guard`). As predicted, the E gate needed no
+`Lambda invoke (native host binary)` and, on 2026-09-05, `VERSION guard`, which
+its own job comment had claimed all along; classic branch protection
+separately requires `Docs and capability registry` and `Aggregate
+Compatibility Results`). As predicted, the E gate needed no
 corresponding change: the job always runs, so the required name always reports.
 
 The estimate this document opened with — 56 → 40 runner-minutes — was built on
