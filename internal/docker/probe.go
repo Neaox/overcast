@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -60,6 +61,22 @@ type ProbeResult struct {
 // Returns nil with a logged warning (not an error) when Docker is unreachable
 // — callers degrade gracefully (metadata ops work, container ops return errors).
 func Probe(socketPath string, networks []NetworkSpec, logger *zap.Logger) (*ProbeResult, error) {
+	// An empty socket path means the caller never configured a daemon for
+	// this service (the default test config's shape — every socket in
+	// tests/helpers/server.go's defaultTestConfig is ""); there is no
+	// bind-mounted socket that might still be starting, so the retry ladder
+	// below has nothing to wait out. Without this check, every Docker-backed
+	// service a test server registers unconditionally (ecs, elasticache,
+	// msk, ec2, efs) burned the full 5s ladder finding that out, leaving a
+	// sleeping goroutine and a live HTTP transport behind for the life of
+	// the test binary (#1775). Lambda already short-circuits this same case
+	// in initDockerRuntime before ever calling Probe; this is the sibling
+	// rule for every other caller that reaches Probe unconditionally
+	// (internal/docker.Supervisor.Probe, wired from internal/router).
+	if socketPath == "" {
+		return nil, errors.New("docker not available: no socket configured")
+	}
+
 	dc := NewClient(socketPath, logger)
 
 	// Retry briefly — when running inside a devcontainer the socket is

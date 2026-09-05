@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/overcast-sh/overcast/internal/events"
 	"go.uber.org/zap"
@@ -180,6 +181,29 @@ func (ps *probeServer) handle(w http.ResponseWriter, r *http.Request) {
 func internalMode(internal bool) func(context.Context, *Client) InternalDecision {
 	return func(context.Context, *Client) InternalDecision {
 		return InternalDecision{Internal: internal, Reason: "test"}
+	}
+}
+
+// An empty socket path means the caller never configured a daemon for this
+// service — the default test config's shape (tests/helpers/server.go) — and
+// there is nothing behind it to retry. Before this test, Probe treated it
+// like any other unreachable daemon and burned the full five-attempt, 5s
+// retry ladder (0.5+1.0+1.5+2.0s of sleep) finding that out, once per unique
+// empty-socket service registration per test server (#1775).
+func TestProbe_emptySocketReturnsImmediatelyWithoutRetrying(t *testing.T) {
+	start := time.Now()
+	result, err := Probe("", nil, zap.NewNop())
+	elapsed := time.Since(start)
+
+	if result != nil {
+		t.Errorf("result = %+v, want nil for an unconfigured socket", result)
+	}
+	if err == nil {
+		t.Fatal("err = nil, want a not-available error for an empty socket path")
+	}
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("Probe(\"\") took %s, want well under 100ms — an empty socket has no daemon "+
+			"behind it and must return immediately, not enter the retry ladder (#1775)", elapsed)
 	}
 }
 
