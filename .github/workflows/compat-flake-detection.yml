@@ -36,6 +36,8 @@ jobs:
   prepare-matrix:
     name: Prepare suite matrix
     runs-on: ubuntu-latest
+    # 3 s: one python step, no checkout.
+    timeout-minutes: 5
     outputs:
       suites: ${{ steps.suites.outputs.suites }}
     steps:
@@ -74,6 +76,13 @@ jobs:
     name: Flake detection (${{ matrix.suite }})
     needs: prepare-matrix
     runs-on: ubuntu-latest
+    # This job runs each suite N times (3 by default), so it is legitimately
+    # long and the default 10 would fail it every night. Measured on the last
+    # two nightlies: `cli` 25m00s (33850053762) and 20m40s (33729983159),
+    # every other suite 2-8 minutes. Sixty is ~2.4x the slowest, and still
+    # leaves room for the `runs` input to be raised to 4 by hand before this
+    # needs revisiting.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -115,10 +124,14 @@ jobs:
         run: pip install --quiet -r requirements.txt
         working-directory: compat/suites/python-sdk
 
+      # `-tags slim` does not drop the Lambda init — slim images run Lambda —
+      # so this needs it as much as the console build does. Eight matrix legs,
+      # one content hash between them.
+      - uses: ./.github/actions/lambda-init
+
       - name: Build binaries
         run: |
           mkdir -p bin
-          make lambda-init
           go build -tags slim,nosqlite -o bin/overcast ./cmd/overcast
           go build -o bin/compat ./cmd/compat
 

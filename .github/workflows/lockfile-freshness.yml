@@ -70,11 +70,20 @@ jobs:
     name: Lockfile freshness
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # 7-11 s (runs 33948464258, 33948656838).
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The merge base and origin/main both have to be in the clone.
           fetch-depth: 0
+          # This check never reads a lockfile at another revision — it compares
+          # object ids. scripts/lockfile-freshness.py resolves each side with
+          # `git rev-parse --verify <commit>:<path>` (blob_at), which answers
+          # from the tree, and asks `git diff --name-only` which paths moved.
+          # Two lockfiles are "the same" exactly when their blob ids match, so
+          # there is nothing to gain by having the bytes. blob:none it is.
+          filter: blob:none
 
       - name: Judge the head against live main
         id: decide
@@ -101,6 +110,12 @@ jobs:
     name: Lockfile freshness sweep
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    # Not measured: no push has changed web/pnpm-lock.yaml since this job
+    # landed, so every recorded run of it is a skip. Twenty is a bound rather
+    # than a multiple — the loop is one `git fetch` and one check-run POST per
+    # open pull request, and `gh pr list --limit 200` is what caps how many
+    # times that can happen. Revisit it against the first real sweep.
+    timeout-minutes: 20
     permissions:
       contents: read
       pull-requests: read
@@ -112,6 +127,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # Same reasoning as `check` above, and the bigger win of the two: the
+          # loop below adds a `git fetch origin refs/pull/N/head` per open pull
+          # request, and a blobless clone makes each of those blobless too. The
+          # verdict is still object ids all the way down.
+          filter: blob:none
 
       - name: Re-judge every open pull request
         env:

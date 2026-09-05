@@ -47,6 +47,10 @@ jobs:
     # stops enforcing the gate, because branch protection matches by name.
     name: Changelog entry
     runs-on: ubuntu-latest
+    # 11-13 s (runs 33948464233, 33948656879). Ten, not five: the variable
+    # cost is the full-history checkout above and the comment API calls, both
+    # of which the action retries rather than failing on the first blip.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,6 +60,17 @@ jobs:
           # remote-tracking ref, so origin/<base> is in the clone to diff
           # against.
           fetch-depth: 0
+          # ...but full *history* is not full *content*. This job only ever
+          # walks commits and trees: `git merge-base`, then
+          # `git diff --name-only`, which compares blob object ids and never
+          # opens a blob. The files it does read — CHANGELOG.md, .changelog/ —
+          # come from the working tree checkout materialises for HEAD anyway.
+          # So the ~317 MiB pack this repository's history carries (35 blobs
+          # over 1 MB account for 522 MB of it) is downloaded on every pull
+          # request to answer a question no blob is part of. blob:none leaves
+          # the commit graph and every tree intact and fetches a blob only if
+          # something asks for its contents.
+          filter: blob:none
 
       # Fork PRs get no secrets, so they get no comment. The check still runs
       # and still fails with the whole message in the job summary — a fork PR

@@ -1,0 +1,114 @@
+name: Build the Lambda init
+description: >
+  Put the in-container Lambda init binaries in
+  internal/services/lambda/initbin/dist, from cache when their inputs have not
+  changed and from `make lambda-init` when they have.
+
+# Every overcast binary embeds the init for both Linux architectures, and
+# //go:embed reads the tree at compile time — so a build that skips this step
+# compiles perfectly well and then fails at the first Lambda invoke that needs
+# it. It therefore runs before every build, everywhere, which is why it is
+# worth caching rather than repeating.
+#
+# `make lambda-init` runs 16 times per pull request today (three sites in
+# test.yml, once per compat build, and once per cross-build leg) and produces
+# byte-identical output every time: `go list -deps ./cmd/lambda-init` is 66
+# packages, of which two are Overcast's (`cmd/lambda-init`,
+# `internal/lambdainit`) and the rest are the standard library. Measured on
+# test.yml run 33945978965, each cross-build leg spent 17.8-24.0 s in it —
+# 3.5 runner-minutes across that matrix alone, all ten computing the same two
+# files.
+#
+# No inputs. The output path is fixed by the Makefile ($LAMBDA_INIT_DIR), the
+# targets are fixed by what //go:embed expects, and a knob for either would
+# only make it possible to cache one thing under another thing's key.
+
+runs:
+  using: composite
+  steps:
+    # The key, computed once and read by both cache steps.
+    #
+    # The content half is everything that can change the two binaries: the
+    # init's own package, the one internal package it imports, the module
+    # definition and lockfile, and the Makefile recipe itself — a change to
+    # the `-ldflags` on the `lambda-init` target must invalidate this as surely
+    # as a change to the Go source.
+    #
+    # The toolchain half is `go env GOVERSION`: the version that would actually
+    # compile them. The workflows all resolve their Go from `go-version-file:
+    # go.mod` before calling this, so asking the installed toolchain is the
+    # same question read at the point it can be answered exactly — go.mod's
+    # `go` directive is a floor, and a patch bump behind it changes the output
+    # without changing any hashed file.
+    - name: Resolve the Lambda init cache key
+      id: key
+      shell: bash
+      env:
+        CONTENT: ${{ hashFiles('cmd/lambda-init/**', 'internal/lambdainit/**', 'go.mod', 'go.sum', 'Makefile') }}
+      run: |
+        set -euo pipefail
+        toolchain="$(go env GOVERSION)"
+        echo "value=lambda-init-${RUNNER_OS}-${toolchain}-${CONTENT}" >> "$GITHUB_OUTPUT"
+        echo "Lambda init cache key: lambda-init-${RUNNER_OS}-${toolchain}-${CONTENT}"
+
+    # restore + save rather than the combined action, so the save is gated on
+    # the assertion below having passed. The combined action saves from a post-
+    # job hook that runs even when the job failed, which would publish a
+    # half-built dist under a content key and then serve it to every later run
+    # — a poisoned cache that keeps CI red until somebody notices it is not the
+    # code's fault.
+    #
+    # Deliberately no restore-keys. A prefix match would hand back binaries
+    # built from different sources, which is the one thing a content-addressed
+    # cache must never do: the build would succeed and the emulator would run
+    # the wrong init. A miss is cheap (24 s); a wrong hit is a bug nobody would
+    # look for here.
+    - name: Restore the built Lambda init
+      id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: internal/services/lambda/initbin/dist
+        key: ${{ steps.key.outputs.value }}
+
+    - name: Build the Lambda init
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: make lambda-init
+
+    # Unconditional, and the point of the whole action: after this step either
+    # both binaries are here or the job is red. A cache that restored an empty
+    # or partial directory would otherwise be indistinguishable from a build,
+    # and the failure would surface much later as a Lambda invoke that cannot
+    # find its init — in a different job, on a different pull request.
+    - name: Check both init binaries are present
+      shell: bash
+      env:
+        FROM_CACHE: ${{ steps.cache.outputs.cache-hit }}
+      run: |
+        set -euo pipefail
+        dist=internal/services/lambda/initbin/dist
+        missing=0
+        for arch in amd64 arm64; do
+          bin="$dist/lambda-init-linux-$arch"
+          if [ -s "$bin" ]; then
+            echo "ok: $bin ($(wc -c < "$bin") bytes)"
+          else
+            echo "::error::$bin is missing or empty after the Lambda init step." >&2
+            missing=1
+          fi
+        done
+        if [ "$missing" -ne 0 ]; then
+          if [ "$FROM_CACHE" = "true" ]; then
+            echo "::error title=Lambda init::Restored from cache key ${{ steps.key.outputs.value }} and the restored directory is incomplete. Delete that cache entry; the next run rebuilds it." >&2
+          else
+            echo "::error title=Lambda init::\`make lambda-init\` reported success but did not produce both binaries." >&2
+          fi
+          exit 1
+        fi
+
+    - name: Save the built Lambda init
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: internal/services/lambda/initbin/dist
+        key: ${{ steps.key.outputs.value }}

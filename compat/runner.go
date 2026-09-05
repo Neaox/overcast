@@ -235,8 +235,11 @@ func (r *Runner) Run(ctx context.Context) (*RunReport, error) {
 	// Compute a per-suite parallelism budget so that running all suites
 	// concurrently doesn't overwhelm the emulator.  Target ≤ max(8, 2×CPU)
 	// total concurrent group executions, divided evenly across suites.
-	totalSlots := min(max(8, runtime.NumCPU()*2), 40)
-	slotsPerSuite := max(1, totalSlots/len(suites))
+	slotsPerSuite := envParallelSlots()
+	if slotsPerSuite == 0 {
+		totalSlots := min(max(8, runtime.NumCPU()*2), 40)
+		slotsPerSuite = max(1, totalSlots/len(suites))
+	}
 
 	// Pre-allocate slice so results land at stable indices regardless of
 	// completion order, preserving deterministic suite ordering in the report.
@@ -305,6 +308,26 @@ func (r *Runner) Run(ctx context.Context) (*RunReport, error) {
 		return report, fmt.Errorf("compat: suite infrastructure failure(s): %s", strings.Join(suiteErrs, "; "))
 	}
 	return report, nil
+}
+
+// envParallelSlots reads an explicit OVERCAST_COMPAT_PARALLEL_SLOTS from this
+// process's environment, or 0 when it is unset, empty or not a positive
+// integer.
+//
+// Without this the variable is inbound-only at the harness and outbound-only
+// here: runSuite appends its computed value to a cmd.Env built from
+// os.Environ(), and os/exec keeps the *last* occurrence of a duplicate key, so
+// a value exported by a caller was silently discarded before the suite ever
+// saw it. Setting it now means what it looks like it means.
+//
+// A bad value is ignored rather than fatal: this is a tuning knob, and a
+// typo in one should not take a compat run down.
+func envParallelSlots() int {
+	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("OVERCAST_COMPAT_PARALLEL_SLOTS")))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
 }
 
 // runSuite starts a single suite subprocess and parses its NDJSON output.

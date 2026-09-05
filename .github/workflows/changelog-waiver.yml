@@ -34,6 +34,14 @@ jobs:
        startsWith(github.event.comment.body, '/needs-changelog')) &&
       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
+    # Not measured — every recorded run of this workflow was skipped by the
+    # `if:` above, because the comments that reached it were not commands.
+    # The value is set by the code rather than by a sample: "Re-run the
+    # changelog gate" below polls for an in-flight run with its own 6-minute
+    # deadline, so anything at or below that would cancel the job at exactly
+    # the moment it is doing its job. Fifteen leaves the poll room to finish
+    # and still bounds a wedged run.
+    timeout-minutes: 15
     steps:
       - name: Require the release App credentials
         env:

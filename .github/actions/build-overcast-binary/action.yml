@@ -31,9 +31,14 @@ runs:
     # //go:embed reads the tree at compile time — so without this step the asset
     # ships with nothing but the placeholder and fails at the first Lambda
     # invoke that needs it. Before the build, always.
-    - name: Build the Lambda init
-      shell: bash
-      run: make lambda-init
+    #
+    # The init does not vary with this action's target: it is always the same
+    # two linux binaries, and this matrix builds it ten times per run. The
+    # composite below restores it from a content-addressed cache instead, and
+    # asserts both binaries are present either way — so a cache that came back
+    # incomplete fails here rather than shipping an asset with a placeholder in
+    # it.
+    - uses: ./.github/actions/lambda-init
 
     - name: Build binary
       shell: bash

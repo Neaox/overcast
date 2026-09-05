@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -295,5 +296,42 @@ func TestValidateSuiteNames(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("ValidateSuiteNames() error = %q, want it to mention %s", err.Error(), want)
 		}
+	}
+}
+
+func TestEnvParallelSlots(t *testing.T) {
+	// Given: the ways a caller can express (or fail to express) an override.
+	tests := []struct {
+		name string
+		set  bool
+		env  string
+		want int
+	}{
+		{name: "unset falls back to the computed budget", set: false, want: 0},
+		{name: "empty falls back", set: true, env: "", want: 0},
+		{name: "explicit value is honoured", set: true, env: "16", want: 16},
+		{name: "surrounding whitespace is tolerated", set: true, env: " 16 ", want: 16},
+		{name: "zero falls back", set: true, env: "0", want: 0},
+		{name: "negative falls back", set: true, env: "-4", want: 0},
+		{name: "a typo falls back rather than failing the run", set: true, env: "sixteen", want: 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// When: the runner reads the knob.
+			if tc.set {
+				t.Setenv("OVERCAST_COMPAT_PARALLEL_SLOTS", tc.env)
+			} else {
+				t.Setenv("OVERCAST_COMPAT_PARALLEL_SLOTS", "")
+				if err := os.Unsetenv("OVERCAST_COMPAT_PARALLEL_SLOTS"); err != nil {
+					t.Fatalf("Unsetenv() error = %v", err)
+				}
+			}
+
+			// Then: only a positive integer overrides the computed budget.
+			if got := envParallelSlots(); got != tc.want {
+				t.Fatalf("envParallelSlots() = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }

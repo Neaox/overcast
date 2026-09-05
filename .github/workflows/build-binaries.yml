@@ -29,8 +29,38 @@ jobs:
   binary:
     name: ${{ matrix.asset }}
     runs-on: ubuntu-latest
+    # 70-93 s per leg on test.yml run 33945978965, 70-95 s on release run
+    # 33353263076. Ten rather than 3x that: the sample is all warm caches,
+    # and a leg that misses both the module and the per-target build cache
+    # compiles the standard library for its GOOS/GOARCH from nothing.
+    #
+    # This is also the timeout release.yml's `binaries` job runs under —
+    # `timeout-minutes` cannot be set on a job that calls a reusable
+    # workflow, so the called workflow has to carry it.
+    timeout-minutes: 10
     strategy:
-      fail-fast: false
+      # The one matrix in the repository that should fail fast, and the reason
+      # is what each job's failure would tell you. Every other matrix here is
+      # distinct evidence — `build-tags` compiles different code per tag,
+      # `installers` runs a different OS per leg, `docker` builds a different
+      # image, and each compat suite is a different client library against the
+      # same emulator, so losing nine answers to learn one is a real loss.
+      #
+      # These ten are `go build` of the same two packages at ten GOOS/GOARCH
+      # pairs. A compile error fails all ten identically and the first one to
+      # report has already said everything the other nine would. Genuinely
+      # target-specific breakage exists — a syscall or a build tag that only
+      # resolves on one platform — but it presents as one leg red and nine
+      # green, which fail-fast never reaches, because it only cancels after a
+      # failure has already happened.
+      #
+      # Safe to cancel: `Cross-build` is not a required check
+      # (docs/plans/ci-streamlining.md § E lists the required set, and
+      # test.yml's cross-build job comments on the same fact), and the
+      # publishing path in release.yml gates on `needs.binaries.result ==
+      # 'success'`, so a cancelled leg blocks the release exactly as a failed
+      # one does.
+      fail-fast: true
       matrix:
         include:
           - asset: overcast-linux-amd64
@@ -76,9 +106,62 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        id: go
         with:
           go-version-file: go.mod
-          cache: true
+          # cache: false, deliberately — see the two actions/cache steps below.
+          # setup-go's built-in cache keys on runner OS/arch, the Go version
+          # and hash(go.sum) and nothing else, so all ten legs of this matrix
+          # compute the *same* key. Observed on test.yml run 33945978965: every
+          # Cross-build job restored
+          # `setup-go-Linux-x64-ubuntu24-go-1.27.0-04967ca2ee86...` and every
+          # one of them then logged "Cache hit occurred on the primary key ...,
+          # not saving cache". Ten jobs, one key, zero saves — so a
+          # cross-compiled GOCACHE, which is per-GOOS/GOARCH, was never
+          # persisted for any target at all.
+          cache: false
+
+      # The module cache is target-independent — the same source, downloaded
+      # once — so it stays on one shared key. Ten legs racing to save it on a
+      # cold key costs nine "Unable to reserve cache" warnings and nothing
+      # else; ten *copies* of it would be the same waste this item is removing,
+      # in the other direction.
+      - name: Restore the Go module cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: go-mod-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-mod-${{ runner.os }}-
+
+      # The build cache is not. GOCACHE entries are keyed by the compiler's
+      # inputs, which include GOOS, GOARCH and the build tags, so a
+      # linux/arm64 leg gets nothing from a darwin/amd64 one — and the prize
+      # here is precisely the part that does not transfer: the standard library
+      # and every dependency compiled *for that target*, which a native build
+      # never produces. Hence one entry per matrix leg, named by `asset`
+      # because that is what identifies a leg (goos/goarch alone would still
+      # collide two ways, `overcast` and `overcastd` differing only in
+      # `-tags slim,nosqlite`).
+      #
+      # Keyed on go.sum and the resolved Go version, not on github.sha. A
+      # sha-keyed entry would save on every run — ten multi-hundred-megabyte
+      # entries per push, which would evict the rest of the repository's caches
+      # inside a day. go.sum keyed means one entry per target per dependency
+      # set: a hit does not re-save, so it goes stale for first-party code, and
+      # that is fine — Go's cache is content-addressed, so a stale entry still
+      # answers for every package whose inputs did not move, which is the
+      # stdlib and the dependency tree. Changed Overcast packages recompile,
+      # which they would anyway.
+      - name: Restore the Go build cache for this target
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ matrix.asset }}-go${{ steps.go.outputs.go-version }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-build-${{ matrix.asset }}-go${{ steps.go.outputs.go-version }}-
+            go-build-${{ matrix.asset }}-
+
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: web-dist

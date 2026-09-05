@@ -27,6 +27,9 @@ permissions:
 jobs:
   todo:
     runs-on: ubuntu-latest
+    # 11-16 s (runs 33948334654, 33948558116). The variable part is one
+    # issue-creation API call per new marker, and a push adds few.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: alstr/todo-to-issue-action@37bb7b56e58569ef273b60678048030a7f0c261a # v5

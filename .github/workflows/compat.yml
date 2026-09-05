@@ -93,6 +93,12 @@ jobs:
   changes:
     name: Changed-path scope
     runs-on: ubuntu-latest
+    # 6 s on the last two real runs (33945978853, 33944965489): a shallow
+    # checkout and one paginated API call. Five minutes is the floor this
+    # file uses for a job whose work is seconds — enough that a slow runner
+    # or a retried API call never trips it, short enough that a wedged one
+    # does not hold a concurrency slot for six hours.
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
@@ -137,6 +143,8 @@ jobs:
   prepare-matrix:
     name: Prepare suite matrix
     runs-on: ubuntu-latest
+    # 3-4 s: one python step, no checkout.
+    timeout-minutes: 5
     outputs:
       suites: ${{ steps.suites.outputs.suites }}
     steps:
@@ -181,6 +189,12 @@ jobs:
     needs: [changes, prepare-matrix]
     if: needs.changes.outputs.code != 'false' && contains(needs.prepare-matrix.outputs.suites, '"rust-sdk"')
     runs-on: ubuntu-latest
+    # 7-12 s when it decides nothing changed, which is almost always; 115 s
+    # the last time it actually built (run 33944335768). Thirty rather than
+    # 3x that, deliberately: 115 s was a warm `type=gha` buildx cache, and a
+    # cold one compiles the Rust SDK suite from source. This is the one job
+    # here whose worst case is not in the sample.
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -188,7 +202,30 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          # Two commits, not the whole history. The only history this job has
+          # ever read is `git diff --name-only HEAD^1 HEAD` in "Detect
+          # rust-sdk image input changes" below, which needs HEAD and its
+          # first parent and nothing further back — the same shape, and the
+          # same reasoning, as test.yml's `version-guard`. On a `pull_request`
+          # HEAD is GitHub's refs/pull/N/merge, so HEAD^1 is the base tip and
+          # the diff is this pull request's own changes.
+          #
+          # The push branch of that step diffs github.event.before against
+          # github.sha instead. This repository squash-merges, so a push to
+          # main is one commit and `before` is HEAD^1 — in the clone at depth
+          # 2. It does not have to be, and it does not matter if it is not:
+          # on anything but a pull request the rebuild is decided by the
+          # `exists` check below, against a tag that is a content hash of the
+          # rust-sdk sources and both registry halves
+          # (compat/suites/rust-sdk/image-tag.sh). Changed inputs mean a tag
+          # nothing has published, so the image is built and pushed whatever
+          # the diff said. The path list is the *conservative* trigger — it
+          # also names .github/workflows/compat.yml, which the tag deliberately
+          # does not — and it is the pull-request path that relies on it.
+          #
+          # So nothing here wanted 1098 commits and a ~317 MiB pack; it wanted
+          # one parent.
+          fetch-depth: 2
 
       - name: Compute image tag
         id: tag
@@ -273,6 +310,9 @@ jobs:
     name: Build Overcast compat binaries
     needs: [changes, prepare-matrix]
     runs-on: ubuntu-latest
+    # 82 s (33945978853) and 70 s (33944965489), before the SPA build came
+    # out of it and the Lambda init started coming from cache.
+    timeout-minutes: 10
     # Named once, read by every step below. `!= 'false'` and not `== 'true'`:
     # see the note on the `changes` job — anything other than a definite "this
     # is prose" runs the suites.
@@ -290,27 +330,31 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: ./.github/actions/lambda-init
         if: env.RUN_SUITES == 'true'
-        with:
-          package_json_file: web/package.json
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        if: env.RUN_SUITES == 'true'
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
 
-      - name: Build web assets
-        if: env.RUN_SUITES == 'true'
-        run: pnpm install --frozen-lockfile && VITE_BUNDLED=true pnpm run build
-        working-directory: web
-
+      # No SPA build, and no pnpm at all. `bin/overcast` is untagged, so it
+      # embeds `all:web/dist` — but the committed `web/dist/.gitkeep` is what
+      # keeps that pattern resolving, and a binary without a real SPA serves
+      # the API normally and answers 503 on the UI port. That is documented
+      # behaviour, not a broken build (test.yml says the same thing above its
+      # `vet` job, and docs/plans/ci-streamlining.md § C is where it was first
+      # established).
+      #
+      # Nothing the suites do could tell the difference. None of the eight
+      # touches the UI port or asks for SPA content: grepping every suite for
+      # `4567` finds only CloudFront key-group ids (`K1234567890ABCDE`) and an
+      # EC2 AMI id, `index.html` finds only the S3
+      # PutBucketWebsite/GetBucketWebsite configuration literal, and `web/dist`
+      # finds nothing. The suites speak to the API over 4566.
+      #
+      # compat-flake-detection.yml already had this shape — it builds
+      # `-tags slim,nosqlite` and has never set up Node — so there is nothing
+      # to remove there.
       - name: Build binaries
         if: env.RUN_SUITES == 'true'
         run: |
           mkdir -p bin
-          make lambda-init
           go build -o bin/overcast ./cmd/overcast
           go build -o bin/compat ./cmd/compat
 
@@ -336,6 +380,13 @@ jobs:
       - rust-sdk-image
     if: always() && needs.prepare-matrix.result == 'success' && needs.build-binaries.result == 'success'
     runs-on: ubuntu-latest
+    # One value for every leg, so it has to fit the slowest: `cli` at 476 s
+    # (33945978853) and 363 s (33944965489), against 44-103 s for the other
+    # seven. Thirty is above compat/runner.go's own `suiteHardTimeout` of 25
+    # minutes on purpose — the runner's per-suite net should fire first,
+    # because it kills the subprocess and writes a result that says which
+    # suite hung, where this cancels the job and says nothing.
+    timeout-minutes: 30
     # The job keeps its name and still reports; only the steps are conditional.
     # A gated-off build-binaries still concludes `success`, so the guard above
     # is unaffected.
@@ -488,6 +539,27 @@ jobs:
         env:
           OVERCAST_ENDPOINT: http://localhost:4566
           OVERCAST_COMPAT_RESULTS_FILE: compat-results-${{ matrix.suite }}.json
+          # A tuning knob, for the `cli` suite only.
+          #
+          # `cli` is the one suite that does not hold a client library open: it
+          # spawns a fresh `aws` process per API call — at least 1149 static
+          # call sites under compat/suites/cli/internal/groups/, dispatched
+          # through awscli.go — so a slot spends most of its life blocked on
+          # process start and Python import, not on the emulator. Eight slots
+          # on a 4-vCPU runner therefore under-subscribes badly: `go-sdk` runs
+          # the same registry in 61 s where `cli` takes 348 s. Sixteen lets
+          # twice as many of those waits overlap without asking anything more
+          # of Overcast, which is answering the same requests either way.
+          #
+          # Unset for every other suite, so each keeps the runner's own
+          # `max(8, 2×CPU)` budget.
+          #
+          # RE-CHECK THIS AGAINST compat-flake-detection.yml after a week. More
+          # concurrency is the classic way to turn a latent ordering bug into
+          # an intermittent one, and the nightly N-runs-per-suite job is what
+          # would see it first. If `cli` starts appearing in flake findings,
+          # this is the first thing to put back.
+          OVERCAST_COMPAT_PARALLEL_SLOTS: ${{ matrix.suite == 'cli' && '16' || '' }}
         run: |
           ./bin/compat \
             --endpoint http://localhost:4566 \
@@ -532,6 +604,11 @@ jobs:
       - compat
     if: always() && needs.prepare-matrix.result == 'success'
     runs-on: ubuntu-latest
+    # 43 s (33945978853) and 29 s (33944965489). Ten because the promotion
+    # path on main does more than the sample ever measured — a force-push,
+    # `gh pr create` and arming auto-merge — and each of those is a network
+    # call that can retry.
+    timeout-minutes: 10
     env:
       RUN_SUITES: ${{ needs.changes.outputs.code != 'false' }}
     permissions:

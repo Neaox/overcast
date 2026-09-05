@@ -31,6 +31,11 @@ jobs:
       github.event_name != 'pull_request' ||
       startsWith(github.event.pull_request.head.ref, 'release/')
     runs-on: ubuntu-latest
+    # 5-8 s on the two runs that were not skipped (33710422795, 33808714687),
+    # neither of which found a held pull request. Fifteen because the work
+    # scales with the number of open pull requests — one workflow-run listing
+    # each, plus a re-run dispatch per held one — and the sample had none.
+    timeout-minutes: 15
     steps:
       - name: Require the release App credentials
         env:

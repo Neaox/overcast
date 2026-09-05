@@ -34,6 +34,10 @@ jobs:
   check-version:
     name: Check release version
     runs-on: ubuntu-latest
+    # 7-9 s on the last two pushes (33948334743, 33948558205). Ten because
+    # the merge-tree validation only runs during a release window, and no
+    # sample covers it.
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.read.outputs.version }}
       tag: ${{ steps.read.outputs.tag }}
@@ -46,7 +50,23 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Every tag, and the history behind them: "Decide floating Docker
+          # tags" asks `git tag` what has already shipped.
           fetch-depth: 0
+          # blob:none keeps all of that — tags, commits and trees are never
+          # filtered — and drops only file contents. Almost everything here is
+          # commit-graph work (`git tag`, `git merge-base --is-ancestor`,
+          # `git ls-remote`) or reads the working tree checkout already
+          # materialised (VERSION, CHANGELOG.md).
+          #
+          # The one step that genuinely wants blobs at other revisions is
+          # "Validate changelog against current main": `git merge-tree
+          # --write-tree` does a real content merge and `git archive` extracts
+          # the merged CHANGELOG.md and .changelog/. Those come back on
+          # demand, and they are the two smallest paths in the tree — the cost
+          # moves from an unconditional ~317 MiB pack on every run to a few
+          # kilobytes fetched only during a release window.
+          filter: blob:none
 
       - name: Read release version
         id: read
@@ -268,6 +288,11 @@ jobs:
     needs: [check-version, web]
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    # 11m31s on the last real release (run 33353263076, 0.0.1-alpha.38) and
+    # 10m51s on 33354244287. This is the untagged suite under `-race`, so it
+    # is the longest job in the file; 35 is ~3x, and it sits under the
+    # `-timeout=1200s` the test binary itself carries.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -288,6 +313,10 @@ jobs:
     needs: check-version
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    # 37 s (run 33353263076) and 41 s (33354244287). Fifteen rather than 3x
+    # two minutes: `pnpm install --frozen-lockfile` on a cold store is the
+    # named hang risk this item exists for, and the sample is all warm.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: web
@@ -326,6 +355,9 @@ jobs:
     name: Build
     needs: [check-version, test, web]
     if: needs.check-version.outputs.should_release == 'true' && needs.test.result == 'success' && needs.web.result == 'success'
+    # No timeout-minutes on this job: GitHub does not accept it alongside
+    # `uses:`. The called workflow carries it instead — see the `binary` job
+    # in build-binaries.yml, which is where the ten legs actually run.
     uses: ./.github/workflows/build-binaries.yml
     with:
       version: ${{ needs.check-version.outputs.version }}
@@ -341,6 +373,24 @@ jobs:
     needs: [check-version, binaries]
     if: needs.check-version.outputs.should_release == 'true' && needs.binaries.result == 'success'
     runs-on: ubuntu-latest
+    # 120, and the number is not derived from the duration — which is the
+    # point. Measured execution on the last real release (run 33353263076,
+    # 0.0.1-alpha.38) was 30 s, from asset download to release creation, so
+    # 3x would be five minutes.
+    #
+    # But this job sits behind the `release` environment's required reviewer,
+    # and how `timeout-minutes` interacts with that wait is genuinely
+    # ambiguous. GitHub lets a deployment wait up to 30 days for approval,
+    # which the default 360-minute timeout demonstrably does not cut short —
+    # so the timer plainly does not run while a job is waiting. Yet the API
+    # reports these jobs as `startedAt` the moment they begin waiting: on run
+    # 33354244287 all three sat "started" for 24 hours before being
+    # cancelled.
+    #
+    # Finding out which reading is right by cancelling a half-published
+    # release is not a trade worth making. 120 bounds a genuine hang at a
+    # third of the default and leaves any plausible approval window alone.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -494,6 +544,11 @@ jobs:
     needs: [check-version, test, web]
     if: needs.check-version.outputs.should_release == 'true' && needs.test.result == 'success' && needs.web.result == 'success'
     runs-on: ubuntu-latest
+    # 120 for the same reason as `release-assets` above: measured execution
+    # is 4m48s on run 33353263076 — a two-platform buildx build — and the
+    # rest of the budget is the `release` environment's approval wait, which
+    # is not worth gambling a release on. Read the note there.
+    timeout-minutes: 120
     env:
       REGISTRY: ghcr.io
       OWNER: ${{ github.repository_owner }}
@@ -547,6 +602,11 @@ jobs:
     needs: [check-version, test, web]
     if: needs.check-version.outputs.should_release == 'true' && needs.test.result == 'success' && needs.web.result == 'success'
     runs-on: ubuntu-latest
+    # 120 for the same reason as `release-assets` above: measured execution
+    # is 2m57s on run 33353263076 — a two-platform buildx build — and the
+    # rest of the budget is the `release` environment's approval wait, which
+    # is not worth gambling a release on. Read the note there.
+    timeout-minutes: 120
     env:
       REGISTRY: ghcr.io
       OWNER: ${{ github.repository_owner }}
@@ -609,6 +669,11 @@ jobs:
     needs: [check-version, release-assets, publish-console, publish-slim]
     if: needs.check-version.outputs.should_release == 'true' && needs.release-assets.result == 'success' && needs.publish-console.result == 'success' && needs.publish-slim.result == 'success'
     runs-on: ubuntu-latest
+    # 4 s on run 33353263076: download one artifact, set the release body.
+    # Deliberately not in the `release` environment (see above), so unlike
+    # the three jobs it depends on this one waits for nothing and can take a
+    # timeout derived from its own duration.
+    timeout-minutes: 10
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -681,6 +746,13 @@ jobs:
     needs: [check-version, release-assets]
     if: needs.check-version.outputs.should_release == 'true' && needs.release-assets.result == 'success'
     runs-on: ${{ matrix.os }}
+    # Never measured: no release has run since this job was added. The
+    # closest proxy is test.yml's `Installers` matrix, which runs the same two
+    # scripts against a local fake release server — 46 s (ubuntu), 76 s
+    # (macos), 94 s (windows) on run 33945978965. Fifteen rather than ~5,
+    # because this one downloads the real assets over the network from
+    # releases/download/, which the proxy does not.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

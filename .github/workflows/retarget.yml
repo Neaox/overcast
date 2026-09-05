@@ -32,6 +32,10 @@ jobs:
       startsWith(github.event.comment.body, '/retarget') &&
       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
+    # Not measured — every recorded run was skipped by the `if:` above. The
+    # body is a shallow checkout and a handful of `gh api` calls with no
+    # loops and no waits, so ten is a bound rather than a multiple.
+    timeout-minutes: 10
     steps:
       - name: Require the release App credentials
         env:
