@@ -30,7 +30,8 @@ func (s *Service) createAddon(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if !serviceutil.RequireString(w, r, req.AddonName, "addonName") {
+	if aerr := validateAddonName(req.AddonName); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
@@ -157,14 +158,15 @@ func (s *Service) updateAddon(w http.ResponseWriter, r *http.Request) {
 }
 
 // addonCatalogEntry is one entry in the synthetic catalog of AWS-managed
-// add-ons that DescribeAddonVersions lists and DescribeAddonConfiguration
-// answers from.
+// add-ons that DescribeAddonVersions lists, DescribeAddonConfiguration
+// answers from, and CreateAddon (validateAddonName) accepts a name against.
 //
-// The two operations used to read separate tables, and the configuration table
-// carried a single version per add-on — so a caller asking for the schema of a
-// version DescribeAddonVersions had just advertised was answered with whatever
-// version that other table held. One table means the two can no longer
-// disagree.
+// The two describe operations used to read separate tables, and the
+// configuration table carried a single version per add-on — so a caller
+// asking for the schema of a version DescribeAddonVersions had just
+// advertised was answered with whatever version that other table held. One
+// table means the two, and now CreateAddon as well, can no longer disagree
+// about which add-ons exist (#1692).
 //
 // Type, Publisher and Owner are AWS's documented values for its own managed
 // add-ons; the pinned model describes the members, not their contents, so they
@@ -186,6 +188,15 @@ type addonCatalogEntry struct {
 // query filter.
 var addonCatalogClusterVersions = []string{"1.30", "1.29"}
 
+// addonCatalog is the small set of AWS-managed add-ons DescribeAddonVersions
+// publishes without filters, taken from
+// https://docs.aws.amazon.com/eks/latest/userguide/workloads-add-ons-available-eks.html
+// (checked 2026-09-05). That page currently lists over twenty add-ons; this
+// catalog carries the handful most CDK/CloudFormation stacks actually
+// reference (the ones named in issue #1692 itself) rather than the full set,
+// consistent with "a small published list" — adding another entry here is a
+// straightforward follow-up, not a design change, because CreateAddon,
+// DescribeAddonVersions and DescribeAddonConfiguration all read this one map.
 var addonCatalog = map[string]addonCatalogEntry{
 	"vpc-cni": {
 		Type: "networking", Publisher: "eks", Owner: "aws",
@@ -207,6 +218,36 @@ var addonCatalog = map[string]addonCatalogEntry{
 		Versions: []string{"v1.35.0-eksbuild.1", "v1.34.0-eksbuild.1"},
 		Schema:   `{"$schema":"http://json-schema.org/draft-06/schema#","type":"object","properties":{"controller":{"type":"object"}}}`,
 	},
+	"eks-pod-identity-agent": {
+		Type: "other", Publisher: "eks", Owner: "aws",
+		Versions: []string{"v1.3.4-eksbuild.1", "v1.3.2-eksbuild.2", "v1.2.0-eksbuild.1"},
+		Schema:   `{"$schema":"http://json-schema.org/draft-06/schema#","type":"object","properties":{}}`,
+	},
+}
+
+// validateAddonName reports the same InvalidParameterException real EKS
+// returns from CreateAddon when addonName is absent or unrecognised.
+// addonName is @required, and the documented contract is that "the name must
+// match one of the names returned by DescribeAddonVersions"
+// (https://docs.aws.amazon.com/eks/latest/APIReference/API_CreateAddon.html,
+// checked 2026-09-05; the docs give InvalidParameterException's shape — an
+// addonName field alongside a generic "review the available parameters"
+// description — but not a literal runtime message, so the wording below is
+// this package's best-effort phrasing of that documented contract, not a
+// verified transcript of AWS's exact text). addonCatalog is
+// DescribeAddonVersions's own catalog, so the two can never disagree about
+// which names are valid.
+func validateAddonName(name string) *protocol.AWSError {
+	if name == "" {
+		return missingRequiredMember("addonName")
+	}
+	if _, ok := addonCatalog[name]; !ok {
+		return invalidParameter(fmt.Sprintf(
+			"addonName %s is not a supported add-on; the name must match one of the names returned by DescribeAddonVersions",
+			name,
+		))
+	}
+	return nil
 }
 
 // describeAddonVersions serves GET /addons/supported-versions. Every input is

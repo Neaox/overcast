@@ -811,6 +811,9 @@ func (s *Service) createAddonTyped(ctx context.Context, req *createAddonRequest)
 	if _, aerr := s.validateCluster(ctx, region, req.ClusterName); aerr != nil {
 		return nil, aerr
 	}
+	if aerr := validateAddonName(req.AddonName); aerr != nil {
+		return nil, aerr
+	}
 	a := &Addon{
 		ClusterName: req.ClusterName, AddonName: req.AddonName,
 		AddonArn:     s.addonARN(region, req.ClusterName, req.AddonName),

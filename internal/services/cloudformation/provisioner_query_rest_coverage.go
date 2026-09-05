@@ -1431,14 +1431,15 @@ func (h *eksAddonHandler) Create(ctx context.Context, router http.Handler, cfg *
 	clusterName, _ := props["ClusterName"].(string)
 	addonName, _ := props["AddonName"].(string)
 	if addonName == "" {
-		// AddonName is Required: Yes on AWS::EKS::Addon, and CreateAddon only
-		// accepts a name DescribeAddonVersions publishes ("vpc-cni",
-		// "coredns", ...) — so any value minted here is a placeholder real AWS
-		// would reject, exactly as the stack-name-only one was. It exists so a
-		// template that omits the property does not send an empty path
-		// segment, and it is generated so that two of them are still two
-		// resources rather than one.
-		addonName = rCtx.generatedName()
+		// AddonName is Required: Yes on AWS::EKS::Addon
+		// (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-eks-addon.html),
+		// unlike almost every other AWS::*::* name property, so there is no
+		// AWS behaviour to emulate by minting a placeholder here — a template
+		// that omits it fails template validation on real CloudFormation
+		// before any resource is touched. #788 made the old placeholder
+		// unique per resource; this issue (#1692) removes it rather than
+		// generating a name real AWS would never accept.
+		return "", nil, requiredPropertyMissing(rCtx.LogicalID, "AWS::EKS::Addon", "AddonName")
 	}
 
 	body := map[string]any{
@@ -1454,16 +1455,36 @@ func (h *eksAddonHandler) Create(ctx context.Context, router http.Handler, cfg *
 		return "", nil, fmt.Errorf("CreateAddon: %w", err)
 	}
 
-	physicalID := fmt.Sprintf("%s/%s", clusterName, addonName)
+	// Ref on AWS::EKS::Addon returns "<cluster-name>|<addon-name>" — pipe
+	// separated, unlike the sibling Nodegroup/FargateProfile handlers below,
+	// which legitimately use "/" because that is what AWS documents for them.
+	// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-eks-addon.html#aws-resource-eks-addon-return-values
+	physicalID := clusterName + "|" + addonName
 	return physicalID, nil, nil
 }
 
-func (h *eksAddonHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
+// eksAddonPhysicalIDParts splits an AWS::EKS::Addon physical ID into its
+// cluster and addon name. The current form is "<cluster>|<addon>" (see
+// Create above); a stack whose add-on was created before that fix (#1692)
+// still holds the old "<cluster>/<addon>" form in its state, so a physical ID
+// with no "|" falls back to splitting on "/" rather than failing its next
+// delete or update.
+func eksAddonPhysicalIDParts(physicalID string) (clusterName, addonName string) {
+	if idx := strings.Index(physicalID, "|"); idx >= 0 {
+		return physicalID[:idx], physicalID[idx+1:]
+	}
 	parts := strings.SplitN(physicalID, "/", 2)
 	if len(parts) < 2 {
+		return "", ""
+	}
+	return parts[0], parts[1]
+}
+
+func (h *eksAddonHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
+	clusterName, addonName := eksAddonPhysicalIDParts(physicalID)
+	if clusterName == "" || addonName == "" {
 		return nil
 	}
-	clusterName, addonName := parts[0], parts[1]
 
 	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
 		"/clusters/"+url.PathEscape(clusterName)+"/addons/"+url.PathEscape(addonName), "", nil)
@@ -1471,7 +1492,47 @@ func (h *eksAddonHandler) Delete(ctx context.Context, router http.Handler, cfg *
 }
 
 func (h *eksAddonHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	// ClusterName and AddonName both replace on real AWS
+	// (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-eks-addon.html);
+	// CreateAddon rejects a duplicate name, so replacing under an unchanged
+	// pair can never succeed.
+	clusterName, addonName := eksAddonPhysicalIDParts(physicalID)
+	if cn, ok := props["ClusterName"].(string); ok && cn != "" && cn != clusterName {
+		return "", nil, errReplacementRequired
+	}
+	if an, ok := props["AddonName"].(string); ok && an != "" && an != addonName {
+		return "", nil, errReplacementRequired
+	}
+
+	body := map[string]any{}
+	if v, ok := props["AddonVersion"].(string); ok && v != "" {
+		if ov, _ := oldProps["AddonVersion"].(string); ov != v {
+			body["addonVersion"] = v
+		}
+	}
+	if v, ok := props["ConfigurationValues"].(string); ok && v != "" {
+		if ov, _ := oldProps["ConfigurationValues"].(string); ov != v {
+			body["configurationValues"] = v
+		}
+	}
+	if v, ok := props["ServiceAccountRoleArn"].(string); ok && v != "" {
+		if ov, _ := oldProps["ServiceAccountRoleArn"].(string); ov != v {
+			body["serviceAccountRoleArn"] = v
+		}
+	}
+	if v, ok := props["ResolveConflicts"].(string); ok && v != "" {
+		body["resolveConflicts"] = v
+	}
+	if len(body) > 0 {
+		if _, err := eksJSON(ctx, router, rCtx.Region, http.MethodPost,
+			"/clusters/"+url.PathEscape(clusterName)+"/addons/"+url.PathEscape(addonName)+"/update", body); err != nil {
+			return "", nil, fmt.Errorf("UpdateAddon: %w", err)
+		}
+	}
+
+	// Normalises a pre-#1692 "<cluster>/<addon>" physical ID to the correct
+	// "<cluster>|<addon>" form on the next update.
+	return clusterName + "|" + addonName, nil, nil
 }
 
 // ── AWS::EKS::AccessEntry ──────────────────────────────────────────────────

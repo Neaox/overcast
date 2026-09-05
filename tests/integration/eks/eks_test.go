@@ -2850,7 +2850,7 @@ func TestEKSDescribeResourcesReturnInlineTags(t *testing.T) {
 
 	// Addon
 	createAddonResp := eksCall(t, http.MethodPost, srv.URL+"/clusters/tags-cluster/addons", map[string]any{
-		"addonName": "tagged-addon",
+		"addonName": "kube-proxy",
 		"tags":      map[string]string{"purpose": "networking"},
 	})
 	if createAddonResp.StatusCode != http.StatusCreated {
@@ -2862,7 +2862,7 @@ func TestEKSDescribeResourcesReturnInlineTags(t *testing.T) {
 	if createdAddonTags["purpose"] != "networking" {
 		t.Fatalf("expected addon create response tags {purpose:networking}, got %#v", createdAddon["tags"])
 	}
-	descAddon := eksCall(t, http.MethodGet, srv.URL+"/clusters/tags-cluster/addons/tagged-addon", nil)
+	descAddon := eksCall(t, http.MethodGet, srv.URL+"/clusters/tags-cluster/addons/kube-proxy", nil)
 	addonBody := decodeBody(t, descAddon)
 	addon, _ := addonBody["addon"].(map[string]any)
 	addonTags, _ := addon["tags"].(map[string]any)

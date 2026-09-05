@@ -277,6 +277,78 @@ func TestEKSDescribeAddonConfiguration(t *testing.T) {
 	_ = expectResourceNotFound(t, unknown)
 }
 
+// TestEKSCreateAddonRejectsUnknownName covers #1692: CreateAddon only accepts
+// an addonName DescribeAddonVersions publishes. An invented name must be
+// rejected the way real EKS rejects it — InvalidParameterException — rather
+// than silently creating an add-on no AWS account could ever have.
+func TestEKSCreateAddonRejectsUnknownName(t *testing.T) {
+	srv := newEKSServer(t)
+	_ = mustCreateCluster(t, srv.URL, "addon-unknown-name-cluster", nil)
+
+	resp := eksCall(t, http.MethodPost, srv.URL+"/clusters/addon-unknown-name-cluster/addons", map[string]any{
+		"addonName": "totally-invented-addon",
+	})
+	body := expectJSONStatus(t, resp, http.StatusBadRequest)
+	if body["__type"] != "InvalidParameterException" {
+		t.Fatalf("expected InvalidParameterException for an unpublished addonName, got %#v", body)
+	}
+	msg, _ := body["message"].(string)
+	if !strings.Contains(msg, "totally-invented-addon") {
+		t.Fatalf("expected the error message to name the rejected addon, got %q", msg)
+	}
+
+	// And: no addon was created.
+	listResp := eksCall(t, http.MethodGet, srv.URL+"/clusters/addon-unknown-name-cluster/addons", nil)
+	listBody := expectJSONStatus(t, listResp, http.StatusOK)
+	if addons, _ := listBody["addons"].([]any); len(addons) != 0 {
+		t.Fatalf("expected no addons after a rejected CreateAddon, got %v", addons)
+	}
+}
+
+// TestEKSCreateAddonRejectsMissingName covers the other half of #1692:
+// addonName is @required, so an absent value must fail the same way real EKS
+// fails it, not default to an empty or placeholder name.
+func TestEKSCreateAddonRejectsMissingName(t *testing.T) {
+	srv := newEKSServer(t)
+	_ = mustCreateCluster(t, srv.URL, "addon-missing-name-cluster", nil)
+
+	resp := eksCall(t, http.MethodPost, srv.URL+"/clusters/addon-missing-name-cluster/addons", map[string]any{})
+	body := expectJSONStatus(t, resp, http.StatusBadRequest)
+	if body["__type"] != "InvalidParameterException" {
+		t.Fatalf("expected InvalidParameterException for a missing addonName, got %#v", body)
+	}
+}
+
+// TestEKSCreateAddonAcceptsEveryPublishedName proves CreateAddon and
+// DescribeAddonVersions agree: every name the catalog advertises must also be
+// accepted by CreateAddon, so the "small published list" is genuinely one
+// source of truth rather than two lists that can drift apart.
+func TestEKSCreateAddonAcceptsEveryPublishedName(t *testing.T) {
+	srv := newEKSServer(t)
+	_ = mustCreateCluster(t, srv.URL, "addon-published-names-cluster", nil)
+
+	resp := eksCall(t, http.MethodGet, srv.URL+"/addons/supported-versions", nil)
+	body := expectJSONStatus(t, resp, http.StatusOK)
+	addons, _ := body["addons"].([]any)
+	if len(addons) == 0 {
+		t.Fatalf("expected DescribeAddonVersions to publish at least one addon")
+	}
+	for _, raw := range addons {
+		entry, _ := raw.(map[string]any)
+		name, _ := entry["addonName"].(string)
+		if name == "" {
+			t.Fatalf("addon entry has no addonName: %#v", entry)
+		}
+		t.Run(name, func(t *testing.T) {
+			created := mustCreateAddon(t, srv.URL, "addon-published-names-cluster", name, "")
+			if created["addonName"] != name {
+				t.Fatalf("expected addonName %s, got %v", name, created["addonName"])
+			}
+			expectStatus(t, eksCall(t, http.MethodDelete, srv.URL+"/clusters/addon-published-names-cluster/addons/"+name, nil), http.StatusOK)
+		})
+	}
+}
+
 func TestEKSCreateAddonPreservesFullShape(t *testing.T) {
 	srv := newEKSServer(t)
 	_ = mustCreateCluster(t, srv.URL, "addon-shape-cluster", nil)
