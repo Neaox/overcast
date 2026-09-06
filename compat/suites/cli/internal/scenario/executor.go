@@ -40,15 +40,18 @@ func (awscliRunner) run(ctx context.Context, t *harness.TestContext, args []stri
 // gives a group's context.
 const bagKey = "scenario_context"
 
+// bagFor returns the group's context bag, creating it on first use. The
+// create-if-absent is atomic because a parallel group's tests share one
+// TestContext and reach this concurrently — see harness.TestContext.LoadOrStore.
 func bagFor(t *harness.TestContext) *contextBag {
-	if v, ok := t.Get(bagKey); ok {
-		if c, ok := v.(*contextBag); ok {
-			return c
-		}
+	v := t.LoadOrStore(bagKey, func() any { return newContextBag() })
+	if c, ok := v.(*contextBag); ok {
+		return c
 	}
-	c := newContextBag()
-	t.Set(bagKey, c)
-	return c
+	// Something else claimed the key. Hand back a private bag rather than
+	// panicking: a probe group never reads it, and a lifecycle group would
+	// fail loudly on the first unresolvable $ref.
+	return newContextBag()
 }
 
 // Resolve implements registry.ScenarioBackend: it claims a test the scenario

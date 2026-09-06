@@ -310,6 +310,10 @@ def build_groups_from_registry(
             tests=tests,
             setup=(setup or {}).get(rg["name"]),
             teardown=(teardown or {}).get(rg["name"]),
+            # Only legal in registry.generated.json, where cmd/compatgen sets
+            # it on a probe group and on nothing else. See
+            # harness.TestGroup.parallel for what makes it safe.
+            parallel=bool(rg.get("parallel", False)),
         )
         groups.append(group)
 

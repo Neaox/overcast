@@ -197,6 +197,83 @@ func TestGenerate_probeGroupHoldsNoImplementedOperation(t *testing.T) {
 	}
 }
 
+// TestGenerate_onlyProbeGroupsAreParallel pins the flag to the kind in both
+// directions, in the scenario and in the registry projection an interpreter
+// actually schedules from (#1801).
+//
+// The two halves fail differently and both matter. A lifecycle group that
+// acquired the flag would have its tests raced against the exports they
+// consume — a real corruption, and one that would show up as an unrelated
+// flake. A probe group that lost it would still pass; it would just quietly
+// give back the wall clock the flag exists to buy, which is the failure nobody
+// notices.
+func TestGenerate_onlyProbeGroupsAreParallel(t *testing.T) {
+	_, gen := generateFixture(t)
+
+	probes, lifecycles := 0, 0
+	for _, g := range gen.scenario.Groups {
+		switch g.Kind {
+		case groupProbe:
+			probes++
+			if !g.Parallel {
+				t.Errorf("probe group %s is not parallel", g.Name)
+			}
+		case groupLifecycle:
+			lifecycles++
+			if g.Parallel {
+				t.Errorf("lifecycle group %s is parallel; its tests consume one another's exports", g.Name)
+			}
+		}
+	}
+	if probes == 0 || lifecycles == 0 {
+		t.Fatalf("the fixture has %d probe and %d lifecycle groups; this test needs both", probes, lifecycles)
+	}
+
+	// The registry is what a loader reads, so the flag has to survive the
+	// projection — a scenario-only flag would be invisible to every suite.
+	fromScenario := map[string]bool{}
+	for _, g := range gen.scenario.Groups {
+		fromScenario[g.Name] = g.Parallel
+	}
+	registered := buildRegistry([]*scenario{gen.scenario}, []string{"cli"}, nil).Groups
+	if len(registered) != len(gen.scenario.Groups) {
+		t.Fatalf("registry holds %d groups, scenario holds %d", len(registered), len(gen.scenario.Groups))
+	}
+	for _, g := range registered {
+		if g.Parallel != fromScenario[g.Name] {
+			t.Errorf("registry group %s: parallel=%t, scenario says %t", g.Name, g.Parallel, fromScenario[g.Name])
+		}
+	}
+}
+
+// TestValidateScenario_rejectsAMisplacedParallelFlag is the belt to the
+// constructor's braces: newGroupBuilder derives the flag from the kind, and a
+// hand-built literal is the only way to get the two out of step.
+func TestValidateScenario_rejectsAMisplacedParallelFlag(t *testing.T) {
+	probe := test{Name: "ListCogs", Op: "ListCogs",
+		Call:   call{Op: "ListCogs", Params: map[string]any{}},
+		Assert: []assertion{responseField(checks("$.Cogs", isList()))}}
+
+	for _, tc := range []struct {
+		name     string
+		kind     string
+		parallel bool
+	}{
+		{"a lifecycle group claiming parallel", groupLifecycle, true},
+		{"a probe group that lost it", groupProbe, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &scenario{Version: scenarioVersion, Service: "widgets", Groups: []group{{
+				Name: "widgets-gen-probe", Kind: tc.kind, Parallel: tc.parallel, Tests: []test{probe},
+			}}}
+			err := validateScenario(s)
+			if err == nil || !strings.Contains(err.Error(), "parallel") {
+				t.Fatalf("validateScenario = %v, want a complaint about parallel", err)
+			}
+		})
+	}
+}
+
 func TestGenerate_probeOfAnOperationThatWouldTouchALiveResourceIsRefused(t *testing.T) {
 	// Given: GetWidgetHistory is a read the emulator does not implement, and
 	// it takes the WidgetId the recipe binds to widget.id.

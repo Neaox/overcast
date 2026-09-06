@@ -479,6 +479,55 @@ func TestBuildGroupsIncludesGeneratedGroupInSuiteScope(t *testing.T) {
 	}
 }
 
+// The generated registry's `parallel` must reach the harness, and only from a
+// group that declares it: it is what tells RunGroup a probe group's tests may
+// overlap (#1801). A group that says nothing keeps the serial behaviour every
+// group had before the field existed.
+func TestBuildGroupsCarriesParallelFromTheGeneratedRegistry(t *testing.T) {
+	reg := &Registry{Groups: []RegistryGroup{
+		{Service: "sqs", Name: "sqs-gen-probe", Generated: true, State: "candidate", Parallel: true,
+			Suites: []string{"cli"}, Tests: []RegistryTest{{Name: "ListQueues"}}},
+		{Service: "sqs", Name: "sqs-gen-queue", Generated: true, State: "candidate",
+			Suites: []string{"cli"}, Tests: []RegistryTest{{Name: "CreateQueue"}}},
+	}}
+
+	groups := BuildGroups(reg, ImplMap{}, BuildGroupsOptions{Suite: "cli"})
+	got := map[string]bool{}
+	for _, g := range groups {
+		got[g.Name] = g.Parallel
+	}
+	if !got["sqs-gen-probe"] {
+		t.Error("sqs-gen-probe declares parallel but the harness group does not")
+	}
+	if got["sqs-gen-queue"] {
+		t.Error("sqs-gen-queue declares no parallel but the harness group is parallel")
+	}
+}
+
+// Load must parse `parallel` off the generated file, not merely accept it: a
+// loader that dropped the field would run every probe group serially with
+// nothing failing.
+func TestLoadParsesParallelFromGeneratedRegistry(t *testing.T) {
+	writeRegistryPair(t,
+		handWrittenOnly,
+		`{"version":1,"groups":[{"service":"sqs","name":"sqs-gen-probe","generated":true,`+
+			`"state":"candidate","parallel":true,"suites":["cli"],"tests":[{"name":"ListQueues"}]}]}`)
+
+	reg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if len(reg.Groups) != 2 {
+		t.Fatalf("Load() = %d groups, want the hand-written one plus the generated one", len(reg.Groups))
+	}
+	if reg.Groups[0].Parallel {
+		t.Errorf("the hand-written group came back parallel: %+v", reg.Groups[0])
+	}
+	if !reg.Groups[1].Parallel {
+		t.Errorf("the generated group declares parallel but Load() dropped it: %+v", reg.Groups[1])
+	}
+}
+
 // A generated test with no static impl and no scenario backend must fail
 // loudly with the exact interim-rule message — never skip, never na, never
 // pass. This is the mechanism that keeps a coverage hole from reporting as

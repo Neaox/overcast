@@ -38,10 +38,18 @@ type TestCase struct {
 
 // TestGroup is a collection of related tests with optional setup/teardown.
 type TestGroup struct {
-	Suite    string
-	Service  string
-	Name     string
-	Tests    []TestCase
+	Suite   string
+	Service string
+	Name    string
+	Tests   []TestCase
+	// Parallel lets the group's tests run concurrently with one another,
+	// bounded by the same slot count that bounds concurrent groups. Only a
+	// generated probe group sets it (registry.generated.json's `parallel`):
+	// its tests have no setup, no teardown, no exports and no Depends, so
+	// nothing orders them and no test can observe another's outcome. Results
+	// are still emitted in declaration order, so the only observable
+	// difference is the wall clock.
+	Parallel bool
 	Setup    func(ctx context.Context, t *TestContext) error
 	Teardown func(ctx context.Context, t *TestContext) error
 }
@@ -79,6 +87,22 @@ func (t *TestContext) Get(key string) (any, bool) {
 	defer t.mu.Unlock()
 	v, ok := t.state[key]
 	return v, ok
+}
+
+// LoadOrStore returns the value stored under key, or stores and returns what
+// create() produces when there is none. The lookup and the store happen under
+// one lock, which a Get-then-Set pair does not: the tests of a parallel group
+// share one TestContext, and two of them racing to create the same lazily
+// built value would each get a different one.
+func (t *TestContext) LoadOrStore(key string, create func() any) any {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if v, ok := t.state[key]; ok {
+		return v
+	}
+	v := create()
+	t.state[key] = v
+	return v
 }
 
 // GetString retrieves a string value from the state bag.
@@ -230,7 +254,36 @@ func runSetup(ctx context.Context, g TestGroup, t *TestContext, counts *GroupCou
 
 // runTests runs every test in a group, honouring skips, na, cancellation and
 // the dependency gate.
+//
+// A group marked Parallel whose tests declare no dependencies runs them
+// concurrently; everything else runs in declaration order. Both halves of that
+// condition are load-bearing. The concurrent path cannot express the
+// dependency gate — it would have to decide what to skip from outcomes that
+// have not happened yet — so a group declaring one is run serially even where
+// the registry says parallel. The IR never produces that combination (only a
+// probe group is parallel, and a probe has no exports for a Depends to
+// consume), which is why this is a guard rather than a scheduler.
 func runTests(ctx context.Context, g TestGroup, t *TestContext, counts *GroupCounts) {
+	if g.Parallel && !hasDependencies(g.Tests) {
+		runTestsConcurrently(ctx, g, t, counts)
+		return
+	}
+	runTestsInOrder(ctx, g, t, counts)
+}
+
+// hasDependencies reports whether any test in the group declares one.
+func hasDependencies(tests []TestCase) bool {
+	for _, tc := range tests {
+		if len(tc.Depends) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// runTestsInOrder is the serial path: one test at a time, in declaration
+// order, each result emitted as it completes.
+func runTestsInOrder(ctx context.Context, g TestGroup, t *TestContext, counts *GroupCounts) {
 	failedOrSkipped := map[string]bool{}
 
 	for _, tc := range g.Tests {
@@ -239,74 +292,189 @@ func runTests(ctx context.Context, g TestGroup, t *TestContext, counts *GroupCou
 			counts.Cancelled++
 			continue
 		}
-		if tc.NA != "" {
-			emit(map[string]any{
-				"event": "test_result", "suite": g.Suite, "service": g.Service,
-				"group": g.Name, "test": tc.Name, "status": "na",
-				"error": tc.NA, "duration_ms": 0,
-			})
-			// na is excluded from pass-rate counters
-			continue
-		}
-		if tc.Skip != "" {
-			emit(map[string]any{
-				"event": "test_result", "suite": g.Suite, "service": g.Service,
-				"group": g.Name, "test": tc.Name, "status": "skip",
-				"error": tc.Skip, "duration_ms": 0,
-			})
-			counts.Skipped++
-			failedOrSkipped[tc.Name] = true
-			continue
-		}
-
-		// Dependency gate — skip if any declared dependency failed or was skipped.
-		if len(tc.Depends) > 0 {
-			var failedDeps []string
-			for _, dep := range tc.Depends {
-				if failedOrSkipped[dep] {
-					failedDeps = append(failedDeps, dep)
-				}
-			}
-			if len(failedDeps) > 0 {
-				emit(map[string]any{
-					"event": "test_result", "suite": g.Suite, "service": g.Service,
-					"group": g.Name, "test": tc.Name, "status": "skip",
-					"error":       fmt.Sprintf("dependency failed: %s", strings.Join(failedDeps, ", ")),
-					"duration_ms": 0,
-				})
-				counts.Skipped++
-				failedOrSkipped[tc.Name] = true
-				continue
+		// An na/skip marker outranks the dependency gate: a test the suite
+		// never intended to run here reports why it was marked, not what
+		// happened to something it does not depend on.
+		res, done := marker(g, tc)
+		if !done {
+			// Dependency gate — skip if any declared dependency failed or was skipped.
+			if gated, applies := dependencyGate(g, tc, failedOrSkipped); applies {
+				res = gated
+			} else {
+				res = execute(ctx, g, t, tc)
 			}
 		}
+		record(res, tc.Name, counts, failedOrSkipped)
+		emit(res.event)
+	}
+}
 
-		start := time.Now()
-		err := tc.Fn(ctx, t)
-		durMs := time.Since(start).Milliseconds()
+// runTestsConcurrently runs the group's tests through a bounded worker pool and
+// emits their results in declaration order once all of them are in.
+//
+// Emitting in order rather than as each finishes is what keeps this stream
+// identical to the serial path's, test for test. The dashboard, the baseline
+// and the flake detector all read it, and a result order that depended on
+// which `aws` process answered first would be a new source of diff noise for
+// no benefit.
+func runTestsConcurrently(ctx context.Context, g TestGroup, t *TestContext, counts *GroupCounts) {
+	results := make([]testResult, len(g.Tests))
+	sem := make(chan struct{}, parallelSlots())
+	var wg sync.WaitGroup
+	for i, tc := range g.Tests {
+		if ctx.Err() != nil {
+			results[i] = testResult{
+				event:  cancelledEvent{Event: "cancelled", Suite: g.Suite, Group: g.Name, Test: tc.Name},
+				status: statusCancelled,
+			}
+			continue
+		}
+		wg.Add(1)
+		go func(i int, tc TestCase) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[i] = runOne(ctx, g, t, tc)
+		}(i, tc)
+	}
+	wg.Wait()
 
-		if err == nil {
-			emit(map[string]any{
-				"event": "test_result", "suite": g.Suite, "service": g.Service,
-				"group": g.Name, "test": tc.Name, "status": "pass", "duration_ms": durMs,
-			})
-			counts.Passed++
-		} else if IsUnimplemented(err) {
-			emit(map[string]any{
-				"event": "test_result", "suite": g.Suite, "service": g.Service,
-				"group": g.Name, "test": tc.Name, "status": "unimplemented", "duration_ms": durMs,
-			})
-			counts.Unimplemented++
-			failedOrSkipped[tc.Name] = true
-		} else {
-			emit(map[string]any{
-				"event": "test_result", "suite": g.Suite, "service": g.Service,
-				"group": g.Name, "test": tc.Name, "status": "fail",
-				"error": err.Error(), "duration_ms": durMs,
-			})
-			counts.Failed++
-			failedOrSkipped[tc.Name] = true
+	// No dependency bookkeeping: this path is taken only when no test declares
+	// one, so the set a serial run maintains would be read by nobody.
+	for i, res := range results {
+		record(res, g.Tests[i].Name, counts, nil)
+		emit(res.event)
+	}
+}
+
+// Result statuses, as they appear in the NDJSON stream.
+const (
+	statusPass          = "pass"
+	statusFail          = "fail"
+	statusSkip          = "skip"
+	statusNA            = "na"
+	statusUnimplemented = "unimplemented"
+	statusCancelled     = "cancelled"
+)
+
+// testResult is one test's NDJSON event held rather than emitted, so a
+// concurrent group can emit in declaration order.
+type testResult struct {
+	event  any
+	status string
+}
+
+// resultEvent builds a test_result event. An empty message omits the "error"
+// key entirely, which is what a pass and an unimplemented have always done.
+func resultEvent(g TestGroup, name, status string, durMs int64, message string) map[string]any {
+	ev := map[string]any{
+		"event": "test_result", "suite": g.Suite, "service": g.Service,
+		"group": g.Name, "test": name, "status": status, "duration_ms": durMs,
+	}
+	if message != "" {
+		ev["error"] = message
+	}
+	return ev
+}
+
+// dependencyGate returns the skip result for a test whose declared
+// dependencies did not all pass, and whether it applies. Consulted only after
+// marker: a test that was never going to run has its own reason.
+func dependencyGate(g TestGroup, tc TestCase, failedOrSkipped map[string]bool) (testResult, bool) {
+	var failedDeps []string
+	for _, dep := range tc.Depends {
+		if failedOrSkipped[dep] {
+			failedDeps = append(failedDeps, dep)
 		}
 	}
+	if len(failedDeps) == 0 {
+		return testResult{}, false
+	}
+	message := fmt.Sprintf("dependency failed: %s", strings.Join(failedDeps, ", "))
+	return testResult{event: resultEvent(g, tc.Name, statusSkip, 0, message), status: statusSkip}, true
+}
+
+// marker returns the result a test carries instead of running — na or skip —
+// and whether it has one.
+func marker(g TestGroup, tc TestCase) (testResult, bool) {
+	if tc.NA != "" {
+		return testResult{event: resultEvent(g, tc.Name, statusNA, 0, tc.NA), status: statusNA}, true
+	}
+	if tc.Skip != "" {
+		return testResult{event: resultEvent(g, tc.Name, statusSkip, 0, tc.Skip), status: statusSkip}, true
+	}
+	return testResult{}, false
+}
+
+// runOne runs a single test, or reports its na/skip marker without running it.
+// It touches no state shared with another test beyond the TestContext, whose
+// bag is mutex guarded, so it is safe to call concurrently for the tests of one
+// group — which is why the concurrent path calls this and the serial one calls
+// marker and execute separately, with the dependency gate between them.
+func runOne(ctx context.Context, g TestGroup, t *TestContext, tc TestCase) testResult {
+	if res, done := marker(g, tc); done {
+		return res
+	}
+	return execute(ctx, g, t, tc)
+}
+
+// execute runs the test function and classifies its outcome.
+func execute(ctx context.Context, g TestGroup, t *TestContext, tc TestCase) testResult {
+	start := time.Now()
+	err := tc.Fn(ctx, t)
+	durMs := time.Since(start).Milliseconds()
+
+	switch {
+	case err == nil:
+		return testResult{event: resultEvent(g, tc.Name, statusPass, durMs, ""), status: statusPass}
+	case IsUnimplemented(err):
+		return testResult{event: resultEvent(g, tc.Name, statusUnimplemented, durMs, ""), status: statusUnimplemented}
+	default:
+		return testResult{event: resultEvent(g, tc.Name, statusFail, durMs, err.Error()), status: statusFail}
+	}
+}
+
+// record folds one result into the group counters and, for a serial run, into
+// the set the dependency gate reads. na is counted nowhere — it is excluded
+// from pass-rate calculations, and it does not say a dependent's prerequisite
+// is missing. failedOrSkipped may be nil when nothing will read it.
+func record(res testResult, name string, counts *GroupCounts, failedOrSkipped map[string]bool) {
+	switch res.status {
+	case statusPass:
+		counts.Passed++
+		return
+	case statusNA:
+		return
+	case statusCancelled:
+		counts.Cancelled++
+		return
+	case statusSkip:
+		counts.Skipped++
+	case statusUnimplemented:
+		counts.Unimplemented++
+	case statusFail:
+		counts.Failed++
+	}
+	if failedOrSkipped != nil {
+		failedOrSkipped[name] = true
+	}
+}
+
+// parallelSlots is how many things this suite may do at once — groups in
+// RunSuite, and the tests of one parallel group in runTestsConcurrently.
+// OVERCAST_COMPAT_PARALLEL_SLOTS is injected by the Go runner from the CPU
+// count and the number of active suites; default 8.
+//
+// One number bounds both because it answers one question — how much load this
+// machine should put on the emulator at once — and a second knob would only
+// let the two drift apart.
+func parallelSlots() int {
+	if v := os.Getenv("OVERCAST_COMPAT_PARALLEL_SLOTS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 8
 }
 
 // RunSuite executes all groups in parallel.
@@ -328,15 +496,8 @@ func RunSuite(suite string, groups []TestGroup, endpoint, region, runID string) 
 		"started_at": startedAt.UTC().Format(time.RFC3339),
 	})
 
-	// Limit concurrent group execution. OVERCAST_COMPAT_PARALLEL_SLOTS is
-	// injected by the Go runner; default 8.
-	slots := 8
-	if v := os.Getenv("OVERCAST_COMPAT_PARALLEL_SLOTS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			slots = n
-		}
-	}
-	sem := make(chan struct{}, slots)
+	// Limit concurrent group execution.
+	sem := make(chan struct{}, parallelSlots())
 
 	// Pre-allocate one slot per group so goroutines can write without locking.
 	groupResults := make([]GroupCounts, len(groups))

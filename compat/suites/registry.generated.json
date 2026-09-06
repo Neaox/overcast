@@ -144,6 +144,7 @@
       "generated": true,
       "scenario": "compat/model/scenarios/organizations.json",
       "state": "candidate",
+      "parallel": true,
       "suites": [
         "cli",
         "node-js-sdk",
@@ -313,6 +314,7 @@
       "generated": true,
       "scenario": "compat/model/scenarios/sqs.json",
       "state": "candidate",
+      "parallel": true,
       "suites": [
         "cli",
         "node-js-sdk",

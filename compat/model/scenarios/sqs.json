@@ -1205,6 +1205,7 @@
     {
       "name": "sqs-gen-probe",
       "kind": "probe",
+      "parallel": true,
       "setup": [],
       "tests": [
         {

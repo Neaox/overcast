@@ -228,9 +228,9 @@ func lintGeneratedRegistry(hand *parityRegistry, gen *generatedRegistry) []strin
 			// registry.generated.schema.json to extend its TestGroup by $ref,
 			// so the ban on hand-written groups carrying them is enforced here
 			// instead of by the schema.
-			if g.Generated || g.State != "" || g.Scenario != "" {
+			if g.Generated || g.State != "" || g.Scenario != "" || g.Parallel {
 				issues = append(issues, fmt.Sprintf(
-					"hand-written group %q carries a generated-only field (generated/state/scenario) — those belong in compat/suites/registry.generated.json, which cmd/compatgen owns",
+					"hand-written group %q carries a generated-only field (generated/state/scenario/parallel) — those belong in compat/suites/registry.generated.json, which cmd/compatgen owns",
 					g.Name))
 			}
 		}

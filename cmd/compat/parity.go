@@ -38,7 +38,7 @@ type parityGroup struct {
 	Name    string `json:"name"`
 	// Suites restricts the group to specific suites. Empty = every suite.
 	Suites []string `json:"suites"`
-	// Generated, State and Scenario are set only on groups from
+	// Generated, State, Scenario and Parallel are set only on groups from
 	// registry.generated.json. They are parsed from the hand-written registry
 	// too so lintGeneratedRegistry can reject a hand-written group that carries
 	// them — the shared schema has to permit the properties for the generated
@@ -46,6 +46,7 @@ type parityGroup struct {
 	Generated bool         `json:"generated"`
 	State     string       `json:"state"`
 	Scenario  string       `json:"scenario"`
+	Parallel  bool         `json:"parallel"`
 	Tests     []parityTest `json:"tests"`
 }
 

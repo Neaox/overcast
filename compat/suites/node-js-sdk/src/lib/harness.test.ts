@@ -24,16 +24,30 @@ function makeCtx(): TestContext {
   } as TestContext;
 }
 
-/** Run one group, capturing the NDJSON events it writes to stdout. */
+/**
+ * Run one group, capturing the NDJSON events it writes to stdout.
+ *
+ * process.stdout is shared with node:test's own reporter, which flushes on its
+ * own schedule and lands inside the patched window whenever the group under
+ * test awaits anything real. So the patch claims only what the harness emits —
+ * one JSON object per line, always beginning `{"event":` — and passes
+ * everything else through untouched. Swallowing it instead would eat the
+ * reporter's output and make the run's own summary wrong.
+ */
 async function runGroupCapturingEvents(
   group: TestGroup,
 ): Promise<Record<string, unknown>[]> {
   const chunks: string[] = [];
   const realWrite = process.stdout.write.bind(process.stdout);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stdout as any).write = (chunk: string) => {
-    chunks.push(chunk);
-    return true;
+  (process.stdout as any).write = (chunk: unknown, ...rest: unknown[]) => {
+    const text =
+      typeof chunk === "string" ? chunk : Buffer.from(chunk as Uint8Array).toString();
+    if (text.startsWith('{"event":')) {
+      chunks.push(text);
+      return true;
+    }
+    return (realWrite as (c: unknown, ...r: unknown[]) => boolean)(chunk, ...rest);
   };
   try {
     await runGroup(group, makeCtx());
@@ -44,7 +58,7 @@ async function runGroupCapturingEvents(
     .join("")
     .split("\n")
     .filter((l) => l.trim().length > 0)
-    .map((l) => JSON.parse(l));
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
 }
 
 describe("runGroup teardown after setup failure", () => {
@@ -195,3 +209,186 @@ describe("runGroup teardown after a normal group", () => {
     assert.equal(counts.failed, 1);
   });
 });
+
+// ─── Parallel probe groups (#1801) ───────────────────────────────────────────
+
+/** A group of `n` tests, each of which resolves only once all `n` have
+ *  started. Serially it never completes and the test times out; run
+ *  concurrently it clears at once — so "did these overlap" is answered by the
+ *  tests themselves, not by a wall-clock threshold a loaded CI machine can
+ *  make lie. */
+function barrierGroup(n: number): TestGroup {
+  let arrived = 0;
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return {
+    suite: "node-js-sdk",
+    service: "widgets",
+    name: "widgets-gen-probe",
+    parallel: true,
+    tests: Array.from({ length: n }, (_, i) => ({
+      name: `Probe${String(i).padStart(2, "0")}`,
+      fn: async () => {
+        arrived++;
+        if (arrived === n) release();
+        await released;
+      },
+    })),
+  };
+}
+
+describe("parallel groups", () => {
+  it("runs a parallel group's tests concurrently", async () => {
+    const events = await runGroupCapturingEvents(barrierGroup(8));
+    const results = events.filter((e) => e["event"] === "test_result");
+    assert.equal(results.length, 8);
+    assert.ok(
+      results.every((r) => r["status"] === "pass"),
+      "the barrier never cleared: the tests did not overlap",
+    );
+  });
+
+  it("emits results in declaration order whatever order they finished in", async () => {
+    // Test i settles after (8 - i) ms, so completion order reverses
+    // declaration order; every third one fails, so statuses differ too.
+    const group: TestGroup = {
+      suite: "node-js-sdk",
+      service: "widgets",
+      name: "widgets-gen-probe",
+      parallel: true,
+      tests: Array.from({ length: 8 }, (_, i) => ({
+        name: `Probe${String(i).padStart(2, "0")}`,
+        fn: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 8 - i));
+          if (i % 3 === 0) throw new Error("boom");
+        },
+      })),
+    };
+
+    const events = await runGroupCapturingEvents(group);
+    const results = events.filter((e) => e["event"] === "test_result");
+    assert.deepEqual(
+      results.map((r) => r["test"]),
+      Array.from({ length: 8 }, (_, i) => `Probe${String(i).padStart(2, "0")}`),
+    );
+    assert.equal(results[0]!["status"], "fail");
+    assert.equal(results[1]!["status"], "pass");
+  });
+
+  it("runs a group without the flag one test at a time, in order", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const order: string[] = [];
+    const group: TestGroup = {
+      suite: "node-js-sdk",
+      service: "widgets",
+      name: "widgets-gen-widget",
+      tests: Array.from({ length: 5 }, (_, i) => {
+        const name = `Probe${String(i).padStart(2, "0")}`;
+        return {
+          name,
+          fn: async () => {
+            inFlight++;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            order.push(name);
+            await new Promise((resolve) => setTimeout(resolve, 1));
+            inFlight--;
+          },
+        };
+      }),
+    };
+
+    await runGroupCapturingEvents(group);
+    assert.equal(
+      maxInFlight,
+      1,
+      "tests overlapped in a group that did not ask for it",
+    );
+    assert.deepEqual(
+      order,
+      Array.from({ length: 5 }, (_, i) => `Probe${String(i).padStart(2, "0")}`),
+    );
+  });
+
+
+  // A test the suite marked na or skip never ran and never will, so it reports
+  // why it was marked — not "dependency failed", which would move an na into
+  // the skip counter and replace a skip's own reason with a cascade message.
+  it("lets an na/skip marker outrank the dependency gate", async () => {
+    const group: TestGroup = {
+      suite: "node-js-sdk",
+      service: "widgets",
+      name: "widgets-gen-widget",
+      tests: [
+        {
+          name: "First",
+          fn: async () => {
+            throw new Error("boom");
+          },
+        },
+        {
+          name: "Marked",
+          depends: ["First"],
+          skip: "requires docker",
+          fn: async () => {},
+        },
+        {
+          name: "Unavailable",
+          depends: ["First"],
+          na: "the SDK has no such command",
+          fn: async () => {},
+        },
+        { name: "Ordinary", depends: ["First"], fn: async () => {} },
+      ],
+    };
+
+    const events = await runGroupCapturingEvents(group);
+    const byTest = new Map(
+      events
+        .filter((e) => e["event"] === "test_result")
+        .map((e) => [e["test"] as string, e]),
+    );
+    assert.equal(byTest.get("Marked")?.["status"], "skip");
+    assert.equal(byTest.get("Marked")?.["error"], "requires docker");
+    assert.equal(byTest.get("Unavailable")?.["status"], "na");
+    assert.equal(
+      byTest.get("Ordinary")?.["error"],
+      "dependency failed: First",
+    );
+  });
+
+  // The concurrent path cannot express the dependency gate, so a group that
+  // declares one runs in order even where the registry says parallel. The IR
+  // never produces this combination — only a probe group is parallel, and a
+  // probe has no exports — but a corpus that did must not silently lose the
+  // cascade skip.
+  it("falls back to serial when a test declares a dependency", async () => {
+    const group: TestGroup = {
+      suite: "node-js-sdk",
+      service: "widgets",
+      name: "widgets-gen-probe",
+      parallel: true,
+      tests: [
+        {
+          name: "First",
+          fn: async () => {
+            throw new Error("boom");
+          },
+        },
+        { name: "Second", depends: ["First"], fn: async () => {} },
+      ],
+    };
+
+    const events = await runGroupCapturingEvents(group);
+    const results = events.filter((e) => e["event"] === "test_result");
+    assert.equal(results[0]!["status"], "fail");
+    assert.equal(
+      results[1]!["status"],
+      "skip",
+      "the dependency gate was lost on the parallel path",
+    );
+  });
+});
+

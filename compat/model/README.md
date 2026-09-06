@@ -55,6 +55,14 @@ exists to replace. See
       "setup":    [ <call>, ... ],
       "tests":    [ <test>, ... ],
       "teardown": [ <call>, ... ]
+    },
+    {
+      "name": "sqs-gen-probe",
+      "kind": "probe",
+      "parallel": true,
+      "setup":    [],
+      "tests":    [ <test>, ... ],
+      "teardown": []
     }
   ]
 }
@@ -87,6 +95,28 @@ will run to remove it, so skipping teardown there is exactly when it is most
 needed. A probe group's two lists are empty by construction, which makes "a
 probe creates nothing" a property of the file rather than a convention each
 interpreter has to remember; each interpreter has a test asserting it.
+
+**`parallel`** says step 3 may run the group's tests concurrently rather than
+one after another, bounded by whatever slot count the interpreter already uses
+for concurrent groups (`OVERCAST_COMPAT_PARALLEL_SLOTS`, default 8). It is
+present and `true` on every probe group and on no lifecycle group, because it
+is a restatement of what a probe group already is: no setup, no teardown, no
+exports, and every test one call with curated literals, so no test can create,
+consume or observe anything another one touches. A lifecycle group is the
+opposite — its tests hand resources to each other through the context, and the
+registry's `depends` records it.
+
+Two rules come with it. **Results are still reported in the group's own test
+order**, whatever order the calls finished in: the dashboard, the baseline and
+the flake detector all read that stream, and an order that depended on which
+call answered first would be diff noise for nothing. And **an interpreter that
+ignores the flag is still correct** — it runs the group in order, which is what
+every backend did before the field existed. That is what makes the flag safe to
+add to the IR ahead of a backend implementing it, and why it is the wall clock,
+never the result, that changes. It earns its place because a probe group is the
+biggest thing a process-spawning backend runs: `organizations-gen-probe` is 25
+`aws` invocations that share nothing, and one at a time that is 21 s of the cli
+suite's wall clock against 4 s eight at a time.
 
 ### `client`
 

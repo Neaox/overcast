@@ -33,6 +33,11 @@ type RegistryGroup struct {
 	Generated bool   `json:"generated,omitempty"`
 	State     string `json:"state,omitempty"`
 	Scenario  string `json:"scenario,omitempty"`
+	// Parallel says the group's tests may run concurrently with one another.
+	// Only legal in registry.generated.json, where cmd/compatgen sets it on a
+	// probe group and on nothing else. BuildGroups copies it onto the harness
+	// TestGroup; see harness.TestGroup.Parallel for what makes it safe.
+	Parallel bool `json:"parallel,omitempty"`
 }
 
 // RegistryTest is one test entry within a group.
@@ -373,10 +378,11 @@ func BuildGroups(reg *Registry, impls ImplMap, opts BuildGroupsOptions) []harnes
 
 		groupName := rg.Name // capture for closures
 		g := harness.TestGroup{
-			Suite:   opts.Suite,
-			Service: rg.Service,
-			Name:    groupName,
-			Tests:   tests,
+			Suite:    opts.Suite,
+			Service:  rg.Service,
+			Name:     groupName,
+			Tests:    tests,
+			Parallel: rg.Parallel,
 		}
 
 		if fn, ok := opts.Setup[groupName]; ok {

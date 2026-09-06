@@ -998,6 +998,12 @@ the recipes that produce it and the refusal report, and
   (absent when it matches `name`). Suites may use it for display or filtering
   but must still use the `name` field as the test identifier.
 
+A generated group may also carry **`"parallel": true`** — `cmd/compatgen` sets
+it on a probe group and on nothing else, and it lets a loader run that group's
+tests concurrently (bounded by `OVERCAST_COMPAT_PARALLEL_SLOTS`) while still
+reporting them in registry order; a loader that ignores it runs them in order,
+which is always correct.
+
 **Every loader concatenates `registry.generated.json`** onto `registry.json`
 (hand-written groups first) and honours `"suites"` on **every** group, generated
 or hand-written (#1393, #1737) — one general rule, which is what replaced each

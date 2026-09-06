@@ -693,6 +693,7 @@
     {
       "name": "organizations-gen-probe",
       "kind": "probe",
+      "parallel": true,
       "setup": [],
       "tests": [
         {

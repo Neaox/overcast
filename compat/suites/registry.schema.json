@@ -58,6 +58,10 @@
         "state": {
           "type": "string",
           "description": "Only legal in registry.generated.json — see `generated`. candidate | gated."
+        },
+        "parallel": {
+          "type": "boolean",
+          "description": "Only legal in registry.generated.json — see `generated`. The group's tests may run concurrently with one another, bounded by the suite's own parallel-slot count; cmd/compatgen sets it on a probe group and on nothing else. A loader that ignores it runs the group in order, which is always correct."
         }
       },
       "additionalProperties": false
