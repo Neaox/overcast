@@ -2,6 +2,7 @@ package initproto_test
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"io"
 	"reflect"
@@ -208,5 +209,62 @@ func TestExtensionSrcRoundTrip(t *testing.T) {
 		if name != tc.wantName || ok != tc.wantOK {
 			t.Fatalf("ExtensionName(%q) = (%q, %v), want (%q, %v)", tc.src, name, ok, tc.wantName, tc.wantOK)
 		}
+	}
+}
+
+// TestTelemetryDeliveryForwardsTheBodyVerbatim pins the one property the
+// Telemetry relay exists to preserve: the host marshals the batch, and what the
+// extension receives is those exact bytes. A delivery that re-marshalled the
+// array would reorder object members and reformat numbers, and the subscriber
+// would be reading something Overcast wrote rather than something the AWS
+// schema owner did.
+func TestTelemetryDeliveryForwardsTheBodyVerbatim(t *testing.T) {
+	body := `[{"time":"2026-09-06T00:00:00.000Z","type":"platform.initStart","record":{"phase":"init","initializationType":"on-demand"}}]`
+	encoded, err := json.Marshal(initproto.TelemetryDelivery{
+		ID:   7,
+		URI:  "http://127.0.0.1:9999",
+		Body: json.RawMessage(body),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got initproto.TelemetryDelivery
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Body) != body {
+		t.Errorf("body round-tripped to %s, want %s", got.Body, body)
+	}
+	if got.ID != 7 || got.URI != "http://127.0.0.1:9999" {
+		t.Errorf("delivery round-tripped to %+v", got)
+	}
+}
+
+// TestTelemetryPollOmitsAnAbsentResult keeps the first poll of a channel — and
+// every poll that follows one the host answered with nothing — free of a result
+// the host would have to tell apart from a real one.
+func TestTelemetryPollOmitsAnAbsentResult(t *testing.T) {
+	encoded, err := json.Marshal(initproto.TelemetryPoll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != "{}" {
+		t.Errorf("an empty poll encodes as %s, want {}", encoded)
+	}
+
+	encoded, err = json.Marshal(initproto.TelemetryPoll{Result: &initproto.TelemetryResult{ID: 3}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != `{"result":{"id":3}}` {
+		t.Errorf("a successful result encodes as %s", encoded)
+	}
+
+	encoded, err = json.Marshal(initproto.TelemetryPoll{Result: &initproto.TelemetryResult{ID: 4, Error: "connection refused"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != `{"result":{"id":4,"error":"connection refused"}}` {
+		t.Errorf("a failed result encodes as %s", encoded)
 	}
 }

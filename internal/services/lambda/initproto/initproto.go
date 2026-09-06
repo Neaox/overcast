@@ -14,6 +14,10 @@
 // The same stream carries the init's platform-telemetry observations ([Record]
 // frames), so where a `platform.initStart` sits relative to the INIT phase's
 // output is a fact about the sequence rather than a race between two channels.
+// It also long-polls [TelemetryPath] for the Telemetry API batches it is to
+// POST to an extension's own listener inside the sandbox, which is the one
+// Lambda surface whose traffic runs host-to-sandbox — and now runs over a
+// channel the sandbox opened, like everything else here.
 // See docs/plans/lambda-in-container-init.md.
 package initproto
 
@@ -57,6 +61,33 @@ const (
 	// same per-environment listener that serves the Runtime API. One
 	// long-lived chunked request per init, not one per invocation.
 	LogsPath = "/overcast/v1/logs"
+
+	// TelemetryPath is the host endpoint the init long-polls for Telemetry API
+	// deliveries, on that same per-environment listener.
+	//
+	// The Telemetry API and the Logs API are the one Lambda surface whose
+	// traffic runs the other way: an extension stands its listener up inside
+	// the sandbox and subscribes a loopback destination, and AWS's platform
+	// POSTs the record batches to it from *inside* the execution environment.
+	// Overcast used to make that POST from the host process, addressed at the
+	// container's bridge IP, which works only where the host shares a kernel
+	// with the daemon — not on Docker Desktop, whose engine is in a VM the
+	// host has no route into, so every delivery timed out and extension
+	// telemetry was inert on most developer machines (#1799).
+	//
+	// So the batch travels the way everything else already does: the init asks
+	// the host for work. The init holds one POST open here; the host answers
+	// it with a [TelemetryDelivery] when a subscriber's batch is cut, and the
+	// init POSTs that batch, byte for byte, to the destination the extension
+	// subscribed — from inside the sandbox, which is where AWS posts it from.
+	// The outcome rides the *next* poll as a [TelemetryResult], so one
+	// exchange both reports the last delivery and collects the next, and no
+	// connection is ever made into the container.
+	//
+	// Only the transport moves. Batching, retry, shedding and the
+	// platform.logsDropped accounting stay on the host, which is the side that
+	// owns the AWS schema; the init is a relay that parses nothing.
+	TelemetryPath = "/overcast/v1/telemetry"
 
 	// HeaderLogSeq is added by the init to three forwarded requests, and reads
 	// the same on all of them: "every frame with seq <= N was published on the
@@ -284,4 +315,42 @@ func Decode(r *bufio.Reader) (Frame, error) {
 		}
 		return f, nil
 	}
+}
+
+// TelemetryDelivery is one cut batch of Telemetry API events, on its way from
+// the host to one subscriber's destination inside the sandbox. See
+// [TelemetryPath].
+type TelemetryDelivery struct {
+	// ID names this delivery within one init's poll channel, so the result
+	// that comes back on the next poll matches the attempt waiting for it.
+	ID uint64 `json:"id"`
+
+	// URI is the destination exactly as the extension subscribed it — a
+	// loopback or sandbox.localdomain address inside the sandbox. The host
+	// does not rewrite it, because the POST no longer originates there.
+	URI string `json:"uri"`
+
+	// Body is the JSON array of Telemetry API events the host marshalled. It
+	// is forwarded byte for byte: the init never parses, reorders or
+	// re-marshals a record, so what the extension receives is what the side
+	// that owns the AWS schema produced.
+	Body json.RawMessage `json:"body"`
+}
+
+// TelemetryResult reports what became of one delivery.
+//
+// An empty Error means the destination answered — with any status, exactly as
+// the host's own attempt counted it, because a response means the bytes arrived
+// and the delivery is done. A non-empty Error is a transport failure, and the
+// host retries on its own schedule.
+type TelemetryResult struct {
+	ID    uint64 `json:"id"`
+	Error string `json:"error,omitempty"`
+}
+
+// TelemetryPoll is the init's request body on [TelemetryPath]: the outcome of
+// the delivery the previous poll handed out, if there was one, and — by the act
+// of asking — a request for the next.
+type TelemetryPoll struct {
+	Result *TelemetryResult `json:"result,omitempty"`
 }

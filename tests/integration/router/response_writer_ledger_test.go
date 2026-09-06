@@ -53,6 +53,7 @@ var emulatorOnlyWriters = map[string]string{
 	"lambda/handler_source.go":           "the console's source editor, on the Lambda path prefix but not an AWS operation",
 	"lambda/handler_layers.go":           "GetLayerVersionMetadata, a /_lambda extension-discovery route",
 	"lambda/handler_functions.go":        "ListRuntimes and the saved test-event routes, all emulator-only",
+	"lambda/telemetry_relay.go":          "/overcast/v1/telemetry on the per-environment Runtime API listener: the in-container init's long poll for the Telemetry API batches it carries into the sandbox, reachable only from a container Overcast started (initproto.TelemetryPath)",
 	"lambda/handler_metrics.go":          "/_overcast/lambda/functions/{name}/metrics, the web Monitor tab's read-through (service-metrics-platform.md phase 3)",
 	"sqs/handler_metrics.go":             "/_overcast/sqs/queues/{name}/metrics, the web Monitor section's read-through (service-metrics-platform.md phase 3)",
 	"sns/handler_metrics.go":             "/_overcast/sns/topics/{topicName}/metrics, the web Monitor tab's read-through (service-metrics-platform.md phase 4)",

@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -272,6 +273,10 @@ type fakeHost struct {
 	stop chan struct{}
 
 	invocations chan invocation
+	// deliveries is what the host has to hand out on the telemetry channel; a
+	// poll that finds it empty is answered 204, which is what an environment
+	// with no telemetry subscriber sees for its whole life.
+	deliveries chan initproto.TelemetryDelivery
 
 	mu     sync.Mutex
 	cond   *sync.Cond
@@ -284,6 +289,10 @@ type fakeHost struct {
 	// it.
 	nextSeqs []string
 	streams  int
+	// telemetryResults are the outcomes the init reported, in arrival order,
+	// and nextDeliveryID numbers the batches handed out.
+	telemetryResults []initproto.TelemetryResult
+	nextDeliveryID   uint64
 	// dropAfter, when positive, ends the log stream once that many frames have
 	// been recorded on it — a host-side connection loss, mid-stream.
 	dropAfter int
@@ -296,6 +305,7 @@ func newFakeHost(t *testing.T) *fakeHost {
 		t:           t,
 		stop:        make(chan struct{}),
 		invocations: make(chan invocation, 8),
+		deliveries:  make(chan initproto.TelemetryDelivery, 8),
 		seen:        map[uint64]bool{},
 	}
 	h.cond = sync.NewCond(&h.mu)
@@ -305,6 +315,7 @@ func newFakeHost(t *testing.T) *fakeHost {
 	mux.HandleFunc("POST /2018-06-01/runtime/invocation/{id}/response", h.handleResult("response"))
 	mux.HandleFunc("POST /2018-06-01/runtime/invocation/{id}/error", h.handleResult("error"))
 	mux.HandleFunc("POST "+initproto.LogsPath, h.handleLogs)
+	mux.HandleFunc("POST "+initproto.TelemetryPath, h.handleTelemetryPoll)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotImplemented)
 	})
@@ -327,6 +338,66 @@ func (h *fakeHost) wake() {
 }
 
 func (h *fakeHost) enqueue(inv invocation) { h.invocations <- inv }
+
+// enqueueDelivery queues one telemetry batch for the init to carry into the
+// sandbox, and returns the ID it was given.
+func (h *fakeHost) enqueueDelivery(uri string, body string) uint64 {
+	h.mu.Lock()
+	h.nextDeliveryID++
+	id := h.nextDeliveryID
+	h.mu.Unlock()
+	h.deliveries <- initproto.TelemetryDelivery{ID: id, URI: uri, Body: json.RawMessage(body)}
+	return id
+}
+
+// handleTelemetryPoll is the host end of the init's telemetry channel: record
+// the outcome of the delivery the previous poll handed out, then hand out the
+// next one — or answer 204 when there is nothing, which is the ordinary case.
+func (h *fakeHost) handleTelemetryPoll(w http.ResponseWriter, r *http.Request) {
+	var poll initproto.TelemetryPoll
+	if err := json.NewDecoder(r.Body).Decode(&poll); err != nil {
+		http.Error(w, "undecodable poll", http.StatusBadRequest)
+		return
+	}
+	if poll.Result != nil {
+		h.mu.Lock()
+		h.telemetryResults = append(h.telemetryResults, *poll.Result)
+		h.cond.Broadcast()
+		h.mu.Unlock()
+	}
+	select {
+	case delivery := <-h.deliveries:
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(delivery)
+	case <-time.After(50 * time.Millisecond):
+		w.WriteHeader(http.StatusNoContent)
+	case <-h.stop:
+		w.WriteHeader(http.StatusNoContent)
+	case <-r.Context().Done():
+	}
+}
+
+// awaitTelemetryResult blocks until the init has reported on delivery id.
+func (h *fakeHost) awaitTelemetryResult(id uint64) initproto.TelemetryResult {
+	h.t.Helper()
+	found := func() (initproto.TelemetryResult, bool) {
+		for _, res := range h.telemetryResults {
+			if res.ID == id {
+				return res, true
+			}
+		}
+		return initproto.TelemetryResult{}, false
+	}
+	if !h.await(func() bool { _, ok := found(); return ok }) {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.t.Fatalf("the init never reported on telemetry delivery %d; it reported %+v", id, h.telemetryResults)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	res, _ := found()
+	return res
+}
 
 func (h *fakeHost) handleNext(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()

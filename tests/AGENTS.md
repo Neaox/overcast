@@ -159,7 +159,7 @@ gate with `helpers.WithECSDocker()` and `helpers.WaitForECSDocker(t, srv)`
 | Platform | What runs | What does not, and why |
 | --- | --- | --- |
 | Linux, daemon on this kernel | everything | — |
-| Windows / macOS, Docker Desktop | everything but one | the Telemetry API delivery test: its destination is a listener inside the sandbox that Overcast posts to at the container's bridge IP, and Desktop's engine is in a VM the host cannot route into. `skipIfHostCannotReachContainerIPs` |
+| Windows / macOS, Docker Desktop | everything | — since [#1799](https://github.com/overcast-sh/overcast/issues/1799). The Telemetry API delivery test was the one exception: its destination is a listener inside the sandbox, and Overcast used to post to it at the container's bridge IP, which Desktop's engine — in a VM the host cannot route into — has no route back from. Deliveries go through the in-container init now, so nothing dials a container and the test runs everywhere |
 | The suite itself in a container | everything, if the daemon's socket is mounted | a hot-reload bind mount needs a path this process and the daemon both see; `hotReloadSourceDir` uses `OVERCAST_TEST_LAMBDA_HOT_RELOAD_DIR`, else `/workspace`, else `skipIfContainerizedHotReloadBindMount` |
 
 Two notes measured on Windows 11 with Docker Desktop 29.7.2, since both are

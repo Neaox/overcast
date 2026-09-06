@@ -408,20 +408,6 @@ func TestRuntimeAPILogsAPI_deliversFunctionLogs(t *testing.T) {
 	}
 }
 
-func TestNormalizeExtensionLogURI_rewritesLoopbackToContainerIP(t *testing.T) {
-	// Given: an extension subscribes using a loopback destination from inside the container.
-	rawURI := "http://127.0.0.1:4243/logs"
-
-	// When: the Runtime API prepares the URI for host-side delivery.
-	got := normalizeExtensionLogURI(rawURI, "172.18.0.9")
-
-	// Then: delivery targets the subscribing container IP and original port/path.
-	want := "http://172.18.0.9:4243/logs"
-	if got != want {
-		t.Fatalf("uri = %q, want %q", got, want)
-	}
-}
-
 func TestRuntimeAPIExtensionQueue_isBounded(t *testing.T) {
 	// Given: an extension that has stopped polling for lifecycle events.
 	srv, _ := newRuntimeAPITestServer(t)

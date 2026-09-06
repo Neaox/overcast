@@ -4,9 +4,13 @@
 //
 // It launches the container's original ENTRYPOINT+CMD as its child, owns that
 // child's stdout and stderr pipes, launches every external extension in
-// /opt/extensions, and proxies the Runtime API on 127.0.0.1:9001 through to the
-// Overcast host. Being the parent is what makes per-invocation log attribution
-// exact: the init knows which invocation was in flight when it read a line, and
+// /opt/extensions, proxies the Runtime API on 127.0.0.1:9001 through to the
+// Overcast host, and carries the Telemetry API's record batches the other way —
+// from the host down a channel it opened, out to the listener an extension
+// stood up inside the sandbox, which is where AWS posts them from too.
+//
+// Being the parent is what makes per-invocation log attribution exact: the
+// init knows which invocation was in flight when it read a line, and
 // it drains both pipes before it forwards the runtime's response, so the host
 // has every byte of an invocation's output before it finalises the invoke. No
 // clocks, no silence heuristics. See docs/plans/lambda-in-container-init.md.
