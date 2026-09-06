@@ -607,8 +607,8 @@ func rustScalarOrComposite(model *serviceModel, crate, target string, value any,
 }
 
 // rustBuilderIsFallible reports whether smithy-rs gives a structure's `build()`
-// a Result, which is exactly where some member is required and has no
-// `@default`.
+// a Result, which is exactly where some member is required and carries neither
+// `@default` nor `@clientOptional`.
 //
 // The `@default` half is what a reading of "required" alone gets wrong. A member
 // that is both required and defaulted has a value whatever the caller says, so
@@ -617,14 +617,25 @@ func rustScalarOrComposite(model *serviceModel, crate, target string, value any,
 // `AccessLog.Enabled` are two of the six such members in the pinned snapshot.
 // Writing `?` after one of those `build()` calls does not compile.
 //
+// `@clientOptional` is the other half, and it is the one place in this program
+// where that trait really does mean what it says: it tells a client generator
+// to treat the member as optional whatever `@required` says, so smithy-rs
+// leaves the builder infallible. Batch's `ComputeEnvironmentOrder`,
+// `ResourceRequirement` and `ShareAttributes` all mark every required member
+// `@clientOptional`, and aws-sdk-batch 1.126.0 gives each of them a bare
+// `build()` — a `?` after any of the three does not compile.
+//
 // It is a predicate of its own rather than a change to RequiredMembers, because
 // that method's other callers ask a different question — which members a caller
-// must *send* — and a defaulted member is still one of those.
+// must *send* — and neither a defaulted nor a client-optional member stops
+// being one of those.
 func rustBuilderIsFallible(model *serviceModel, target string) bool {
 	for _, name := range model.RequiredMembers(target) {
-		if !hasTrait(model.Shapes[target].Members[name].Traits, "smithy.api#default") {
-			return true
+		traits := model.Shapes[target].Members[name].Traits
+		if hasTrait(traits, "smithy.api#default") || hasTrait(traits, "smithy.api#clientOptional") {
+			continue
 		}
+		return true
 	}
 	return false
 }
@@ -1009,14 +1020,39 @@ func rustNameOperation(op string) string { return rustIdent(snake(op)) }
 // rustNameMember is the builder setter for a modeled member.
 func rustNameMember(member string) string { return rustIdent(snake(member)) }
 
-// rustNameType is the crate::types name of a modeled shape. The snapshot's
-// references into the service's own namespace are already bare PascalCase
-// names, which is what smithy-rs generates.
+// rustNameType is the crate::types name of a modeled shape.
+//
+// It is *not* the shape name verbatim, which is what this returned until a
+// `batch` recipe needed one. smithy-rs runs every structure and enum name
+// through its own `toPascalCase` — `CaseUtils.toSnakeCase` followed by
+// `CaseUtils.toCamelCase` — so an acronym run is normalised to a single
+// capital. Batch models `CEState`, `CEType` and `JQState`, and the crate
+// declares `CeState`, `CeType` and `JqState` (verified against
+// aws-sdk-batch 1.126.0's `src/types/_ce_state.rs` and `_jq_state.rs`); the
+// verbatim name does not resolve. Every shape in the pilot corpus was already
+// its own pascal case, which is why nothing caught this earlier.
+//
+// `snake` is the same normalisation the operation and member names go through,
+// so one rule spells all three.
 func rustNameType(target string) string {
+	bare := target
 	if i := strings.LastIndex(target, "#"); i >= 0 {
-		return target[i+1:]
+		bare = target[i+1:]
 	}
-	return target
+	var out strings.Builder
+	upperNext := true
+	for _, r := range snake(bare) {
+		if r == '_' {
+			upperNext = true
+			continue
+		}
+		if upperNext && r >= 'a' && r <= 'z' {
+			r -= 'a' - 'A'
+		}
+		upperNext = false
+		out.WriteRune(r)
+	}
+	return out.String()
 }
 
 // rustKeywords are the Rust keywords a generated identifier may collide with,

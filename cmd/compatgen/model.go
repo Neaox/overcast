@@ -204,13 +204,32 @@ func (m *serviceModel) Members(structure string) []string {
 	return names
 }
 
-// RequiredMembers returns the members a caller must send, sorted. A member
-// marked @clientOptional is one the service does not actually require.
+// RequiredMembers returns the members a caller must send, sorted: every
+// @required member, whether or not it also carries @clientOptional.
+//
+// This read used to exclude a @clientOptional member, on the reading that the
+// trait says the service does not really require it. It does not. The trait's
+// own definition is about *generators*: it "requires that non-authoritative
+// generators like clients treat a structure member as optional regardless of
+// if the member is also marked with the required trait", which is a statement
+// about a client's nullability, not about what the service validates. AWS
+// Batch is where the difference showed up — it marks all 182 of its @required
+// input members @clientOptional as well, and no other snapshot in the corpus
+// carries one — and the reading is measured rather than argued: the AWS SDK
+// for Go v2's own generated validator refuses the call before it reaches the
+// wire, `1 validation error(s) found. - missing required field,
+// DescribeJobsInput.Jobs.`, so a probe that omitted such a member reported
+// `fail` instead of the `unimplemented` a 501 would have given it.
+//
+// smithy-rs really does read the trait the other way, and that is where its
+// meaning belongs: a builder whose required members are all @clientOptional
+// gets an infallible build(). That question is rustBuilderIsFallible's, and it
+// applies the exclusion itself rather than borrowing it from here.
 func (m *serviceModel) RequiredMembers(structure string) []string {
 	shape := m.Shapes[structure]
 	var names []string
 	for name, member := range shape.Members {
-		if hasTrait(member.Traits, "smithy.api#required") && !hasTrait(member.Traits, "smithy.api#clientOptional") {
+		if hasTrait(member.Traits, "smithy.api#required") {
 			names = append(names, name)
 		}
 	}

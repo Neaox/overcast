@@ -2,6 +2,18 @@
   "$comment": "Curated literals for required input members no recipe binds (docs/plans/compat-coverage-modelgen.md §3.3 rule 3). Every value must be legal on AWS, not merely accepted by the emulator; the generator checks each against the model's enum, length, range and pattern constraints. Identifiers here are syntactically valid and deliberately nonexistent — they bind probes of operations the emulator does not implement, where the call is expected to fail before the value is looked at. That is also why they are the only thing a probe may bind: a probe is the one generated call no delete undoes, so it must never name a resource the run owns.",
   "version": 1,
   "services": {
+    "batch": {
+      "$comment": "Batch is Tier 0 and every one of these binds a probe, so each value names a resource that does not exist and cannot be created by a run: no $name prefix appears in any of them, which is what keeps a probe off anything the suite owns. Two shapes are worth stating. A Batch ARN is arn:aws:batch:<region>:<account>:<resource-type>/<name> — compute-environment, job-queue, job-definition, scheduling-policy, consumable-resource and quota-share all follow it — so a quota-share ARN in the documentation account is well-formed and refers to nothing. And a Batch job id is a UUID, which is why the two job identifiers are the nil UUID rather than a word: a non-UUID is answered with a validation error rather than the not-found a probe is written for. consumableResource and jobQueue take a name or an ARN, and the name is the shorter honest answer.",
+      "operations": {
+        "DescribeJobs": { "jobs": ["00000000-0000-0000-0000-000000000000"] },
+        "DescribeQuotaShare": {
+          "quotaShareArn": "arn:aws:batch:us-east-1:123456789012:quota-share/compat-scenario-nonexistent"
+        },
+        "DescribeServiceJob": { "jobId": "00000000-0000-0000-0000-000000000000" },
+        "ListJobsByConsumableResource": { "consumableResource": "compat-scenario-nonexistent" },
+        "ListQuotaShares": { "jobQueue": "compat-scenario-nonexistent" }
+      }
+    },
     "sqs": {
       "$comment": "TaskHandle is base64 on AWS — StartMessageMoveTask hands back an opaque encoded handle — so the placeholder is base64 too: an unencoded string is answered with a validation error rather than the not-found the probe is written for. This one decodes to {\"taskId\":\"compat-scenario\"}. QueueUrl and SourceArn name a queue in an account that is not the caller's, so a probe of AddPermission, RemovePermission, CancelMessageMoveTask or ListMessageMoveTasks cannot reach the queue the run created.",
       "operations": {

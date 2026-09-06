@@ -539,6 +539,16 @@ func TestJavaPascalAndUnCapitalize(t *testing.T) {
 		// that does not exist.
 		{"FooB", "Foob", "fooB"},
 		{"FooBar", "FooBar", "fooBar"},
+		// Two boundaries with nothing between them. The SDK's camel rule is a
+		// zero-width split, so `sBy` and `yCo` are both boundaries even though
+		// they overlap; a consuming replacement would swallow `By` into the
+		// following word and name ListJobsByconsumableResourceRequest, which
+		// software.amazon.awssdk:batch does not declare.
+		{"ListJobsByConsumableResource", "ListJobsByConsumableResource", "listJobsByConsumableResource"},
+		{"AByCd", "AByCd", "aByCd"},
+		// The lookahead is `([a-zA-Z]|[0-9])`, so a digit after the capital is
+		// a boundary as much as a letter is.
+		{"FooB2", "FooB2", "fooB2"},
 	} {
 		if got := javaPascal(tc.in); got != tc.pascal {
 			t.Errorf("javaPascal(%q) = %q, want %q", tc.in, got, tc.pascal)

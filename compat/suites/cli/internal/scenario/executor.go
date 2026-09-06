@@ -30,8 +30,14 @@ type awscliRunner struct{}
 // holding a parallel slot open until the whole suite is killed. A generated
 // group makes far more calls than a hand-written one, so it is likelier to be
 // the group sitting on a hung process.
+//
+// It is the *signed* variant because a generated call has to carry its own
+// service's credential scope: unsigned, an operation Overcast has not
+// implemented falls through the REST fallback to S3 and answers 405 rather than
+// 501, which the harness reports as a failure of the service under test. See
+// awscli.RunOutputContextSigned.
 func (awscliRunner) run(ctx context.Context, t *harness.TestContext, args []string) (map[string]any, error) {
-	return awscli.RunOutputContext(ctx, t.Endpoint, t.Region, args...)
+	return awscli.RunOutputContextSigned(ctx, t.Endpoint, t.Region, args...)
 }
 
 // bagKey is where a group's context bag lives on the harness TestContext. The
