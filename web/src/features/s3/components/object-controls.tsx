@@ -13,6 +13,7 @@ import { Search, X, Folder, ListTree, Download } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/primitives"
+// eslint-disable-next-line classnames/prefer-resource-table -- borrows `TableHead` for the shared sortable header; it renders no table of its own
 import { TableHead } from "@/components/ui/table"
 import { Tooltip } from "@/components/ui/tooltip"
 import { formatBytes, formatCount } from "@/lib/format"

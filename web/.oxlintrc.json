@@ -276,6 +276,7 @@
     "classnames/no-raw-spinner-in-content": "warn",
     "classnames/prefer-shared-formatter": "warn",
     "classnames/prefer-use-resource-mutation": "warn",
+    "classnames/prefer-resource-table": "warn",
     "classnames/no-duplicate-class-cluster": "warn",
 
     // ---- @tanstack/eslint-plugin-query (JS plugin) ------------------------

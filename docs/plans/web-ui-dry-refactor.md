@@ -582,6 +582,14 @@ the grid back into the page fails CI rather than only lint-warning.
   the list, so every converted index page in the console has the same `?sort=` contract. The five
   compute lists' identity columns gained explicit ids at the same time — the id is the URL token,
   and a reworded header must not break a saved link.
+- **2026-09-06 — the drift guard** (#1327 Wave E). The issue's optional enforcement item asked
+  for an ESLint `no-restricted-imports` entry with an allowlist; ESLint is gone (#1330), so it is
+  `classnames/prefer-resource-table` in the house plugin instead — an import of
+  `@/components/ui/table` under `src/features/**` warns, and the allowlist is a disable comment
+  carrying its reason, the shape `prefer-use-resource-mutation` already uses. Eight sites carry one
+  today: the six deliberately-bespoke tables plus `s3/object-controls` (borrows one `TableHead`)
+  and `s3/bucket-detail` (an object browser, never in the wave inventories). Warning-level, like
+  its siblings — the count is a to-do list rather than a gate.
   - **Still not built:** `rowTo`, `select?`, `filter?`. Selection is now one feature import
     (`rowSelectionFeature`) away rather than a rewrite, but nothing needs it yet; filtering stays
     at the page level, where `q` already lives.

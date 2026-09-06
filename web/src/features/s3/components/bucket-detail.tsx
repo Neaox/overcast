@@ -82,6 +82,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
+// eslint-disable-next-line classnames/prefer-resource-table -- an object browser — prefix rows, continuation-token paging and selection, not a flat resource list
 import { TableCell, TableHead } from "@/components/ui/table"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"

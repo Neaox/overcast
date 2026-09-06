@@ -1702,9 +1702,13 @@ exception, not the default. Two kinds of table earn it: one that is not a resour
 at all (the IAM policy simulator's result grid, the debug page), and one whose shape
 genuinely does not fit (`log-search-results`' virtualized stream). When you do, say why
 in a comment at the call site — "ResourceTable didn't fit because …" — so the next
-reader can tell a decision from an oversight. Fifty-five bespoke tables accumulated
-before this rule existed; their migration, and `ResourceTable`'s move onto TanStack
-Table v9 (sorting, column visibility, pagination on one engine), is tracked in
+reader can tell a decision from an oversight, and disable
+`classnames/prefer-resource-table` on the import with the same reason. That rule flags
+any import of the table primitives under `features/**`, so an exception is recorded
+twice on purpose: once for the reader, at the call site, and once for the linter, at the
+import it needs. Fifty-five bespoke tables accumulated before that rule existed; their
+migration, and `ResourceTable`'s move onto TanStack Table v9 (sorting, column
+visibility, pagination on one engine), is
 [#1327](https://github.com/overcast-sh/overcast/issues/1327). Do not add to the count.
 
 ### Attribute grids — `DefinitionCard`, not a two-column `<Table>`
