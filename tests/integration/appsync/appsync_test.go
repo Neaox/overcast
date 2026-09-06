@@ -88,6 +88,122 @@ func appsyncPostWithHeaders(t *testing.T, srv *helpers.TestServer, path string, 
 	return resp
 }
 
+// assertGraphQLAuthUnauthorized asserts that an authorization failure on the
+// data-plane GraphQL endpoint (POST .../graphql) carries AppSync's GraphQL
+// error envelope — {"errors":[{"errorType":"UnauthorizedException",
+// "message":"..."}]} — with Content-Type: application/json and HTTP 401,
+// rather than the AWS JSON error envelope ({"__type":...}) that the
+// management-plane /v1/apis operations correctly use. Verified against
+// https://docs.aws.amazon.com/appsync/latest/devguide/security-authz.html
+// and a captured real AppSync 401 response (see
+// internal/services/appsync/handler_execute.go's writeGraphQLAuthError doc
+// comment for the exact evidence).
+func assertGraphQLAuthUnauthorized(t *testing.T, resp *http.Response) {
+	t.Helper()
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d\nbody: %s", resp.StatusCode, raw)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var body struct {
+		Errors []struct {
+			ErrorType string `json:"errorType"`
+			Message   string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decode error body %s: %v", raw, err)
+	}
+	if len(body.Errors) != 1 {
+		t.Fatalf("errors = %+v, want exactly one GraphQL error\nbody: %s", body.Errors, raw)
+	}
+	if body.Errors[0].ErrorType != "UnauthorizedException" {
+		t.Errorf("errors[0].errorType = %q, want UnauthorizedException", body.Errors[0].ErrorType)
+	}
+	if body.Errors[0].Message == "" {
+		t.Error("errors[0].message is empty, want a non-empty message")
+	}
+}
+
+// TestExecuteGraphQL_authFailureEnvelope covers every authorization mode the
+// GraphQL execution handler can actually refuse a request under, driving each
+// one to the credential-missing failure and asserting the GraphQL error
+// envelope from assertGraphQLAuthUnauthorized. AWS_IAM is deliberately absent:
+// h.iamIdentity (handler_execute.go) never returns an authorization error —
+// Overcast accepts any SigV4-shaped credential without verifying it (AGENTS.md
+// § Non-goals: "not a security boundary") — so there is no way to make an
+// AWS_IAM request fail authorization here.
+func TestExecuteGraphQL_authFailureEnvelope(t *testing.T) {
+	tests := []struct {
+		name               string
+		authenticationType string
+		extra              map[string]any
+	}{
+		{
+			name:               "API_KEY",
+			authenticationType: "API_KEY",
+		},
+		{
+			name:               "OPENID_CONNECT",
+			authenticationType: "OPENID_CONNECT",
+			extra: map[string]any{
+				"openIDConnectConfig": map[string]any{"issuer": "https://issuer.example.test"},
+			},
+		},
+		{
+			name:               "AWS_LAMBDA",
+			authenticationType: "AWS_LAMBDA",
+			extra: map[string]any{
+				"lambdaAuthorizerConfig": map[string]any{
+					"authorizerUri": "arn:aws:lambda:us-east-1:000000000000:function:does-not-matter",
+				},
+			},
+		},
+		{
+			name:               "AMAZON_COGNITO_USER_POOLS",
+			authenticationType: "AMAZON_COGNITO_USER_POOLS",
+			extra: map[string]any{
+				"userPoolConfig": map[string]any{"userPoolId": "us-east-1_fake"},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: an API whose (sole) authentication type is tc.authenticationType
+			srv := helpers.NewTestServer(t)
+			apiID, _ := createTestAPI(t, srv)
+
+			update := map[string]any{
+				"name":               "auth-failure-api",
+				"authenticationType": tc.authenticationType,
+			}
+			for k, v := range tc.extra {
+				update[k] = v
+			}
+			appsyncPost(t, srv, "/v1/apis/"+apiID, update).Body.Close()
+
+			sdl := `type Query { hello: String }`
+			b64SDL := base64.StdEncoding.EncodeToString([]byte(sdl))
+			appsyncPost(t, srv, "/v1/apis/"+apiID+"/schemacreation", map[string]any{"definition": b64SDL}).Body.Close()
+
+			// When: the request carries no credential at all
+			resp := appsyncPost(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
+				map[string]any{"query": `{ hello }`},
+			)
+
+			// Then: AppSync's GraphQL error envelope, not the AWS JSON envelope
+			assertGraphQLAuthUnauthorized(t, resp)
+		})
+	}
+}
+
 // createTestAPI is a helper that creates a GraphQL API and returns its ID and ARN.
 func createTestAPI(t *testing.T, srv *helpers.TestServer) (apiID, arn string) {
 	t.Helper()
@@ -2104,10 +2220,9 @@ func TestExecuteGraphQL_missingApiKey(t *testing.T) {
 	resp := appsyncPost(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ hello }`},
 	)
-	defer resp.Body.Close()
 
-	// Then: 401 UnauthorizedException
-	helpers.AssertStatus(t, resp, http.StatusUnauthorized)
+	// Then: AppSync's GraphQL error envelope naming UnauthorizedException
+	assertGraphQLAuthUnauthorized(t, resp)
 }
 
 func TestExecuteGraphQL_invalidApiKey(t *testing.T) {
@@ -2120,10 +2235,9 @@ func TestExecuteGraphQL_invalidApiKey(t *testing.T) {
 		map[string]any{"query": `{ hello }`},
 		map[string]string{"x-api-key": "da2-invalid"},
 	)
-	defer resp.Body.Close()
 
-	// Then: 401 UnauthorizedException
-	helpers.AssertStatus(t, resp, http.StatusUnauthorized)
+	// Then: AppSync's GraphQL error envelope naming UnauthorizedException
+	assertGraphQLAuthUnauthorized(t, resp)
 }
 
 func TestExecuteGraphQL_expiredApiKey(t *testing.T) {
@@ -2148,10 +2262,9 @@ func TestExecuteGraphQL_expiredApiKey(t *testing.T) {
 		map[string]any{"query": `{ hello }`},
 		map[string]string{"x-api-key": keyResult.ApiKey.Id},
 	)
-	defer resp.Body.Close()
 
-	// Then: 401
-	helpers.AssertStatus(t, resp, http.StatusUnauthorized)
+	// Then: AppSync's GraphQL error envelope naming UnauthorizedException
+	assertGraphQLAuthUnauthorized(t, resp)
 }
 
 func TestExecuteGraphQL_mutation(t *testing.T) {
@@ -4633,10 +4746,9 @@ func TestAuth_cognitoRejectsNoToken(t *testing.T) {
 	resp := appsyncPost(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ hello }`},
 	)
-	defer resp.Body.Close()
 
-	// Then: should get 401
-	helpers.AssertStatus(t, resp, http.StatusUnauthorized)
+	// Then: AppSync's GraphQL error envelope naming UnauthorizedException
+	assertGraphQLAuthUnauthorized(t, resp)
 }
 
 func TestAuth_multiAuth(t *testing.T) {

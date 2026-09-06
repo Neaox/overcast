@@ -31,7 +31,9 @@ verified exactly when the primary mode would be.
 Under `OVERCAST_ENFORCE_APPSYNC_COGNITO_AUTH` the token must come from
 Overcast's own Cognito: verification reads the pool's key from local state, so
 a token minted by real AWS Cognito is refused. Rejections carry AppSync's
-`UnauthorizedException` and HTTP `401`.
+`UnauthorizedException` and HTTP `401`, in the GraphQL error envelope
+(`errors[0].errorType`) that every authorization failure on the GraphQL
+endpoint uses, regardless of which mode refused the request.
 
 > [!CAUTION]
 > By default, three of the five modes above accept a token nobody signed. Do

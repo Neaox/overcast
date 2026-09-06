@@ -13,7 +13,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -235,28 +234,14 @@ func queryWhoami(t *testing.T, srv *helpers.TestServer, apiID, authorization str
 		map[string]any{"query": `{ whoami { sub username issuer tokenUse groups } }`}, headers)
 }
 
-// assertWhoamiUnauthorized asserts AppSync's UnauthorizedException shape:
-// HTTP 401 with the AWS JSON error envelope naming the exception.
+// assertWhoamiUnauthorized asserts AppSync's UnauthorizedException shape for
+// the data-plane GraphQL endpoint: HTTP 401 with the GraphQL error envelope
+// naming the exception (errors[0].errorType), not the AWS JSON envelope. See
+// assertGraphQLAuthUnauthorized in appsync_test.go for the full assertion and
+// the AWS documentation it was verified against.
 func assertWhoamiUnauthorized(t *testing.T, resp *http.Response) {
 	t.Helper()
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read response body: %v", err)
-	}
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("expected status 401, got %d\nbody: %s", resp.StatusCode, raw)
-	}
-	var body struct {
-		Type    string `json:"__type"`
-		Message string `json:"message"`
-	}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		t.Fatalf("decode error body %s: %v", raw, err)
-	}
-	if body.Type != "UnauthorizedException" {
-		t.Errorf("__type = %q, want UnauthorizedException (message %q)", body.Type, body.Message)
-	}
+	assertGraphQLAuthUnauthorized(t, resp)
 }
 
 // assertWhoamiOK asserts the query succeeded and returns the resolver identity.
