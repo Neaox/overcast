@@ -709,7 +709,7 @@
                     "QueueUrl": {
                       "$ref": "queue.url"
                     },
-                    "VisibilityTimeout": 0,
+                    "VisibilityTimeout": 1,
                     "WaitTimeSeconds": 5
                   }
                 },
@@ -771,7 +771,7 @@
               "ReceiptHandle": {
                 "$ref": "message.receiptHandle"
               },
-              "VisibilityTimeout": 0
+              "VisibilityTimeout": 1
             }
           },
           "assert": [
@@ -788,7 +788,7 @@
                     "QueueUrl": {
                       "$ref": "queue.url"
                     },
-                    "VisibilityTimeout": 0,
+                    "VisibilityTimeout": 1,
                     "WaitTimeSeconds": 5
                   },
                   "export": {
@@ -837,7 +837,7 @@
                     "QueueUrl": {
                       "$ref": "queue.url"
                     },
-                    "VisibilityTimeout": 0,
+                    "VisibilityTimeout": 1,
                     "WaitTimeSeconds": 1
                   }
                 },
@@ -1032,7 +1032,7 @@
                   "ReceiptHandle": {
                     "$ref": "batch.receiptHandle"
                   },
-                  "VisibilityTimeout": 0
+                  "VisibilityTimeout": 1
                 }
               ],
               "QueueUrl": {
@@ -1062,7 +1062,7 @@
                     "QueueUrl": {
                       "$ref": "queue.url"
                     },
-                    "VisibilityTimeout": 0,
+                    "VisibilityTimeout": 1,
                     "WaitTimeSeconds": 5
                   },
                   "export": {
@@ -1093,8 +1093,8 @@
               "QueueUrl": {
                 "$ref": "queue.url"
               },
-              "VisibilityTimeout": 0,
-              "WaitTimeSeconds": 1
+              "VisibilityTimeout": 1,
+              "WaitTimeSeconds": 5
             },
             "export": {
               "batch.receiptHandle": "$.Messages[0].ReceiptHandle"
@@ -1148,8 +1148,8 @@
                     "QueueUrl": {
                       "$ref": "queue.url"
                     },
-                    "VisibilityTimeout": 0,
-                    "WaitTimeSeconds": 1
+                    "VisibilityTimeout": 1,
+                    "WaitTimeSeconds": 5
                   }
                 },
                 "itemsPath": "$.Messages",

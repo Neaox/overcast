@@ -385,6 +385,17 @@ an array is a list of values; a scalar is itself.
 No conditionals, no arithmetic, no scripting: eight implementations have to
 agree on every value.
 
+**A scenario may not depend on sending a member's modeled default.** A typed
+SDK that gives a defaulted member a value-typed field cannot tell "unset" from
+"set to the default", and omits it: the AWS SDK for Go v2 serializes
+`ReceiveMessage`'s `VisibilityTimeout` only `if v.VisibilityTimeout != 0`, so a
+scenario asking for `0` silently asks for the queue's own timeout instead. The
+value is not wrong, it simply never reaches the wire, and the backends then
+disagree about what the service was told. Where a recipe needs the effect of a
+default, say it with a value the SDK will send — SQS's message recipes ask for
+a one-second visibility timeout rather than a zero — and give the call that
+must observe the result a poll long enough to cover it.
+
 `$name` is the only way a generated test names a resource, which is what
 makes the name-hygiene convention (`{runId}-<group-token>-…`) hold by
 construction: the group token is the whole group name.
@@ -450,6 +461,19 @@ SDK-specific. Each backend derives what it needs:
 | java-sdk | `<PascalCase(sdkId)>Client` | `client.<lowerFirst(op)>(<Op>Request.builder()…)` |
 | dotnet-sdk | `Amazon<PascalCase(sdkId)>Client` | `client.<Op>Async(new <Op>Request {…})` |
 | rust-sdk | `aws_sdk_<snake(sdkId)>` | `client.<snake(op)>()…send()` |
+
+**go-sdk is a source emitter, not an interpreter**, so its row is the naming
+table `cmd/compatgen/emit_go.go` renders through, and
+`go run -tags dev ./cmd/compatgen -explain <group>/<test> -lang go` prints the
+statements it writes. One detail of that row is worth stating because the other
+typed backends will meet it too: a member is assigned through the *address* of
+the input field — `b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))`
+— rather than with `aws.String`. Whether smithy-go made a member a pointer or a
+value is not derivable from the pinned snapshot: the snapshot and the vendored
+SDK are generated from different revisions of the same AWS model, and for
+SQS's `ReceiveMessage` they already disagree about three members the pilot
+sends. Passing the address lets one helper write either spelling, and an enum,
+a list, a map and a nested structure besides.
 
 Where a derivation is known to break, the interpreter needs a small override
 table of its own, and the plan asks for those to be recorded as follow-ups
@@ -661,6 +685,7 @@ service and operation, with a stable reason:
 | `no-output-to-assert` | a probe of an operation that returns nothing a probe can assert: no output at all, or no identity member and no single list to check the shape of. Reading back the resource it names would assert something that was already true before the call, so there is nothing honest to assert |
 | `setup-refused:<resource>` | a required resource could not be bound |
 | `unsupported-tag-shape:<Shape>` | the tag member is neither a string map nor a list of `{Key, Value}`. `<Shape>` is the bare shape name; the qualified Smithy id is in the detail |
+| `go-emit-unsupported:<Member>` | the go-sdk emitter has no Go value expression for that member's modeled kind — a timestamp, blob, document or union. It is the one reason here that does **not** mean "no test": the operation is generated and the interpreters run it, and the group is scoped away from `go-sdk` in the generated registry instead, because a suite listed against a group it cannot compile would report as a hard failure |
 
 Refusals are a feature. Fixing one is a line in a recipe or in
 `values.json`; guessing is never an option.

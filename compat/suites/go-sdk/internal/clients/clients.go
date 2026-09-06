@@ -101,6 +101,20 @@ func (c *Clients) awsCfgLocked() aws.Config {
 	return cfg
 }
 
+// Config returns the shared AWS config the per-service accessors above build
+// their clients from.
+//
+// It exists for the generated scenario groups (internal/groups/scenarios_*_gen.go),
+// which build one client per generated service themselves rather than adding a
+// hand-written accessor here for every service the generator learns to cover.
+// Hand-written groups still take their client from the accessors — a test
+// function must never construct one (compat/suites/go-sdk/AGENTS.md).
+func (c *Clients) Config() aws.Config {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.awsCfgLocked()
+}
+
 // S3 returns a lazily-initialised S3 client.
 func (c *Clients) S3() *s3.Client {
 	c.mu.Lock()

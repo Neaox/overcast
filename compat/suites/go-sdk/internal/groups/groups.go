@@ -27,8 +27,18 @@ func (g ServiceGroup) named(name string) ServiceGroup {
 	return g
 }
 
-// All returns all service groups.
+// All returns all service groups: the hand-written ones below, then the
+// generated ones from scenarios_gen.go.
+//
+// A generated group is a registry group cmd/compatgen emitted from the
+// scenario IR (compat/model/scenarios/<service>.json). Its constructor names
+// the source file it came from rather than a service file here, so a duplicate
+// impl key can say which of the two registered it.
 func All(c *clients.Clients) []ServiceGroup {
+	return append(handWritten(c), scenarioGroups(c)...)
+}
+
+func handWritten(c *clients.Clients) []ServiceGroup {
 	return []ServiceGroup{
 		S3(c).named("s3"),
 		SQS(c).named("sqs"),

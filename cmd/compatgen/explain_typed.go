@@ -12,7 +12,11 @@ import (
 // than by subscripting a map. The data-shaped backends are in
 // explain_dynamic.go; the shared machinery is in explain.go.
 
-func goStyle() style {
+// typedStyle is what the four typed backends share: a request object built
+// from named members, and a response read through fields or getters. Each of
+// them overrides the call and the object/list syntax; go additionally renders
+// through its emitter (goStyle below).
+func typedStyle() style {
 	st := jsStyle()
 	st.name = func(suffix string) string { return fmt.Sprintf("runID + \"-\" + group + \"-%s\"", suffix) }
 	st.object = func(entries [][2]string) string {
@@ -30,16 +34,41 @@ func goStyle() style {
 	return st
 }
 
+// goStyle renders a call through the emitter's own naming table (emit_go.go),
+// so `-explain -lang go` prints the statements cmd/compatgen writes into
+// compat/suites/go-sdk/internal/groups/scenarios_*_gen.go rather than a second
+// description of them. The definition of done for the Go backend asks for one
+// naming table; this is how there comes to be only one.
+//
+// The pkg it renders against is the scenario's own, so the reader can paste
+// the lines under the client the header line builds.
+func goStyle(sdkID string) style {
+	st := typedStyle()
+	pkg := goNamePackage(sdkID)
+	st.callLines = func(op string, params map[string]any) []string {
+		lines, err := goInputLines(pkg, op, params, "")
+		if err != nil {
+			// Unreachable for a committed scenario: the emitter refuses at
+			// generation time what it cannot render, so a value this cannot
+			// spell never reaches a scenario file.
+			return []string{fmt.Sprintf("// %v", err)}
+		}
+		return append(lines, fmt.Sprintf("g.cl().%s(ctx, in)", op))
+	}
+	return st
+}
+
 func renderGo(s *scenario, g *group, t *test) string {
-	e := &explainer{st: goStyle()}
+	e := &explainer{st: goStyle(s.Client.SDKID)}
 	return e.test(s, g, t, func() {
-		e.linef("client := %s.NewFromConfig(cfg)  // github.com/aws/aws-sdk-go-v2/service/%s", goPackage(s.Client.SDKID), goPackage(s.Client.SDKID))
+		e.linef("client := %s.NewFromConfig(cfg)  // %s", goNamePackage(s.Client.SDKID), goNameModule(s.Client.SDKID))
 		e.linef("group := %s", quote(g.Name))
+		e.commentf("b is the scenario.Binder the generated Build closure receives")
 	})
 }
 
 func javaStyle() style {
-	st := goStyle()
+	st := typedStyle()
 	st.name = func(suffix string) string { return fmt.Sprintf("runId + \"-\" + group + \"-%s\"", suffix) }
 	st.object = func(entries [][2]string) string {
 		var parts []string
@@ -69,7 +98,7 @@ func renderJava(s *scenario, g *group, t *test) string {
 }
 
 func dotnetStyle() style {
-	st := goStyle()
+	st := typedStyle()
 	st.object = func(entries [][2]string) string {
 		var parts []string
 		for _, e := range entries {
@@ -98,7 +127,7 @@ func renderDotnet(s *scenario, g *group, t *test) string {
 }
 
 func rustStyle() style {
-	st := goStyle()
+	st := typedStyle()
 	st.name = func(suffix string) string { return fmt.Sprintf("format!(\"{run_id}-{group}-%s\")", suffix) }
 	st.object = func(entries [][2]string) string {
 		var parts []string
@@ -161,8 +190,4 @@ func pathAsGetters(path string, call string) string {
 		}
 	}
 	return out.String()
-}
-
-func goPackage(sdkID string) string {
-	return strings.ToLower(strings.ReplaceAll(sdkID, " ", ""))
 }

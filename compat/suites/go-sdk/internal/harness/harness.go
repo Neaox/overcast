@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -39,10 +40,18 @@ type TestCase struct {
 
 // TestGroup is a collection of related tests with optional setup/teardown.
 type TestGroup struct {
-	Suite    string
-	Service  string
-	Name     string
-	Tests    []TestCase
+	Suite   string
+	Service string
+	Name    string
+	Tests   []TestCase
+	// Parallel lets the group's tests run concurrently with one another,
+	// bounded by the same slot count that bounds concurrent groups. Only a
+	// generated probe group sets it (registry.generated.json's `parallel`):
+	// its tests have no setup, no teardown, no exports and no Depends, so
+	// nothing orders them and no test can observe another's outcome. Results
+	// are still emitted in declaration order, so the only observable
+	// difference is the wall clock.
+	Parallel bool
 	Setup    func(ctx context.Context, t *TestContext) error
 	Teardown func(ctx context.Context, t *TestContext) error
 }
@@ -80,6 +89,22 @@ func (t *TestContext) Get(key string) (any, bool) {
 	defer t.mu.Unlock()
 	v, ok := t.state[key]
 	return v, ok
+}
+
+// LoadOrStore returns the value stored under key, or stores and returns what
+// create() produces when there is none. The lookup and the store happen under
+// one lock, which a Get-then-Set pair does not: the tests of a parallel group
+// share one TestContext, and two of them racing to create the same lazily
+// built value would each get a different one.
+func (t *TestContext) LoadOrStore(key string, create func() any) any {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if v, ok := t.state[key]; ok {
+		return v
+	}
+	v := create()
+	t.state[key] = v
+	return v
 }
 
 // GetString retrieves a string value from the state bag.
@@ -153,13 +178,46 @@ func emit(v any) {
 
 // ─── Unimplemented detection ──────────────────────────────────────────────────
 
+// ErrUnimplemented marks an error the emulator answered with 501, for a caller
+// that has already read the raw SDK error and classified it. Wrap it rather
+// than returning it bare, so the reported message stays the caller's own.
+var ErrUnimplemented = errors.New("unimplemented")
+
+// Composed is implemented by an error whose message was assembled out of
+// scenario data rather than produced by the AWS SDK — the params JSON that was
+// sent, expected and actual values, the SDK's own text quoted inside it.
+//
+// LooksUnimplemented must never be applied to such a message. It matches a
+// bare "501", and a run id or a port like 4501 in the params is enough to put
+// one there, which would report every failure of that test as unimplemented.
+// A composed error states the 501 by wrapping ErrUnimplemented instead. This
+// is the treatment the cli suite's interpreter got in #1790, for the same
+// reason and in the same shape.
+type Composed interface{ ComposedFailure() }
+
 // IsUnimplemented reports whether err signals a 501 / not-implemented response
 // from the Overcast emulator.
+//
+// The sentinel is checked first, so a caller that has already classified the
+// SDK's own error is believed. The substring heuristic is applied only to an
+// error nobody classified, and never to a composed message — see Composed.
 func IsUnimplemented(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
+	if errors.Is(err, ErrUnimplemented) {
+		return true
+	}
+	var composed Composed
+	if errors.As(err, &composed) {
+		return false
+	}
+	return LooksUnimplemented(err.Error())
+}
+
+// LooksUnimplemented is the substring heuristic over one raw AWS SDK error
+// text. Pass it what the SDK said and nothing else.
+func LooksUnimplemented(s string) bool {
 	return strings.Contains(s, "501") ||
 		strings.Contains(s, "NotImplemented") ||
 		strings.Contains(s, "UnknownOperationException")
@@ -228,7 +286,36 @@ func runSetup(ctx context.Context, group TestGroup, t *TestContext, res *GroupRe
 
 // runTests runs every test in a group, honouring skips, na, cancellation and
 // the dependency gate.
+//
+// A group marked Parallel whose tests declare no dependencies runs them
+// concurrently; everything else runs in declaration order. Both halves of that
+// condition are load-bearing. The concurrent path cannot express the
+// dependency gate — it would have to decide what to skip from outcomes that
+// have not happened yet — so a group declaring one is run serially even where
+// the registry says parallel. The IR never produces that combination (only a
+// probe group is parallel, and a probe has no exports for a Depends to
+// consume), which is why this is a guard rather than a scheduler.
 func runTests(ctx context.Context, group TestGroup, t *TestContext, res *GroupResult) {
+	if group.Parallel && !hasDependencies(group.Tests) {
+		runTestsConcurrently(ctx, group, t, res)
+		return
+	}
+	runTestsInOrder(ctx, group, t, res)
+}
+
+// hasDependencies reports whether any test in the group declares one.
+func hasDependencies(tests []TestCase) bool {
+	for _, tc := range tests {
+		if len(tc.Depends) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// runTestsInOrder is the serial path: one test at a time, in declaration
+// order, each result emitted as it completes.
+func runTestsInOrder(ctx context.Context, group TestGroup, t *TestContext, res *GroupResult) {
 	// Tests that did not pass, so a test declaring one of them as a dependency
 	// is skipped rather than run against a prerequisite that never happened.
 	// "na" and cancelled are deliberately absent: neither says the resource a
@@ -241,94 +328,188 @@ func runTests(ctx context.Context, group TestGroup, t *TestContext, res *GroupRe
 			res.Cancelled++
 			continue
 		}
-		if tc.NA != "" {
-			emit(testResultEvent{
-				Event:      "test_result",
-				Suite:      group.Suite,
-				Service:    group.Service,
-				Group:      group.Name,
-				Test:       tc.Name,
-				Status:     "na",
-				DurationMs: 0,
-				Error:      tc.NA,
-			})
-			continue
-		}
-		if tc.Skip != "" {
-			emit(testResultEvent{
-				Event:      "test_result",
-				Suite:      group.Suite,
-				Service:    group.Service,
-				Group:      group.Name,
-				Test:       tc.Name,
-				Status:     "skip",
-				DurationMs: 0,
-				Error:      tc.Skip,
-			})
-			res.Skipped++
-			failedOrSkipped[tc.Name] = true
-			continue
-		}
-
-		// Dependency gate — skip if any declared dependency failed or was skipped.
-		// Without it a single broken prerequisite reports as a cascade of
-		// unrelated failures, and "dependency failed: X" is what tells a reader
-		// the cause is elsewhere in the group.
-		if len(tc.Depends) > 0 {
-			var failedDeps []string
-			for _, dep := range tc.Depends {
-				if failedOrSkipped[dep] {
-					failedDeps = append(failedDeps, dep)
-				}
-			}
-			if len(failedDeps) > 0 {
-				emit(testResultEvent{
-					Event:      "test_result",
-					Suite:      group.Suite,
-					Service:    group.Service,
-					Group:      group.Name,
-					Test:       tc.Name,
-					Status:     "skip",
-					DurationMs: 0,
-					Error:      fmt.Sprintf("dependency failed: %s", strings.Join(failedDeps, ", ")),
-				})
-				res.Skipped++
-				failedOrSkipped[tc.Name] = true
-				continue
+		// An na/skip marker outranks the dependency gate: a test the suite
+		// never intended to run here reports why it was marked, not what
+		// happened to something it does not depend on.
+		out, done := marker(group, tc)
+		if !done {
+			// Dependency gate — skip if any declared dependency failed or was
+			// skipped. Without it a single broken prerequisite reports as a
+			// cascade of unrelated failures, and "dependency failed: X" is
+			// what tells a reader the cause is elsewhere in the group.
+			if gated, applies := dependencyGate(group, tc, failedOrSkipped); applies {
+				out = gated
+			} else {
+				out = execute(ctx, group, t, tc)
 			}
 		}
-
-		start := time.Now()
-		err := tc.Fn(ctx, t)
-		elapsed := time.Since(start).Milliseconds()
-
-		ev := testResultEvent{
-			Event:      "test_result",
-			Suite:      group.Suite,
-			Service:    group.Service,
-			Group:      group.Name,
-			Test:       tc.Name,
-			DurationMs: elapsed,
-		}
-
-		switch {
-		case err == nil:
-			ev.Status = "pass"
-			res.Passed++
-		case IsUnimplemented(err):
-			ev.Status = "unimplemented"
-			ev.Error = err.Error()
-			res.Unimplemented++
-			failedOrSkipped[tc.Name] = true
-		default:
-			ev.Status = "fail"
-			ev.Error = err.Error()
-			res.Failed++
-			failedOrSkipped[tc.Name] = true
-		}
-
-		emit(ev)
+		record(out, tc.Name, res, failedOrSkipped)
+		emit(out.event)
 	}
+}
+
+// runTestsConcurrently runs the group's tests through a bounded worker pool and
+// emits their results in declaration order once all of them are in.
+//
+// Emitting in order rather than as each finishes is what keeps this stream
+// identical to the serial path's, test for test. The dashboard, the baseline
+// and the flake detector all read it, and a result order that depended on
+// which call answered first would be a new source of diff noise for no
+// benefit.
+func runTestsConcurrently(ctx context.Context, group TestGroup, t *TestContext, res *GroupResult) {
+	results := make([]testResult, len(group.Tests))
+	sem := make(chan struct{}, parallelSlots())
+	var wg sync.WaitGroup
+	for i, tc := range group.Tests {
+		if ctx.Err() != nil {
+			results[i] = testResult{
+				event:  cancelledEvent{Event: "cancelled", Suite: group.Suite, Group: group.Name, Test: tc.Name},
+				status: statusCancelled,
+			}
+			continue
+		}
+		wg.Add(1)
+		go func(i int, tc TestCase) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[i] = runOne(ctx, group, t, tc)
+		}(i, tc)
+	}
+	wg.Wait()
+
+	// No dependency bookkeeping: this path is taken only when no test declares
+	// one, so the set a serial run maintains would be read by nobody.
+	for i, out := range results {
+		record(out, group.Tests[i].Name, res, nil)
+		emit(out.event)
+	}
+}
+
+// Result statuses, as they appear in the NDJSON stream.
+const (
+	statusPass          = "pass"
+	statusFail          = "fail"
+	statusSkip          = "skip"
+	statusNA            = "na"
+	statusUnimplemented = "unimplemented"
+	statusCancelled     = "cancelled"
+)
+
+// testResult is one test's NDJSON event held rather than emitted, so a
+// concurrent group can emit in declaration order.
+type testResult struct {
+	event  any
+	status string
+}
+
+// resultEvent builds a test_result event. An empty message leaves the "error"
+// key out, which is what a pass has always done.
+func resultEvent(group TestGroup, name, status string, durMs int64, message string) testResultEvent {
+	return testResultEvent{
+		Event: "test_result", Suite: group.Suite, Service: group.Service,
+		Group: group.Name, Test: name, Status: status, DurationMs: durMs, Error: message,
+	}
+}
+
+// marker returns the result a test carries instead of running — na or skip —
+// and whether it has one.
+func marker(group TestGroup, tc TestCase) (testResult, bool) {
+	if tc.NA != "" {
+		return testResult{event: resultEvent(group, tc.Name, statusNA, 0, tc.NA), status: statusNA}, true
+	}
+	if tc.Skip != "" {
+		return testResult{event: resultEvent(group, tc.Name, statusSkip, 0, tc.Skip), status: statusSkip}, true
+	}
+	return testResult{}, false
+}
+
+// dependencyGate returns the skip result for a test whose declared
+// dependencies did not all pass, and whether it applies. Consulted only after
+// marker: a test that was never going to run has its own reason.
+func dependencyGate(group TestGroup, tc TestCase, failedOrSkipped map[string]bool) (testResult, bool) {
+	var failedDeps []string
+	for _, dep := range tc.Depends {
+		if failedOrSkipped[dep] {
+			failedDeps = append(failedDeps, dep)
+		}
+	}
+	if len(failedDeps) == 0 {
+		return testResult{}, false
+	}
+	message := fmt.Sprintf("dependency failed: %s", strings.Join(failedDeps, ", "))
+	return testResult{event: resultEvent(group, tc.Name, statusSkip, 0, message), status: statusSkip}, true
+}
+
+// runOne runs a single test, or reports its na/skip marker without running it.
+// It touches no state shared with another test beyond the TestContext, whose
+// bag is mutex guarded, so it is safe to call concurrently for the tests of one
+// group — which is why the concurrent path calls this and the serial one calls
+// marker and execute separately, with the dependency gate between them.
+func runOne(ctx context.Context, group TestGroup, t *TestContext, tc TestCase) testResult {
+	if out, done := marker(group, tc); done {
+		return out
+	}
+	return execute(ctx, group, t, tc)
+}
+
+// execute runs the test function and classifies its outcome.
+func execute(ctx context.Context, group TestGroup, t *TestContext, tc TestCase) testResult {
+	start := time.Now()
+	err := tc.Fn(ctx, t)
+	durMs := time.Since(start).Milliseconds()
+
+	switch {
+	case err == nil:
+		return testResult{event: resultEvent(group, tc.Name, statusPass, durMs, ""), status: statusPass}
+	case IsUnimplemented(err):
+		return testResult{event: resultEvent(group, tc.Name, statusUnimplemented, durMs, err.Error()), status: statusUnimplemented}
+	default:
+		return testResult{event: resultEvent(group, tc.Name, statusFail, durMs, err.Error()), status: statusFail}
+	}
+}
+
+// record folds one result into the group counters and, for a serial run, into
+// the set the dependency gate reads. na is counted nowhere — it is excluded
+// from pass-rate calculations, and it does not say a dependent's prerequisite
+// is missing. failedOrSkipped may be nil when nothing will read it.
+func record(out testResult, name string, res *GroupResult, failedOrSkipped map[string]bool) {
+	switch out.status {
+	case statusPass:
+		res.Passed++
+		return
+	case statusNA:
+		return
+	case statusCancelled:
+		res.Cancelled++
+		return
+	case statusSkip:
+		res.Skipped++
+	case statusUnimplemented:
+		res.Unimplemented++
+	case statusFail:
+		res.Failed++
+	}
+	if failedOrSkipped != nil {
+		failedOrSkipped[name] = true
+	}
+}
+
+// parallelSlots is how many things this suite may do at once — groups in
+// RunSuite and in the interactive loop, and the tests of one parallel group in
+// runTestsConcurrently. OVERCAST_COMPAT_PARALLEL_SLOTS is injected by the Go
+// runner; default 8.
+//
+// One number bounds both because it answers one question — how much load this
+// machine should put on the emulator at once — and a second knob would only
+// let the two drift apart.
+func parallelSlots() int {
+	if v := os.Getenv("OVERCAST_COMPAT_PARALLEL_SLOTS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 8
 }
 
 // RunSuite executes all groups in parallel and emits run_start / run_end events.

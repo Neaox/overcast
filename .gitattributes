@@ -28,6 +28,8 @@ internal/services/dynamodb/reserved_words.txt linguist-generated=true
 compat/model/scenarios/*.json linguist-generated=true
 compat/model/gaps.json linguist-generated=true
 compat/suites/registry.generated.json linguist-generated=true
+compat/suites/go-sdk/internal/groups/scenarios_gen.go linguist-generated=true
+compat/suites/go-sdk/internal/groups/scenarios_*_gen.go linguist-generated=true
 
 # The public installers (install/README.md). install.sh must stay LF: a CRLF
 # copy from a Windows checkout is a script sh cannot run. install.ps1 follows

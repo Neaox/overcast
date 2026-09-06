@@ -23,7 +23,7 @@ func TestPromotions_changeTheStateAndNothingElse(t *testing.T) {
 	backends := []string{"cli", "python-sdk"}
 	promoted := gen.scenario.Groups[0].Name
 
-	before, err := encodeDocument(buildRegistry(scenarios, backends, nil))
+	before, err := encodeDocument(buildRegistry(scenarios, backends, nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestPromotions_changeTheStateAndNothingElse(t *testing.T) {
 			promoted: {State: generatedStateGated, FirstSeen: "2026-09-01", PromotedAt: "2026-09-05", Runs: []string{"run-1"}},
 		},
 	}
-	after, err := encodeDocument(buildRegistry(scenarios, backends, ledger))
+	after, err := encodeDocument(buildRegistry(scenarios, backends, ledger, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestPromotions_changeTheStateAndNothingElse(t *testing.T) {
 
 	// And the group that was promoted is the one named, not whichever came
 	// first in the file.
-	for _, g := range buildRegistry(scenarios, backends, ledger).Groups {
+	for _, g := range buildRegistry(scenarios, backends, ledger, nil).Groups {
 		want := generatedStateCandidate
 		if g.Name == promoted {
 			want = generatedStateGated
@@ -87,7 +87,7 @@ func TestPromotions_defaultToCandidate(t *testing.T) {
 	_, gen := generateFixture(t)
 	empty := compatmodel.EmptyPromotions()
 	for _, source := range []*compatmodel.Promotions{nil, empty} {
-		for _, g := range buildRegistry([]*scenario{gen.scenario}, []string{"cli"}, source).Groups {
+		for _, g := range buildRegistry([]*scenario{gen.scenario}, []string{"cli"}, source, nil).Groups {
 			if g.State != generatedStateCandidate {
 				t.Errorf("group %s state = %q with ledger %v, want %q", g.Name, g.State, source, generatedStateCandidate)
 			}

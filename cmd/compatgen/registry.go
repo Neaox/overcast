@@ -3,6 +3,7 @@
 package main
 
 import (
+	"slices"
 	"sort"
 
 	compatmodel "github.com/overcast-sh/overcast/compat/model"
@@ -21,7 +22,16 @@ import (
 
 // scenarioBackends lists the suites that can execute scenario IR, sorted.
 // Add a suite here in the PR that lands its interpreter or source emitter.
-var scenarioBackends = []string{"cli", "node-js-sdk", "python-sdk"}
+var scenarioBackends = []string{"cli", "go-sdk", "node-js-sdk", "python-sdk"}
+
+// goSDKSuite is the suite the Go source emitter (emit_go.go) writes for. It is
+// named rather than spelled inline because two things key on it: whether the
+// emitted files are produced at all, and which groups the emitter could not
+// express.
+const goSDKSuite = "go-sdk"
+
+// hasBackend reports whether a suite can execute scenario IR.
+func hasBackend(suite string) bool { return slices.Contains(scenarioBackends, suite) }
 
 const (
 	generatedRegistryVersion = 1
@@ -71,6 +81,28 @@ type generatedTest struct {
 // open.
 func scenarioPath(service string) string { return scenarioDir + "/" + service + ".json" }
 
+// unableSuites names, per group, the suites whose backend exists but cannot
+// execute that group — today only the Go emitter, which refuses a group whose
+// input members it has no Go expression for (emit_go.go). Such a group is
+// scoped to the suites that can run it, so a backend is never listed as able to
+// execute something it will not compile; a group no suite can run is left out
+// of the registry entirely, as one with no backends at all already is.
+type unableSuites map[string]map[string]bool
+
+func (u unableSuites) suitesFor(backends []string, group string) []string {
+	unable := u[group]
+	if len(unable) == 0 {
+		return backends
+	}
+	out := make([]string, 0, len(backends))
+	for _, suite := range backends {
+		if !unable[suite] {
+			out = append(out, suite)
+		}
+	}
+	return out
+}
+
 // buildRegistry projects scenarios onto the registry, honouring the backend
 // rule above. Groups are sorted by name across services so the file does not
 // depend on the order recipes were read in.
@@ -80,7 +112,7 @@ func scenarioPath(service string) string { return scenarioDir + "/" + service + 
 // compat/model/promotions.json is where it comes from. See promotions.go for
 // why the state is an input rather than something a second tool edits into this
 // file.
-func buildRegistry(scenarios []*scenario, backends []string, promotions *compatmodel.Promotions) generatedRegistry {
+func buildRegistry(scenarios []*scenario, backends []string, promotions *compatmodel.Promotions, unable unableSuites) generatedRegistry {
 	reg := generatedRegistry{
 		Schema:  "./registry.generated.schema.json",
 		Version: generatedRegistryVersion,
@@ -94,6 +126,10 @@ func buildRegistry(scenarios []*scenario, backends []string, promotions *compatm
 	sort.Strings(suites)
 	for _, s := range scenarios {
 		for _, g := range s.Groups {
+			groupSuites := unable.suitesFor(suites, g.Name)
+			if len(groupSuites) == 0 {
+				continue
+			}
 			entry := generatedGroup{
 				Service:   s.Service,
 				Name:      g.Name,
@@ -101,7 +137,7 @@ func buildRegistry(scenarios []*scenario, backends []string, promotions *compatm
 				Scenario:  scenarioPath(s.Service),
 				State:     promotionStateOf(promotions, g.Name),
 				Parallel:  g.Parallel,
-				Suites:    suites,
+				Suites:    groupSuites,
 			}
 			for _, t := range g.Tests {
 				rt := generatedTest{Name: t.Name, Depends: t.Depends}
