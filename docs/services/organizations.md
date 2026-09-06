@@ -29,7 +29,9 @@ aws organizations create-policy \
 
 aws organizations list-policies --filter SERVICE_CONTROL_POLICY
 
-aws organizations create-organizational-unit   --parent-id "$(aws organizations list-roots --query 'Roots[0].Id' --output text)"   --name workloads
+aws organizations create-organizational-unit \
+  --parent-id "$(aws organizations list-roots --query 'Roots[0].Id' --output text)" \
+  --name workloads
 ```
 
 Any credentials work; with none configured, run `eval "$(overcast env)"` first
@@ -56,6 +58,7 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 | What is inside a unit                           | Accounts and child units                   | Child units only; `OrganizationalUnitNotEmptyException` counts those   |
 | `Root.PolicyTypes`                              | Lists the types enabled on the root        | Always empty — `EnablePolicyType` returns 501, so none can be enabled  |
 | Tagging an account                              | Succeeds                                   | `TargetNotFoundException` — accounts are not stored                    |
+| An id that violates its pattern                 | `InvalidInputException` (`INVALID_PATTERN`) | Reported as not-found instead (see Gotchas)                            |
 | Accounts, handshakes, delegated administrators  | Full API                                   | Not implemented — `501 Not Implemented`                                |
 
 ## Gotchas
@@ -68,6 +71,15 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 A unit's `Path` is derived from the tree it sits in, so it is accurate for
 however deep the unit is nested — but nothing moves a unit once created, as
 AWS models no operation that does.
+
+`ParentId`, `OrganizationalUnitId` and `PolicyId` are matched by prefix
+(`r-`, `ou-` or `p-`) and looked up directly, rather than validated against
+their full modeled pattern first. An id of the right shape that names
+nothing gets the operation's own not-found error either way; an id that
+violates the pattern outright — wrong length, an illegal character — gets
+the same not-found error here, where AWS would answer `InvalidInputException`
+with `Reason: INVALID_PATTERN`. This is deliberate and consistent with how a
+policy id is already resolved.
 
 <!-- BEGIN overcast:capabilities -->
 

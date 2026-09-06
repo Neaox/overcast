@@ -1,21 +1,241 @@
 service: organizations
-status: not_started
+status: fixed
 priority: p3
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-17
+last_updated: 2026-09-06
 protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
-implementation: [internal/services/organizations]
+implementation: [internal/services/organizations, internal/inert]
 integration_tests: [tests/integration/organizations]
 capability_docs: docs/services/organizations.md
-operation_count_estimate: 1 tracked, inert
-current_support_level: Hardcoded DescribeOrganization stub only.
-operations: {}
+operation_count_estimate: 15 tracked; 15 supported (Tier 1 inert emulation, plus a hand-written DescribeOrganization)
+current_support_level: >-
+  DescribeOrganization is hand-written. The other 14 operations are Tier 1
+  ("inert") bindings over internal/inert: full CRUD for policies
+  (CreatePolicy/DescribePolicy/UpdatePolicy/DeletePolicy/ListPolicies) and
+  organizational units
+  (CreateOrganizationalUnit/DescribeOrganizationalUnit/UpdateOrganizationalUnit/DeleteOrganizationalUnit/ListOrganizationalUnitsForParent),
+  ListRoots, and the shared TagResource/UntagResource/ListTagsForResource
+  surface. Request metadata (identifiers, ARNs, tags, pagination, modeled
+  errors including InvalidInputException.Reason) is stored and returned
+  faithfully; nothing a policy describes ever takes effect and nothing is
+  ever placed in a unit. Everything else (accounts, handshakes, policy
+  attachment, delegated administrators) stays Tier 0 (501).
+operations:
+  DescribeOrganization:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/organizations/latest/APIReference/API_DescribeOrganization.html
+    protocol: AWS JSON 1.1/1.0 and RPCv2 CBOR; POST / with X-Amz-Target AWSOrganizationsV20161128.DescribeOrganization
+    tests:
+      - internal/services/organizations/typed_ops_test.go
+    scenarios:
+      organization_id_shape:
+        status: reviewed
+        evidence: The organization id is derived deterministically from the account id (o- plus ten lowercase-alphanumeric characters), matching OrganizationId's modeled pattern, so real SDK/CLI ARN validation and CDK bootstrap's own assertion accept it (#1736).
+  CreatePolicy:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/organizations/latest/APIReference/API_CreatePolicy.html
+    protocol: AWS JSON 1.1/1.0 and RPCv2 CBOR; POST / with X-Amz-Target AWSOrganizationsV20161128.CreatePolicy
+    tests:
+      - internal/services/organizations/inert_policy_test.go
+      - internal/services/organizations/inert_conformance_test.go
+      - internal/services/organizations/inert_review_followups_test.go
+    scenarios:
+      required_members:
+        status: reviewed
+        evidence: Name, Content, Description and Type are checked for presence and enum membership; each reports InvalidInputException with the modeled Reason (INPUT_REQUIRED for a missing member, INVALID_ENUM_POLICY_TYPE for an unrecognized Type).
+      duplicate_name:
+        status: reviewed
+        evidence: A policy id is derived from Name, so a second CreatePolicy for the same name returns DuplicatePolicyException.
+      tags_on_create:
+        status: fixed
+        evidence: Tags supplied on create used to be applied before the record's Put, so a failed Put left orphaned tags for a policy that was never created; tags are now applied only after a successful Put and remain visible to ListTagsForResource immediately.
+  DescribePolicy:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/organizations/latest/APIReference/API_DescribePolicy.html
+    protocol: AWS JSON 1.1/1.0 and RPCv2 CBOR; POST / with X-Amz-Target AWSOrganizationsV20161128.DescribePolicy
+    tests:
+      - internal/services/organizations/inert_policy_test.go
+    scenarios:
+      not_found:
+        status: reviewed
+        evidence: An unknown or malformed-persisted PolicyId returns PolicyNotFoundException rather than a 500 — internal/inert isolates a corrupt record.
+  UpdatePolicy:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/organizations/latest/APIReference/API_UpdatePolicy.html
+    tests:
+      - internal/services/organizations/inert_policy_test.go
+      - internal/services/organizations/inert_review_followups_test.go
+    scenarios:
+      merge_semantics:
+        status: fixed
+        evidence: Only members the caller sends move. Omitting every optional member, or resending the current values, used to still bump the record's internal UpdatedAt and rewrite the store; it is now a true no-op that writes nothing.
+      empty_optional_member:
+        status: fixed
+        evidence: Name and Content are pointers on this operation, so an explicit "" is a sent value rather than a missing one; it now reports InvalidInputException with Reason MIN_LENGTH_EXCEEDED instead of a generic message with no Reason.
+  DeletePolicy:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/organizations/latest/APIReference/API_DeletePolicy.html
+    tests:
+      - internal/services/organizations/inert_policy_test.go
+    scenarios:
+      policy_in_use:
+        status: intentionally_partial
+        evidence: PolicyInUseException is declared but unreachable by construction — it needs a policy attachment, and AttachPolicy is Tier 0 (501), so no state can ever put a policy in use here.
+  ListPolicies:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/organizations/latest/APIReference/API_ListPolicies.html
+    tests:
+      - internal/services/organizations/inert_policy_test.go
+      - internal/services/organizations/inert_conformance_test.go
+      - internal/services/organizations/inert_review_followups_test.go
+    scenarios:
+      max_results_range:
+        status: fixed
+        evidence: MaxResults outside the modeled 1..20 range used to be silently clamped by serviceutil.Paginate; it now reports InvalidInputException with Reason MAX_VALUE_EXCEEDED / MIN_VALUE_EXCEEDED before pagination runs.
+      filter_required_vs_invalid:
+        status: fixed
+        evidence: A missing Filter and an invalid Filter value are now distinguished by Reason (INPUT_REQUIRED vs INVALID_ENUM_POLICY_TYPE) instead of one combined message.
+      garbage_next_token:
+        status: reviewed
+        evidence: An undecodable NextToken reports InvalidInputException with Reason INVALID_NEXT_TOKEN (the enum's wire value for the INVALID_PAGINATION_TOKEN member).
+  ListRoots:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/organizations/latest/APIReference/API_ListRoots.html
+    tests:
+      - internal/services/organizations/inert_ou_test.go
+      - internal/services/organizations/inert_review_followups_test.go
+    scenarios:
+      single_root:
+        status: reviewed
+        evidence: One organization has exactly one root, derived rather than stored; ListRoots projects it the same way DescribeOrganization does.
+      max_results_range:
+        status: fixed
+        evidence: Same MaxResults range fix as ListPolicies.
+  CreateOrganizationalUnit:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/organizations/latest/APIReference/API_CreateOrganizationalUnit.html
+    tests:
+      - internal/services/organizations/inert_ou_test.go
+      - internal/services/organizations/inert_ou_conformance_test.go
+      - internal/services/organizations/inert_review_followups_test.go
+    scenarios:
+      name_length_is_rune_counted:
+        status: fixed
+        evidence: OrganizationalUnitName's modeled @length (max 128) counts Unicode code points; the check used len(name) (bytes), under-accepting and over-rejecting multi-byte names. Fixed to utf8.RuneCountInString.
+      duplicate_name_scoped_to_parent:
+        status: reviewed
+        evidence: DuplicateOrganizationalUnitException is scoped to the parent — the same name under two different parents derives two different ids and both succeed.
+      unknown_parent:
+        status: reviewed
+        evidence: A ParentId of the right shape naming no root or OU this organization holds returns ParentNotFoundException.
+      tags_on_create:
+        status: fixed
+        evidence: Same tags-after-Put ordering fix as CreatePolicy.
+  DescribeOrganizationalUnit:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/organizations/latest/APIReference/API_DescribeOrganizationalUnit.html
+    tests:
+      - internal/services/organizations/inert_ou_test.go
+  UpdateOrganizationalUnit:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/organizations/latest/APIReference/API_UpdateOrganizationalUnit.html
+    tests:
+      - internal/services/organizations/inert_ou_test.go
+      - internal/services/organizations/inert_review_followups_test.go
+    scenarios:
+      merge_semantics:
+        status: fixed
+        evidence: Same no-op-does-not-write fix as UpdatePolicy — omitting Name, or resending the current one, no longer bumps UpdatedAt or rewrites the record.
+      empty_name:
+        status: fixed
+        evidence: Name is a pointer here too; an explicit "" now reports MIN_LENGTH_EXCEEDED rather than the same INPUT_REQUIRED message CreateOrganizationalUnit's plain-string Name uses.
+      rename_onto_a_sibling:
+        status: reviewed
+        evidence: A rename that collides with a sibling's name returns DuplicateOrganizationalUnitException, the same one-name-per-parent constraint the create enforces.
+  DeleteOrganizationalUnit:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/organizations/latest/APIReference/API_DeleteOrganizationalUnit.html
+    tests:
+      - internal/services/organizations/inert_ou_test.go
+    scenarios:
+      non_empty:
+        status: reviewed
+        evidence: A unit with a child OU returns OrganizationalUnitNotEmptyException; child accounts are not modeled, so a child unit is the only occupant this emulator can see.
+  ListOrganizationalUnitsForParent:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/organizations/latest/APIReference/API_ListOrganizationalUnitsForParent.html
+    tests:
+      - internal/services/organizations/inert_ou_test.go
+      - internal/services/organizations/inert_ou_conformance_test.go
+      - internal/services/organizations/inert_review_followups_test.go
+    scenarios:
+      max_results_range:
+        status: fixed
+        evidence: Same MaxResults range fix as ListPolicies/ListRoots.
+      unknown_parent:
+        status: reviewed
+        evidence: Resolved before the scan, so an unknown ParentId is ParentNotFoundException rather than an empty list.
+  TagResource:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/organizations/latest/APIReference/API_TagResource.html
+    tests:
+      - internal/services/organizations/inert_policy_test.go
+      - internal/services/organizations/inert_ou_test.go
+    scenarios:
+      shared_tag_surface:
+        status: reviewed
+        evidence: One tag store serves policies, organizational units and the root, resolved by ResourceId's prefix (p-, ou-, or the root id); an account or resource-policy id (Tier 0) reports TargetNotFoundException.
+  UntagResource:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/organizations/latest/APIReference/API_UntagResource.html
+    tests:
+      - internal/services/organizations/inert_policy_test.go
+      - internal/services/organizations/inert_ou_test.go
+  ListTagsForResource:
+    status: reviewed
+    aws_docs:
+      - https://docs.aws.amazon.com/organizations/latest/APIReference/API_ListTagsForResource.html
+    tests:
+      - internal/services/organizations/inert_policy_test.go
+      - internal/services/organizations/inert_ou_test.go
+      - internal/services/organizations/inert_review_followups_test.go
+    scenarios:
+      no_max_results_member:
+        status: reviewed
+        evidence: ListTagsForResourceRequest models no MaxResults member (confirmed against models/aws/shapes/organizations.json), so only NextToken is validated; a garbage token reports INVALID_NEXT_TOKEN.
 findings:
-  fixed: []
+  fixed:
+    - MaxResults outside the modeled 1..20 range (ListPolicies, ListRoots, ListOrganizationalUnitsForParent) was silently clamped by serviceutil.Paginate; it now reports InvalidInputException with Reason MAX_VALUE_EXCEEDED / MIN_VALUE_EXCEEDED before pagination runs.
+    - InvalidInputException.Reason, a modeled member AWS always populates, was never set anywhere in the service; every invalid-input path now sets it from the modeled InvalidInputExceptionReason enum, threaded through the shared invalidInput helper. protocol.AWSError gained an optional Reason field (rendered by WriteJSONError, mirroring how QueryErrorCode already works) to carry it.
+    - CreateOrganizationalUnit's (and UpdateOrganizationalUnit's) name-length check counted bytes (len(name)) rather than Unicode code points against OrganizationalUnitName's modeled @length, under-accepting and over-rejecting multi-byte names; fixed to utf8.RuneCountInString.
+    - CreatePolicy and CreateOrganizationalUnit applied tags before the record's Put; a failed Put left orphaned tags for a resource that was never created. Tags are now applied only after a successful Put in both.
+    - UpdatePolicy and UpdateOrganizationalUnit bumped UpdatedAt and rewrote the record even when nothing on it changed (every optional member omitted, or resent unchanged); a true no-op update no longer writes.
   remaining_gaps:
-    - Keep minimal CDK-unblocking stub unless real Organizations workflows become a target.
-  intentionally_partial: []
+    - ParentId/OrganizationalUnitId/PolicyId are matched by prefix and looked up directly rather than validated against their full modeled pattern first, so an id that violates the pattern is reported as not-found rather than InvalidInputException (Reason INVALID_PATTERN) — deliberate, documented in docs/services/organizations.md's Gotchas.
+    - Accounts, handshakes, delegated administrators, policy attachment and EnablePolicyType remain Tier 0 (501) — see docs/plans/inert-tier-rollout.md for the phased plan.
+  intentionally_partial:
+    - Renaming a policy or organizational unit does not free its old derived identifier (both are derived from name, or parent+name), so recreating the original name returns Duplicate*Exception where real AWS would allow it.
+    - Root.PolicyTypes is always empty since EnablePolicyType is Tier 0, so nothing can ever be enabled on a root.
 handoff:
-  start_with: [DescribeOrganization]
-  do_not_redo: []
-  commands: [go test -count=1 ./internal/services/organizations/... ./tests/integration/organizations/...]
+  start_with: [EnablePolicyType, CreateAccount]
+  do_not_redo:
+    [
+      DescribeOrganization, CreatePolicy, DescribePolicy, UpdatePolicy, DeletePolicy, ListPolicies,
+      ListRoots, CreateOrganizationalUnit, DescribeOrganizationalUnit, UpdateOrganizationalUnit,
+      DeleteOrganizationalUnit, ListOrganizationalUnitsForParent, TagResource, UntagResource, ListTagsForResource,
+    ]
+  commands: [go test -count=1 ./internal/services/organizations/... ./internal/inert/... ./tests/integration/organizations/...]
