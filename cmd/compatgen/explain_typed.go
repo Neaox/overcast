@@ -165,7 +165,18 @@ func renderDotnet(_ renderEnv, s *scenario, g *group, t *test) string {
 	})
 }
 
-func rustStyle() style {
+// rustStyle renders a call through the emitter's own spelling table
+// (rustCallLines), so `-explain -lang rust` prints the statements cmd/compatgen
+// writes into compat/suites/rust-sdk/src/groups/scenarios_*_gen.rs rather than a
+// second description of them. It is the same one-naming-table rule goStyle
+// follows, and the same reason: an explanation that describes the call rather
+// than reproducing it drifts from it silently.
+//
+// modelErr is non-nil when the shape snapshot could not be read. That must
+// never happen to generation, but it can happen to `-explain`: a recipe that
+// overrides its model service names a snapshot this command looks for under the
+// scenario's own key. Saying so beats printing a spelling that would be a guess.
+func rustStyle(model *serviceModel, crate string, modelErr error) style {
 	st := typedStyle()
 	st.name = func(suffix string) string { return fmt.Sprintf("format!(\"{run_id}-{group}-%s\")", suffix) }
 	st.object = func(entries [][2]string) string {
@@ -176,22 +187,39 @@ func rustStyle() style {
 		return "HashMap::from([" + strings.Join(parts, ", ") + "])"
 	}
 	st.list = func(items []string) string { return "vec![" + strings.Join(items, ", ") + "]" }
-	st.pathExpr = func(root, path string) string { return root + pathAsGetters(path, "()") }
+	st.pathExpr = func(root, path string) string { return root + pathAsRustAccessors(path) }
 	st.call = func(op string, members [][2]string) string {
 		var setters []string
 		for _, m := range members {
-			setters = append(setters, "."+snake(m[0])+"("+m[1]+")")
+			setters = append(setters, "."+rustNameMember(m[0])+"("+m[1]+")")
 		}
-		return fmt.Sprintf("client.%s()%s.send().await?", snake(op), strings.Join(setters, ""))
+		return fmt.Sprintf("client.%s()%s.send().await?", rustNameOperation(op), strings.Join(setters, ""))
+	}
+	st.callLines = func(op string, params map[string]any) []string {
+		if model == nil {
+			return []string{fmt.Sprintf("// the shape snapshot could not be read: %v", modelErr)}
+		}
+		lines, err := rustCallLines(model, crate, op, params)
+		if err != nil {
+			// Unreachable for a committed scenario: the emitter refuses at
+			// generation time what it cannot render, so a value this cannot
+			// spell never reaches a scenario file.
+			return []string{fmt.Sprintf("// %v", err)}
+		}
+		return lines
 	}
 	return st
 }
 
-func renderRust(_ renderEnv, s *scenario, g *group, t *test) string {
-	e := &explainer{st: rustStyle()}
+func renderRust(env renderEnv, s *scenario, g *group, t *test) string {
+	crate := rustNameCrate(s.Client.SDKID)
+	model, loadErr := env.shapes(s.Service)
+	e := &explainer{st: rustStyle(model, crate, loadErr)}
 	return e.test(s, g, t, func() {
-		e.linef("let client = aws_sdk_%s::Client::new(&config);  // endpoint_url set on the config", strings.ReplaceAll(kebab(s.Client.SDKID), "-", "_"))
+		e.linef("let client = %s::Client::new(&config);  // endpoint_url set on the config", crate)
 		e.linef("let group = %s;", quote(g.Name))
+		e.commentf("b is the scenario::Binder the generated invoke closure receives")
+		e.commentf("capture is the interceptor that keeps the raw response body")
 	})
 }
 
@@ -212,7 +240,26 @@ func pathAsGo(path string) string {
 	return out.String()
 }
 
-// pathAsGetters renders $.A.B[0] as .a().b().get(0) (Java, Rust) or .A.B[0]
+// pathAsRustAccessors renders $.A.B[0] as .a().b()[0] — snake_case, because
+// that is what the SDK for Rust names a member's accessor, and a bare index,
+// because a list member answers with a slice.
+//
+// It is a rendering of the *modeled* path for a reader, not of what the runtime
+// does: crate::scenario walks the response body as a document, by the modeled
+// names the scenario file writes (see compat/suites/rust-sdk/src/scenario).
+func pathAsRustAccessors(path string) string {
+	var out strings.Builder
+	for _, segment := range mustPath(path).segments {
+		if segment.index >= 0 {
+			fmt.Fprintf(&out, "[%d]", segment.index)
+		} else {
+			fmt.Fprintf(&out, ".%s()", rustNameMember(segment.name))
+		}
+	}
+	return out.String()
+}
+
+// pathAsGetters renders $.A.B[0] as .a().b().get(0) (Java) or .A.B[0]
 // (.NET, with call="").
 func pathAsGetters(path string, call string) string {
 	var out strings.Builder

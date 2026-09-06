@@ -1,0 +1,248 @@
+//! The shared error-matching conformance fixtures,
+//! `compat/model/testdata/errors`.
+//!
+//! Every backend reads the same documents and must agree about which clauses
+//! they satisfy. Each suite writes this test once, against its own matcher, so a
+//! rule only one backend implements fails somewhere rather than being discovered
+//! when a generated group disagrees with itself across suites
+//! (compat/model/README.md § Errors).
+//!
+//! A fixture whose surfaces this suite cannot see is skipped by name and with a
+//! reason: a silently ignored fixture would look exactly like a passing one.
+//!
+//! The fixtures live outside this crate, in the model directory the whole compat
+//! suite shares, and the rust-sdk Docker image is built from a context that does
+//! not contain them (`compat/suites`). So this test says loudly what it did
+//! rather than passing quietly when it could not run — and CI runs it from a
+//! full checkout, where the directory is there, in `test.yml`'s
+//! `compat-suite-unit-tests` job.
+
+use std::collections::BTreeSet;
+use std::path::PathBuf;
+
+use serde::Deserialize;
+use serde_json::Value as Json;
+
+use super::errors::{self, ErrorSpec};
+
+/// The whole carrier vocabulary. A fixture naming anything else is a typo that
+/// would otherwise skip quietly in every suite at once.
+const KNOWN_CARRIERS: &[&str] = &[
+    "exceptionName",
+    "bodyType",
+    "bodyCode",
+    "queryErrorHeader",
+    "cliBanner",
+];
+
+/// What this suite can see.
+///
+/// `exceptionName` is not among them: Rust models a service's errors as one enum
+/// per operation, and a modeled variant's name is reachable only through
+/// `Debug`, which is a rendering rather than a surface. `cliBanner` belongs to
+/// another suite.
+const OBSERVED_CARRIERS: &[&str] = &["bodyType", "bodyCode", "queryErrorHeader"];
+
+const WHAT_THIS_SUITE_SEES: &str =
+    "the SDK hands this suite a resolved error code, the raw response body its own \
+     interceptor kept, and the response headers — never an exception class name \
+     and never a process's stderr";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Fixture {
+    id: String,
+    #[allow(dead_code)]
+    title: String,
+    #[allow(dead_code)]
+    why: String,
+    carriers: Vec<String>,
+    wire: Wire,
+    expect: Vec<Expectation>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Wire {
+    #[serde(default)]
+    status: Option<u16>,
+    #[serde(rename = "exceptionName", default)]
+    exception_name: Option<String>,
+    #[serde(default)]
+    headers: Option<std::collections::BTreeMap<String, String>>,
+    #[serde(default)]
+    body: Option<Json>,
+    #[serde(default)]
+    stderr: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Expectation {
+    name: String,
+    error: FixtureError,
+    matches: bool,
+    #[serde(default)]
+    via: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FixtureError {
+    shape: String,
+    code: String,
+}
+
+fn fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("model")
+        .join("testdata")
+        .join("errors")
+}
+
+#[test]
+fn shared_error_fixtures() {
+    let dir = fixture_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        // The Docker build stage copies only this suite's sources, so the shared
+        // fixtures are not there. Say so rather than reporting a pass; the
+        // checkout-based CI job is where this really runs.
+        eprintln!(
+            "[rust-sdk] shared error fixtures not found at {} — this build cannot run them; \
+             they run in test.yml's compat-suite-unit-tests job, from a full checkout",
+            dir.display()
+        );
+        return;
+    };
+
+    let mut paths: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    paths.sort();
+    assert!(
+        !paths.is_empty(),
+        "no fixtures in {}: the shared conformance set may not be skipped by deleting it",
+        dir.display()
+    );
+
+    let known: BTreeSet<&str> = KNOWN_CARRIERS.iter().copied().collect();
+    let observed: BTreeSet<&str> = OBSERVED_CARRIERS.iter().copied().collect();
+    let mut checked = 0usize;
+    let mut skipped: Vec<String> = Vec::new();
+
+    for path in &paths {
+        let raw = std::fs::read_to_string(path).expect("read fixture");
+        // Strict: an unknown key anywhere in a fixture is an error, not a field
+        // the suite that added it happens to ignore.
+        let fixture: Fixture =
+            serde_json::from_str(&raw).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+
+        for carrier in &fixture.carriers {
+            assert!(
+                known.contains(carrier.as_str()),
+                "{}: unknown carrier {carrier:?}; the vocabulary is fixed by \
+                 compat/model/README.md § Errors",
+                fixture.id
+            );
+        }
+
+        // A fixture that states no code anywhere is observed by everyone: there
+        // is nothing to miss, and its expectations are all negative.
+        let observes_any = fixture.carriers.is_empty()
+            || fixture
+                .carriers
+                .iter()
+                .any(|carrier| observed.contains(carrier.as_str()));
+        if !observes_any {
+            skipped.push(format!(
+                "{}: reads none of this fixture's surfaces ({}): {WHAT_THIS_SUITE_SEES}",
+                fixture.id,
+                fixture.carriers.join(", ")
+            ));
+            continue;
+        }
+
+        // The observation, as this suite would have made it: the raw body its
+        // interceptor kept and the response header, through the same extraction
+        // a live failure goes through. `exception_name` and `stderr` are on the
+        // wire for the suites that read them, and are deliberately not read
+        // here.
+        let _ = (
+            &fixture.wire.exception_name,
+            &fixture.wire.stderr,
+            &fixture.wire.status,
+        );
+        let header = fixture
+            .wire
+            .headers
+            .as_ref()
+            .and_then(|headers| headers.get(errors::QUERY_ERROR_HEADER))
+            .map(String::as_str);
+        let codes = errors::surfaces(None, header, fixture.wire.body.as_ref());
+
+        for expectation in &fixture.expect {
+            if expectation.matches {
+                let via = expectation.via.as_deref().unwrap_or_else(|| {
+                    panic!(
+                        "{}: a matching expectation must name its carrier",
+                        fixture.id
+                    )
+                });
+                if !observed.contains(via) {
+                    skipped.push(format!(
+                        "{}/{}: matches through {via:?}, which this suite does not observe",
+                        fixture.id, expectation.name
+                    ));
+                    continue;
+                }
+            }
+            checked += 1;
+            let want = ErrorSpec {
+                // The fixture's strings are owned; the matcher takes &'static
+                // str only because every clause the emitter writes is a literal.
+                shape: Box::leak(expectation.error.shape.clone().into_boxed_str()),
+                code: Box::leak(expectation.error.code.clone().into_boxed_str()),
+            };
+            assert_eq!(
+                errors::matches(&codes, &want),
+                expectation.matches,
+                "{}/{}: matching {:?} against {codes:?}",
+                fixture.id,
+                expectation.name,
+                (&expectation.error.shape, &expectation.error.code)
+            );
+        }
+    }
+
+    for reason in &skipped {
+        eprintln!("[rust-sdk] skipped fixture {reason}");
+    }
+    assert!(
+        checked > 0,
+        "every fixture was skipped: this suite is asserting nothing about error matching"
+    );
+}
+
+/// Pins the assumption the `bodyType` surface rests on: the AWS JSON protocols
+/// state the code in `__type`, and a Smithy id there names the same code as its
+/// bare shape name does.
+#[test]
+fn a_smithy_id_states_the_same_code_as_its_bare_shape_name() {
+    let codes = errors::surfaces(
+        None,
+        None,
+        Some(&serde_json::json!({"__type": "com.amazonaws.sqs#QueueDoesNotExist"})),
+    );
+    assert!(errors::spellings(&codes[0]).contains(&"QueueDoesNotExist".to_string()));
+    // And the query header's fault suffix is split off, and nowhere else.
+    assert_eq!(
+        errors::spellings("AWS.SimpleQueueService.NonExistentQueue;Sender"),
+        vec![
+            "AWS.SimpleQueueService.NonExistentQueue;Sender".to_string(),
+            "AWS.SimpleQueueService.NonExistentQueue".to_string(),
+        ]
+    );
+}

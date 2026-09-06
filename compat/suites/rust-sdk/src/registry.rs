@@ -28,6 +28,10 @@ struct RegistryGroup {
     /// means every suite. See [`in_scope`].
     #[serde(default)]
     suites: Vec<String>,
+    /// The group's tests may run concurrently with one another. Only a
+    /// generated probe group carries it — see [`crate::harness::TestGroup`].
+    #[serde(default)]
+    parallel: bool,
     tests: Vec<RegistryTest>,
     /// Set only for groups read from [`GENERATED_REGISTRY_FILE`]; the
     /// hand-written registry declares none of those fields, so serde never
@@ -82,6 +86,8 @@ struct GeneratedGroup {
     state: String,
     suites: Vec<String>,
     #[serde(default)]
+    parallel: bool,
+    #[serde(default)]
     scenario: Option<String>,
 }
 
@@ -98,6 +104,7 @@ impl GeneratedGroup {
             service: self.service,
             name: self.name,
             suites: self.suites,
+            parallel: self.parallel,
             tests: self.tests,
             generated: Some(GeneratedMeta {
                 state: self.state,
@@ -205,6 +212,7 @@ fn assemble(
                 name,
                 tests,
                 generated,
+                parallel,
                 ..
             } = group;
             let context = GroupContext {
@@ -232,6 +240,7 @@ fn assemble(
                 teardown: teardowns.get(&name).cloned(),
                 service,
                 name,
+                parallel,
                 tests,
             }
         })
@@ -714,6 +723,7 @@ mod tests {
             service: service.to_string(),
             name: name.to_string(),
             suites: Vec::new(),
+            parallel: false,
             tests,
             generated: None,
         }
@@ -874,6 +884,7 @@ mod tests {
                 suite: "rust-sdk".to_string(),
                 service: group.service.clone(),
                 name: group.name.clone(),
+                parallel: group.parallel,
                 tests: group
                     .tests
                     .iter()
@@ -989,6 +1000,43 @@ mod tests {
         Ok(registry)
     }
 
+    /// `parallel` is carried from the generated file onto the group the harness
+    /// runs. Only a probe group sets it, and it is the one field of a generated
+    /// group that changes how a run is *scheduled* rather than what it reports —
+    /// so a loader that dropped it would slow a run down silently.
+    #[test]
+    fn the_parallel_flag_reaches_the_group_the_harness_runs() {
+        let body = format!(
+            r#"{{"version":1,"groups":[{},{}]}}"#,
+            r#"{"service":"sqs","name":"sqs-gen-probe","generated":true,"state":"candidate","parallel":true,"suites":["rust-sdk"],"tests":[{"name":"ListMessageMoveTasks"}]}"#,
+            r#"{"service":"sqs","name":"sqs-gen-queue","generated":true,"state":"candidate","suites":["rust-sdk"],"tests":[{"name":"CreateQueue"}]}"#,
+        );
+        let registry = concatenated(&body).expect("generated registry loads");
+        let groups = assemble(
+            "rust-sdk",
+            registry,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashSet::new(),
+            None,
+        )
+        .expect("groups assemble");
+
+        let parallel: Vec<(&str, bool)> = groups
+            .iter()
+            .map(|group| (group.name.as_str(), group.parallel))
+            .collect();
+        assert!(
+            parallel.contains(&("sqs-gen-probe", true)),
+            "the probe group is not marked parallel: {parallel:?}"
+        );
+        assert!(
+            parallel.contains(&("sqs-gen-queue", false)),
+            "a lifecycle group was marked parallel: {parallel:?}"
+        );
+    }
+
     #[test]
     fn resolves_the_generated_registry_beside_registry_json() {
         // Whatever path the loader was pointed at — the default relative one,
@@ -1065,6 +1113,7 @@ mod tests {
             service: "cdk".to_string(),
             name: "cdk-lifecycle".to_string(),
             suites: vec!["cdk".to_string()],
+            parallel: false,
             tests: vec![test_entry("Deploy")],
             generated: None,
         });

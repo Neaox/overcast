@@ -3,6 +3,10 @@ pub mod eventbridge;
 pub mod kms;
 pub mod lambda;
 pub mod s3;
+/// The generated groups' index, written wholly by `cmd/compatgen`. It declares
+/// the per-service generated modules beside it, so adding a service to the
+/// scenario corpus needs no hand edit here.
+pub mod scenarios_gen;
 pub mod secretsmanager;
 pub mod sns;
 pub mod sqs;

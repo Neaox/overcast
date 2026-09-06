@@ -16,6 +16,9 @@ func TestExplain_rendersEveryLanguage(t *testing.T) {
 	}
 	for _, lang := range rendererNames() {
 		t.Run(lang, func(t *testing.T) {
+			// All three source-emitting backends render through their own
+			// emitter, so every one of their inputs is supplied: the vendored
+			// SDK's types for Go, the shape snapshot for Java and Rust.
 			env := renderEnv{
 				goTypes: fixtureGoTypes(),
 				model:   func(string) (*serviceModel, error) { return f.model, nil },
