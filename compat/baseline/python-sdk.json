@@ -3024,6 +3024,14 @@
       "suite": "python-sdk",
       "service": "iam",
       "group": "iam-policies",
+      "test": "CreatePolicyMalformedDocument",
+      "op": "CreatePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-policies",
       "test": "DeletePolicy",
       "status": "pass"
     },
@@ -3032,6 +3040,30 @@
       "service": "iam",
       "group": "iam-policies",
       "test": "GetPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-policies",
+      "test": "GetPolicyAttachmentCountAfterAttach",
+      "op": "GetPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-policies",
+      "test": "GetPolicyAttachmentCountAfterDetach",
+      "op": "GetPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-policies",
+      "test": "GetPolicyReturnsTags",
+      "op": "GetPolicy",
       "status": "pass"
     },
     {
@@ -3067,6 +3099,14 @@
       "service": "iam",
       "group": "iam-roles",
       "test": "CreateRole",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "CreateRoleMalformedDocument",
+      "op": "CreateRole",
       "status": "pass"
     },
     {
@@ -3109,6 +3149,14 @@
       "service": "iam",
       "group": "iam-roles",
       "test": "GetRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "GetRoleReturnsTags",
+      "op": "GetRole",
       "status": "pass"
     },
     {

@@ -3001,6 +3001,13 @@
       "suite": "go-sdk",
       "service": "iam",
       "group": "iam-policies",
+      "test": "CreatePolicyMalformedDocument",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "iam",
+      "group": "iam-policies",
       "test": "DeletePolicy",
       "status": "pass"
     },
@@ -3009,6 +3016,27 @@
       "service": "iam",
       "group": "iam-policies",
       "test": "GetPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "iam",
+      "group": "iam-policies",
+      "test": "GetPolicyAttachmentCountAfterAttach",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "iam",
+      "group": "iam-policies",
+      "test": "GetPolicyAttachmentCountAfterDetach",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "iam",
+      "group": "iam-policies",
+      "test": "GetPolicyReturnsTags",
       "status": "pass"
     },
     {
@@ -3044,6 +3072,13 @@
       "service": "iam",
       "group": "iam-roles",
       "test": "CreateRole",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "CreateRoleMalformedDocument",
       "status": "pass"
     },
     {
@@ -3086,6 +3121,13 @@
       "service": "iam",
       "group": "iam-roles",
       "test": "GetRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "go-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "GetRoleReturnsTags",
       "status": "pass"
     },
     {

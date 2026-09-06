@@ -8,6 +8,7 @@ import software.amazon.awssdk.services.iam.IamClient;
 import software.amazon.awssdk.services.iam.model.*;
 import software.amazon.awssdk.services.iam.model.PolicyScopeType;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -39,6 +40,31 @@ public final class IamGroup implements ServiceGroup {
             }
             """;
 
+    /**
+     * A document AWS refuses with MalformedPolicyDocument: "Statements must
+     * include either an Action or NotAction element" (IAM User Guide,
+     * reference_policies_elements_action.html). Every writer that takes a
+     * document names that error (IAM API Reference, API_CreatePolicy.html and
+     * API_CreateRole.html, Errors).
+     */
+    private static final String MALFORMED_POLICY = """
+            {
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Resource": "*"
+              }]
+            }
+            """;
+
+    /**
+     * The tag set the role and policy fixtures are created with, and the one
+     * GetRole and GetPolicy must hand back on the resource itself.
+     */
+    private static final List<Tag> RESOURCE_TAGS = List.of(
+            Tag.builder().key("owner").value("compat").build(),
+            Tag.builder().key("stage").value("dev").build());
+
     private final AwsClients clients;
 
     public IamGroup(AwsClients clients) {
@@ -62,7 +88,9 @@ public final class IamGroup implements ServiceGroup {
                 Map.entry("iam-users:DeleteUserPolicy",                       this::deleteUserPolicy),
                 Map.entry("iam-users:DeleteUser",                             this::deleteUser),
                 Map.entry("iam-roles:CreateRole",                             this::createIamRole),
+                Map.entry("iam-roles:CreateRoleMalformedDocument",            this::createRoleMalformedDocument),
                 Map.entry("iam-roles:GetRole",                                this::getIamRole),
+                Map.entry("iam-roles:GetRoleReturnsTags",                     this::getRoleReturnsTags),
                 Map.entry("iam-roles:ListRoles",                              this::listIamRoles),
                 Map.entry("iam-roles:PutRolePolicy",                          this::putRolePolicy),
                 Map.entry("iam-roles:GetRolePolicy",                          this::getRolePolicy),
@@ -76,8 +104,12 @@ public final class IamGroup implements ServiceGroup {
                 Map.entry("iam-roles:AddRoleToInstanceProfile",               this::addRoleToInstanceProfile),
                 Map.entry("iam-roles:GetInstanceProfile",                     this::getInstanceProfile),
                 Map.entry("iam-policies:CreatePolicy",                        this::createIamPolicy),
+                Map.entry("iam-policies:CreatePolicyMalformedDocument",       this::createPolicyMalformedDocument),
                 Map.entry("iam-policies:GetPolicy",                           this::getIamPolicy),
+                Map.entry("iam-policies:GetPolicyReturnsTags",                this::getPolicyReturnsTags),
                 Map.entry("iam-policies:ListPolicies",                        this::listIamPolicies),
+                Map.entry("iam-policies:GetPolicyAttachmentCountAfterAttach", this::getPolicyAttachmentCountAfterAttach),
+                Map.entry("iam-policies:GetPolicyAttachmentCountAfterDetach", this::getPolicyAttachmentCountAfterDetach),
                 Map.entry("iam-policies:DeletePolicy",                        this::deleteIamPolicy),
                 Map.entry("iam-groups:CreateGroup",                           this::createGroup),
                 Map.entry("iam-groups:GetGroup",                              this::getGroup),
@@ -244,7 +276,8 @@ public final class IamGroup implements ServiceGroup {
         String name = ctx.getString("iamRole");
         var resp = iam().createRole(r -> r
                 .roleName(name)
-                .assumeRolePolicyDocument(BASIC_ASSUME_ROLE_POLICY));
+                .assumeRolePolicyDocument(BASIC_ASSUME_ROLE_POLICY)
+                .tags(RESOURCE_TAGS));
         Assertions.assertNotBlank(resp.role().roleId(), "CreateIamRole: roleId is blank");
         Assertions.assertNotBlank(resp.role().arn(), "CreateIamRole: arn is blank");
     }
@@ -253,6 +286,26 @@ public final class IamGroup implements ServiceGroup {
         String name = ctx.getString("iamRole");
         var resp = iam().getRole(r -> r.roleName(name));
         Assertions.assertEquals(name, resp.role().roleName(), "GetIamRole: roleName mismatch");
+    }
+
+    /** A trust policy AWS would refuse must be refused here, not stored unparsed. */
+    private void createRoleMalformedDocument(TestContext ctx) throws Exception {
+        String name = ctx.getString("iamRole") + "-malformed";
+        try {
+            iam().createRole(r -> r.roleName(name).assumeRolePolicyDocument(MALFORMED_POLICY));
+        } catch (IamException e) {
+            assertMalformedPolicyDocument("CreateRoleMalformedDocument", e);
+            return;
+        }
+        throw new AssertionError(
+                "CreateRoleMalformedDocument: expected MalformedPolicyDocument, call succeeded");
+    }
+
+    /** Tags given to CreateRole come back on the role (API_Role.html). */
+    private void getRoleReturnsTags(TestContext ctx) throws Exception {
+        String name = ctx.getString("iamRole");
+        var resp = iam().getRole(r -> r.roleName(name));
+        assertResourceTags("GetRoleReturnsTags", resp.role().tags());
     }
 
     private void listIamRoles(TestContext ctx) throws Exception {
@@ -351,17 +404,32 @@ public final class IamGroup implements ServiceGroup {
 
     private void setupPolicies(TestContext ctx) {
         ctx.set("iamManagedPolicyName", "compat-policy-" + ctx.runId());
+        // The counter tests attach this group's own policy to a role of its
+        // own, so AttachmentCount moves for a customer managed policy rather
+        // than for the AWS managed one iam-roles attaches.
+        String role = "compat-policy-role-" + ctx.runId();
+        iam().createRole(r -> r.roleName(role).assumeRolePolicyDocument(BASIC_ASSUME_ROLE_POLICY));
+        ctx.set("iamPolicyRole", role);
     }
 
     private void teardownPolicies(TestContext ctx) {
         String arn = ctx.getString("managedPolicyArn");
+        String role = ctx.getString("iamPolicyRole");
+        if (role != null) {
+            if (arn != null) {
+                try { iam().detachRolePolicy(r -> r.roleName(role).policyArn(arn)); } catch (Exception ignored) {}
+            }
+            try { iam().deleteRole(r -> r.roleName(role)); } catch (Exception ignored) {}
+        }
         if (arn == null) return;
         try { iam().deletePolicy(r -> r.policyArn(arn)); } catch (Exception ignored) {}
     }
 
     private void createIamPolicy(TestContext ctx) throws Exception {
         String name = ctx.getString("iamManagedPolicyName");
-        var resp = iam().createPolicy(r -> r.policyName(name).policyDocument(INLINE_POLICY));
+        var resp = iam().createPolicy(r -> r.policyName(name)
+                .policyDocument(INLINE_POLICY)
+                .tags(RESOURCE_TAGS));
         Assertions.assertNotBlank(resp.policy().policyId(), "CreateIamPolicy: policyId is blank");
         ctx.set("managedPolicyArn", resp.policy().arn());
     }
@@ -377,6 +445,63 @@ public final class IamGroup implements ServiceGroup {
         var resp = iam().listPolicies(r -> r.scope(PolicyScopeType.LOCAL).maxItems(1000));
         boolean found = resp.policies().stream().anyMatch(p -> name.equals(p.policyName()));
         Assertions.assertTrue(found, "ListIamPolicies: created policy " + name + " not found in list");
+    }
+
+    /** The same refusal on the identity-policy writer. */
+    private void createPolicyMalformedDocument(TestContext ctx) throws Exception {
+        String name = ctx.getString("iamManagedPolicyName") + "-malformed";
+        try {
+            iam().createPolicy(r -> r.policyName(name).policyDocument(MALFORMED_POLICY));
+        } catch (IamException e) {
+            assertMalformedPolicyDocument("CreatePolicyMalformedDocument", e);
+            return;
+        }
+        throw new AssertionError(
+                "CreatePolicyMalformedDocument: expected MalformedPolicyDocument, call succeeded");
+    }
+
+    /** Tags given to CreatePolicy come back on the policy (API_Policy.html). */
+    private void getPolicyReturnsTags(TestContext ctx) throws Exception {
+        String arn = ctx.getString("managedPolicyArn");
+        var resp = iam().getPolicy(r -> r.policyArn(arn));
+        assertResourceTags("GetPolicyReturnsTags", resp.policy().tags());
+    }
+
+    /** Reads AttachmentCount back through GetPolicy. */
+    private int attachmentCount(TestContext ctx, String op) {
+        String arn = ctx.getString("managedPolicyArn");
+        var resp = iam().getPolicy(r -> r.policyArn(arn));
+        Integer count = resp.policy().attachmentCount();
+        Assertions.assertNotNull(count, op + ": GetPolicy returned no AttachmentCount");
+        return count;
+    }
+
+    /**
+     * AttachmentCount moves 0 to 1. "The number of entities (users, groups, and
+     * roles) that the policy is attached to" (IAM API Reference,
+     * API_Policy.html) is what a cleanup script reads before deleting a policy,
+     * so a stuck 0 deletes something in use.
+     */
+    private void getPolicyAttachmentCountAfterAttach(TestContext ctx) throws Exception {
+        final String op = "GetPolicyAttachmentCountAfterAttach";
+        Assertions.assertEquals(0, attachmentCount(ctx, op), op + ": AttachmentCount before the attach");
+        String arn = ctx.getString("managedPolicyArn");
+        String role = ctx.getString("iamPolicyRole");
+        Assertions.assertNotNull(role, op + ": no role from setup");
+        iam().attachRolePolicy(r -> r.roleName(role).policyArn(arn));
+        Assertions.assertEquals(1, attachmentCount(ctx, op),
+                op + ": AttachmentCount after attaching to one role");
+    }
+
+    /** The counter moves back to 0, which a never-decremented one would fail. */
+    private void getPolicyAttachmentCountAfterDetach(TestContext ctx) throws Exception {
+        final String op = "GetPolicyAttachmentCountAfterDetach";
+        String arn = ctx.getString("managedPolicyArn");
+        String role = ctx.getString("iamPolicyRole");
+        Assertions.assertNotNull(role, op + ": no role from setup");
+        iam().detachRolePolicy(r -> r.roleName(role).policyArn(arn));
+        Assertions.assertEquals(0, attachmentCount(ctx, op),
+                op + ": AttachmentCount after the detach");
     }
 
     private void deleteIamPolicy(TestContext ctx) throws Exception {
@@ -553,4 +678,26 @@ public final class IamGroup implements ServiceGroup {
                 "SimulatePrincipalPolicy: uncovered action should be implicitDeny");
     }
 
+    // ── shared assertions ─────────────────────────────────────────────────────
+
+    /**
+     * Checks both halves of the error contract: the code AWS's model names, and
+     * the 400 the Query protocol binds it to.
+     */
+    private static void assertMalformedPolicyDocument(String op, IamException e) {
+        String code = e.awsErrorDetails() == null ? "" : e.awsErrorDetails().errorCode();
+        Assertions.assertEquals("MalformedPolicyDocument", code, op + ": unexpected error code");
+        Assertions.assertEquals(400, e.statusCode(),
+                op + ": expected HTTP 400 for MalformedPolicyDocument");
+    }
+
+    /** Checks the two fixture tags on a resource returned by a Get* call. */
+    private static void assertResourceTags(String op, List<Tag> tags) {
+        for (Tag want : RESOURCE_TAGS) {
+            boolean found = tags != null && tags.stream()
+                    .anyMatch(t -> want.key().equals(t.key()) && want.value().equals(t.value()));
+            Assertions.assertTrue(found,
+                    op + ": tag " + want.key() + "=" + want.value() + " not on the resource (tags: " + tags + ")");
+        }
+    }
 }
