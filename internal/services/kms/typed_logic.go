@@ -808,6 +808,22 @@ func (h *Handler) reEncryptTyped(ctx context.Context, req *reEncryptRequest) (*r
 	if err != nil || srcKey == nil {
 		return nil, errNotFound(keyID)
 	}
+	// SourceKeyId is optional for symmetric ciphertext — "AWS KMS can get this
+	// information from metadata that it adds to the symmetric ciphertext blob"
+	// — but when it is supplied it is authoritative: "Enter a key ID of the KMS
+	// key that was used to encrypt the ciphertext. If you identify a different
+	// KMS key, the ReEncrypt operation throws an IncorrectKeyException."
+	// Checked before the key-state check, as decryptTyped checks Decrypt's
+	// KeyId, so naming the wrong key reports itself either way.
+	if req.SourceKeyId != "" {
+		named, aerr := h.resolveKeyForTyped(ctx, req.SourceKeyId)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if named.KeyID != srcKey.KeyID {
+			return nil, errIncorrectKey()
+		}
+	}
 	if !srcKey.Enabled {
 		return nil, errDisabled(srcKey.KeyID)
 	}

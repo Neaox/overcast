@@ -4608,7 +4608,7 @@
           "operation": "ReEncrypt",
           "category": "Symmetric crypto",
           "status": "✅ Supported",
-          "notes": "Decrypts and re-encrypts ciphertext with destination key"
+          "notes": "Decrypts and re-encrypts ciphertext with destination key; a `SourceKeyId` naming a different key is an `IncorrectKeyException`"
         },
         {
           "operation": "GenerateDataKeyPair",

@@ -131,17 +131,21 @@ func pendingWindowInDays(days *int) (int, *protocol.AWSError) {
 	return *days, nil
 }
 
-// errIncorrectKey reports that Decrypt's KeyId parameter names a key other
-// than the one that produced the ciphertext. Per the API Reference: "When you
-// use the KeyId parameter to specify a KMS key, AWS KMS only uses the KMS key
-// you specify. If the ciphertext was encrypted under a different KMS key, the
-// Decrypt operation fails" with IncorrectKeyException (HTTP 400).
+// errIncorrectKey reports that the caller named a key other than the one that
+// produced the ciphertext — Decrypt's KeyId, or ReEncrypt's SourceKeyId. Both
+// operations raise the same exception, and its documented description names
+// both: "The request was rejected because the specified KMS key cannot decrypt
+// the data. The KeyId in a Decrypt request and the SourceKeyId in a ReEncrypt
+// request must identify the same KMS key that was used to encrypt the
+// ciphertext." (HTTP 400).
 // https://docs.aws.amazon.com/kms/latest/APIReference/API_Decrypt.html
+// https://docs.aws.amazon.com/kms/latest/APIReference/API_ReEncrypt.html
 func errIncorrectKey() *protocol.AWSError {
 	return &protocol.AWSError{
 		Code: "IncorrectKeyException",
-		Message: "The key ID in your request is not valid for this ciphertext. " +
-			"The KeyId in a Decrypt request must identify the same KMS key that was used to encrypt the ciphertext.",
+		Message: "The request was rejected because the specified KMS key cannot decrypt the data. " +
+			"The KeyId in a Decrypt request and the SourceKeyId in a ReEncrypt request " +
+			"must identify the same KMS key that was used to encrypt the ciphertext.",
 		HTTPStatus: http.StatusBadRequest,
 	}
 }
