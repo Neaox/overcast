@@ -20,9 +20,11 @@ import (
 // detectService infers the AWS service from a request using the same signals
 // the real AWS SDKs embed: X-Amz-Target prefix (JSON services), well-known URL
 // prefixes (Lambda REST API), the Smithy RPC v2 URI and its Smithy-Protocol
-// header, the Authorization Credential scope (Query-protocol services such as
-// IAM, STS, SNS, EC2), and finally S3 as a fallback.
-// An optional body parameter enables Query-protocol Action-param detection.
+// header, the Query-protocol Action and Version form parameters (IAM, STS, SNS,
+// EC2 and the rest of the Query services), the Authorization Credential scope,
+// and finally S3 as a fallback.
+// An optional body parameter enables Query-protocol Action-param detection;
+// without it a Query request can only be classified by its credential scope.
 //
 // What it answers is not only a log label. IAM enforcement builds the action it
 // authorises from it (see requestIAMAction, which maps the answer to AWS's IAM
@@ -34,7 +36,7 @@ import (
 // Every one of those consumers wants an **Overcast service key**, which is one
 // of the three names a service has. serviceidentity.go holds the other two and
 // the mappings between them; the short version is that the answer here is never
-// a SigV4 signing name, even though step 3 reads one.
+// a SigV4 signing name, even though step 3b reads one.
 //
 // The step 2 prefix switch is hand-written and stays that way deliberately. The
 // pinned Smithy models describe the same paths — every REST binding's URI, and
@@ -55,11 +57,13 @@ import (
 //     carries the SigV4 signing name, which is not this function's key for
 //     several implemented services — elasticfilesystem/efs, kafka/msk,
 //     servicecatalog/appregistry, states/stepfunctions, monitoring/cloudwatch,
-//     elasticloadbalancing/elbv2 — and step 3 used to return it raw, so a
+//     elasticloadbalancing/elbv2 — and step 3b used to return it raw, so a
 //     signed request to any of their paths that step 2 does not claim was
 //     labelled with a name nothing downstream knows. serviceKeyForSigningName
-//     (serviceidentity.go) translates it; step 3 is why MSK's v1 surface no
-//     longer escapes IAM enforcement.
+//     (serviceidentity.go) translates it; step 3b is why MSK's v1 surface no
+//     longer escapes IAM enforcement. It cannot separate two services AWS
+//     gives one signing name, which is why the Query wire is read at step 3
+//     ahead of it — see #1884 and serviceKeyForSigningName's ELB arm.
 //   - Three entries here are ambiguous in the models and would have to be given
 //     up. "/applications" is declared by eight modeled services, "/v1/tags" by
 //     twelve, "/2017-03-31/" by Lambda and Lambda MicroVMs. Answering "" for
@@ -77,11 +81,11 @@ import (
 // registers a path family the switch has never been told about, classifying
 // unsigned. TestDetectServiceClassifiesEverySignedRouteByItsSigningName signs
 // each route the way the pinned models say that binding is signed, which is the
-// case the switch does not decide and step 3 does.
+// case the switch does not decide and step 3b does.
 //
 // Both vary only the path, so neither can say anything about the protocols that
 // name the service in the request *content* rather than its URL — the wires
-// steps 1, 2d and 3b read. TestClassifiesEveryDeclaredOperationOnItsContentWire
+// steps 1, 2d and 3 read. TestClassifiesEveryDeclaredOperationOnItsContentWire
 // is that third axis: it sweeps every operation the capability registry
 // declares against the shapes the models say a client addresses it with, it
 // asserts the operation as well as the service, and it runs each case through
@@ -247,16 +251,21 @@ func detectService(r *http.Request, body ...[]byte) string {
 		return middlewareServiceKey(claim.Service)
 	}
 
-	// 3. Authorization Credential scope — covers Query-protocol services
-	// (IAM, STS, SNS, EC2, CloudFormation, RDS, …) where there is no
-	// X-Amz-Target header and no distinguishing URL path.
-	// Format: AWS4-HMAC-SHA256 Credential=AKID/DATE/REGION/SERVICE/aws4_request
-	if svc := serviceKeyFromAuthCredential(r); svc != "" && svc != "s3" {
-		return svc
-	}
-
-	// 3b. Query-protocol Action parameter — use the generated AWS operation
-	// registry for accurate service/operation mapping.
+	// 3. Query-protocol Action and Version — the AWS Query wire names its own
+	// service in the request content, as a pair the generated registry
+	// attributes to exactly one modeled service.
+	//
+	// It leads the credential scope below because it is the stronger signal and
+	// because it is the signal the *router* dispatches a Query request on
+	// (targetDispatch's queryOwner): a classifier that read the scope instead
+	// could label a request with a service that did not answer it. Elastic Load
+	// Balancing is where the two disagree — Classic (2012-06-01) and ELBv2
+	// (2015-12-01) are both Query on POST "/" and both sign as
+	// "elasticloadbalancing", so the scope can only name one of them and named
+	// ELBv2 for every Classic call (#1884).
+	//
+	// A request with no version, or one the models do not carry, falls through
+	// to the scope, which is what classified it before this step moved.
 	if len(body) > 0 && len(body[0]) > 0 && bytes.Contains(body[0][:min(len(body[0]), 256)], []byte("Action=")) {
 		values, err := url.ParseQuery(string(body[0]))
 		if err == nil {
@@ -272,6 +281,15 @@ func detectService(r *http.Request, body ...[]byte) string {
 				return middlewareServiceKey(claim.Service)
 			}
 		}
+	}
+
+	// 3b. Authorization Credential scope — covers the Query-protocol services
+	// whose request body this middleware never saw (see
+	// TestDetectService_withoutTheBodyCannotClassifyQuery), and every REST
+	// service whose path step 2 does not claim.
+	// Format: AWS4-HMAC-SHA256 Credential=AKID/DATE/REGION/SERVICE/aws4_request
+	if svc := serviceKeyFromAuthCredential(r); svc != "" && svc != "s3" {
+		return svc
 	}
 
 	// 4. S3 is the final fallback: S3 uses plain HTTP verbs on path-style or
