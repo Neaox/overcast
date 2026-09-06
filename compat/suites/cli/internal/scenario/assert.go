@@ -8,6 +8,13 @@ import (
 	"strings"
 )
 
+// This file's counterpart is
+// compat/suites/go-sdk/internal/scenario/assert.go: the two evaluate the same
+// closed assertion set (compat/model/README.md § Assertions) against their own
+// backend's response shape and are not byte-identical, but a change to how one
+// assertion kind is evaluated here usually needs a matching change there —
+// change both or neither.
+
 // The closed assertion set (compat/model/README.md § Assertions).
 const (
 	kindResponseField = "responseField"

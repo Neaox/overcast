@@ -477,6 +477,17 @@ Debuggability is the interpreter approach's real cost, and it is paid explicitly
   greppable by construction — which also serves as a cross-check that the IR
   means what the interpreters think it means.
 
+**Typed-backend binding decision (2026-09, #1830/#1831):** the go-sdk emitter
+binds every input member through a runtime helper
+(`b.Set("Member", &in.Member, v)`) rather than the typed spelling, because the
+pinned model cannot say whether the vendored Go SDK models a member as a value
+or a pointer (`sqs`'s `VisibilityTimeout` is a value `int32` where the model
+says `NullableInteger`). #1831 replaces this with emit-time type resolution
+from the vendored SDK itself, which is the rule the java/dotnet/rust emitters
+must also follow where their SDK's nullability is not derivable from the
+model (dotnet nullable value types), and need not follow where it is (java
+builders, Rust `Option<T>`).
+
 ### 3.3 D2 — Passing constructs between tests: recipes, exports, bindings
 
 This is the part the model cannot solve alone, so the design is explicit about
@@ -1376,6 +1387,10 @@ loopback: `node-js-sdk` 1.2 s, `python-sdk` 1.6 s, `cli` 23 s — the slowest
 suite at a quarter of the local budget, and all three together at 26 s. So
 sharding is not what G2 needs, and §3.10 records why it would not be the lever
 at fleet scale either.
+
+`#1830` grew the `sqs-gen-batch` absence poll from 1 s to 5 s, because the Go
+SDK cannot send `VisibilityTimeout: 0` and the recipe's 1 s hide needs a poll
+that outlasts it (§3.10) — ~4 s per suite per run, still inside the budget.
 
 ### 4.4 G2 handoff — what an interpreter author has to agree to
 

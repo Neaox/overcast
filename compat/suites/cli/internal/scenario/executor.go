@@ -372,6 +372,14 @@ func wait(ctx context.Context, delayMs int) error {
 	}
 }
 
+// The rest of this file is general call execution; only matchesError,
+// errorCodes and errorCodeSpellings below have a counterpart, which is
+// compat/suites/go-sdk/internal/scenario/errors.go — that suite's error
+// matching lives in its own file because it reads a typed error chain rather
+// than parsing stderr. The two apply the same equality rule over their own
+// backend's error surfaces and are not byte-identical, but a change to the
+// rule here usually needs a matching change there — change both or neither.
+
 // matchesError reports whether a failed call carries the error an `error`
 // clause names.
 //

@@ -9,6 +9,13 @@ import (
 	"strings"
 )
 
+// This file's parsePath is byte-identical to its counterpart in
+// compat/suites/cli/internal/scenario/path.go; canonicalJSON, jsonEqual,
+// render, renderResolved and missingValue differ from it only in comments.
+// The two scenario packages are separate Go modules with no shared dependency
+// yet, so change both together or neither — compat/scenario_parity_test.go
+// enforces this for parsePath and the other four identifiers named above.
+
 // Paths (compat/model/README.md § Paths): `$` is the response, `.Name` selects
 // a structure member or map key, `[n]` selects a list element. Nothing else —
 // no wildcards, filters, quoting or recursive descent.
