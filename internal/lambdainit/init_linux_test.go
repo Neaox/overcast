@@ -400,16 +400,31 @@ func TestInitStartsExtensionsAndTagsTheirOutput(t *testing.T) {
 	}
 
 	h := newFakeHost(t)
+	// The runtime takes an invocation before it writes anything, and the host
+	// holds that invocation until both extensions have announced themselves.
+	// The barrier is load-bearing: the init spawns an extension and never waits
+	// for it — an extension's readiness is the Extensions API's business, which
+	// the host owns — so the extension's first line races the runtime's entire
+	// life. A runtime that prints and exits immediately has the environment torn
+	// down within ~3 ms of the fork, and stopExtensions then SIGTERMs a shell
+	// that has not reached its `echo` yet, which is a line that never existed
+	// rather than one the init lost.
+	h.enqueue(invocation{id: "req-1", payload: `{}`, before: func() {
+		h.awaitMessage("alpha is up")
+		h.awaitMessage("beta is up")
+	}})
 	res := runInit(t, h, options{
 		child:         childCmd(),
-		environ:       childEnviron("print-then-exit", "0"),
+		environ:       childEnviron("runtime-interleave", "1"),
 		extensionsDir: dir,
 	})
 	if res.code != 0 {
 		t.Fatalf("exit code = %d, want 0\n%s", res.code, res.diag)
 	}
 
-	h.mustAwaitFrameCount(5) // 3 from the runtime, one per extension
+	// initStart, one line per extension, initRuntimeDone and initReport, the
+	// runtime's out-1 and err-1, and invokeDone.
+	h.mustAwaitFrameCount(8)
 	frames := h.snapshotFrames()
 
 	for _, name := range []string{"alpha", "beta"} {
@@ -429,7 +444,7 @@ func TestInitStartsExtensionsAndTagsTheirOutput(t *testing.T) {
 	}
 	// The extension's own output is teed like everything else.
 	if !strings.Contains(res.stdout, "alpha is up\n") {
-		t.Errorf("the extension's output did not reach the container's stdout:\n%s", res.stdout)
+		t.Errorf("the extension's output did not reach the container's stdout:\n%s\ndiagnostics:\n%s", res.stdout, res.diag)
 	}
 }
 
