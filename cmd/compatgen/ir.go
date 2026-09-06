@@ -35,6 +35,13 @@ const (
 )
 
 type scenario struct {
+	// Comment is prose an authored scenario carries and a generated one never
+	// does: the emitters and interpreters ignore it, and the generator writes
+	// none, so byte-identical regeneration is unaffected. It exists because an
+	// authored scenario is the review artifact for a group that used to be
+	// seven per-language implementations, and a review artifact that cannot
+	// say why a clause is what it is is worse than the code it replaced.
+	Comment string     `json:"$comment,omitempty"`
 	Version int        `json:"version"`
 	Service string     `json:"service"`
 	Client  clientInfo `json:"client"`
@@ -58,8 +65,10 @@ type clientInfo struct {
 }
 
 type group struct {
-	Name string `json:"name"`
-	Kind string `json:"kind"`
+	// Comment is prose; see scenario.Comment.
+	Comment string `json:"$comment,omitempty"`
+	Name    string `json:"name"`
+	Kind    string `json:"kind"`
 	// Parallel says the group's tests may run concurrently with one another.
 	// Only a probe group carries it, and every probe group does: a probe has
 	// no setup, no teardown and no exports (README § What a probe may bind),
@@ -82,6 +91,8 @@ type call struct {
 
 // test is one registry test: a primary call and at least one assertion.
 type test struct {
+	// Comment is prose; see scenario.Comment.
+	Comment string      `json:"$comment,omitempty"`
 	Name    string      `json:"name"`
 	Op      string      `json:"op"`
 	Call    call        `json:"call"`

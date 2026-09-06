@@ -2,8 +2,11 @@
 
 // Command compatgen turns the pruned AWS shape snapshot plus hand-curated
 // recipes into the compat scenario IR, the refusal report and the generated
-// registry sibling. It is a build-time tool whose output is committed data;
-// nothing under compat/ imports it or any other emulator Go code.
+// registry sibling. It also reads the authored scenarios under
+// compat/model/authored — the same IR, written by hand to port a hand-written
+// registry group — and renders every backend's source for those too. It is a
+// build-time tool whose output is committed data; nothing under compat/ imports
+// it or any other emulator Go code.
 //
 // Usage:
 //
@@ -11,11 +14,12 @@
 //
 // Flags:
 //
-//	(none)                    generate every recipe under compat/model/recipes/
+//	(none)                    generate every recipe under compat/model/recipes/,
+//	                          and every authored scenario under compat/model/authored/
 //	-check                    prove the committed output is byte-identical, writing nothing
 //	-scaffold <service>       print a recipe skeleton for a service in the shape snapshot
 //	-review-report [service]  print the Markdown review report for a PR body
-//	-explain <group>/<test>   render one generated test as pseudo-code (with -lang)
+//	-explain <group>/<test>   render one test as pseudo-code (with -lang)
 //	-lang <language>          python | node | cli | go | java | dotnet | rust
 //	-sample <n>               scenarios rendered in the review report (default 3)
 //	-root <dir>               repository root (default: the current directory)
@@ -109,7 +113,12 @@ type corpus struct {
 	// written against the loaders' contract, not this package's.
 	suites  *schemaSet
 	recipes []recipe
-	values  *valuesTable
+	// authored is the hand-written scenario layer: an IR file with no recipe,
+	// written to port a hand-written registry group (§3.11). It is an input
+	// like a recipe, and it reaches the emitters through exactly the same
+	// generation the recipes produce. See authored.go.
+	authored []authored
+	values   *valuesTable
 	// promotions is the soak ledger: the one generated-registry field that
 	// comes from an input file rather than from the scenario. See
 	// promotions.go.
@@ -137,7 +146,29 @@ func loadCorpus(root string) (*corpus, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &corpus{schemas: schemas, suites: suites, recipes: recipes, values: values, promotions: promotions}, nil
+	authoredScenarios, err := loadAuthored(filepath.Join(root, filepath.FromSlash(authoredDir)), schemas)
+	if err != nil {
+		return nil, err
+	}
+	// compat/suites/registry.json is read for one reason and not kept: an
+	// authored scenario ports a group of it, and the names have to match.
+	hand, err := loadHandRegistry(filepath.Join(root, filepath.FromSlash(handRegistryPath)))
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range authoredScenarios {
+		if err := checkAuthoredAgainstRegistry(a, hand); err != nil {
+			return nil, err
+		}
+	}
+	return &corpus{
+		schemas:    schemas,
+		suites:     suites,
+		recipes:    recipes,
+		authored:   authoredScenarios,
+		values:     values,
+		promotions: promotions,
+	}, nil
 }
 
 // generateAll runs the generator over every recipe and renders every output.
@@ -162,21 +193,41 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 	// per invocation and not per package.
 	type work struct {
 		recipe recipe
-		model  *serviceModel
-		client clientInfo
+		// authored is set instead of recipe for an authored scenario.
+		authored *authored
+		model    *serviceModel
+		client   clientInfo
 	}
-	planned := make([]work, 0, len(c.recipes))
+	planned := make([]work, 0, len(c.recipes)+len(c.authored))
 	var sdkIDs []string
-	for _, r := range c.recipes {
-		model, err := loadModel(filepath.Join(root, filepath.FromSlash(shapesDir)), r.modelService())
+	modelFor := func(modelService, service string) (*serviceModel, clientInfo, error) {
+		model, err := loadModel(filepath.Join(root, filepath.FromSlash(shapesDir)), modelService)
 		if err != nil {
-			return nil, nil, err
+			return nil, clientInfo{}, err
 		}
-		client, err := clientInfoFor(model, r.Service)
+		client, err := clientInfoFor(model, service)
+		if err != nil {
+			return nil, clientInfo{}, err
+		}
+		return model, client, nil
+	}
+	for _, r := range c.recipes {
+		model, client, err := modelFor(r.modelService(), r.Service)
 		if err != nil {
 			return nil, nil, err
 		}
 		planned = append(planned, work{recipe: r, model: model, client: client})
+		sdkIDs = append(sdkIDs, client.SDKID)
+	}
+	// Authored scenarios are planned in the same list and primed in the same
+	// `go list`: to every backend below, an authored generation and a
+	// recipe-generated one are the same thing.
+	for _, a := range c.authored {
+		model, client, err := modelFor(a.scenario.Service, a.scenario.Service)
+		if err != nil {
+			return nil, nil, err
+		}
+		planned = append(planned, work{authored: &a, model: model, client: client})
 		sdkIDs = append(sdkIDs, client.SDKID)
 	}
 	if hasBackend(goSDKSuite) {
@@ -185,30 +236,45 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 		}
 	}
 	for _, w := range planned {
-		r, model, client := w.recipe, w.model, w.client
-		gen, err := generate(model, r, c.values, capabilitiesFor(r.Service), client)
+		var (
+			gen   *generation
+			err   error
+			label = w.recipe.Service
+		)
+		if w.authored != nil {
+			label = w.authored.file
+			gen, err = generateAuthored(*w.authored, w.model, w.client)
+		} else {
+			gen, err = generate(w.model, w.recipe, c.values, capabilitiesFor(w.recipe.Service), w.client)
+		}
 		if err != nil {
-			return nil, nil, fmt.Errorf("%s: %w", r.Service, err)
+			return nil, nil, fmt.Errorf("%s: %w", label, err)
 		}
 		generations = append(generations, gen)
 		scenarios = append(scenarios, gen.scenario)
 		gaps.Gaps = append(gaps.Gaps, gen.gaps...)
-		contents, err := encodeDocument(gen.scenario)
-		if err != nil {
-			return nil, nil, err
+		// The scenario file is an output for a recipe and an input for an
+		// authored scenario. Writing the authored one back would put the
+		// generator in charge of a file a human owns, and `-check` would then
+		// fail a hand-written comment for not being the generator's own bytes.
+		if w.authored == nil {
+			contents, err := encodeDocument(gen.scenario)
+			if err != nil {
+				return nil, nil, err
+			}
+			outputs[scenarioPath(w.recipe.Service)] = contents
 		}
-		outputs[scenarioPath(r.Service)] = contents
 		for _, backend := range sourceBackends {
 			if !hasBackend(backend.suite) {
 				continue
 			}
 			emission, err := backend.emit(gen, goTypes)
 			if err != nil {
-				return nil, nil, fmt.Errorf("%s: %w", r.Service, err)
+				return nil, nil, fmt.Errorf("%s: %w", label, err)
 			}
 			outputs[emission.Path] = emission.Contents
 			gaps.Gaps = append(gaps.Gaps, emission.Gaps...)
-			emitted[backend.suite] = append(emitted[backend.suite], r.Service)
+			emitted[backend.suite] = append(emitted[backend.suite], gen.unit)
 			markUnable(unable, backend.suite, emission.Refused)
 		}
 	}
@@ -231,7 +297,7 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 	if err := checkPromotionsAreKnownGroups(c.promotions, scenarios); err != nil {
 		return nil, nil, err
 	}
-	registry := buildRegistry(scenarios, scenarioBackends, c.promotions, unable)
+	registry := buildRegistry(generations, scenarioBackends, c.promotions, unable)
 	contents, err = encodeDocument(registry)
 	if err != nil {
 		return nil, nil, err
@@ -306,14 +372,14 @@ func runGenerate(opts options, stdout io.Writer) error {
 		if err := outputs.check(opts.root); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "compat model is up to date (%d service(s), %d file(s))\n", len(generations), len(outputs))
+		fmt.Fprintf(stdout, "compat model is up to date (%d unit(s), %d file(s))\n", len(generations), len(outputs))
 		return nil
 	}
 	if err := outputs.write(opts.root); err != nil {
 		return err
 	}
 	for _, gen := range generations {
-		fmt.Fprintf(stdout, "%s: %s\n", gen.scenario.Service, gen.summaryLine())
+		fmt.Fprintf(stdout, "%s: %s\n", gen.describe(), gen.summaryLine())
 	}
 	return nil
 }
@@ -407,11 +473,19 @@ func markUnable(unable unableSuites, suite string, refused map[string]bool) {
 	}
 }
 
-// summaryLine is the one-line generation summary printed per service.
+// summaryLine is the one-line generation summary printed per unit.
 func (gen *generation) summaryLine() string {
 	tests := 0
 	for _, g := range gen.scenario.Groups {
 		tests += len(g.Tests)
+	}
+	// Operation coverage and refusals are a recipe's measurements: how much of
+	// the service the generator managed to reach, and what it declined. An
+	// authored scenario reaches exactly what its author wrote, so quoting
+	// "0 of 23 operation(s) covered" for one would report a hand-written file's
+	// deliberate scope as a shortfall.
+	if gen.isAuthored() {
+		return fmt.Sprintf("%d group(s), %d test(s)", len(gen.scenario.Groups), tests)
 	}
 	return fmt.Sprintf("%d group(s), %d test(s), %d of %d operation(s) covered, %d refusal(s)",
 		len(gen.scenario.Groups), tests, len(gen.covered), len(gen.model.Operations()), len(gen.gaps))

@@ -43,11 +43,15 @@ type parityGroup struct {
 	// too so lintGeneratedRegistry can reject a hand-written group that carries
 	// them — the shared schema has to permit the properties for the generated
 	// schema to extend its TestGroup by $ref. See generatedregistry.go.
-	Generated bool         `json:"generated"`
-	State     string       `json:"state"`
-	Scenario  string       `json:"scenario"`
-	Parallel  bool         `json:"parallel"`
-	Tests     []parityTest `json:"tests"`
+	Generated bool   `json:"generated"`
+	State     string `json:"state"`
+	Scenario  string `json:"scenario"`
+	Parallel  bool   `json:"parallel"`
+	// ShadowOf is the same: only a generated group carries it, and it names the
+	// hand-written group the authored scenario behind it is being compared
+	// against before the native implementations are deleted.
+	ShadowOf string       `json:"shadowOf"`
+	Tests    []parityTest `json:"tests"`
 }
 
 type parityTest struct {

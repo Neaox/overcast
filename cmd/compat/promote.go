@@ -261,6 +261,16 @@ func applyPromotions(gen *generatedRegistry, ledger *compatmodel.Promotions, run
 	sort.Strings(out.Pruned)
 
 	for _, group := range gen.Groups {
+		// A shadow group is not a candidate for this soak and never becomes
+		// one. It is running the migration soak instead — does the authored
+		// port answer exactly as the native group it will replace, which
+		// --compare-shadow measures — and the flip PR that concludes that
+		// deletes it. Recording it here would put a group with a scheduled end
+		// date on the road into the gate, and then report it overdue at thirty
+		// days for failing to arrive somewhere it was never going.
+		if group.ShadowOf != "" {
+			continue
+		}
 		entry, recorded := ledger.Groups[group.Name]
 		// The ledger outranks the registry's own `state` field: the registry
 		// is regenerated *from* the ledger, so between a promotion and the

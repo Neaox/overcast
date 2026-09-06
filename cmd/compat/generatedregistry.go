@@ -76,6 +76,14 @@ type generatedGroup struct {
 	Scenario string `json:"scenario,omitempty"`
 	// State is generatedStateCandidate or generatedStateGated.
 	State string `json:"state"`
+	// ShadowOf names the hand-written group this one shadows, on a group
+	// produced from an authored scenario that is being compared against the
+	// native implementations it will replace (§3.11 step 2). It is what
+	// --compare-shadow joins the two halves on, and why --promote-generated
+	// leaves the group alone: a shadow is collecting evidence of agreement
+	// with another group, not with itself, and it is deleted when that
+	// evidence is in.
+	ShadowOf string `json:"shadowOf,omitempty"`
 	// Suites lists the backends that can execute the group. Always present and
 	// mechanically derived: a suite absent from it is out of scope, not
 	// indebted.
@@ -127,6 +135,7 @@ func (r *generatedRegistry) parityGroups() []parityGroup {
 			Generated: g.Generated,
 			State:     g.State,
 			Scenario:  g.Scenario,
+			ShadowOf:  g.ShadowOf,
 			Tests:     g.Tests,
 		})
 	}
@@ -228,9 +237,9 @@ func lintGeneratedRegistry(hand *parityRegistry, gen *generatedRegistry) []strin
 			// registry.generated.schema.json to extend its TestGroup by $ref,
 			// so the ban on hand-written groups carrying them is enforced here
 			// instead of by the schema.
-			if g.Generated || g.State != "" || g.Scenario != "" || g.Parallel {
+			if g.Generated || g.State != "" || g.Scenario != "" || g.Parallel || g.ShadowOf != "" {
 				issues = append(issues, fmt.Sprintf(
-					"hand-written group %q carries a generated-only field (generated/state/scenario/parallel) — those belong in compat/suites/registry.generated.json, which cmd/compatgen owns",
+					"hand-written group %q carries a generated-only field (generated/state/scenario/shadowOf/parallel) — those belong in compat/suites/registry.generated.json, which cmd/compatgen owns",
 					g.Name))
 			}
 		}
@@ -276,6 +285,7 @@ func lintGeneratedRegistry(hand *parityRegistry, gen *generatedRegistry) []strin
 			issues = append(issues, fmt.Sprintf(
 				"generated group %q has no tests", g.Name))
 		}
+		issues = append(issues, shadowIssues(g, hand)...)
 
 		for _, t := range g.Tests {
 			key := g.Name + "/" + t.Name
@@ -300,4 +310,81 @@ func lintGeneratedRegistry(hand *parityRegistry, gen *generatedRegistry) []strin
 // line, so a --check-parity run names every collision rather than the first.
 func generatedRegistryIssueError(path string, issues []string) error {
 	return fmt.Errorf("%d problem(s) in %s:\n  %s", len(issues), path, strings.Join(issues, "\n  "))
+}
+
+// ---------------------------------------------------------------------------
+// Shadow groups
+// ---------------------------------------------------------------------------
+
+// shadowIssues holds a shadow group to the two things --compare-shadow needs
+// of it, and neither is decorative.
+//
+// The comparison joins shadow to native on the test name, per suite. A shadow
+// naming a group that does not exist compares against nothing and reports a
+// clean run; one whose test names have drifted compares eight of nine and says
+// nothing about the ninth. Both read as "the port agrees with the natives",
+// which is the one conclusion the soak exists to earn rather than assume — and
+// the flip that follows deletes working code on the strength of it.
+//
+// A shadow must also stay a candidate. Gating a group that is scheduled for
+// deletion would put the deletion behind a baseline update; more to the point,
+// the promotion soak asks whether a group agrees with itself, which is not the
+// question a shadow is being asked.
+func shadowIssues(g generatedGroup, hand *parityRegistry) []string {
+	if g.ShadowOf == "" {
+		return nil
+	}
+	var issues []string
+	if g.State != generatedStateCandidate {
+		issues = append(issues, fmt.Sprintf(
+			"generated group %q shadows %q but is in state %q — a shadow gates nothing and is deleted when the port lands, so it stays %q",
+			g.Name, g.ShadowOf, g.State, generatedStateCandidate))
+	}
+	if hand == nil {
+		return issues
+	}
+	var native *parityGroup
+	for i := range hand.Groups {
+		if hand.Groups[i].Name == g.ShadowOf {
+			native = &hand.Groups[i]
+			break
+		}
+	}
+	if native == nil {
+		return append(issues, fmt.Sprintf(
+			"generated group %q shadows %q, which is not a group in the hand-written registry — --compare-shadow would join it against nothing and report agreement",
+			g.Name, g.ShadowOf))
+	}
+	shadowTests := make(map[string]bool, len(g.Tests))
+	for _, t := range g.Tests {
+		shadowTests[t.Name] = true
+	}
+	nativeTests := make(map[string]bool, len(native.Tests))
+	for _, t := range native.Tests {
+		nativeTests[t.Name] = true
+	}
+	var missing, extra []string
+	for name := range nativeTests {
+		if !shadowTests[name] {
+			missing = append(missing, name)
+		}
+	}
+	for name := range shadowTests {
+		if !nativeTests[name] {
+			extra = append(extra, name)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(extra)
+	if len(missing) > 0 {
+		issues = append(issues, fmt.Sprintf(
+			"generated group %q shadows %q but does not declare %s — the comparison joins on the test name, so a test the shadow is missing is a test nobody proved the port reproduces",
+			g.Name, g.ShadowOf, strings.Join(missing, ", ")))
+	}
+	if len(extra) > 0 {
+		issues = append(issues, fmt.Sprintf(
+			"generated group %q shadows %q and declares %s, which %q does not — a shadow reproduces the native group's tests, it does not add to them",
+			g.Name, g.ShadowOf, strings.Join(extra, ", "), g.ShadowOf))
+	}
+	return issues
 }

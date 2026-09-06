@@ -1281,6 +1281,66 @@ and the exceptions-file lint above. When a new operation appears in a model
 refresh, the intended cost is zero human actions for shape coverage and one
 reviewed scenario only if it warrants behavioural coverage.
 
+#### 2026-09-07 — the G6 pilot, and the mechanism every later port reuses
+
+`sqs-queues` is ported (#1116). The machinery, which nothing after this has to
+invent again:
+
+- **An authored scenario is an input with no recipe**, at
+  `compat/model/authored/<group>.json` — beside `scenarios/`, never inside it,
+  because everything in that directory is rewritten wholly on every run.
+  `cmd/compatgen` validates it against `scenario.schema.json` and the IR's own
+  rules, then against the model, and feeds it to the four typed emitters
+  through exactly the `generation` a recipe produces. Its emit key is
+  `authored-<group>`, so a port's source is `scenarios_authored_<group>_gen.*`
+  and the diff of a migration is readable next to the service's generated one.
+  `-check` covers everything produced from it.
+- **The names are checked against the registry**, which is step 1 stated as a
+  gate rather than as an instruction: the file's base name is the group it
+  ports, and the test names, their `op` and their `depends` are that group's,
+  in its order. A scenario that quietly renamed a test would soak green and
+  orphan one baseline entry per suite on the flip.
+- **Step 2 is a shadow group.** Both implementations have to be live at once,
+  and no suite may register two implementations for one `group:test` key, so
+  the port runs under `<group>-shadow`. Its generated registry entry carries
+  `shadowOf`, always in state `candidate`; `--promote-generated` skips it (that
+  soak asks whether a group agrees with itself, which is not the question);
+  `go run ./cmd/compat --compare-shadow --results-file <run>` joins the two on
+  (suite, test), and the nightly runs it beside the promotion soak.
+- **The comparison classifies rather than diffs.** Only a *divergence* blocks
+  the flip. A native `skip` carrying the not-implemented sentinel against a
+  shadow that ran is **parity debt closed**, which is step 4 happening and not
+  a fault; two skips are **not exercised**, which is agreement in status and
+  evidence of nothing — promote.go's all-skip reasoning applied to this soak.
+  Collapsing the four would make the tool unusable for the migration it exists
+  to serve.
+- **The `$comment` key is now legal** on a scenario, a group, a test and an
+  assertion, and the generator still writes none. §3.11 calls an authored
+  scenario "the review artifact"; one that could not say why a clause is what
+  it is would be worse than the eight implementations it replaces.
+
+Two findings from the pilot itself, both fixed here:
+
+- **The seven native `sqs-queues` implementations were not one test.** They
+  disagreed on the visibility timeout (dotnet 120, the rest 60), on six
+  different tag sets, and on how much they verified at all: `java-sdk` asserted
+  nothing for `SetQueueAttributes`, `TagQueue`, `UntagQueue` or `DeleteQueue`,
+  its `CreateQueue` asserted a context value without calling the service, and
+  `rust-sdk`'s `SetQueueAttributes` had no read-back either. The authored
+  scenario is the union, so the port is a coverage *increase* for two suites —
+  which is the class of divergence §3.11 predicted the migration would surface.
+- **Two suites inferred "generated" from the group name.** `java-sdk`'s and
+  `rust-sdk`'s registration tests skipped any group whose name lacked `-gen-`,
+  which is exactly the inference compat/AGENTS.md forbids and which a ported
+  group — named for the hand-written group it replaces — defeats. Both now ask
+  whether the emitter registered anything for the group.
+
+One thing the IR still cannot express: **"the response contains the resource
+name"**. `matches` takes a fixed pattern and cannot embed a `$name`, so
+`rust-sdk`'s "the queue URL contains the queue name" has no direct spelling.
+Here the list-membership clause is strictly stronger and the loss is nil, but a
+later port may not be so lucky.
+
 ---
 
 ## 4. First milestone — pilot (Phase G2)

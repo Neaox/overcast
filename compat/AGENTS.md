@@ -468,8 +468,8 @@ replaced all three with the one rule above.
 
 ### Flags that read a results file instead of producing one
 
-`--max-failures`, `--compare-baseline`, `--update-baseline`, `--report` and
-`--check-parity` are **gate modes**. Each reads an existing `--results-file`
+`--max-failures`, `--compare-baseline`, `--update-baseline`, `--report`,
+`--check-parity` and `--compare-shadow` are **gate modes**. Each reads an existing `--results-file`
 and exits without running a single test. So this does not do what it looks
 like:
 
@@ -1046,6 +1046,18 @@ it on a probe group and on nothing else, and it lets a loader run that group's
 tests concurrently (bounded by `OVERCAST_COMPAT_PARALLEL_SLOTS`) while still
 reporting them in registry order; a loader that ignores it runs them in order,
 which is always correct.
+
+A generated group may also carry **`"shadowOf": "<group>"`**. That is a
+hand-written group being ported to an authored IR scenario
+([compat/model/README.md § Authored scenarios](./model/README.md#authored-scenarios)):
+while the port soaks it runs beside the natives under `<group>-shadow`, so both
+are live at once and no suite registers two implementations for one
+`group:test` key. `go run ./cmd/compat --compare-shadow --results-file <run>`
+joins the two on (suite, test) and reports every pair that answered
+differently — the evidence the flip PR cites when it deletes the native code.
+A shadow group is always in state `candidate` and never promotes;
+`--promote-generated` skips it. Like every field above it is derived by
+`cmd/compatgen`, from the group's own name, and is never hand-written.
 
 **Every loader concatenates `registry.generated.json`** onto `registry.json`
 (hand-written groups first) and honours `"suites"` on **every** group, generated

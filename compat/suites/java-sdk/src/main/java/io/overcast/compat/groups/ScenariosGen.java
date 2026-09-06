@@ -20,6 +20,7 @@ public final class ScenariosGen {
     /** The generated groups, in service order. */
     public static List<ServiceGroup> all(AwsClients clients) {
         return List.of(
+                new ScenariosAuthoredSqsQueuesGen(clients),
                 new ScenariosBatchGen(clients),
                 new ScenariosElasticLoadBalancingGen(clients),
                 new ScenariosOrganizationsGen(clients),

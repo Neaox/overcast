@@ -347,11 +347,11 @@ func TestEmitJava_refusesWhatItCannotSpell(t *testing.T) {
 // the group.
 func TestBuildRegistry_scopesAJavaRefusedGroupAwayFromJavaSdk(t *testing.T) {
 	_, gen := generateFixture(t)
-	scenarios := []*scenario{gen.scenario}
+	units := []*generation{gen}
 	backends := []string{"cli", "go-sdk", "java-sdk"}
 	refused := gen.scenario.Groups[0].Name
 
-	reg := buildRegistry(scenarios, backends, nil, unableSuites{refused: {"java-sdk": true}})
+	reg := buildRegistry(units, backends, nil, unableSuites{refused: {"java-sdk": true}})
 	for _, g := range reg.Groups {
 		want := backends
 		if g.Name == refused {
@@ -365,7 +365,7 @@ func TestBuildRegistry_scopesAJavaRefusedGroupAwayFromJavaSdk(t *testing.T) {
 	// And a group no backend can execute is left out entirely rather than
 	// written with an empty `suites`, which the schema refuses.
 	none := unableSuites{refused: {"cli": true, "go-sdk": true, "java-sdk": true}}
-	for _, g := range buildRegistry(scenarios, backends, nil, none).Groups {
+	for _, g := range buildRegistry(units, backends, nil, none).Groups {
 		if g.Name == refused {
 			t.Error("a group no suite can execute was still registered")
 		}

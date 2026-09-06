@@ -318,11 +318,11 @@ func TestGoSpeller_spellsEveryShapeOfField(t *testing.T) {
 // loader's generated-no-backend rule turns the refusal into a hard failure.
 func TestBuildRegistry_scopesARefusedGroupAwayFromItsBackend(t *testing.T) {
 	_, gen := generateFixture(t)
-	scenarios := []*scenario{gen.scenario}
+	units := []*generation{gen}
 	backends := []string{"cli", "go-sdk", "python-sdk"}
 	refused := gen.scenario.Groups[0].Name
 
-	reg := buildRegistry(scenarios, backends, nil, unableSuites{refused: {"go-sdk": true}})
+	reg := buildRegistry(units, backends, nil, unableSuites{refused: {"go-sdk": true}})
 	for _, g := range reg.Groups {
 		want := backends
 		if g.Name == refused {
@@ -336,7 +336,7 @@ func TestBuildRegistry_scopesARefusedGroupAwayFromItsBackend(t *testing.T) {
 	// And a group no backend can execute is left out entirely rather than
 	// written with an empty `suites`, which the schema refuses.
 	none := unableSuites{refused: {"cli": true, "go-sdk": true, "python-sdk": true}}
-	for _, g := range buildRegistry(scenarios, backends, nil, none).Groups {
+	for _, g := range buildRegistry(units, backends, nil, none).Groups {
 		if g.Name == refused {
 			t.Error("a group no suite can execute was still registered")
 		}
