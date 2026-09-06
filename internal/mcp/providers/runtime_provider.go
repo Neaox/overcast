@@ -15,6 +15,7 @@ import (
 
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/iampolicy"
 	"github.com/overcast-sh/overcast/internal/mcp"
 	"github.com/overcast-sh/overcast/internal/protocol"
 	"github.com/overcast-sh/overcast/internal/services/acm"
@@ -5447,6 +5448,23 @@ func (p *RuntimeProvider) toolIAMDeleteUser(ctx context.Context, params json.Raw
 	}, nil
 }
 
+// defaultAssumeRolePolicy is the trust policy a role gets when the caller
+// supplies none: one sts:AssumeRole statement trusting the account root, which
+// is the same-account trust policy AWS's own console offers and a document IAM
+// accepts. The placeholder this replaced carried an empty Statement list, which
+// is not a policy the IAM API will store (#1850) and which grants nothing, so a
+// role written through MCP could not be assumed or evaluated.
+func defaultAssumeRolePolicy(accountID string) string {
+	return `{"Version":"2012-10-17","Statement":[{"Effect":"Allow",` +
+		`"Principal":{"AWS":"arn:aws:iam::` + accountID + `:root"},` +
+		`"Action":"sts:AssumeRole"}]}`
+}
+
+// toolIAMCreateRole writes the role straight to the store, as every runtime
+// tool here does, so the policy-document check the IAM handler applies
+// (internal/services/iam/policy_document.go) has to be applied here too — the
+// same iampolicy.ValidateDocument, so the two write paths agree on what a
+// well-formed document is.
 func (p *RuntimeProvider) toolIAMCreateRole(ctx context.Context, params json.RawMessage) (any, error) {
 	var args struct {
 		Name                     string            `json:"name"`
@@ -5464,6 +5482,13 @@ func (p *RuntimeProvider) toolIAMCreateRole(ctx context.Context, params json.Raw
 	if name == "" {
 		return nil, fmt.Errorf("name is required")
 	}
+	assumePolicy := strings.TrimSpace(args.AssumeRolePolicyDocument)
+	if assumePolicy == "" {
+		assumePolicy = defaultAssumeRolePolicy(p.accountID())
+	}
+	if err := iampolicy.ValidateDocument(assumePolicy); err != nil {
+		return nil, fmt.Errorf("malformed assume_role_policy_document: %w", err)
+	}
 	if _, found, err := p.store.Get(ctx, iamRolesStoreNamespace, name); err != nil {
 		return nil, fmt.Errorf("check existing iam role: %w", err)
 	} else if found {
@@ -5478,10 +5503,6 @@ func (p *RuntimeProvider) toolIAMCreateRole(ctx context.Context, params json.Raw
 	}
 	if !strings.HasSuffix(path, "/") {
 		path += "/"
-	}
-	assumePolicy := strings.TrimSpace(args.AssumeRolePolicyDocument)
-	if assumePolicy == "" {
-		assumePolicy = `{"Version":"2012-10-17","Statement":[]}`
 	}
 	role := iam.Role{
 		RoleName:                 name,
@@ -5554,6 +5575,9 @@ func (p *RuntimeProvider) toolIAMCreatePolicy(ctx context.Context, params json.R
 	document := strings.TrimSpace(args.Document)
 	if document == "" {
 		return nil, fmt.Errorf("document is required")
+	}
+	if err := iampolicy.ValidateDocument(document); err != nil {
+		return nil, fmt.Errorf("malformed document: %w", err)
 	}
 	path := strings.TrimSpace(args.Path)
 	if path == "" {
