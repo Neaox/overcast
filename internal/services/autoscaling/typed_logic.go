@@ -667,6 +667,39 @@ func zonesDoNotMatchError() *protocol.AWSError {
 	return asgValidationError("The availability zones of the specified subnets and the AutoScalingGroup do not match")
 }
 
+// validatePlacement refuses a group that names neither AvailabilityZones nor
+// any VPCZoneIdentifier subnet. Such a group has nowhere to launch: the
+// reconciler's nextPlacement returns an empty subnet and an empty zone, and
+// EC2's RunInstances then falls back to <region>a — a shape real AWS cannot
+// produce, because it refuses the group instead.
+//
+// Neither parameter is marked Required in the CreateAutoScalingGroup or
+// UpdateAutoScalingGroup reference, and neither Errors section names a code
+// for the combination, so the code is the one the Auto Scaling common-error
+// list defines for input that "doesn't meet the required format or
+// constraints" — ValidationError, HTTP 400 — the same reasoning as
+// zonesDoNotMatchError. The conditionality is documented rather than stated:
+// AvailabilityZones is "used for launching into the default VPC subnet in each
+// Availability Zone *when not using the VPCZoneIdentifier property*", and
+// CloudFormation types VPCZoneIdentifier "Required: Conditional — Required to
+// launch instances into a nondefault VPC".
+//
+// The message is real Auto Scaling's, reported verbatim through the Ruby SDK
+// as "AWS::AutoScaling::Errors::ValidationError: At least one Availability
+// Zone or VPC Subnet is required." in chef-boneyard/chef-provisioning-aws#135;
+// moto raises the identical string, trailing full stop included, from
+// _set_azs_and_vpcs in moto/autoscaling/models.py.
+//
+// The subnets are counted with subnetIDs rather than by the raw string, so a
+// VPCZoneIdentifier that is only separators and spaces is the no-placement
+// case it really is — the same split the reconciler launches by.
+func validatePlacement(zones []string, vpcZoneIdentifier string) *protocol.AWSError {
+	if len(zones) > 0 || len(subnetIDs(vpcZoneIdentifier)) > 0 {
+		return nil
+	}
+	return asgValidationError("At least one Availability Zone or VPC Subnet is required.")
+}
+
 // sameZoneSet reports whether two zone lists name the same zones, ignoring
 // order and repeats: a group may list one zone twice, or hold two subnets in
 // one zone, without that being a mismatch.
@@ -707,6 +740,13 @@ func (h *Handler) createASGTyped(ctx context.Context, req *createASGReq) (*creat
 		desired = *req.DesiredCapacity
 	}
 	if aerr := validateCapacity(req.MinSize, req.MaxSize, desired); aerr != nil {
+		return nil, aerr
+	}
+
+	// Checked against the request, not against what resolveGroupPlacement
+	// settles on: a group naming subnets EC2 cannot resolve keeps an empty
+	// zone list on purpose (subnetZones), and it is placed all the same.
+	if aerr := validatePlacement(req.AvailabilityZones, req.VPCZoneIdentifier); aerr != nil {
 		return nil, aerr
 	}
 
@@ -881,6 +921,16 @@ func (h *Handler) updateASGTyped(ctx context.Context, req *updateASGReq) (*updat
 	}
 
 	if aerr := validateCapacity(g.MinSize, g.MaxSize, g.DesiredCapacity); aerr != nil {
+		s.mu.Unlock()
+		return nil, aerr
+	}
+	// Applied to the group as the update would leave it, not to the request:
+	// an update naming no placement is the ordinary case and must stay
+	// accepted, while a group that would be left with neither is refused
+	// wherever it got into that state. Today that is a group persisted by an
+	// Overcast from before create validated this, and an update supplying
+	// either parameter heals it.
+	if aerr := validatePlacement(g.AvailabilityZones, g.VPCZoneIdentifier); aerr != nil {
 		s.mu.Unlock()
 		return nil, aerr
 	}

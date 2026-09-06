@@ -346,3 +346,132 @@ func TestCreateAutoScalingGroup_derivesZonesFromVPCZoneIdentifier(t *testing.T) 
 		t.Errorf("instances placed %+v, want one in each of us-east-1a and us-east-1c", seen)
 	}
 }
+
+// ─── At least one of the two ──────────────────────────────────────────────────
+
+// TestCreateAutoScalingGroup_requiresZonesOrSubnets pins #1843: a group naming
+// neither AvailabilityZones nor VPCZoneIdentifier has nowhere to launch, and
+// real Auto Scaling refuses it rather than storing it. Accepted without the
+// refusal, the reconciler placed such a group nowhere in particular —
+// nextPlacement returns an empty subnet and an empty zone — and EC2's
+// RunInstances fell back to <region>a, a shape AWS cannot produce.
+//
+// Neither parameter is marked Required in the CreateAutoScalingGroup
+// reference, and its Errors section names no code for the combination, so the
+// code is the Auto Scaling common-error one for input that "doesn't meet the
+// required format or constraints": ValidationError, HTTP 400. The message is
+// the one real Auto Scaling returns, reported verbatim from the Ruby SDK as
+// "AWS::AutoScaling::Errors::ValidationError: At least one Availability Zone
+// or VPC Subnet is required." (chef-boneyard/chef-provisioning-aws#135); moto
+// raises the same string in _set_azs_and_vpcs (moto/autoscaling/models.py).
+//
+// Either parameter alone is enough, which is what the two accepting subtests
+// hold: AvailabilityZones is documented as the way to launch "into the default
+// VPC subnet in each Availability Zone when not using the VPCZoneIdentifier
+// property", and CloudFormation types VPCZoneIdentifier "Required: Conditional
+// — Required to launch instances into a nondefault VPC".
+func TestCreateAutoScalingGroup_requiresZonesOrSubnets(t *testing.T) {
+	// Given: a launch configuration and one real subnet to name
+	srv := helpers.NewTestServer(t)
+	newLaunchConfig(t, srv, "placement-lc")
+	vpc := newVPC(t, srv, "10.0.0.0/16")
+	subnetA := newSubnet(t, srv, vpc, "10.0.1.0/24", "us-east-1a")
+
+	cases := []struct {
+		name       string
+		group      string
+		placement  map[string]string
+		wantStatus int
+	}{
+		{
+			name:       "neither is refused",
+			group:      "no-placement-asg",
+			placement:  nil,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "availability zones alone are enough",
+			group:      "zones-only-asg",
+			placement:  map[string]string{"AvailabilityZones.member.1": "us-east-1a"},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "subnets alone are enough",
+			group:      "subnets-only-asg",
+			placement:  map[string]string{"VPCZoneIdentifier": subnetA},
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// When: the group is created with that placement
+			params := map[string]string{
+				"AutoScalingGroupName":    tc.group,
+				"LaunchConfigurationName": "placement-lc",
+				"MinSize":                 "0",
+				"MaxSize":                 "2",
+				"DesiredCapacity":         "0",
+			}
+			for k, v := range tc.placement {
+				params[k] = v
+			}
+			resp := asCall(t, srv, "CreateAutoScalingGroup", params)
+			body := xmlText(t, resp)
+
+			// Then: it is refused with AWS's error, or accepted
+			if resp.StatusCode != tc.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", resp.StatusCode, tc.wantStatus, body)
+			}
+			if tc.wantStatus == http.StatusBadRequest {
+				if !strings.Contains(body, "ValidationError") {
+					t.Errorf("body does not name ValidationError: %s", body)
+				}
+				if !strings.Contains(body, "At least one Availability Zone or VPC Subnet is required.") {
+					t.Errorf("body does not carry AWS's message: %s", body)
+				}
+			}
+
+			// And: only an accepted group is stored
+			var groups describeGroupsXML
+			asDecode(t, srv, "DescribeAutoScalingGroups", nil, &groups)
+			stored := false
+			for _, g := range groups.Groups {
+				if g.Name == tc.group {
+					stored = true
+				}
+			}
+			if want := tc.wantStatus == http.StatusOK; stored != want {
+				t.Errorf("group stored = %v, want %v", stored, want)
+			}
+		})
+	}
+}
+
+// TestCreateAutoScalingGroup_whitespaceOnlyVPCZoneIdentifierIsNoPlacement
+// covers the boundary the comma-separated form creates: VPCZoneIdentifier is
+// split on commas and each entry trimmed (subnetIDs), so a value that is only
+// separators and spaces names no subnet at all and is not a placement.
+func TestCreateAutoScalingGroup_whitespaceOnlyVPCZoneIdentifierIsNoPlacement(t *testing.T) {
+	// Given: a launch configuration
+	srv := helpers.NewTestServer(t)
+	newLaunchConfig(t, srv, "blank-subnets-lc")
+
+	// When: a group's only placement is a VPCZoneIdentifier naming no subnet
+	resp := asCall(t, srv, "CreateAutoScalingGroup", map[string]string{
+		"AutoScalingGroupName":    "blank-subnets-asg",
+		"LaunchConfigurationName": "blank-subnets-lc",
+		"MinSize":                 "0",
+		"MaxSize":                 "2",
+		"VPCZoneIdentifier":       " , ",
+	})
+	body := xmlText(t, resp)
+
+	// Then: it is refused like a group with no placement at all
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, "At least one Availability Zone or VPC Subnet is required.") {
+		t.Errorf("body does not carry AWS's message: %s", body)
+	}
+}
