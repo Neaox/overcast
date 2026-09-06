@@ -273,10 +273,21 @@ mod registration_tests {
 
         let mut generated_groups = 0;
         for group in &all_groups {
-            // The generated groups are the ones the scenario corpus names; a
+            // A group this emitter registered anything for is one of ours; a
             // hand-written group with no impl here is the ordinary
             // not-yet-implemented skip and is not what this case is about.
-            if !group.name.contains("-gen-") {
+            //
+            // Deliberately not a name test. `-gen-` names a group generated
+            // from a recipe, but an authored scenario ported from a
+            // hand-written group keeps that group's own name (and, while it
+            // soaks, that name plus `-shadow`), so a substring check would
+            // skip exactly the groups a migration is most at risk of dropping.
+            // See compat/model/README.md § Authored scenarios.
+            let mine = group
+                .tests
+                .iter()
+                .any(|test| impls.contains_key(&format!("{}:{}", group.name, test.name)));
+            if !mine {
                 continue;
             }
             generated_groups += 1;

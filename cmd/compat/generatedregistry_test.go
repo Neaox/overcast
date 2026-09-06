@@ -212,7 +212,7 @@ func TestCheckedInGeneratedRegistryLeavesParityUnchanged(t *testing.T) {
 	)
 	addSkip(report, suite, "s3", "s3-crud", "DeleteBucket", notImplementedSentinel(suite))
 
-	hand := testRegistry()
+	hand := withShadowNatives(t, testRegistry())
 	handOnly := computeParity(hand, report, []string{suite})
 
 	// When: the checked-in sibling is concatenated in.
@@ -235,6 +235,29 @@ func TestCheckedInGeneratedRegistryLeavesParityUnchanged(t *testing.T) {
 	if len(withSibling.Unregistered) != 0 {
 		t.Errorf("unregistered = %#v, want none", withSibling.Unregistered)
 	}
+}
+
+// withShadowNatives gives a fixture hand-written registry the groups the
+// checked-in generated registry shadows.
+//
+// lintGeneratedRegistry requires a shadow group's native to exist and to
+// declare the same tests, which the real pair of files satisfies by
+// construction. A case that pairs the *real* generated registry with a
+// *fixture* hand-written one has to satisfy it too, or it fails on the
+// fixture's incompleteness rather than on the property it is testing.
+func withShadowNatives(t *testing.T, hand *parityRegistry) *parityRegistry {
+	t.Helper()
+	gen, err := readGeneratedRegistry(repoPath(t, "compat", "suites", "registry.generated.json"))
+	if err != nil {
+		t.Fatalf("readGeneratedRegistry: %v", err)
+	}
+	for _, g := range gen.Groups {
+		if g.ShadowOf == "" {
+			continue
+		}
+		hand.Groups = append(hand.Groups, parityGroup{Service: g.Service, Name: g.ShadowOf, Tests: g.Tests})
+	}
+	return hand
 }
 
 // suiteWithNoGeneratedGroups names a suite the checked-in generated registry

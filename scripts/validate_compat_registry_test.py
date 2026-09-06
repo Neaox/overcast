@@ -141,6 +141,89 @@ class GeneratedGroupMustDeclareSuitesTest(unittest.TestCase):
         self.assertEqual(errors, [])
 
 
+class ShadowGroupTest(unittest.TestCase):
+    """A shadow group has to join the hand-written group it names.
+
+    While a hand-written group is being ported to an authored IR scenario
+    (docs/plans/compat-coverage-modelgen.md §3.11) the port runs beside the
+    natives under `<group>-shadow`, and `cmd/compat --compare-shadow` joins the
+    two on (suite, test). A shadow that names a group nobody declares, or whose
+    test names have drifted, compares against nothing and reports agreement --
+    which is the evidence a flip PR deletes seven implementations on.
+    """
+
+    @staticmethod
+    def hand(tests=("CreateQueue", "DeleteQueue")):
+        return {
+            "groups": [
+                {
+                    "service": "sqs",
+                    "name": "sqs-queues",
+                    "tests": [{"name": t} for t in tests],
+                }
+            ]
+        }
+
+    @staticmethod
+    def shadow(tests=("CreateQueue", "DeleteQueue"), state="candidate", shadow_of="sqs-queues"):
+        return {
+            "groups": [
+                {
+                    "service": "sqs",
+                    "name": "sqs-queues-shadow",
+                    "generated": True,
+                    "state": state,
+                    "shadowOf": shadow_of,
+                    "suites": ["cli", "go-sdk"],
+                    "tests": [{"name": t} for t in tests],
+                }
+            ]
+        }
+
+    def test_matching_shadow_passes(self):
+        self.assertEqual(vcr.shadow_group_errors(self.hand(), self.shadow()), [])
+
+    def test_shadow_of_an_unknown_group_is_rejected(self):
+        errors = vcr.shadow_group_errors(self.hand(), self.shadow(shadow_of="sqs-nothing"))
+        self.assertTrue(any("not a group in registry.json" in e for e in errors), errors)
+
+    def test_shadow_missing_a_native_test_is_rejected(self):
+        errors = vcr.shadow_group_errors(self.hand(), self.shadow(tests=("CreateQueue",)))
+        self.assertTrue(any("does not declare DeleteQueue" in e for e in errors), errors)
+
+    def test_shadow_with_an_extra_test_is_rejected(self):
+        errors = vcr.shadow_group_errors(
+            self.hand(), self.shadow(tests=("CreateQueue", "DeleteQueue", "PurgeQueue"))
+        )
+        self.assertTrue(any("declares PurgeQueue" in e for e in errors), errors)
+
+    def test_gated_shadow_is_rejected(self):
+        errors = vcr.shadow_group_errors(self.hand(), self.shadow(state="gated"))
+        self.assertTrue(any("gates nothing" in e for e in errors), errors)
+
+    def test_a_generated_group_without_shadow_of_is_not_checked(self):
+        generated = {
+            "groups": [
+                {
+                    "service": "sqs",
+                    "name": "sqs-gen-queue",
+                    "generated": True,
+                    "state": "gated",
+                    "suites": ["cli"],
+                    "tests": [{"name": "CreateQueue"}],
+                }
+            ]
+        }
+        self.assertEqual(vcr.shadow_group_errors(self.hand(), generated), [])
+
+    def test_the_committed_pair_is_consistent(self):
+        registry = json.loads(vcr.DEFAULT_REGISTRY.read_text(encoding="utf-8"))
+        generated = vcr.load_json_optional(vcr.DEFAULT_GENERATED_REGISTRY)
+        if generated is None:
+            self.skipTest("no generated registry in this checkout")
+        self.assertEqual(vcr.shadow_group_errors(registry, generated), [])
+
+
 class ServiceKeyValidationTest(unittest.TestCase):
     def test_known_capability_key_passes(self):
         registry = {"groups": [group("s3-crud", service="s3")]}
@@ -316,12 +399,18 @@ class MainIntegrationTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            # The generated registry is pointed away from the checked-in one:
+            # its shadow groups name hand-written groups this fixture does not
+            # have, so leaving it in would make the case pass on the shadow
+            # lint rather than on the suites-scope lint it is about.
             rc = vcr.main(
                 [
                     "--registry",
                     str(registry_path),
                     "--schema",
                     str(vcr.DEFAULT_SCHEMA),
+                    "--generated-registry",
+                    str(Path(d) / "absent.json"),
                 ]
             )
             self.assertEqual(rc, 1)

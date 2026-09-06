@@ -1,0 +1,220 @@
+{
+  "$comment": "Authored port of the hand-written registry group sqs-queues (docs/plans/compat-coverage-modelgen.md §3.11, G6 pilot, #1116). One spec in place of seven per-language implementations. It runs today under the shadow name sqs-queues-shadow, beside the natives, so the nightly can compare the two per (suite, test); the flip PR renames this group to sqs-queues, moves the registry entry into the hand-written registry.json, and deletes the native code. The clauses are the union of what the seven natives assert — see compat/model/README.md § Authored scenarios.",
+  "version": 1,
+  "service": "sqs",
+  "client": {
+    "sdkId": "SQS",
+    "endpointPrefix": "sqs",
+    "signingName": "sqs",
+    "protocol": "awsJson1_0",
+    "apiVersion": "2012-11-05",
+    "targetPrefix": "AmazonSQS",
+    "awsQueryCompatible": true
+  },
+  "groups": [
+    {
+      "$comment": "Two queues: the group's own (created in setup, read and mutated by every test) and an ephemeral one the CreateQueue test creates and the DeleteQueue test removes. That split is what four of the seven natives already do, and it is what lets DeleteQueue prove a delete without destroying the queue the earlier tests read.",
+      "name": "sqs-queues-shadow",
+      "kind": "lifecycle",
+      "setup": [
+        {
+          "op": "CreateQueue",
+          "params": { "QueueName": { "$name": "q" } },
+          "export": { "queue.url": "$.QueueUrl" }
+        }
+      ],
+      "tests": [
+        {
+          "$comment": "Union: python/java/dotnet assert the URL is non-empty; go, dotnet and rust also read the queue back out of ListQueues by its own name prefix. rust additionally asserts the URL contains the queue name, which the IR cannot express (a `matches` pattern is a fixed string and cannot embed a $name) — the list-membership clause is strictly stronger, since it ties this exact URL to that exact name.",
+          "name": "CreateQueue",
+          "op": "CreateQueue",
+          "call": {
+            "op": "CreateQueue",
+            "params": { "QueueName": { "$name": "created" } },
+            "export": { "queue.createdUrl": "$.QueueUrl" }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": { "$.QueueUrl": { "nonEmpty": true } }
+            },
+            {
+              "kind": "listContains",
+              "call": {
+                "op": "ListQueues",
+                "params": { "QueueNamePrefix": { "$name": "created" } }
+              },
+              "itemsPath": "$.QueueUrls",
+              "where": { "$": { "$ref": "queue.createdUrl" } }
+            }
+          ]
+        },
+        {
+          "$comment": "Every native asserts the URL is non-empty; node and rust that it contains the name. Comparing it to the URL the create returned is both expressible and stronger.",
+          "name": "GetQueueUrl",
+          "op": "GetQueueUrl",
+          "call": {
+            "op": "GetQueueUrl",
+            "params": { "QueueName": { "$name": "q" } }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": { "$.QueueUrl": { "equals": { "$ref": "queue.url" } } }
+            }
+          ],
+          "depends": ["CreateQueue"]
+        },
+        {
+          "$comment": "go and python assert only that the page is non-empty; cli, node, java, dotnet and rust that it holds this group's own queue. The stronger reading is the union.",
+          "name": "ListQueues",
+          "op": "ListQueues",
+          "call": {
+            "op": "ListQueues",
+            "params": { "QueueNamePrefix": { "$name": "q" } }
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.QueueUrls",
+              "where": { "$": { "$ref": "queue.url" } }
+            }
+          ],
+          "depends": ["CreateQueue"]
+        },
+        {
+          "$comment": "go, python, node, cli and dotnet read the attribute back; java and rust assert nothing at all beyond the call succeeding. The read-back is the union. dotnet sets 120 where the other six set 60; 60 is taken, and GetQueueAttributes below asserts the same value.",
+          "name": "SetQueueAttributes",
+          "op": "SetQueueAttributes",
+          "call": {
+            "op": "SetQueueAttributes",
+            "params": {
+              "QueueUrl": { "$ref": "queue.url" },
+              "Attributes": { "VisibilityTimeout": "60" }
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "GetQueueAttributes",
+                "params": {
+                  "QueueUrl": { "$ref": "queue.url" },
+                  "AttributeNames": ["VisibilityTimeout"]
+                }
+              },
+              "checks": { "$.Attributes.VisibilityTimeout": { "equals": "60" } }
+            }
+          ],
+          "depends": ["CreateQueue"]
+        },
+        {
+          "$comment": "python, node and cli assert QueueArn is present; go, java, dotnet and rust that VisibilityTimeout carries what SetQueueAttributes wrote; node also that ApproximateNumberOfMessages is present, 0 being a legal value. All three, under AttributeNames: All.",
+          "name": "GetQueueAttributes",
+          "op": "GetQueueAttributes",
+          "call": {
+            "op": "GetQueueAttributes",
+            "params": {
+              "QueueUrl": { "$ref": "queue.url" },
+              "AttributeNames": ["All"]
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Attributes.QueueArn": { "nonEmpty": true },
+                "$.Attributes.VisibilityTimeout": { "equals": "60" },
+                "$.Attributes.ApproximateNumberOfMessages": { "nonEmpty": true }
+              }
+            }
+          ],
+          "depends": ["SetQueueAttributes"]
+        },
+        {
+          "$comment": "The seven natives use six different tag sets. node and rust write project=overcast and env=test and read project back; go and cli write env=test; python writes env=compat; dotnet writes Environment=compat and Team=dotnet; java writes env=test and reads nothing back. node's and rust's pair is taken because it is the only one that lets UntagQueue below prove an untag is selective, and both keys are read back rather than one.",
+          "name": "TagQueue",
+          "op": "TagQueue",
+          "call": {
+            "op": "TagQueue",
+            "params": {
+              "QueueUrl": { "$ref": "queue.url" },
+              "Tags": { "project": "overcast", "env": "test" }
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "ListQueueTags",
+                "params": { "QueueUrl": { "$ref": "queue.url" } }
+              },
+              "checks": {
+                "$.Tags.project": { "equals": "overcast" },
+                "$.Tags.env": { "equals": "test" }
+              }
+            }
+          ],
+          "depends": ["CreateQueue"]
+        },
+        {
+          "$comment": "Six natives untag one key and assert it is gone; dotnet untags both and asserts the map is empty; java asserts nothing. Untagging one key and asserting the other survived is the stronger claim, and the one that would catch an untag that cleared the map.",
+          "name": "UntagQueue",
+          "op": "UntagQueue",
+          "call": {
+            "op": "UntagQueue",
+            "params": {
+              "QueueUrl": { "$ref": "queue.url" },
+              "TagKeys": ["env"]
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "ListQueueTags",
+                "params": { "QueueUrl": { "$ref": "queue.url" } }
+              },
+              "checks": {
+                "$.Tags.env": { "missing": true },
+                "$.Tags.project": { "equals": "overcast" }
+              }
+            }
+          ],
+          "depends": ["TagQueue"]
+        },
+        {
+          "$comment": "Six natives prove the delete took effect by listing the name prefix again and finding nothing; java only calls DeleteQueue. depends mirrors registry.json exactly; CreateQueue, whose export this consumes, is reached through GetQueueUrl.",
+          "name": "DeleteQueue",
+          "op": "DeleteQueue",
+          "call": {
+            "op": "DeleteQueue",
+            "params": { "QueueUrl": { "$ref": "queue.createdUrl" } }
+          },
+          "assert": [
+            {
+              "kind": "absent",
+              "call": {
+                "op": "ListQueues",
+                "params": { "QueueNamePrefix": { "$name": "created" } }
+              },
+              "itemsPath": "$.QueueUrls",
+              "where": { "$": { "$ref": "queue.createdUrl" } }
+            }
+          ],
+          "depends": ["GetQueueUrl", "ListQueues", "GetQueueAttributes", "UntagQueue"]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeleteQueue",
+          "params": { "QueueUrl": { "$ref": "queue.createdUrl" } }
+        },
+        {
+          "op": "DeleteQueue",
+          "params": { "QueueUrl": { "$ref": "queue.url" } }
+        }
+      ]
+    }
+  ]
+}

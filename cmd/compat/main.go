@@ -85,6 +85,7 @@ var (
 	promoteGeneratedRun = flag.Bool("promote-generated", false, "Soak --promote-runs against --generated-registry-file and promote qualifying candidate groups in --promotions-file, then exit. Regenerate afterwards (`make generate-compat-model`)")
 	promoteRuns         = flag.String("promote-runs", "", "Run reports the soak reads: comma-separated files, globs, or directories of *.json. Each file is one run, identified by its base name")
 	promoteMinRuns      = flag.Int("promote-min-runs", 3, "Consecutive agreeing runs a candidate group needs before it is promoted to \"gated\"")
+	compareShadowRun    = flag.Bool("compare-shadow", false, "Compare every shadow group in --generated-registry-file against the hand-written group its \"shadowOf\" names, from --results-file, then exit. Non-zero on any (suite, test) that answered differently. Step 2 of the native-group migration: docs/plans/compat-coverage-modelgen.md §3.11")
 	checkParity         = flag.Bool("check-parity", false, "Check cross-suite registry parity against --parity-debt-file, then exit")
 	updateParityDebt    = flag.Bool("update-parity-debt", false, "Regenerate --parity-debt-file from --results-file, then exit")
 
@@ -280,6 +281,14 @@ func main() {
 		if err := promoteGeneratedFile(*promotionsFilePath, *registryFile, *generatedRegistryFile,
 			*promoteRuns, *promoteMinRuns, *annotate, os.Stdout); err != nil {
 			fmt.Fprintf(os.Stderr, "compat: promote generated groups: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *compareShadowRun {
+		if err := compareShadowFile(*generatedRegistryFile, *resultsFile, *annotate, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "compat: shadow comparison: %v\n", err)
 			os.Exit(1)
 		}
 		return

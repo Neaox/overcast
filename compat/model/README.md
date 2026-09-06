@@ -1,12 +1,12 @@
 # The compat scenario model
 
 This directory is the model-driven half of the compat suite: the inputs a
-human curates, the scenario IR `cmd/compatgen` generates from them, and the
-schemas both are held to. Interpreters (`python-sdk`, `node-js-sdk`, `cli`)
-execute the scenario files; typed-SDK suites compile them to source. This
-page is the normative description of the IR — an interpreter is written from
-it, and where it and `scenario.schema.json` disagree, that is a bug in one of
-them.
+human curates, the scenario IR `cmd/compatgen` generates from them, the
+scenarios a human writes directly in that same IR, and the schemas all of it
+is held to. Interpreters (`python-sdk`, `node-js-sdk`, `cli`) execute the
+scenario files; typed-SDK suites compile them to source. This page is the
+normative description of the IR — an interpreter is written from it, and where
+it and `scenario.schema.json` disagree, that is a bug in one of them.
 
 Design: [docs/plans/compat-coverage-modelgen.md](../../docs/plans/compat-coverage-modelgen.md) §3.
 Generator: [cmd/compatgen/README.md](../../cmd/compatgen/README.md).
@@ -20,6 +20,7 @@ Generator: [cmd/compatgen/README.md](../../cmd/compatgen/README.md).
 | `promotions.json` | `cmd/compat --promote-generated` | the candidate → gated soak ledger, read by the generator to emit each group's `state` (`promotions.schema.json`) |
 | `promotions.go` | a human | package `compatmodel`: the Go shape of `promotions.json`, its version and its strict reader, shared by the one command that writes the ledger and the one that reads it |
 | `scenarios/<service>.json` | `cmd/compatgen` | the scenario IR, one file per service (`scenario.schema.json`) |
+| `authored/<group>.json` | a human | an authored scenario: the same IR, written by hand to port one hand-written registry group — see [Authored scenarios](#authored-scenarios) |
 | `gaps.json` | `cmd/compatgen` | every operation the generator refused, with a reason (`gaps.schema.json`) |
 | `testdata/errors/*.json` | a human | the shared error-matching conformance fixtures every interpreter's unit tests run — see [Errors](#errors) |
 | `../suites/registry.generated.json` | `cmd/compatgen` | the generated registry sibling every loader concatenates |
@@ -69,8 +70,9 @@ exists to replace. See
 ```
 
 A **group** is a registry group. Its name is `<service>-gen-<resource>` for a
-lifecycle group and `<service>-gen-probe` for the probe group. Every group is
-independently runnable: `setup` creates what it needs, `teardown` removes it,
+generated lifecycle group and `<service>-gen-probe` for the probe group; an
+[authored](#authored-scenarios) one is named for the group it ports. Every
+group is independently runnable: `setup` creates what it needs, `teardown` removes it,
 and nothing crosses group boundaries.
 
 An interpreter runs one group as:
@@ -796,6 +798,89 @@ delete took effect. Organizations is the worked example — `CreateAccount` and
 be deleted, and `DeleteOrganization` has no not-found error to verify it
 with, so all three are marked; `organizationalunit` and `policy`, which have
 both, are not.
+
+## Authored scenarios
+
+Everything above describes an IR file `cmd/compatgen` writes from a recipe.
+The same IR is also written **by hand**, and that is the middle layer of
+[docs/plans/compat-coverage-modelgen.md](../../docs/plans/compat-coverage-modelgen.md)
+§3.11: behavioural intent no recipe can reach — send a message and receive it,
+publish to a topic subscribed to a queue, FIFO ordering, DLQ redrive — written
+once instead of eight times in eight languages.
+
+| | Generated | Authored |
+| --- | --- | --- |
+| Lives in | `scenarios/<service>.json` | `authored/<group>.json` |
+| Written by | `cmd/compatgen` from a recipe | a human |
+| Group name | `<service>-gen-<resource>` | the registry group it ports |
+| Rewritten every run | yes | never — it is an input |
+| Emitted source | `scenarios_<service>_gen.*` | `scenarios_authored_<group>_gen.*` |
+
+An authored file is an **input**, so it sits beside `scenarios/` rather than
+inside it: everything in that directory is rewritten wholly on every run and
+must never be edited, and an input filed among the outputs is the one mistake
+this layout exists to make impossible. The file's base name is the hand-written
+registry group it ports, it holds exactly one group, and prose belongs in a
+`$comment` on the file, the group or a test — the one place the IR carries any,
+because an authored scenario is the review artifact for something that used to
+be seven per-language implementations.
+
+Everything else is identical. The schema is the same, the structural rules are
+the same, the interpreters open it through the registry group's `scenario`
+field exactly as they open a generated one, and the four typed suites compile
+emitted source from it through the same emitters. `-check` covers it: the file
+itself is never rewritten, but the source and the registry entry produced from
+it are.
+
+Three things the generator checks that a generated file cannot need, because a
+human wrote the names:
+
+- **The names are the registry's.** The group is `<group>` or
+  `<group>-shadow`; the test names, their `op` and their `depends` are the
+  hand-written group's, in its order. Those are the join keys for
+  `compat/baseline/`, `compat/flaky.json`, `compat/parity-debt.json` and the
+  dashboard's history, so a scenario that quietly renamed a test would soak
+  green and then orphan one baseline entry *per suite* on the flip.
+- **The `client` block is the model's.** The interpreters build their client
+  from it, so a stale copy is a scenario talking to the wrong wire format.
+- **Every call is the model's.** An unknown operation, or a member the
+  operation does not take, is an error rather than a refusal: a refusal is the
+  generator declining to write something, and nobody wrote this but a human.
+
+### Porting a hand-written group — two PRs and a soak between them
+
+§3.11's migration is deliberately not one change, because the first one deletes
+nothing:
+
+1. **The port.** Author `authored/<group>.json` with the group named
+   `<group>-shadow`, and regenerate. It registers as a generated group carrying
+   `shadowOf: <group>`, in state `candidate`, so it runs in every suite and
+   gates nothing, beside the natives it will replace.
+2. **The soak.** One nightly cycle, then
+   `go run ./cmd/compat --compare-shadow --results-file <run>` joins the two on
+   (suite, test) and reports every pair that answered differently, exiting
+   non-zero if any did. The nightly runs it beside the promotion soak and
+   writes the comparison into its step summary, which is what the next PR
+   cites. A pair where one half reported nothing is a divergence too: a suite
+   that ran the native group and not the shadow has proved nothing about the
+   port.
+3. **The flip.** Rename the group in the authored file to `<group>`, move the
+   registry entry into the hand-written `registry.json` with a `scenario`
+   field, delete the native implementations, regenerate.
+
+A divergence blocks step 3, never the gate, and is triaged as an IR
+expressiveness gap or a latent bug in one of the eight copies — which is how
+such bugs get found, and why a ported group's clauses are the **union** of what
+the natives assert rather than any one native's. Where the natives disagree
+about a literal, one is chosen and the choice is stated in that test's
+`$comment`.
+
+A shadow group never promotes. `--promote-generated` skips it: that soak asks
+whether a group agrees with itself, which is not the question a shadow is being
+asked, and a group with a scheduled deletion date has no business in the gate.
+`cmd/compat`'s lint and `scripts/validate-compat-registry.py` both refuse a
+shadow that names a group the hand-written registry does not declare, one whose
+test names have drifted from it, and one somebody has gated.
 
 ## Refusals
 

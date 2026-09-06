@@ -14,6 +14,9 @@ express:
   - `suites` scoping on a hand-written group is reserved for the small
     allowed set (today just `cdk-lifecycle`) -- see compat/AGENTS.md's
     suites-scoping amendment (docs/plans/compat-coverage-modelgen.md §3.6);
+  - a *generated* group carrying `shadowOf` must name a group registry.json
+    really declares, with exactly its test names, and must stay in state
+    "candidate" (docs/plans/compat-coverage-modelgen.md §3.11);
   - a *generated* group (loaded from the sibling
     compat/suites/registry.generated.json, which cmd/compatgen owns) must
     always declare `suites`, since it is mechanically derived from backend
@@ -243,6 +246,77 @@ def generated_group_errors(
     return errors
 
 
+def shadow_group_errors(registry: object, generated: object) -> list[str]:
+    """A shadow group must join the hand-written group it names.
+
+    While a hand-written group is being ported to an authored IR scenario
+    (docs/plans/compat-coverage-modelgen.md §3.11), the port runs beside the
+    natives under `<group>-shadow` and its generated entry carries
+    `shadowOf: <group>`. `go run ./cmd/compat --compare-shadow` joins the two on
+    (suite, test) and reports every pair that answered differently -- which is
+    the evidence the flip PR cites when it deletes seven per-language
+    implementations.
+
+    A shadow naming a group that does not exist compares against nothing and
+    reports a clean run; one whose test names have drifted compares all but the
+    drifted ones and says nothing about those. Both read as agreement, which is
+    the one conclusion the soak exists to earn rather than assume. cmd/compat's
+    Go lint checks the same thing wherever the loader runs; this is the CI-side
+    copy, so a hand-edited registry is caught by the schema job too.
+    """
+    if not isinstance(registry, dict) or not isinstance(generated, dict):
+        return []
+
+    hand_tests: dict[str, set[str]] = {}
+    for group in registry.get("groups", []):
+        if not isinstance(group, dict):
+            continue
+        hand_tests[group.get("name", "")] = {
+            t.get("name", "") for t in group.get("tests", []) if isinstance(t, dict)
+        }
+
+    errors: list[str] = []
+    for group in generated.get("groups", []):
+        if not isinstance(group, dict):
+            continue
+        shadow_of = group.get("shadowOf")
+        if not shadow_of:
+            continue
+        name = group.get("name", "(unnamed)")
+        if group.get("state") != "candidate":
+            errors.append(
+                f"generated group {name!r}: shadows {shadow_of!r} but is in "
+                f"state {group.get('state')!r} -- a shadow gates nothing and is "
+                "deleted when the port lands, so it stays \"candidate\""
+            )
+        if shadow_of not in hand_tests:
+            errors.append(
+                f"generated group {name!r}: shadows {shadow_of!r}, which is not "
+                "a group in registry.json -- --compare-shadow would join it "
+                "against nothing and report agreement"
+            )
+            continue
+        shadow_tests = {
+            t.get("name", "") for t in group.get("tests", []) if isinstance(t, dict)
+        }
+        missing = sorted(hand_tests[shadow_of] - shadow_tests)
+        extra = sorted(shadow_tests - hand_tests[shadow_of])
+        if missing:
+            errors.append(
+                f"generated group {name!r}: shadows {shadow_of!r} but does not "
+                f"declare {', '.join(missing)} -- the comparison joins on the "
+                "test name, so a test the shadow is missing is a test nobody "
+                "proved the port reproduces"
+            )
+        if extra:
+            errors.append(
+                f"generated group {name!r}: shadows {shadow_of!r} and declares "
+                f"{', '.join(extra)}, which {shadow_of!r} does not -- a shadow "
+                "reproduces the native group's tests, it does not add to them"
+            )
+    return errors
+
+
 def load_capability_service_keys(path: Path) -> set[str]:
     """Extract the set of Overcast capability service keys.
 
@@ -402,6 +476,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         errors += generated_group_errors(generated, capability_keys, snapshot_keys)
+        errors += shadow_group_errors(registry, generated)
 
     if errors:
         rel = args.registry.relative_to(REPO_ROOT) if args.registry.is_relative_to(REPO_ROOT) else args.registry
