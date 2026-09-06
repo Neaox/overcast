@@ -2,8 +2,8 @@
 # development on Windows without a host Go install and outside the
 # devcontainer. PowerShell twin of scripts/docker-go.sh; see that script's
 # header comment for behavior details (caches, the CPU bound, bind-mount
-# performance, git limitations). The two scripts must stay behaviorally
-# identical.
+# performance, git limitations, the GOTOOLCHAIN pin). The two scripts must
+# stay behaviorally identical.
 #
 # Usage:
 #   scripts\docker-go.ps1 test ./internal/state/...
@@ -14,6 +14,12 @@
 # CPU use is capped to half the available cores so a long test run leaves the
 # machine usable. Override with OVERCAST_GO_CPUS / OVERCAST_GO_TEST_P;
 # OVERCAST_GO_CPUS=0 restores the old unbounded behaviour.
+#
+# GOTOOLCHAIN is pinned to go.mod's toolchain line (unless already set) so
+# `go run <tool>@<version>` -- which resolves its own toolchain from the
+# tool's go.mod, not this repo's -- still targets the version this repo
+# builds against; see lib\go-toolchain.ps1. The downloaded toolchain lands in
+# the mod cache volume below, so it is fetched once, not per run.
 
 $ErrorActionPreference = "Stop"
 
@@ -23,6 +29,10 @@ $ErrorActionPreference = "Stop"
 $image = $goImage
 $modCache = if ($env:OVERCAST_GO_MOD_CACHE) { $env:OVERCAST_GO_MOD_CACHE } else { "overcast-go-mod-cache" }
 $buildCache = if ($env:OVERCAST_GO_BUILD_CACHE) { $env:OVERCAST_GO_BUILD_CACHE } else { "overcast-go-build-cache" }
+
+# Toolchain pin lives in lib\go-toolchain.ps1; it sets $goToolchain from
+# go.mod (and warns on stderr if $image's Go looks newer than that pin).
+. "$PSScriptRoot\lib\go-toolchain.ps1"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
@@ -59,6 +69,10 @@ $dockerArgs = @(
 )
 if ($goCpus -ne "0") {
     $dockerArgs += @("--cpus=$goCpus", "--env=GOMAXPROCS=$goCpus")
+}
+# A caller-set GOTOOLCHAIN always wins; the wrapper only fills in a default.
+if (-not $env:GOTOOLCHAIN -and $goToolchain) {
+    $dockerArgs += "--env=GOTOOLCHAIN=$goToolchain"
 }
 # Only attach a TTY for interactive sessions; plain command output pipes
 # cleanly without one.

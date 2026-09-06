@@ -18,6 +18,11 @@
 #     lib/go-image.sh); override with OVERCAST_GO_IMAGE.
 #   - Module and build caches live in named Docker volumes (the mod cache is
 #     shared with the devcontainer), so repeated runs are fast.
+#   - GOTOOLCHAIN is pinned to go.mod's toolchain line (unless already set)
+#     so `go run <tool>@<version>` — which resolves its own toolchain from
+#     the tool's go.mod, not this repo's — still targets the version this
+#     repo builds against; see lib/go-toolchain.sh. The downloaded toolchain
+#     lands in the mod cache volume above, so it is fetched once, not per run.
 #   - CPU use is capped to half the available cores so a long test run leaves
 #     the machine usable. Override with OVERCAST_GO_CPUS / OVERCAST_GO_TEST_P;
 #     OVERCAST_GO_CPUS=0 restores the old unbounded behaviour. See the CPU
@@ -47,6 +52,14 @@ repo_root=$(CDPATH= cd -- "$script_dir/.." && (pwd -W 2>/dev/null || pwd))
 # sets GO_IMAGE from OVERCAST_GO_IMAGE or the devcontainer's FROM line.
 . "$script_dir/lib/go-image.sh"
 IMAGE="$GO_IMAGE"
+
+# Toolchain pin lives in lib/go-toolchain.sh; it sets GO_TOOLCHAIN from
+# go.mod (and warns on stderr if $IMAGE's Go looks newer than that pin).
+. "$script_dir/lib/go-toolchain.sh"
+toolchain_flag=""
+if [ -z "${GOTOOLCHAIN:-}" ] && [ -n "$GO_TOOLCHAIN" ]; then
+    toolchain_flag="--env=GOTOOLCHAIN=$GO_TOOLCHAIN"
+fi
 
 if [ "$#" -eq 0 ]; then
     echo "usage: $0 <go-subcommand and args> | shell" >&2
@@ -113,7 +126,7 @@ run() {
     # Word splitting on the flag variables is deliberate: each holds zero or
     # more whole docker flags, never a path.
     # shellcheck disable=SC2086
-    MSYS_NO_PATHCONV=1 docker run --rm $tty_flags $cpus_flag $gomaxprocs_flag \
+    MSYS_NO_PATHCONV=1 docker run --rm $tty_flags $cpus_flag $gomaxprocs_flag $toolchain_flag \
         -v "$repo_root:/src" \
         -v "$MOD_CACHE_VOLUME:/go/pkg/mod" \
         -v "$BUILD_CACHE_VOLUME:/root/.cache/go-build" \
