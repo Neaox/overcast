@@ -33,7 +33,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/overcast-sh/overcast/internal/inert"
 	"github.com/overcast-sh/overcast/internal/protocol"
@@ -589,11 +588,9 @@ func (s *Service) childrenOf(ctx context.Context, parentID string) ([]*organizat
 // @length 1..128. Its @pattern is `^[\s\S]*$`, which accepts anything, so
 // there is nothing else to check.
 //
-// @length counts Unicode code points, not bytes — Smithy's length trait is
-// defined over the string's length as a sequence of code points, and the
-// pattern accepts non-ASCII text, so a multi-byte name must not be rejected
-// (or accepted past the limit) based on len(name)'s byte count. utf8.RuneCountInString
-// is the code-point count.
+// The maximum is checked by validateMaxLength (inert_policy.go), shared with
+// PolicyName and PolicyDescription's own maxima — see that function's
+// comment for why it counts Unicode code points rather than bytes.
 //
 // required distinguishes why an empty name is invalid: CreateOrganizationalUnit
 // takes Name as a plain (non-pointer) string, so an empty value there is
@@ -609,8 +606,5 @@ func validateOrganizationalUnitName(name string, required bool) *protocol.AWSErr
 		}
 		return invalidInput(reasonMinLengthExceeded, "Name must be at least 1 character.")
 	}
-	if n := utf8.RuneCountInString(name); n > maxOrganizationalUnitName {
-		return invalidInput(reasonMaxLengthExceeded, fmt.Sprintf("Name must be at most %d characters.", maxOrganizationalUnitName))
-	}
-	return nil
+	return validateMaxLength("Name", name, maxOrganizationalUnitName)
 }

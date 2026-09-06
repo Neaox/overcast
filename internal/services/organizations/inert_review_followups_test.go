@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"go.uber.org/zap"
 
@@ -383,6 +384,155 @@ func TestUpdatePolicy_NoOpDoesNotBumpUpdatedAtOrWrite(t *testing.T) {
 	rec2, _, _ := s.policies.Get(context.Background(), id)
 	if !rec2.UpdatedAt.Equal(fixed) {
 		t.Fatalf("UpdatedAt = %v after resending the current Description, want unchanged %v", rec2.UpdatedAt, fixed)
+	}
+}
+
+// ---- item 6: PolicyName/PolicyContent/PolicyDescription's modeled @length
+// maxes were never enforced -----------------------------------------------
+//
+// The audit note createPolicy carried after #1376's review named exactly
+// this gap: PolicyName's @length max (128) and PolicyDescription's (512)
+// were never checked at all, on either CreatePolicy or UpdatePolicy.
+// PolicyContent has no modeled max (@length min: 1 only), so it gets no
+// max-length test here — only the boundary tests below for Name and
+// Description, following the same rune-counted, boundary-exact pattern as
+// TestCreateOrganizationalUnit_NameLengthBoundaryIsRuneExact.
+
+func TestCreatePolicy_NameLengthBoundaryIsRuneExact(t *testing.T) {
+	s := newTestService(t)
+	base := map[string]any{
+		"Description": "d", "Content": `{"Version":"2012-10-17","Statement":[]}`,
+		"Type": "SERVICE_CONTROL_POLICY",
+	}
+
+	atLimit := strings.Repeat("é", maxPolicyName)
+	fields := map[string]any{"Name": atLimit}
+	for k, v := range base {
+		fields[k] = v
+	}
+	rec := dispatch(t, s, "CreatePolicy", fields)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("CreatePolicy with a %d-rune Name returned %d, want 200: %s", maxPolicyName, rec.Code, rec.Body.String())
+	}
+
+	overLimit := strings.Repeat("é", maxPolicyName+1)
+	fields = map[string]any{"Name": overLimit}
+	for k, v := range base {
+		fields[k] = v
+	}
+	rec = dispatch(t, s, "CreatePolicy", fields)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("CreatePolicy with a %d-rune Name returned %d, want 400", maxPolicyName+1, rec.Code)
+	}
+	if reason := errorReason(t, rec.Body.Bytes()); reason != "MAX_LENGTH_EXCEEDED" {
+		t.Fatalf("over-limit Name: Reason = %q, want MAX_LENGTH_EXCEEDED", reason)
+	}
+}
+
+// TestCreatePolicy_NameLengthCountsRunesNotBytes is the policy sibling of
+// TestCreateOrganizationalUnit_NameLengthCountsRunesNotBytes: 100 "é"
+// characters is 100 code points (under PolicyName's 128 max) but 200 bytes
+// (over it), so a byte-counted check would wrongly reject it.
+func TestCreatePolicy_NameLengthCountsRunesNotBytes(t *testing.T) {
+	s := newTestService(t)
+	name := strings.Repeat("é", 100)
+	if len(name) <= maxPolicyName {
+		t.Fatalf("test setup: byte length %d must exceed %d for this case to be meaningful", len(name), maxPolicyName)
+	}
+
+	rec := dispatch(t, s, "CreatePolicy", map[string]any{
+		"Name": name, "Description": "d",
+		"Content": `{"Version":"2012-10-17","Statement":[]}`, "Type": "SERVICE_CONTROL_POLICY",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("CreatePolicy with a %d-rune (%d-byte) Name returned %d, want 200: %s",
+			100, len(name), rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreatePolicy_DescriptionLengthBoundaryIsRuneExact(t *testing.T) {
+	s := newTestService(t)
+	base := map[string]any{
+		"Content": `{"Version":"2012-10-17","Statement":[]}`, "Type": "SERVICE_CONTROL_POLICY",
+	}
+
+	atLimit := strings.Repeat("é", maxPolicyDescription)
+	fields := map[string]any{"Name": "desc-at-limit", "Description": atLimit}
+	for k, v := range base {
+		fields[k] = v
+	}
+	rec := dispatch(t, s, "CreatePolicy", fields)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("CreatePolicy with a %d-rune Description returned %d, want 200: %s", maxPolicyDescription, rec.Code, rec.Body.String())
+	}
+
+	overLimit := strings.Repeat("é", maxPolicyDescription+1)
+	fields = map[string]any{"Name": "desc-over-limit", "Description": overLimit}
+	for k, v := range base {
+		fields[k] = v
+	}
+	rec = dispatch(t, s, "CreatePolicy", fields)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("CreatePolicy with a %d-rune Description returned %d, want 400", maxPolicyDescription+1, rec.Code)
+	}
+	if reason := errorReason(t, rec.Body.Bytes()); reason != "MAX_LENGTH_EXCEEDED" {
+		t.Fatalf("over-limit Description: Reason = %q, want MAX_LENGTH_EXCEEDED", reason)
+	}
+}
+
+// TestCreatePolicy_ContentHasNoMaxLength pins PolicyContent's modeled
+// @length as min-only (1, no max): a very long Content value — well past
+// PolicyName's and PolicyDescription's maxes — must still be accepted.
+func TestCreatePolicy_ContentHasNoMaxLength(t *testing.T) {
+	s := newTestService(t)
+	longContent := `{"Version":"2012-10-17","Statement":[]}` + strings.Repeat(" ", 4096)
+	rec := dispatch(t, s, "CreatePolicy", map[string]any{
+		"Name": "long-content", "Description": "d", "Content": longContent, "Type": "SERVICE_CONTROL_POLICY",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("CreatePolicy with a %d-rune Content returned %d, want 200: %s", utf8.RuneCountInString(longContent), rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpdatePolicy_NameLengthBoundaryIsRuneExact(t *testing.T) {
+	s := newTestService(t)
+	summary := createTestPolicy(t, s, "rename-target")
+	id, _ := summary["Id"].(string)
+
+	atLimit := strings.Repeat("é", maxPolicyName)
+	rec := dispatch(t, s, "UpdatePolicy", map[string]any{"PolicyId": id, "Name": atLimit})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("UpdatePolicy with a %d-rune Name returned %d, want 200: %s", maxPolicyName, rec.Code, rec.Body.String())
+	}
+
+	overLimit := strings.Repeat("é", maxPolicyName+1)
+	rec = dispatch(t, s, "UpdatePolicy", map[string]any{"PolicyId": id, "Name": overLimit})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("UpdatePolicy with a %d-rune Name returned %d, want 400", maxPolicyName+1, rec.Code)
+	}
+	if reason := errorReason(t, rec.Body.Bytes()); reason != "MAX_LENGTH_EXCEEDED" {
+		t.Fatalf("over-limit Name: Reason = %q, want MAX_LENGTH_EXCEEDED", reason)
+	}
+}
+
+func TestUpdatePolicy_DescriptionLengthBoundaryIsRuneExact(t *testing.T) {
+	s := newTestService(t)
+	summary := createTestPolicy(t, s, "redescribe-target")
+	id, _ := summary["Id"].(string)
+
+	atLimit := strings.Repeat("é", maxPolicyDescription)
+	rec := dispatch(t, s, "UpdatePolicy", map[string]any{"PolicyId": id, "Description": atLimit})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("UpdatePolicy with a %d-rune Description returned %d, want 200: %s", maxPolicyDescription, rec.Code, rec.Body.String())
+	}
+
+	overLimit := strings.Repeat("é", maxPolicyDescription+1)
+	rec = dispatch(t, s, "UpdatePolicy", map[string]any{"PolicyId": id, "Description": overLimit})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("UpdatePolicy with a %d-rune Description returned %d, want 400", maxPolicyDescription+1, rec.Code)
+	}
+	if reason := errorReason(t, rec.Body.Bytes()); reason != "MAX_LENGTH_EXCEEDED" {
+		t.Fatalf("over-limit Description: Reason = %q, want MAX_LENGTH_EXCEEDED", reason)
 	}
 }
 

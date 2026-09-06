@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/overcast-sh/overcast/internal/inert"
 	"github.com/overcast-sh/overcast/internal/protocol"
@@ -42,6 +43,15 @@ const (
 	nsPolicies = "organizations:policies"
 	nsTags     = "organizations:tags"
 )
+
+// maxPolicyName is PolicyName's modeled @length max. The minimum, 1, is the
+// presence check in createPolicy/updatePolicy.
+const maxPolicyName = 128
+
+// maxPolicyDescription is PolicyDescription's modeled @length max. Its
+// minimum is 0 — an empty description is legal, unlike PolicyName and
+// PolicyContent — so there is no accompanying minimum check.
+const maxPolicyDescription = 512
 
 // organizationID derives the emulator's single organization identifier from
 // the account ID, shared with DescribeOrganization's hand-written response so
@@ -416,24 +426,33 @@ func (rec *policyRecord) view() policyView {
 // ---- handlers --------------------------------------------------------------
 
 func (s *Service) createPolicy(ctx context.Context, in *createPolicyRequest) (*createPolicyResponse, *protocol.AWSError) {
-	// §3.4: exactly the checks the model states — @required presence and
-	// enum membership. Nothing cross-field, nothing referential.
+	// §3.4: exactly the checks the model states — @required presence,
+	// @length maxima, and enum membership. Nothing cross-field, nothing
+	// referential.
 	//
-	// Audit note (post-merge review of #1376): unlike
-	// validateOrganizationalUnitName, nothing here enforces PolicyName's
-	// modeled @length max (128), PolicyContent's (min 1 — presence already
-	// covers that one) or PolicyDescription's (max 512). There is no
-	// byte-vs-rune bug to fix because there is no length check to have had
-	// one; adding those checks is a separate, tracked follow-up rather than
-	// part of this review pass.
+	// PolicyContent gets no max-length check: its modeled @length is min 1
+	// only (no max member in the trait), and the presence check below
+	// already covers the minimum. PolicyName (max 128) and PolicyDescription
+	// (max 512) are the two maxima the model does declare, checked with
+	// validateMaxLength. Name and Content are plain, non-pointer strings
+	// here, so an empty value is indistinguishable from absent and reports
+	// INPUT_REQUIRED, same as validateOrganizationalUnitName's create path;
+	// Description carries a modeled minimum of 0, so an explicitly empty
+	// description is legal and only its maximum is checked.
 	if in.Name == "" {
 		return nil, invalidInput(reasonInputRequired, "Name is a required parameter.")
+	}
+	if aerr := validateMaxLength("Name", in.Name, maxPolicyName); aerr != nil {
+		return nil, aerr
 	}
 	if in.Content == "" {
 		return nil, invalidInput(reasonInputRequired, "Content is a required parameter.")
 	}
 	if in.Description == nil {
 		return nil, invalidInput(reasonInputRequired, "Description is a required parameter.")
+	}
+	if aerr := validateMaxLength("Description", *in.Description, maxPolicyDescription); aerr != nil {
+		return nil, aerr
 	}
 	if !policyTypes[in.Type] {
 		return nil, invalidInput(reasonInvalidEnumPolicyType, "Type must be one of the modeled policy types.")
@@ -500,19 +519,30 @@ func (s *Service) updatePolicy(ctx context.Context, in *updatePolicyRequest) (*u
 	// both carry a modeled @length min of 1, so that is a length violation
 	// (MIN_LENGTH_EXCEEDED), not a missing parameter (unlike CreatePolicy's
 	// plain-string Name/Content, where "" is indistinguishable from absent).
+	// Name and Description also carry a modeled @length max (128 and 512),
+	// checked with the same validateMaxLength createPolicy uses; PolicyContent
+	// has no modeled max, so it gets no such check here either.
 	changed := false
 	if in.Name != nil {
 		if *in.Name == "" {
 			return nil, invalidInput(reasonMinLengthExceeded, "Name must be at least 1 character.")
+		}
+		if aerr := validateMaxLength("Name", *in.Name, maxPolicyName); aerr != nil {
+			return nil, aerr
 		}
 		if *in.Name != rec.Name {
 			rec.Name = *in.Name
 			changed = true
 		}
 	}
-	if in.Description != nil && *in.Description != rec.Description {
-		rec.Description = *in.Description
-		changed = true
+	if in.Description != nil {
+		if aerr := validateMaxLength("Description", *in.Description, maxPolicyDescription); aerr != nil {
+			return nil, aerr
+		}
+		if *in.Description != rec.Description {
+			rec.Description = *in.Description
+			changed = true
+		}
 	}
 	if in.Content != nil {
 		if *in.Content == "" {
@@ -714,6 +744,31 @@ func (s *Service) taggableARN(ctx context.Context, resourceID string) (string, *
 // service goes through here so no path can omit it by accident.
 func invalidInput(reason, message string) *protocol.AWSError {
 	return &protocol.AWSError{Code: errInvalidInput.Code, Message: message, HTTPStatus: errInvalidInput.HTTPStatus, Reason: reason}
+}
+
+// validateMaxLength is the one place every modeled @length maximum in this
+// service is checked, shared by OrganizationalUnitName
+// (validateOrganizationalUnitName, inert_ou.go) and PolicyName/
+// PolicyDescription (createPolicy/updatePolicy, below) — three different
+// shapes with the same rule, rather than three copies of it.
+//
+// It counts Unicode code points with utf8.RuneCountInString, not bytes:
+// Smithy's @length trait is defined over a string's length as a sequence of
+// code points, every pattern these fields carry (`^[\s\S]*$`) accepts
+// non-ASCII text, and a multi-byte value must not be rejected based on
+// len(value)'s byte count — see TestCreateOrganizationalUnit_NameLengthCountsRunesNotBytes
+// and its policy siblings in inert_review_followups_test.go.
+//
+// It only checks the maximum. None of this service's minimums are checked
+// here: a required, non-pointer member reports INPUT_REQUIRED when empty
+// (indistinguishable from absent) and a pointer member the caller explicitly
+// sent reports MIN_LENGTH_EXCEEDED when it decoded to empty — both are
+// call-site decisions this length-only helper has no way to make on its own.
+func validateMaxLength(field, value string, max int) *protocol.AWSError {
+	if n := utf8.RuneCountInString(value); n > max {
+		return invalidInput(reasonMaxLengthExceeded, fmt.Sprintf("%s must be at most %d characters.", field, max))
+	}
+	return nil
 }
 
 func tagMap(tags []resourceTag) map[string]string {
