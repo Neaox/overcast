@@ -91,7 +91,6 @@ export function LayerDetail() {
         <h2 className="font-mono text-sm font-semibold text-fg">Versions</h2>
         <ResourceTable
           variant="embedded"
-          columnToggle={false}
           query={{ data: versions, isLoading }}
           noun="versions"
           emptyTitle="No versions"
@@ -140,11 +139,8 @@ export function LayerDetail() {
             target: deleteTarget,
             onRequest: setDeleteTarget,
             onOpenChange: (open) => !open && setDeleteTarget(undefined),
-            mutation: {
-              mutate: (version) => deleteMut.mutate({ layerName, version: Number(version) }),
-              isPending: deleteMut.isPending,
-            },
-            getId: (v) => String(v.Version ?? 0),
+            mutation: deleteMut,
+            getVars: (v) => ({ layerName, version: v.Version ?? 0 }),
             label: (v) => `version ${v.Version}`,
             noun: "version",
             title: deleteTarget ? `Delete version ${deleteTarget.Version}?` : undefined,
@@ -164,7 +160,6 @@ export function LayerDetail() {
         <h2 className="font-mono text-sm font-semibold text-fg">Functions using this layer</h2>
         <ResourceTable
           variant="embedded"
-          columnToggle={false}
           query={{ data: attachedFunctions, isLoading: false }}
           noun="functions"
           emptyTitle="No functions are currently using this layer."

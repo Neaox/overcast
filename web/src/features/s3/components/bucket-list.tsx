@@ -110,8 +110,6 @@ export function BucketList({ sort, onSortChange }: BucketListProps = {}) {
         errorTitle="Failed to load buckets"
         sort={sort}
         onSortChange={onSortChange}
-        // Three columns, one of which is the copy-URL control — nothing worth hiding.
-        columnToggle={false}
         rowKey={(b) => b.name}
         onRowClick={(b) => navigate({ to: "/s3/$bucket", params: { bucket: b.name } })}
         columns={[
@@ -137,10 +135,10 @@ export function BucketList({ sort, onSortChange }: BucketListProps = {}) {
             ),
           },
           {
-            // The row navigates on click and `ResourceTable` stops propagation
-            // only for the row-actions cell — but `CopyUrlButton`'s trigger
-            // stops it itself, so opening the format menu does not also open
-            // the bucket.
+            // `interactive`: the row navigates on click, and this cell holds a
+            // control — a click that lands in the cell's padding rather than on
+            // the button must not open the bucket.
+            interactive: true,
             header: "URL",
             cell: (b) => (
               <CopyUrlButton formats={s3CopyFormats(endpoint.baseUrl, b.name)} noun="bucket URL" />
@@ -170,7 +168,7 @@ export function BucketList({ sort, onSortChange }: BucketListProps = {}) {
           onRequest: setDeleteTarget,
           onOpenChange: (o) => !o && setDeleteTarget(undefined),
           mutation: deleteMutation,
-          getId: (b) => b.name,
+          getVars: (b) => b.name,
           label: (b) => b.name,
           noun: "bucket",
           title: "Delete bucket?",

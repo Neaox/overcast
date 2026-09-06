@@ -165,7 +165,6 @@ function DataSourcesTab({ apiId }: { apiId: string }) {
   return (
     <ResourceTable
       variant="embedded"
-      columnToggle={false}
       query={{ data: dataSources, isLoading, error }}
       noun="data sources"
       emptyIcon={Database}
@@ -233,7 +232,6 @@ function ResolverGroup({ apiId, typeName }: { apiId: string; typeName: string })
       <h3 className="mb-2 font-mono text-sm font-semibold">{typeName}</h3>
       <ResourceTable
         variant="embedded"
-        columnToggle={false}
         query={{ data: resolvers, isLoading, error }}
         noun="resolvers"
         emptyTitle={`No resolvers for ${typeName}.`}
@@ -262,7 +260,6 @@ function FunctionsTab({ apiId }: { apiId: string }) {
   return (
     <ResourceTable
       variant="embedded"
-      columnToggle={false}
       query={{ data: functions, isLoading, error }}
       noun="functions"
       emptyIcon={FunctionSquare}
@@ -324,7 +321,6 @@ function ApiKeysTab({
 
       <ResourceTable
         variant="embedded"
-        columnToggle={false}
         query={{ data: apiKeys, isLoading, error }}
         noun="API keys"
         emptyIcon={Key}
@@ -349,7 +345,7 @@ function ApiKeysTab({
           onRequest: (k) => setDeleteKeyTarget(k.id),
           onOpenChange: (open) => !open && setDeleteKeyTarget(undefined),
           mutation: deleteMut,
-          getId: (k) => k.id ?? "",
+          getVars: (k) => k.id ?? "",
           label: (k) => k.id ?? "",
           noun: "API key",
           title: "Delete API Key",
@@ -400,7 +396,6 @@ function SchemaTab({ apiId }: { apiId: string }) {
 
       <ResourceTable
         variant="embedded"
-        columnToggle={false}
         query={{ data: types, isLoading: typesLoading, error: typesError }}
         noun="types"
         emptyIcon={FileCode}

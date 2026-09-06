@@ -1683,6 +1683,19 @@ doesn't exist"), row click and row actions, the delete flow, the mono-by-default
 with `prose` opt-out, and the card/embedded framing. Its API is documented at the top
 of the file; the 14 index pages converted in #1200 are the worked examples.
 
+The engine also carries what used to send a page back to a hand-rolled table:
+`rowClassName` for a row that has a tone of its own (a failure event, a log level),
+`rowKey`'s second argument for a feed whose entries carry no id, `emptyExtra` for
+content that belongs under the empty state, `interactive` on a column whose cell holds
+a control, and a delete whose `getVars` builds whatever the mutation needs — a lock
+token, an ETag, a composite `{apiId, routeId}` — with `canDelete` where only some rows
+can be deleted at all. Two rules to know before writing the columns: a column sorts
+only if it declares `sortValue`, and a timestamp sorts on a `Date` rather than on the
+ISO string it arrived as; and a list that refetches on an interval declares
+`defaultSort`, because the emulator's storage order is not stable across polls and a
+row that moves under the cursor is worse than an order the API never promised. The
+columns menu appears unasked only on a card table with five columns or more.
+
 Composing `<Table>`/`<TableBody>` from `components/ui/table.tsx` directly is the
 exception, not the default. Two kinds of table earn it: one that is not a resource list
 at all (the IAM policy simulator's result grid, the debug page), and one whose shape

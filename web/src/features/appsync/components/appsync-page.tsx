@@ -107,7 +107,7 @@ export function AppSyncPage({ filter, onFilterChange, sort, onSortChange }: AppS
           onRequest: setDeleteTarget,
           onOpenChange: (open) => !open && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (api) => api.apiId ?? "",
+          getVars: (api) => api.apiId ?? "",
           label: (api) => api.name ?? "",
           noun: "GraphQL API",
           title: "Delete GraphQL API",

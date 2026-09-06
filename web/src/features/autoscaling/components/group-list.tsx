@@ -233,7 +233,6 @@ function GroupDetail({ name, instances }: { name: string; instances: GroupInstan
         <CardContent className="overflow-x-auto">
           <ResourceTable
             variant="embedded"
-            columnToggle={false}
             query={{ data: instances, isLoading: false }}
             noun="instances"
             emptyTitle="No instances yet."
@@ -288,7 +287,6 @@ function GroupDetail({ name, instances }: { name: string; instances: GroupInstan
         <CardContent className="overflow-x-auto">
           <ResourceTable
             variant="embedded"
-            columnToggle={false}
             query={{ data: groupPolicies, isLoading: false }}
             noun="scaling policies"
             emptyTitle="No scaling policies."
@@ -329,7 +327,6 @@ function GroupDetail({ name, instances }: { name: string; instances: GroupInstan
         <CardContent className="overflow-x-auto">
           <ResourceTable
             variant="embedded"
-            columnToggle={false}
             query={{ data: hooks, isLoading: false }}
             noun="lifecycle hooks"
             emptyTitle="No lifecycle hooks."
@@ -367,7 +364,6 @@ function GroupDetail({ name, instances }: { name: string; instances: GroupInstan
         <CardContent className="overflow-x-auto">
           <ResourceTable
             variant="embedded"
-            columnToggle={false}
             // Still the 15 most recent the panel always showed; the sort orders
             // that window rather than reaching past it.
             query={{ data: activities.slice(0, 15), isLoading: false }}

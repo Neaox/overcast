@@ -128,7 +128,7 @@ export function StepFunctionsPage({
           onRequest: setDeleteTarget,
           onOpenChange: (open) => !open && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (sm) => sm.stateMachineArn ?? "",
+          getVars: (sm) => sm.stateMachineArn ?? "",
           label: (sm) => sm.name ?? "",
           noun: "state machine",
           title: "Delete State Machine",

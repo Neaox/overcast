@@ -133,17 +133,10 @@ export function WebACLList({ sort, onSortChange }: WebACLListProps = {}) {
           target: deleteTarget,
           onRequest: setDeleteTarget,
           onOpenChange: (open) => !open && setDeleteTarget(undefined),
-          // DeleteWebACL needs the whole summary (it carries the lock token),
-          // but `ResourceTable`'s delete contract is `mutate(id: string)` — so
-          // the row key round-trips through `getId` and is resolved back here.
-          mutation: {
-            mutate: (key: string) => {
-              const acl = data.find((a) => `${a.scope}:${a.id}` === key)
-              if (acl) deleteMutation.mutate(acl)
-            },
-            isPending: deleteMutation.isPending,
-          },
-          getId: (acl) => `${acl.scope}:${acl.id}`,
+          // DeleteWebACL needs the whole summary — it carries the lock token —
+          // which is what `getVars` is for.
+          mutation: deleteMutation,
+          getVars: (acl) => acl,
           label: (acl) => acl.name,
           noun: "Web ACL",
           title: "Delete Web ACL?",

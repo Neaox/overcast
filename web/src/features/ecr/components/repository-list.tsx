@@ -108,8 +108,6 @@ export function RepositoryList({ sort, onSortChange }: RepositoryListProps = {})
         errorTitle="Failed to load repositories"
         sort={sort}
         onSortChange={onSortChange}
-        // Three columns, all load-bearing — nothing worth hiding.
-        columnToggle={false}
         rowKey={(repository) => repository.name}
         onRowClick={(repository) =>
           navigate({
@@ -151,7 +149,7 @@ export function RepositoryList({ sort, onSortChange }: RepositoryListProps = {})
           onRequest: setDeleteTarget,
           onOpenChange: (open) => !open && setDeleteTarget(undefined),
           mutation: deleteMutation,
-          getId: (repository) => repository.name,
+          getVars: (repository) => repository.name,
           label: (repository) => repository.name,
           noun: "repository",
           title: "Delete repository?",

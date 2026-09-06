@@ -134,7 +134,7 @@ export function CognitoPage({ filter, onFilterChange, sort, onSortChange }: Cogn
           onRequest: setDeleteTarget,
           onOpenChange: (open) => !open && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (pool) => pool.id,
+          getVars: (pool) => pool.id,
           label: (pool) => pool.name,
           noun: "user pool",
           title: "Delete User Pool",

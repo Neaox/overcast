@@ -143,9 +143,6 @@ export function DistributionDetail() {
             query={{ data: dist.origins, isLoading: false }}
             noun="origins"
             emptyTitle="No origins"
-            // A sub-table on a detail page: four columns, all of them the reason
-            // the tab exists, so there is nothing a columns menu would help with.
-            columnToggle={false}
             rowKey={(origin) => origin.id}
             columns={[
               {
@@ -187,7 +184,6 @@ export function DistributionDetail() {
                 query={{ data: dist.originGroups, isLoading: false }}
                 noun="origin groups"
                 emptyTitle="No origin groups"
-                columnToggle={false}
                 rowKey={(group) => group.id}
                 columns={[
                   {
@@ -240,7 +236,6 @@ export function DistributionDetail() {
               </Button>
             }
             errorTitle="Failed to load invalidations"
-            columnToggle={false}
             rowKey={(inv) => inv.id}
             columns={[
               {

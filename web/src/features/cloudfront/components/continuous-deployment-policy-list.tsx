@@ -38,8 +38,6 @@ export function ContinuousDeploymentPolicyList({
         errorTitle="Failed to load continuous deployment policies"
         sort={sort}
         onSortChange={onSortChange}
-        // Three columns, none of them secondary — there is nothing worth hiding.
-        columnToggle={false}
         rowKey={(policy) => policy.id}
         columns={[
           {

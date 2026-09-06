@@ -316,7 +316,6 @@ export function TopicDetail({ topicName }: Props) {
                 // ListSubscriptionsByTopic returns storage order; grouping by
                 // protocol is what makes a fan-out legible at a glance.
                 defaultSort={{ id: "protocol", desc: false }}
-                columnToggle={false}
                 rowKey={(sub) => sub.SubscriptionArn ?? ""}
                 columns={[
                   {

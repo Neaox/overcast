@@ -34,8 +34,6 @@ export function FLEConfigList({ sort, onSortChange }: FLEConfigListProps) {
         errorTitle="Failed to load FLE configs"
         sort={sort}
         onSortChange={onSortChange}
-        // Four columns, all of them load-bearing for an FLE config — nothing to hide.
-        columnToggle={false}
         rowKey={(config) => config.id}
         columns={[
           {

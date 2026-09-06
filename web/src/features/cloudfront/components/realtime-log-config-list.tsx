@@ -35,8 +35,6 @@ export function RealtimeLogConfigList({ sort, onSortChange }: RealtimeLogConfigL
         errorTitle="Failed to load realtime log configs"
         sort={sort}
         onSortChange={onSortChange}
-        // Three columns, all of them the point of the page.
-        columnToggle={false}
         rowKey={(config) => config.arn}
         columns={[
           {

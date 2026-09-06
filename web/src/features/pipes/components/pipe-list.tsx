@@ -560,8 +560,6 @@ export function PipeList() {
         // ListPipes returns the emulator's storage order; A→Z is what a name
         // column implies. Created is sortable for "what did I just make".
         defaultSort={{ id: "name", desc: false }}
-        // Four columns, all primary — a Columns menu here is clutter, not an offer.
-        columnToggle={false}
         rowKey={(p) => p.Name ?? ""}
         onRowClick={(p) => navigate({ to: "/pipes/$pipeName", params: { pipeName: p.Name ?? "" } })}
         columns={[
@@ -623,7 +621,7 @@ export function PipeList() {
           onRequest: setDeleteTarget,
           onOpenChange: (v) => !v && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (p) => p.Name ?? "",
+          getVars: (p) => p.Name ?? "",
           label: (p) => p.Name ?? "pipe",
           noun: "pipe",
           title: "Delete Pipe",

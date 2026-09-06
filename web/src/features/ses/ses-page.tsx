@@ -109,7 +109,7 @@ export function SesPage() {
           onRequest: setDeleteTarget,
           onOpenChange: (open) => !open && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (id) => id.IdentityName ?? "",
+          getVars: (id) => id.IdentityName ?? "",
           label: (id) => id.IdentityName ?? "",
           noun: "identity",
           description: (id) => (

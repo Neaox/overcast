@@ -1068,8 +1068,6 @@ function IndexTable({ indexes, noun }: { indexes: DynamoGSI[]; noun: string }) {
       query={{ data: indexes, isLoading: false }}
       noun={noun}
       rowKey={(index) => index.indexName ?? ""}
-      // Three columns describing one index each — nothing worth hiding.
-      columnToggle={false}
       columns={[
         {
           id: "index-name",
@@ -1085,9 +1083,7 @@ function IndexTable({ indexes, noun }: { indexes: DynamoGSI[]; noun: string }) {
         {
           id: "items",
           header: "Items",
-          // The sortable header is a full-width flex button inside the `<th>`;
-          // `text-right` alone would leave its label on the left.
-          headerClassName: "text-right [&>button]:justify-end",
+          headerClassName: "text-right",
           cellClassName: "text-right tabular-nums",
           sortValue: (index) => index.itemCount,
           cell: (index) => index.itemCount.toLocaleString(),

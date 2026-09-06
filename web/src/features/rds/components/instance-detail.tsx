@@ -16,16 +16,7 @@ import { DockerBanner } from "@/components/docker-banner"
 import { Badge } from "@/components/ui/badge"
 import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableCellProse,
-  TableEmpty,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { useState } from "react"
 import { Play, Square, Trash2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -247,26 +238,20 @@ function LogsPanel({ instanceId }: { instanceId: string }) {
  * would not come up. This is AWS's own channel for that question
  * (`DescribeEvents`); the console's failure UI is the same feed rendered.
  *
- * ResourceTable didn't fit because a failure event tints its whole row
- * (`bg-danger-muted`) — that is the panel's entire point, and `ResourceTable`
- * has no per-row class/tone hook: it renders `<TableRow key>` and styling is
- * declared per *column* (`cellClassName`), which cannot reach the row. Cell
- * backgrounds do not fill the `<td>` padding, so faking it would leave gaps
- * rather than a tinted row. Reported on #1327 as a `ResourceTable` gap; this
- * panel converts the day a row-tone hook exists.
+ * A failure event tints its whole row, which is the panel's entire point and
+ * was what kept it a hand-rolled `<Table>` until `ResourceTable` grew
+ * `rowClassName` (#1327). It keys by index for the same reason it always did:
+ * `DescribeEvents` gives an event no id, and two events can share a timestamp
+ * and a message.
  */
+function isFailureEvent(event: { EventCategories?: string[] }): boolean {
+  return (event.EventCategories ?? []).some((c) => c.toLowerCase() === "failure")
+}
+
 function EventsPanel({ instanceId }: { instanceId: string }) {
-  const { data, isLoading, refetch, isFetching } = useQuery(
+  const { data, isLoading, error, refetch, isFetching } = useQuery(
     rdsInstanceEventsQueryOptions(instanceId),
   )
-
-  if (isLoading) {
-    return (
-      <div className="flex justify-center py-16">
-        <Spinner className="h-5 w-5" />
-      </div>
-    )
-  }
 
   return (
     <div className="space-y-3">
@@ -276,48 +261,51 @@ function EventsPanel({ instanceId }: { instanceId: string }) {
           Refresh
         </Button>
       </div>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-52">Time</TableHead>
-            <TableHead className="w-40">Categories</TableHead>
-            <TableHead>Message</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {(data ?? []).length === 0 ? (
-            <TableEmpty colSpan={3}>No events in the last 14 days</TableEmpty>
-          ) : (
-            // Keyed by position: the list is replaced wholesale on every
-            // refetch, carries no per-row state, and two events can share both
-            // timestamp and message.
-            (data ?? []).map((event, index) => {
-              const categories = event.EventCategories ?? []
-              const isFailure = categories.some((c) => c.toLowerCase() === "failure")
-              return (
-                <TableRow key={index} className={cn(isFailure && "bg-danger-muted")}>
-                  <TableCell className="text-fg-muted">{formatDate(event.Date)}</TableCell>
-                  <TableCell>
-                    <span className="flex flex-wrap gap-1">
-                      {categories.map((category) => (
-                        <Badge
-                          key={category}
-                          variant={category.toLowerCase() === "failure" ? "danger" : "default"}
-                        >
-                          {category}
-                        </Badge>
-                      ))}
-                    </span>
-                  </TableCell>
-                  <TableCellProse className={cn(isFailure && "text-danger")}>
-                    {event.Message}
-                  </TableCellProse>
-                </TableRow>
-              )
-            })
-          )}
-        </TableBody>
-      </Table>
+      <ResourceTable
+        variant="embedded"
+        query={{ data, isLoading, error }}
+        noun="events"
+        emptyTitle="No events in the last 14 days"
+        rowKey={(_event, index) => index}
+        rowClassName={(event) => (isFailureEvent(event) ? "bg-danger-muted" : undefined)}
+        // The feed arrives newest-first from `listInstanceEvents`; saying so as
+        // a sort makes the order the panel's rather than the API's, and lets a
+        // reader walk it forwards.
+        defaultSort={{ id: "time", desc: true }}
+        columns={[
+          {
+            id: "time",
+            header: "Time",
+            headerClassName: "w-52",
+            cellClassName: "text-fg-muted",
+            sortValue: (event) => event.Date,
+            cell: (event) => formatDate(event.Date),
+          },
+          {
+            header: "Categories",
+            headerClassName: "w-40",
+            cell: (event) => (
+              <span className="flex flex-wrap gap-1">
+                {(event.EventCategories ?? []).map((category) => (
+                  <Badge
+                    key={category}
+                    variant={category.toLowerCase() === "failure" ? "danger" : "default"}
+                  >
+                    {category}
+                  </Badge>
+                ))}
+              </span>
+            ),
+          },
+          {
+            header: "Message",
+            prose: true,
+            cell: (event) => (
+              <span className={cn(isFailureEvent(event) && "text-danger")}>{event.Message}</span>
+            ),
+          },
+        ]}
+      />
     </div>
   )
 }

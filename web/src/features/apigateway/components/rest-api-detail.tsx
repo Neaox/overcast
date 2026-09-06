@@ -817,7 +817,6 @@ export function RestApiDetail({ apiId }: Props) {
           </div>
           <ResourceTable
             variant="embedded"
-            columnToggle={false}
             query={{ data: stages, isLoading: stagesLoading, error: stagesError }}
             noun="stages"
             emptyTitle="No stages. Create a deployment first, then add a stage."
@@ -862,7 +861,6 @@ export function RestApiDetail({ apiId }: Props) {
           </div>
           <ResourceTable
             variant="embedded"
-            columnToggle={false}
             query={{ data: deployments, isLoading: deploymentsLoading, error: deploymentsError }}
             noun="deployments"
             emptyTitle="No deployments yet."
@@ -901,7 +899,6 @@ export function RestApiDetail({ apiId }: Props) {
           </div>
           <ResourceTable
             variant="embedded"
-            columnToggle={false}
             query={{ data: authorizers, isLoading: authorizersLoading, error: authorizersError }}
             noun="authorizers"
             emptyTitle="No authorizers defined."
@@ -925,12 +922,8 @@ export function RestApiDetail({ apiId }: Props) {
               target: deleteAuthorizerTarget,
               onRequest: setDeleteAuthorizerTarget,
               onOpenChange: (open) => !open && setDeleteAuthorizerTarget(undefined),
-              mutation: {
-                mutate: (authorizerId: string) =>
-                  deleteAuthorizerMut.mutate({ apiId, authorizerId }),
-                isPending: deleteAuthorizerMut.isPending,
-              },
-              getId: (auth) => auth.id,
+              mutation: deleteAuthorizerMut,
+              getVars: (auth) => ({ apiId, authorizerId: auth.id }),
               label: (auth) => auth.name,
               noun: "authorizer",
               title: "Delete Authorizer",

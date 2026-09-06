@@ -81,23 +81,11 @@ export function TableList({ sort, onSortChange }: TableListProps = {}) {
         emptyIcon={Database}
         emptyTitle="No tables yet"
         emptyDescription="Create a table to start storing DynamoDB items."
-        emptyAction={
-          <div className="flex flex-col items-center gap-4">
-            <CreateAction onClick={() => setShowCreate(true)}>Create table</CreateAction>
-            {/* Same arrangement as the CloudFormation stack list: `ResourceTable`
-                owns its empty state, so the cross-region notice rides in the
-                action slot, with its sibling margins dropped and the wrapper
-                collapsed when the notice has nothing to say. */}
-            <div className="empty:hidden [&>div]:mt-0 [&>div]:mb-0">
-              <RegionElsewhereNotice kind="dynamodb-tables" noun="tables" />
-            </div>
-          </div>
-        }
+        emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create table</CreateAction>}
+        emptyExtra={<RegionElsewhereNotice kind="dynamodb-tables" noun="tables" />}
         errorTitle="Failed to load tables"
         sort={sort}
         onSortChange={onSortChange}
-        // Four columns, all of them the reason someone opens this page.
-        columnToggle={false}
         rowKey={(table) => table.tableName}
         onRowClick={(table) =>
           navigate({ to: "/dynamodb/$tableName", params: { tableName: table.tableName } })
@@ -137,10 +125,7 @@ export function TableList({ sort, onSortChange }: TableListProps = {}) {
           {
             id: "items",
             header: "Items",
-            // A sortable header is a full-width flex button inside the `<th>`,
-            // so `text-right` alone leaves the label hanging on the left of a
-            // right-aligned column; the child selector aligns the button too.
-            headerClassName: "text-right [&>button]:justify-end",
+            headerClassName: "text-right",
             cellClassName: "text-right tabular-nums",
             sortValue: (table) => table.itemCount,
             cell: (table) => table.itemCount.toLocaleString(),
@@ -161,7 +146,7 @@ export function TableList({ sort, onSortChange }: TableListProps = {}) {
           onRequest: setDeleteTarget,
           onOpenChange: (open) => !open && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (table) => table.tableName,
+          getVars: (table) => table.tableName,
           label: (table) => table.tableName,
           noun: "table",
           title: "Delete table",

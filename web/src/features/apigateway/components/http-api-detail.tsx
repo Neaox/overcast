@@ -312,7 +312,6 @@ export function HttpApiDetail({ apiId }: Props) {
           </div>
           <ResourceTable
             variant="embedded"
-            columnToggle={false}
             query={{ data: routes, isLoading: routesLoading, error: routesError }}
             noun="routes"
             emptyTitle="No routes defined."
@@ -340,11 +339,8 @@ export function HttpApiDetail({ apiId }: Props) {
               target: deleteRouteTarget,
               onRequest: setDeleteRouteTarget,
               onOpenChange: (open) => !open && setDeleteRouteTarget(undefined),
-              mutation: {
-                mutate: (routeId: string) => deleteRouteMut.mutate({ apiId, routeId }),
-                isPending: deleteRouteMut.isPending,
-              },
-              getId: (route) => route.routeId,
+              mutation: deleteRouteMut,
+              getVars: (route) => ({ apiId, routeId: route.routeId }),
               label: (route) => route.routeKey,
               noun: "route",
               title: "Delete Route",
@@ -369,7 +365,6 @@ export function HttpApiDetail({ apiId }: Props) {
           </div>
           <ResourceTable
             variant="embedded"
-            columnToggle={false}
             query={{ data: integrations, isLoading: integrationsLoading, error: integrationsError }}
             noun="integrations"
             emptyTitle="No integrations defined."
@@ -411,7 +406,6 @@ export function HttpApiDetail({ apiId }: Props) {
           </div>
           <ResourceTable
             variant="embedded"
-            columnToggle={false}
             query={{ data: stages, isLoading: stagesLoading, error: stagesError }}
             noun="stages"
             emptyTitle="No stages."
@@ -443,11 +437,8 @@ export function HttpApiDetail({ apiId }: Props) {
               target: deleteStageTarget,
               onRequest: setDeleteStageTarget,
               onOpenChange: (open) => !open && setDeleteStageTarget(undefined),
-              mutation: {
-                mutate: (stageName: string) => deleteStageMut.mutate({ apiId, stageName }),
-                isPending: deleteStageMut.isPending,
-              },
-              getId: (stage) => stage.stageName,
+              mutation: deleteStageMut,
+              getVars: (stage) => ({ apiId, stageName: stage.stageName }),
               label: (stage) => stage.stageName,
               noun: "stage",
               title: "Delete Stage",
@@ -472,7 +463,6 @@ export function HttpApiDetail({ apiId }: Props) {
           </div>
           <ResourceTable
             variant="embedded"
-            columnToggle={false}
             query={{
               data: v2Authorizers,
               isLoading: v2AuthorizersLoading,
@@ -503,12 +493,8 @@ export function HttpApiDetail({ apiId }: Props) {
               target: deleteV2AuthorizerTarget,
               onRequest: setDeleteV2AuthorizerTarget,
               onOpenChange: (open) => !open && setDeleteV2AuthorizerTarget(undefined),
-              mutation: {
-                mutate: (authorizerId: string) =>
-                  deleteV2AuthorizerMut.mutate({ apiId, authorizerId }),
-                isPending: deleteV2AuthorizerMut.isPending,
-              },
-              getId: (auth) => auth.authorizerId,
+              mutation: deleteV2AuthorizerMut,
+              getVars: (auth) => ({ apiId, authorizerId: auth.authorizerId }),
               label: (auth) => auth.name,
               noun: "authorizer",
               title: "Delete Authorizer",

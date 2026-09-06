@@ -256,7 +256,6 @@ function TasksPanel({
        */}
       <ResourceTable
         variant="embedded"
-        columnToggle={false}
         query={{ data: selection.tasks, isLoading }}
         noun="tasks"
         emptyTitle={`No ${selection.effectiveView} tasks`}
@@ -467,7 +466,6 @@ function TaskDefinitionsPanel() {
               {expandedFamily === family && (
                 <ResourceTable
                   variant="embedded"
-                  columnToggle={false}
                   query={{ data: revisions, isLoading: false }}
                   noun="revisions"
                   emptyTitle="No revisions"
@@ -523,7 +521,6 @@ function TaskDefinitionsPanel() {
               {expandedFamily === "__ungrouped__" && (
                 <ResourceTable
                   variant="embedded"
-                  columnToggle={false}
                   query={{ data: ungrouped, isLoading: false }}
                   noun="task definitions"
                   emptyTitle="No task definitions"
@@ -633,7 +630,6 @@ function ServicesPanel({
       {/* Expanded service detail renders below the table — see the Tasks panel. */}
       <ResourceTable
         variant="embedded"
-        columnToggle={false}
         query={{ data: services, isLoading }}
         noun="services"
         emptyTitle="No services"
@@ -1299,7 +1295,6 @@ function ContainerInstancesPanel({ clusterName }: { clusterName: string }) {
   return (
     <ResourceTable
       variant="embedded"
-      columnToggle={false}
       query={{ data: instances, isLoading }}
       noun="container instances"
       emptyTitle="No container instances"
@@ -1363,7 +1358,6 @@ function ClusterTagsPanel({ clusterArn }: { clusterArn: string }) {
   return (
     <ResourceTable
       variant="embedded"
-      columnToggle={false}
       query={{ data: tags, isLoading }}
       noun="tags"
       emptyTitle="No tags"

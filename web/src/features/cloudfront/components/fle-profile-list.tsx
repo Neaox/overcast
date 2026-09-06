@@ -34,9 +34,6 @@ export function FLEProfileList({ sort, onSortChange }: FLEProfileListProps) {
         errorTitle="Failed to load FLE profiles"
         sort={sort}
         onSortChange={onSortChange}
-        // Four columns; the ID is the only one a reader could call secondary,
-        // and a three-column table is not worth a menu.
-        columnToggle={false}
         rowKey={(profile) => profile.id}
         columns={[
           {

@@ -175,7 +175,6 @@ export function EventBusDetail({ busName }: Props) {
           filteredEmptyDescription="No rules match the filter."
           isFiltered={!!filter}
           onClearFilter={() => setFilter("")}
-          columnToggle={false}
           // ListRules returns the emulator's storage order; A→Z is what a name
           // column implies.
           defaultSort={{ id: "name", desc: false }}
@@ -227,7 +226,7 @@ export function EventBusDetail({ busName }: Props) {
             onRequest: setDeleteTarget,
             onOpenChange: (open) => !open && setDeleteTarget(undefined),
             mutation: deleteMut,
-            getId: (rule) => rule.Name ?? "",
+            getVars: (rule) => rule.Name ?? "",
             label: (rule) => rule.Name ?? "rule",
             noun: "rule",
             title: "Delete Rule",

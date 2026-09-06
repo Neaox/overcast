@@ -777,7 +777,6 @@ export function QueueDetail({ queueName }: Props) {
                 </Button>
               }
               errorTitle="Failed to load subscriptions"
-              columnToggle={false}
               // The topic is what identifies a row here — the queue is fixed.
               defaultSort={{ id: "topic-arn", desc: false }}
               rowKey={(sub) => sub.SubscriptionArn ?? ""}

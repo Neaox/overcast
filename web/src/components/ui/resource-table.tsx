@@ -66,7 +66,7 @@ import { cn } from "@/lib/utils"
  *     onRequest: setDeleteTarget,
  *     onOpenChange: (open) => !open && setDeleteTarget(undefined),
  *     mutation: del,
- *     getId: (t) => t.TopicArn ?? "",
+ *     getVars: (t) => t.TopicArn ?? "",
  *     label: (t) => shortName(t),
  *     noun: "topic",
  *   }}
@@ -103,12 +103,41 @@ import { cn } from "@/lib/utils"
  * contract `q` and `tab` already have. Omit them and `ResourceTable` keeps the
  * sort in local state, so a page gets sorting for free.
  *
+ * **A list that refetches sets `defaultSort`.** An SDK `List*` call returns the
+ * emulator's storage order, which is not stable across refetches, so a polled
+ * list can move a row out from under the cursor between two polls. Sorting by
+ * the name column (or by the timestamp, where the table is a feed) costs
+ * nothing and makes the order something the reader can rely on — a stable
+ * default beats a faithful but jittery one. Sort a timestamp on a `Date`, not
+ * on the ISO string it arrived as: a string sorts A→Z, which is only
+ * accidentally chronological.
+ *
+ * ## Rows
+ *
+ * `rowKey` identifies a row (React's key, and the sort-stable row id); it takes
+ * the item's index too, for a feed whose entries carry no id of their own.
+ * `rowClassName` styles the row itself — the tone a log level or a failure
+ * event paints across every cell, which `cellClassName` cannot reach because a
+ * cell background does not fill the row's padding. Mark a column `interactive`
+ * when its cell holds a control of its own, so a click that misses the control
+ * stops in the cell instead of navigating.
+ *
  * ## Delete
  *
  * `onDelete` is deliberately controlled by the caller rather than owning the
  * `deleteTarget` state itself: the mutation's `onSuccess` (from
  * `useResourceMutation`) is what clears it today, and that callback lives on
  * the page, not in this component.
+ *
+ * `getVars` builds the mutation's variables from the row, and the mutation is
+ * generic in them: `DeleteWebACL` needs the whole summary for its lock token,
+ * `DeleteRoute` needs `{apiId, routeId}`, `DeleteDistribution` needs an ETag
+ * only `GetDistribution` returns — so `getVars` may also be async, and the
+ * confirm button stays pending while it resolves. A rejected `getVars` leaves
+ * the dialog open and cancels the pending state; reporting it is the caller's,
+ * inside `getVars`. `canDelete` hides the action on rows that cannot be
+ * deleted (a stack mid-update), which a page otherwise has to drop to
+ * `rowActions` and its own `ConfirmDialog` for.
  *
  * A page with a filter box passes `query.data` already filtered, plus
  * `isFiltered`/`onClearFilter` so the empty state can tell "nothing matches
@@ -163,6 +192,11 @@ const DEFAULT_ROW_HEIGHT = 37
 const EMPTY_ROWS: never[] = []
 const EMPTY_SORTING: SortingState = []
 
+/** Narrows an `X | Promise<X>` without assuming the promise is a native one. */
+function isPromiseLike<X>(value: X | Promise<X>): value is Promise<X> {
+  return typeof (value as { then?: unknown } | null)?.then === "function"
+}
+
 /** A value a column can be ordered by. `cell` renders a `ReactNode`, which cannot be compared. */
 export type ResourceTableSortValue = string | number | boolean | Date | null | undefined
 
@@ -201,6 +235,13 @@ export interface ResourceTableColumn<T extends RowData> {
   hideable?: boolean
   /** Starts hidden, discoverable through the columns menu. Implies `hideable`. */
   defaultHidden?: boolean
+  /**
+   * The cell holds a control of its own — a copy button, a link, a switch. A
+   * click anywhere in it, its padding included, stops there rather than
+   * reaching `onRowClick`, so aiming at the control and missing it by a pixel
+   * no longer navigates away from the row you were about to act on.
+   */
+  interactive?: boolean
 }
 
 interface ResourceTableQuery<T> {
@@ -209,7 +250,7 @@ interface ResourceTableQuery<T> {
   error?: unknown
 }
 
-interface ResourceTableDeleteConfig<T> {
+interface ResourceTableDeleteConfig<T, TVars> {
   /** The row currently targeted for deletion — page-owned state (`useState<T>()`). */
   target: T | undefined
   /** Opens the confirm dialog for a row — usually the target's `useState` setter. */
@@ -217,9 +258,20 @@ interface ResourceTableDeleteConfig<T> {
   /** Matches `ConfirmDialog`'s prop; closes the dialog by clearing the target. */
   onOpenChange: (open: boolean) => void
   /** The mutation that performs the delete — typically from `useResourceMutation`. */
-  mutation: { mutate: (id: string) => void; isPending: boolean }
-  /** Resolve the mutation variable (id/name/arn) from the row. */
-  getId: (item: T) => string
+  mutation: { mutate: (vars: TVars) => void; isPending: boolean }
+  /**
+   * Builds the mutation's variables from the row — an id or name for most
+   * deletes, the whole row where the call needs more of it (a lock token, an
+   * ETag, a composite `{apiId, routeId}`). Returning a promise is allowed: the
+   * confirm button stays pending until it resolves, and a rejection leaves the
+   * dialog open without mutating, so any error reporting belongs inside here.
+   */
+  getVars: (item: T) => TVars | Promise<TVars>
+  /**
+   * Hides the delete action on rows that cannot be deleted — a stack mid-update,
+   * a resource the emulator owns. Defaults to every row.
+   */
+  canDelete?: (item: T) => boolean
   /** Display name used in the confirm dialog's default title/description. */
   label: (item: T) => string
   /** Lowercase singular noun, e.g. `"topic"`. Feeds the default copy. */
@@ -244,18 +296,38 @@ interface ResourceTableVirtualizeConfig {
   overscan?: number
 }
 
-interface ResourceTableProps<T extends RowData> {
+interface ResourceTableProps<T extends RowData, TVars> {
   query: ResourceTableQuery<T>
   columns: ResourceTableColumn<T>[]
-  rowKey: (item: T) => string
+  /**
+   * Stable identity for a row. The index is there for a feed whose entries
+   * carry none of their own — two log lines can share a timestamp and a
+   * message — and is what such a table would otherwise key by anyway.
+   */
+  rowKey: (item: T, index: number) => string | number
   /** Lowercase plural noun, e.g. `"topics"` — feeds the skeleton footer. */
   noun: string
   /** Row click handler — rows navigate to a detail page when this is set. */
   onRowClick?: (item: T) => void
+  /**
+   * Classes for the `<tr>` itself — the tone a row carries as a whole, such as
+   * the danger wash on a failure event or a log line's level tint. A column's
+   * `cellClassName` cannot do this: a cell background stops at the cell, so a
+   * tinted row faked from cells is a row with gaps in it.
+   */
+  rowClassName?: (item: T, index: number) => string | undefined
   emptyIcon?: LucideIcon
   emptyTitle?: string
   emptyDescription?: string
   emptyAction?: React.ReactNode
+  /**
+   * Rendered directly beneath the empty state, inside the same container as the
+   * table — where `RegionElsewhereNotice` belongs, tucked under the empty
+   * state's bottom padding by its own negative margin. Only on the plain empty
+   * state: a filtered-empty list and a failed fetch are different facts, and
+   * an explanation of an empty region would be wrong about both.
+   */
+  emptyExtra?: React.ReactNode
   /**
    * True while a filter/search is narrowing the list — swaps the empty state
    * to "no matches" copy with a clear-filter action instead of `emptyAction`,
@@ -272,7 +344,7 @@ interface ResourceTableProps<T extends RowData> {
   loadingCount?: number
   /** Extra per-row actions rendered before the delete action, if any. */
   rowActions?: (item: T) => React.ReactNode
-  onDelete?: ResourceTableDeleteConfig<T>
+  onDelete?: ResourceTableDeleteConfig<T, TVars>
   /**
    * Current sort, when the page owns it — pair with `onSortChange`, usually
    * both straight from `useSortSearchParam` so the sort deep-links. Omit both
@@ -285,8 +357,9 @@ interface ResourceTableProps<T extends RowData> {
   /** Rows per page. Unset means no pagination and no pager. */
   pageSize?: number
   /**
-   * Forces the columns menu on or off. Defaults to showing it once more than
-   * one column can be hidden — a two-column table has nothing worth toggling.
+   * Forces the columns menu on or off. It appears by default only on a
+   * `"card"` table with at least `COLUMN_TOGGLE_MIN_COLUMNS` columns, more than
+   * one of them hideable — see that constant for why the bar is that high.
    */
   columnToggle?: boolean
   /** Virtualizes the rows. `true` accepts every default. */
@@ -315,16 +388,46 @@ function columnLabel(header: React.ReactNode | undefined, id: string): string {
   return typeof header === "string" ? header : id
 }
 
-export function ResourceTable<T extends RowData>({
+/**
+ * Where the sort button puts its label. A sortable header is a full-bleed
+ * flex `<button>`, and `text-align` does not reach a flex child — so a
+ * `headerClassName` of `text-right` left every numeric column's label on the
+ * left until callers worked around it with `[&>button]:justify-end`. Read the
+ * alignment off the class the column already declares rather than adding a
+ * second way to say it, so the two can never disagree.
+ */
+function sortButtonJustify(headerClassName: string | undefined): string {
+  if (!headerClassName) return "justify-start"
+  if (/(^|\s)text-right(\s|$)/.test(headerClassName)) return "justify-end"
+  if (/(^|\s)text-center(\s|$)/.test(headerClassName)) return "justify-center"
+  return "justify-start"
+}
+
+/**
+ * How many columns a card table needs before it offers a columns menu.
+ *
+ * The first cut showed the menu whenever two columns could be hidden, which
+ * put one on nearly every list: four of the six conversion waves reported it as
+ * noise, and 70 call sites ended up turning it off by hand (#1327). A menu
+ * earns its place on a wide table, where hiding a column is how the row stops
+ * wrapping — not on a four-column list whose every column is read by every
+ * reader. An embedded sub-table never gets one at all: its container clips the
+ * popover.
+ */
+const COLUMN_TOGGLE_MIN_COLUMNS = 5
+
+export function ResourceTable<T extends RowData, TVars = string>({
   query,
   columns,
   rowKey,
   noun,
   onRowClick,
+  rowClassName,
   emptyIcon: EmptyIcon,
   emptyTitle,
   emptyDescription,
   emptyAction,
+  emptyExtra,
   isFiltered,
   onClearFilter,
   filteredEmptyTitle,
@@ -341,7 +444,11 @@ export function ResourceTable<T extends RowData>({
   virtualize,
   variant = "card",
   className,
-}: ResourceTableProps<T>) {
+}: ResourceTableProps<T, TVars>) {
+  // True while an async `getVars` is resolving, so the confirm button keeps
+  // its pending state across a lookup the mutation itself has not started yet.
+  const [isPreparingDelete, setIsPreparingDelete] = React.useState(false)
+
   const items: T[] = query.data ?? EMPTY_ROWS
   const isEmpty = items.length === 0
   const hasActionsColumn = Boolean(rowActions || onDelete)
@@ -432,7 +539,7 @@ export function ResourceTable<T extends RowData>({
     features: resourceTableFeatures,
     data: items,
     columns: columnDefs,
-    getRowId: (item, index) => rowKeyRef.current(item) || String(index),
+    getRowId: (item, index) => String(rowKeyRef.current(item, index)) || String(index),
     enableMultiSort: false,
     state: { sorting: sortingState, columnVisibility, pagination: paginationState },
     onSortingChange: handleSortingChange,
@@ -478,7 +585,11 @@ export function ResourceTable<T extends RowData>({
   // ── Rendering ──────────────────────────────────────────────────────────
   const columnsById = new Map(resolved.map((column) => [column.id, column]))
   const hideableColumns = table.getAllLeafColumns().filter((column) => column.getCanHide())
-  const showColumnToggle = columnToggle ?? hideableColumns.length > 1
+  const showColumnToggle =
+    columnToggle ??
+    (variant === "card" &&
+      resolved.length >= COLUMN_TOGGLE_MIN_COLUMNS &&
+      hideableColumns.length > 1)
 
   // `ariaRowIndex` is only meaningful while virtualizing: the DOM then holds a window
   // onto the rows, so without `aria-rowcount` on the table and a 1-based `aria-rowindex`
@@ -488,13 +599,20 @@ export function ResourceTable<T extends RowData>({
     <TableRow
       key={row.id}
       aria-rowindex={ariaRowIndex}
+      className={rowClassName?.(row.original, row.index)}
       onClick={onRowClick ? () => onRowClick(row.original) : undefined}
     >
       {row.getVisibleCells().map((cell) => {
         const column = columnsById.get(cell.column.id)
         const Cell = column?.prose ? TableCellProse : TableCell
         return (
-          <Cell key={cell.id} className={column?.cellClassName}>
+          <Cell
+            key={cell.id}
+            className={column?.cellClassName}
+            onClick={
+              onRowClick && column?.interactive ? (event) => event.stopPropagation() : undefined
+            }
+          >
             <table.FlexRender cell={cell} />
           </Cell>
         )
@@ -503,7 +621,7 @@ export function ResourceTable<T extends RowData>({
         <TableCell onClick={(event) => event.stopPropagation()}>
           <RowActions>
             {rowActions?.(row.original)}
-            {onDelete && (
+            {onDelete && (onDelete.canDelete?.(row.original) ?? true) && (
               <RowAction
                 label={
                   onDelete.actionLabel?.(row.original) ?? `Delete ${onDelete.label(row.original)}`
@@ -557,6 +675,7 @@ export function ResourceTable<T extends RowData>({
                 className={cn(
                   fieldLabel,
                   "inline-flex h-full w-full cursor-pointer items-center gap-1 px-4 py-2 transition-colors select-none hover:text-fg",
+                  sortButtonJustify(column?.headerClassName),
                   sorted && "text-fg",
                 )}
               >
@@ -575,31 +694,42 @@ export function ResourceTable<T extends RowData>({
     </TableRow>
   )
 
+  // `emptyExtra` follows the empty state as a sibling, which is the placement
+  // its one caller shape — `RegionElsewhereNotice`, whose `-mt-8` tucks it into
+  // the `EmptyState`'s bottom padding — is drawn for. Not on a filtered-empty
+  // list or a failed fetch: an explanation of "nothing here" is wrong about
+  // both, and `QueryListState` renders something else entirely for each.
+  const showEmptyExtra =
+    Boolean(emptyExtra) && isEmpty && !query.isLoading && !query.error && !isFiltered
+
   const body =
     query.isLoading || isEmpty ? (
-      <QueryListState
-        isLoading={query.isLoading}
-        isEmpty={isEmpty}
-        error={query.error}
-        emptyTitle={emptyTitle ?? `No ${noun}`}
-        errorTitle={errorTitle ?? `Failed to load ${noun}`}
-        loadingNoun={noun}
-        loadingCount={loadingCount}
-        isFiltered={isFiltered}
-        onClearFilter={onClearFilter}
-        filteredEmptyTitle={filteredEmptyTitle ?? `No matching ${noun}`}
-        filteredEmptyDescription={filteredEmptyDescription ?? `No ${noun} match your filter.`}
-        empty={
-          !isFiltered && (emptyDescription || emptyAction || EmptyIcon) ? (
-            <EmptyState
-              icon={EmptyIcon && <EmptyIcon className="h-10 w-10" />}
-              title={emptyTitle ?? `No ${noun}`}
-              description={emptyDescription}
-              action={emptyAction}
-            />
-          ) : undefined
-        }
-      />
+      <>
+        <QueryListState
+          isLoading={query.isLoading}
+          isEmpty={isEmpty}
+          error={query.error}
+          emptyTitle={emptyTitle ?? `No ${noun}`}
+          errorTitle={errorTitle ?? `Failed to load ${noun}`}
+          loadingNoun={noun}
+          loadingCount={loadingCount}
+          isFiltered={isFiltered}
+          onClearFilter={onClearFilter}
+          filteredEmptyTitle={filteredEmptyTitle ?? `No matching ${noun}`}
+          filteredEmptyDescription={filteredEmptyDescription ?? `No ${noun} match your filter.`}
+          empty={
+            !isFiltered && (emptyDescription || emptyAction || EmptyIcon) ? (
+              <EmptyState
+                icon={EmptyIcon && <EmptyIcon className="h-10 w-10" />}
+                title={emptyTitle ?? `No ${noun}`}
+                description={emptyDescription}
+                action={emptyAction}
+              />
+            ) : undefined
+          }
+        />
+        {showEmptyExtra && emptyExtra}
+      </>
     ) : (
       <>
         {virtualize ? (
@@ -729,10 +859,23 @@ export function ResourceTable<T extends RowData>({
               </>
             ))
           }
-          isPending={onDelete.mutation.isPending}
-          onConfirm={() =>
-            onDelete.target && onDelete.mutation.mutate(onDelete.getId(onDelete.target))
-          }
+          isPending={onDelete.mutation.isPending || isPreparingDelete}
+          onConfirm={() => {
+            if (!onDelete.target) return
+            const vars = onDelete.getVars(onDelete.target)
+            if (!isPromiseLike(vars)) {
+              onDelete.mutation.mutate(vars)
+              return
+            }
+            setIsPreparingDelete(true)
+            void Promise.resolve(vars).then(
+              (resolved) => {
+                setIsPreparingDelete(false)
+                onDelete.mutation.mutate(resolved)
+              },
+              () => setIsPreparingDelete(false),
+            )
+          }}
         />
       )}
     </>

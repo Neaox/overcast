@@ -99,8 +99,6 @@ export function ClusterList() {
         // ListClusters returns the emulator's storage order; A→Z is what a name
         // column implies.
         defaultSort={{ id: "cluster-name", desc: false }}
-        // Four columns, all primary — a Columns menu here is clutter, not an offer.
-        columnToggle={false}
         rowKey={(c) => c.ClusterArn ?? ""}
         columns={[
           {
@@ -130,7 +128,7 @@ export function ClusterList() {
           onRequest: setDeleteTarget,
           onOpenChange: (v) => !v && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (c) => c.ClusterArn ?? "",
+          getVars: (c) => c.ClusterArn ?? "",
           label: (c) => c.ClusterName ?? "cluster",
           noun: "cluster",
           title: "Delete Kafka Cluster",
