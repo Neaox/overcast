@@ -621,6 +621,66 @@ func validateGroupInput(name string, lt launchTemplateSpec, mip mixedInstancesPo
 	return nil
 }
 
+// resolveGroupPlacement settles a group's AvailabilityZones against its
+// VPCZoneIdentifier and returns the zones to store.
+//
+// The subnets win. CreateAutoScalingGroup and UpdateAutoScalingGroup both
+// document AvailabilityZones as a list "used for launching into the default VPC
+// subnet in each Availability Zone *when not using the VPCZoneIdentifier
+// property*", so a group that names subnets takes its zones from them — which
+// is what makes the parameter optional for the CDK-shaped request that passes
+// VPCZoneIdentifier alone. Given both, the reference requires that "the subnets
+// that you specify must reside in those Availability Zones", and real Auto
+// Scaling compares the two as *sets*: a group listing four zones with subnets
+// in only three of them is refused too, which is the shape most of the reported
+// failures are (an Fn::GetAZs zone list against a hand-written subnet list).
+// moto compares the same way (moto/autoscaling/models.py, _set_azs_and_vpcs).
+//
+// A VPCZoneIdentifier EC2 cannot fully resolve is left alone rather than
+// refused — see subnetZones.
+func (s *Service) resolveGroupPlacement(ctx context.Context, zones []string, vpcZoneIdentifier string) ([]string, *protocol.AWSError) {
+	if vpcZoneIdentifier == "" {
+		return zones, nil
+	}
+	derived, ok := s.subnetZones(ctx, vpcZoneIdentifier)
+	if !ok {
+		return zones, nil
+	}
+	if len(zones) > 0 && !sameZoneSet(zones, derived) {
+		return nil, zonesDoNotMatchError()
+	}
+	return derived, nil
+}
+
+// zonesDoNotMatchError is the error real Auto Scaling answers when a group's
+// zones and its subnets' zones are not the same set.
+//
+// Neither operation's reference lists an error for breaking the rule, so the
+// code is the one the Auto Scaling common-error list defines for input that
+// "doesn't meet the required format or constraints" — ValidationError, HTTP
+// 400 — and the message is the one real AWS returns, pasted from a
+// CloudFormation failure event in aws/amazon-ecs-cli#47 and reported in the
+// same words wherever the failure is discussed. moto raises the same
+// ValidationError with "the Auto Scaling group" where the real responses say
+// "the AutoScalingGroup"; the real responses are what is followed here.
+func zonesDoNotMatchError() *protocol.AWSError {
+	return asgValidationError("The availability zones of the specified subnets and the AutoScalingGroup do not match")
+}
+
+// sameZoneSet reports whether two zone lists name the same zones, ignoring
+// order and repeats: a group may list one zone twice, or hold two subnets in
+// one zone, without that being a mismatch.
+func sameZoneSet(a, b []string) bool {
+	set := func(zones []string) map[string]struct{} {
+		m := make(map[string]struct{}, len(zones))
+		for _, z := range zones {
+			m[z] = struct{}{}
+		}
+		return m
+	}
+	return maps.Equal(set(a), set(b))
+}
+
 // validateCapacity applies AWS's min/max/desired constraints.
 func validateCapacity(min, max, desired int) *protocol.AWSError {
 	if min < 0 {
@@ -647,6 +707,15 @@ func (h *Handler) createASGTyped(ctx context.Context, req *createASGReq) (*creat
 		desired = *req.DesiredCapacity
 	}
 	if aerr := validateCapacity(req.MinSize, req.MaxSize, desired); aerr != nil {
+		return nil, aerr
+	}
+
+	// Settled before the group is stored: a group whose zones and subnets
+	// contradict each other would otherwise be accepted and then have every
+	// launch refused by EC2 one at a time (#1839), never reaching its desired
+	// capacity for a reason only the activity log carries.
+	zones, aerr := s.resolveGroupPlacement(ctx, req.AvailabilityZones, req.VPCZoneIdentifier)
+	if aerr != nil {
 		return nil, aerr
 	}
 
@@ -680,7 +749,7 @@ func (h *Handler) createASGTyped(ctx context.Context, req *createASGReq) (*creat
 		MaxSize:                          req.MaxSize,
 		DesiredCapacity:                  desired,
 		DefaultCooldown:                  cooldown,
-		AvailabilityZones:                req.AvailabilityZones,
+		AvailabilityZones:                zones,
 		VPCZoneIdentifier:                req.VPCZoneIdentifier,
 		HealthCheckType:                  healthCheck,
 		HealthCheckGracePeriod:           req.HealthCheckGracePeriod,
@@ -736,6 +805,24 @@ func (h *Handler) updateASGTyped(ctx context.Context, req *updateASGReq) (*updat
 		launchTemplate = resolved
 	}
 
+	// Zones and subnets are settled before the group is locked too, and against
+	// whatever the group already has: an update that changes only the zones is
+	// checked against the stored subnets, so it cannot walk a group into the
+	// mismatch create refuses.
+	subnets := req.VPCZoneIdentifier
+	if len(req.AvailabilityZones) > 0 && subnets == "" {
+		s.mu.Lock()
+		stored, exists := s.st.getGroup(ctx, req.AutoScalingGroupName)
+		s.mu.Unlock()
+		if exists {
+			subnets = stored.VPCZoneIdentifier
+		}
+	}
+	zones, aerr := s.resolveGroupPlacement(ctx, req.AvailabilityZones, subnets)
+	if aerr != nil {
+		return nil, aerr
+	}
+
 	s.mu.Lock()
 	g, found := s.st.getGroup(ctx, req.AutoScalingGroupName)
 	if !found {
@@ -770,8 +857,12 @@ func (h *Handler) updateASGTyped(ctx context.Context, req *updateASGReq) (*updat
 	if req.DefaultCooldown != nil {
 		g.DefaultCooldown = *req.DefaultCooldown
 	}
-	if len(req.AvailabilityZones) > 0 {
-		g.AvailabilityZones = req.AvailabilityZones
+	// zones is what resolveGroupPlacement settled on: the request's own zones
+	// when it named no subnets, and the subnets' zones whenever it did — so an
+	// update that swaps a group onto subnets in other zones moves the zone list
+	// with them, as AWS does.
+	if len(zones) > 0 {
+		g.AvailabilityZones = zones
 	}
 	if req.VPCZoneIdentifier != "" {
 		g.VPCZoneIdentifier = req.VPCZoneIdentifier

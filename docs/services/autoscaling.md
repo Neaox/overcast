@@ -47,7 +47,8 @@ pokes — a lifecycle heartbeat expiring, a cooldown ending.
 | Convergence | `CreateAutoScalingGroup`, `UpdateAutoScalingGroup`, `SetDesiredCapacity`, `ExecutePolicy` and alarm-driven policies all move `DesiredCapacity`; the reconciler then calls EC2 `RunInstances` / `TerminateInstances` to close the gap, clamped to `MinSize` and `MaxSize` |
 | Launch source | Either a launch configuration or an EC2 `LaunchTemplate`, by ID or name and at a version including `$Latest` and `$Default`. The template is resolved through EC2 when the group is configured, so one that does not exist is a `ValidationError` rather than a group that never converges. `DescribeAutoScalingGroups` reports it, as does each instance launched from it |
 | Instance state | `Pending` → `InService` and `Terminating` → gone, reported with `LifecycleState`, `HealthStatus`, `AvailabilityZone`, `InstanceType` and `ProtectedFromScaleIn` |
-| Placement | Round-robin across `AvailabilityZones` and, when set, across `VPCZoneIdentifier`'s subnets. Tags marked `PropagateAtLaunch` are applied to each instance, alongside `aws:autoscaling:groupName` |
+| Placement | Round-robin across `VPCZoneIdentifier`'s subnets, each instance landing in its own subnet's zone, or across `AvailabilityZones` for a group with no subnets. A group given only subnets takes its zones from them |
+| Instance tags | Tags marked `PropagateAtLaunch` are applied to each instance, alongside `aws:autoscaling:groupName` |
 | Scaling policies | `SimpleScaling` and `StepScaling` execute, honouring `ChangeInCapacity`, `ExactCapacity`, `PercentChangeInCapacity`, `MinAdjustmentMagnitude` and the group's cooldown |
 | CloudWatch alarms | A policy ARN in an alarm's `AlarmActions` works end to end. For a step policy, the breach is the alarm's most recent datapoint minus its threshold — the number AWS compares against the metric interval bounds |
 | Lifecycle hooks | The instance really parks in `Pending:Wait` or `Terminating:Wait`, an `EC2 Instance-launch Lifecycle Action` event carrying the `LifecycleActionToken` is published to the default EventBridge bus, and it stays there until `CompleteLifecycleAction` or `HeartbeatTimeout` applies the hook's `DefaultResult`. `RecordLifecycleActionHeartbeat` extends the window |
@@ -63,6 +64,7 @@ operation rather than stored and quietly disregarded.
 | `MixedInstancesPolicy` | `CreateAutoScalingGroup` / `UpdateAutoScalingGroup` | `501` — there is no instance-type fleet or spot allocation to distribute over |
 | `InstanceId` | `CreateAutoScalingGroup` | `501` — launch parameters cannot be derived from a running instance |
 | No launch source at all | `CreateAutoScalingGroup` | `400 ValidationError`, as on AWS |
+| `VPCZoneIdentifier` subnets outside `AvailabilityZones` | `CreateAutoScalingGroup` / `UpdateAutoScalingGroup` | `400 ValidationError`, as on AWS — the two must name the same zones |
 | `PolicyType=TargetTrackingScaling` | `PutScalingPolicy` | `501` — nothing tracks a target metric value |
 | `PolicyType=PredictiveScaling` | `PutScalingPolicy` | `501` — there is no forecasting model over historical metrics |
 | Warm pools, instance refresh, scheduled actions, notification configurations | — | Not registered; a protocol-correct `501` |

@@ -478,6 +478,31 @@ func (h *elbv2ListenerHandler) Update(ctx context.Context, router http.Handler, 
 
 type autoscalingASGHandler struct{}
 
+// vpcZoneIdentifierParam renders the VPCZoneIdentifier property as the
+// comma-separated string CreateAutoScalingGroup takes.
+//
+// CloudFormation types the property as "Array of String" while the API types it
+// as a single comma-separated string, and the resource reference's own examples
+// show it both ways — `"VPCZoneIdentifier": ["subnetIdAz1", "subnetIdAz2"]` and
+// `{ "Ref": "Subnets" }` resolving to a list. CDK emits the list. Reading only
+// the string form dropped the list one silently, which left the group launching
+// into no subnet at all rather than failing where a reader would see it.
+func vpcZoneIdentifierParam(props map[string]any) string {
+	switch v := props["VPCZoneIdentifier"].(type) {
+	case string:
+		return v
+	case []any:
+		ids := make([]string, 0, len(v))
+		for _, raw := range v {
+			if s, _ := raw.(string); s != "" {
+				ids = append(ids, s)
+			}
+		}
+		return strings.Join(ids, ",")
+	}
+	return ""
+}
+
 func (h *autoscalingASGHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["AutoScalingGroupName"].(string)
 	if name == "" {
@@ -511,7 +536,7 @@ func (h *autoscalingASGHandler) Create(ctx context.Context, router http.Handler,
 			}
 		}
 	}
-	if v, _ := props["VPCZoneIdentifier"].(string); v != "" {
+	if v := vpcZoneIdentifierParam(props); v != "" {
 		params["VPCZoneIdentifier"] = v
 	}
 	if v, _ := props["LaunchConfigurationName"].(string); v != "" {
@@ -611,7 +636,7 @@ func (h *autoscalingASGHandler) Update(ctx context.Context, router http.Handler,
 	if v := fmtPropString(props, "DesiredCapacity"); v != "" {
 		params["DesiredCapacity"] = v
 	}
-	if v, _ := props["VPCZoneIdentifier"].(string); v != "" {
+	if v := vpcZoneIdentifierParam(props); v != "" {
 		params["VPCZoneIdentifier"] = v
 	}
 	if azs, ok := props["AvailabilityZones"].([]any); ok {

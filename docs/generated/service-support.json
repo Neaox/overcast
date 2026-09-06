@@ -7018,12 +7018,12 @@
         {
           "operation": "CreateAutoScalingGroup",
           "status": "✅ Supported",
-          "notes": "Reconciles: launches EC2 instances to DesiredCapacity from a LaunchConfiguration or a LaunchTemplate, resolved through EC2 at create time. MixedInstancesPolicy and InstanceId are refused with 501"
+          "notes": "Reconciles: launches EC2 instances to DesiredCapacity from a LaunchConfiguration or a LaunchTemplate, resolved through EC2 at create time. VPCZoneIdentifier subnets outside AvailabilityZones are AWS's ValidationError; given only subnets, the zones are derived from them. MixedInstancesPolicy and InstanceId are refused with 501"
         },
         {
           "operation": "UpdateAutoScalingGroup",
           "status": "✅ Supported",
-          "notes": "Min/max/desired changes re-converge the group; desired outside min/max is AWS's ValidationError. Setting either launch source clears the other"
+          "notes": "Min/max/desired changes re-converge the group; desired outside min/max, and VPCZoneIdentifier subnets outside AvailabilityZones, are AWS's ValidationError. Setting either launch source clears the other"
         },
         {
           "operation": "DescribeAutoScalingGroups",
