@@ -80,6 +80,14 @@ class TestGroup:
     tests: list[TestCase]
     setup: Optional[TestFn] = None
     teardown: Optional[TestFn] = None
+    # Lets the group's tests run concurrently with one another, bounded by the
+    # same slot count that bounds concurrent groups. Only a generated probe
+    # group sets it (``parallel`` in registry.generated.json): its tests have
+    # no setup, no teardown, no exports and no ``depends``, so nothing orders
+    # them and no test can observe another's outcome. Results are still
+    # emitted in declaration order, so the only observable difference is the
+    # wall clock.
+    parallel: bool = False
 
 
 # ─── NDJSON emitters ─────────────────────────────────────────────────────────
@@ -143,13 +151,20 @@ def emit_batch_complete(suite: str, batch_id: str, passed: int, failed: int,
     })
 
 
-def emit_cancelled(suite: str, batch_id: str, group: str, test: str,
-                   reason: str = "") -> None:
+def cancelled_event(suite: str, batch_id: str, group: str, test: str,
+                    reason: str = "") -> dict:
+    """The `cancelled` event, built rather than emitted so a group collecting
+    its results can hold one alongside the rest."""
     ev: dict = {"event": "cancelled", "suite": suite, "batch_id": batch_id,
                 "group": group, "test": test}
     if reason:
         ev["reason"] = reason
-    _emit(ev)
+    return ev
+
+
+def emit_cancelled(suite: str, batch_id: str, group: str, test: str,
+                   reason: str = "") -> None:
+    _emit(cancelled_event(suite, batch_id, group, test, reason))
 
 
 def _iso_now() -> str:
@@ -175,6 +190,23 @@ def _is_unimplemented(exc: Exception) -> bool:
     if "501" in msg and "Not Implemented" in msg:
         return True
     return False
+
+
+# ─── Parallel slots ───────────────────────────────────────────────────────────
+
+def _parallel_slots() -> int:
+    """How many things this suite may do at once: groups in ``run_suite``, and
+    the tests of one parallel group in ``run_group``.
+
+    ``OVERCAST_COMPAT_PARALLEL_SLOTS`` is injected by the Go runner from the CPU
+    count and the number of active suites; default 8. One number bounds both
+    because it answers one question — how much load this machine should put on
+    the emulator at once — and a second knob would only let the two drift apart.
+    """
+    try:
+        return max(1, int(os.environ.get("OVERCAST_COMPAT_PARALLEL_SLOTS", "8") or "8"))
+    except ValueError:
+        return 8
 
 
 # ─── Group runner ─────────────────────────────────────────────────────────────
@@ -215,109 +247,197 @@ def run_group(group: TestGroup, ctx: TestContext, *,
             _run_teardown(group, ctx)
             return passed, failed, skipped, unimplemented, cancelled_count
 
-    for tc in group.tests:
-        # Check cancellation before each test
-        if cancel_event and cancel_event.is_set():
-            emit_cancelled(group.suite, batch_id, group.name, tc.name, "user")
-            cancelled_count += 1
-            continue
-
-        _emit({"event": "test_start", "suite": group.suite,
-               "service": group.service, "group": group.name, "test": tc.name})
-
-        if tc.na:
-            _emit({
-                "event": "test_result",
-                "suite": group.suite,
-                "service": group.service,
-                "group": group.name,
-                "test": tc.name,
-                "status": "na",
-                "duration_ms": 0,
-                "error": tc.na,
-            })
-            continue
-
-        if tc.skip:
-            reason = tc.skip if isinstance(tc.skip, str) else "skipped"
-            _emit({
-                "event": "test_result",
-                "suite": group.suite,
-                "service": group.service,
-                "group": group.name,
-                "test": tc.name,
-                "status": "skip",
-                "duration_ms": 0,
-                "error": reason,
-            })
-            skipped += 1
-            failed_or_skipped.add(tc.name)
-            continue
-
-        # Dependency gate — skip if any declared dependency failed or was
-        # skipped. Without it a single broken prerequisite reports as a cascade
-        # of unrelated failures, and "dependency failed: X" is what tells a
-        # reader the cause is elsewhere in the group.
-        failed_deps = [d for d in tc.depends if d in failed_or_skipped]
-        if failed_deps:
-            _emit({
-                "event": "test_result",
-                "suite": group.suite,
-                "service": group.service,
-                "group": group.name,
-                "test": tc.name,
-                "status": "skip",
-                "duration_ms": 0,
-                "error": f"dependency failed: {', '.join(failed_deps)}",
-            })
-            skipped += 1
-            failed_or_skipped.add(tc.name)
-            continue
-
-        start = time.monotonic()
-        try:
-            tc.fn(ctx)
-            duration = int((time.monotonic() - start) * 1000)
-            result: dict[str, Any] = {
-                "event": "test_result",
-                "suite": group.suite,
-                "service": group.service,
-                "group": group.name,
-                "test": tc.name,
-                "status": "pass",
-                "duration_ms": duration,
-            }
-            if tc.op is not None and tc.op is not False:
-                result["op"] = tc.op
-            elif tc.op is False:
-                pass  # suppress doc link — don't set "op"
-            _emit(result)
-            passed += 1
-        except Exception as exc:
-            duration = int((time.monotonic() - start) * 1000)
-            if _is_unimplemented(exc):
-                status = "unimplemented"
-                unimplemented += 1
-            else:
-                status = "fail"
-                failed += 1
-            failed_or_skipped.add(tc.name)
-            result = {
-                "event": "test_result",
-                "suite": group.suite,
-                "service": group.service,
-                "group": group.name,
-                "test": tc.name,
-                "status": status,
-                "duration_ms": duration,
-                "error": str(exc),
-            }
-            if tc.op is not None and tc.op is not False:
-                result["op"] = tc.op
-            _emit(result)
+    # A group marked parallel whose tests declare no dependencies runs them
+    # concurrently; everything else runs in declaration order. Both halves of
+    # that condition are load-bearing: the concurrent path cannot express the
+    # dependency gate, which decides what to skip from outcomes that have not
+    # happened yet, so a group declaring one is run serially even where the
+    # registry says parallel. The IR never produces that combination — only a
+    # probe group is parallel, and a probe has no exports for a ``depends`` to
+    # consume — which is why this is a guard and not a scheduler.
+    if group.parallel and not any(tc.depends for tc in group.tests):
+        counts = _run_tests_concurrently(group, ctx, cancel_event=cancel_event,
+                                         batch_id=batch_id)
+    else:
+        counts = _run_tests_in_order(group, ctx, failed_or_skipped,
+                                     cancel_event=cancel_event, batch_id=batch_id)
+    passed, failed, skipped, unimplemented, cancelled_count = counts
 
     _run_teardown(group, ctx)
     return passed, failed, skipped, unimplemented, cancelled_count
+
+
+def _start_event(group: TestGroup, tc: TestCase) -> dict:
+    return {"event": "test_start", "suite": group.suite,
+            "service": group.service, "group": group.name, "test": tc.name}
+
+
+def _result_event(group: TestGroup, tc: TestCase, status: str,
+                  duration_ms: int, error: Optional[str] = None,
+                  with_op: bool = False) -> dict:
+    """One ``test_result`` event.
+
+    ``with_op`` says whether the test's ``op`` is carried, and it is set
+    exactly where it has always been set: on a result the test produced by
+    running, never on an na/skip marker it never got to. ``op is False``
+    suppresses the dashboard's doc link and is never emitted either way.
+    """
+    ev: dict[str, Any] = {
+        "event": "test_result",
+        "suite": group.suite,
+        "service": group.service,
+        "group": group.name,
+        "test": tc.name,
+        "status": status,
+        "duration_ms": duration_ms,
+    }
+    if error is not None:
+        ev["error"] = error
+    if with_op and tc.op is not None and tc.op is not False:
+        ev["op"] = tc.op
+    return ev
+
+
+def _marker(group: TestGroup, tc: TestCase) -> Optional[list[dict]]:
+    """The events a test carries instead of running — na or skip — or None."""
+    if tc.na:
+        return [_start_event(group, tc),
+                _result_event(group, tc, "na", 0, error=tc.na)]
+    if tc.skip:
+        reason = tc.skip if isinstance(tc.skip, str) else "skipped"
+        return [_start_event(group, tc),
+                _result_event(group, tc, "skip", 0, error=reason)]
+    return None
+
+
+def _run_one(group: TestGroup, ctx: TestContext, tc: TestCase) -> list[dict]:
+    """Run one test, or report its na/skip marker without running it, and
+    return the events it produces.
+
+    Nothing here is shared with another test of the group beyond the
+    TestContext, which a probe group never writes to, so it is safe to call
+    concurrently for the tests of one parallel group — which is why the
+    concurrent path calls this and the serial one calls ``_marker`` and
+    ``_execute`` separately, with the dependency gate between them.
+    """
+    return _marker(group, tc) or _execute(group, ctx, tc)
+
+
+def _execute(group: TestGroup, ctx: TestContext, tc: TestCase) -> list[dict]:
+    """Run the test function and classify its outcome."""
+    events = [_start_event(group, tc)]
+    start = time.monotonic()
+    try:
+        tc.fn(ctx)
+    except Exception as exc:
+        duration = int((time.monotonic() - start) * 1000)
+        status = "unimplemented" if _is_unimplemented(exc) else "fail"
+        events.append(_result_event(group, tc, status, duration, error=str(exc), with_op=True))
+        return events
+    duration = int((time.monotonic() - start) * 1000)
+    events.append(_result_event(group, tc, "pass", duration, with_op=True))
+    return events
+
+
+# Counts, in the order run_group returns them.
+Counts = tuple[int, int, int, int, int]
+
+
+def _tally(events: list[dict]) -> Counts:
+    """Fold a test's events into the group counters. "na" is counted nowhere:
+    it is excluded from pass-rate calculations."""
+    passed = failed = skipped = unimplemented = cancelled = 0
+    for ev in events:
+        if ev["event"] == "cancelled":
+            cancelled += 1
+            continue
+        status = ev.get("status")
+        if status == "pass":
+            passed += 1
+        elif status == "skip":
+            skipped += 1
+        elif status == "unimplemented":
+            unimplemented += 1
+        elif status == "fail":
+            failed += 1
+    return passed, failed, skipped, unimplemented, cancelled
+
+
+def _add(a: Counts, b: Counts) -> Counts:
+    return tuple(x + y for x, y in zip(a, b))  # type: ignore[return-value]
+
+
+def _run_tests_in_order(group: TestGroup, ctx: TestContext,
+                        failed_or_skipped: set[str], *,
+                        cancel_event: Optional[threading.Event],
+                        batch_id: str) -> Counts:
+    """The serial path: one test at a time, in declaration order, each event
+    emitted as it happens so the dashboard sees the group progress."""
+    counts: Counts = (0, 0, 0, 0, 0)
+    for tc in group.tests:
+        if cancel_event and cancel_event.is_set():
+            events = [cancelled_event(group.suite, batch_id, group.name,
+                                      tc.name, "user")]
+        else:
+            # An na/skip marker outranks the dependency gate: a test the suite
+            # never intended to run here reports why it was marked, not what
+            # happened to something it does not depend on.
+            events = _marker(group, tc)
+            if events is None:
+                # Dependency gate — skip if any declared dependency failed or
+                # was skipped. Without it a single broken prerequisite reports
+                # as a cascade of unrelated failures, and "dependency failed: X"
+                # is what tells a reader the cause is elsewhere in the group.
+                failed_deps = [d for d in tc.depends if d in failed_or_skipped]
+                if failed_deps:
+                    events = [
+                        _start_event(group, tc),
+                        _result_event(group, tc, "skip", 0,
+                                      error=f"dependency failed: {', '.join(failed_deps)}"),
+                    ]
+                else:
+                    events = _execute(group, ctx, tc)
+            if events[-1].get("status") in ("skip", "fail", "unimplemented"):
+                failed_or_skipped.add(tc.name)
+        for ev in events:
+            _emit(ev)
+        counts = _add(counts, _tally(events))
+    return counts
+
+
+def _run_tests_concurrently(group: TestGroup, ctx: TestContext, *,
+                            cancel_event: Optional[threading.Event],
+                            batch_id: str) -> Counts:
+    """Run the group's tests through a bounded thread pool, then emit their
+    events in declaration order.
+
+    Emitting in order rather than as each finishes is what keeps this stream
+    identical to the serial path's, test for test. The dashboard, the baseline
+    and the flake detector all read it, and a result order that depended on
+    which boto3 call answered first would be a new source of diff noise for no
+    benefit.
+
+    No dependency bookkeeping: this path is taken only when no test declares
+    one, so the set a serial run maintains would be read by nobody.
+    """
+    per_test: list[list[dict]] = [[] for _ in group.tests]
+    with ThreadPoolExecutor(max_workers=_parallel_slots()) as pool:
+        futures = {}
+        for i, tc in enumerate(group.tests):
+            if cancel_event and cancel_event.is_set():
+                per_test[i] = [cancelled_event(group.suite, batch_id,
+                                               group.name, tc.name, "user")]
+                continue
+            futures[pool.submit(_run_one, group, ctx, tc)] = i
+        for future, i in futures.items():
+            per_test[i] = future.result()
+
+    counts: Counts = (0, 0, 0, 0, 0)
+    for events in per_test:
+        for ev in events:
+            _emit(ev)
+        counts = _add(counts, _tally(events))
+    return counts
 
 
 def _run_teardown(group: TestGroup, ctx: TestContext) -> None:
@@ -346,9 +466,7 @@ def run_suite(suite: str, groups: list[TestGroup], endpoint: str,
         return run_group(group, ctx)
 
     # Limit concurrent group execution to avoid overwhelming the emulator.
-    # OVERCAST_COMPAT_PARALLEL_SLOTS is injected by the Go runner based on
-    # CPU count and the number of active suites (default: 8).
-    max_workers = max(1, int(os.environ.get("OVERCAST_COMPAT_PARALLEL_SLOTS", "8") or "8"))
+    max_workers = _parallel_slots()
 
     total_passed = total_failed = total_skipped = total_unimplemented = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:

@@ -41,6 +41,10 @@
               "enum": ["candidate", "gated"],
               "description": "candidate = runs everywhere and reports everywhere, but gates nothing: excluded from both --compare-baseline and --max-failures. The inverse of flaky.json — quarantined by default until it proves itself, rather than gated by default until someone gets a label. gated = has passed the soak and is enforced exactly like a hand-written group."
             },
+            "parallel": {
+              "type": "boolean",
+              "description": "The group's tests may run concurrently with one another, bounded by the suite's existing parallel-slot count (OVERCAST_COMPAT_PARALLEL_SLOTS, default 8). Emitted only on a probe group, whose tests have no setup, no teardown and no exports and so cannot order one another; a lifecycle group never carries it. Results are still collected and emitted in registry order, so honouring it changes the wall clock and nothing else. Absent means serial, which is what every loader did before the field existed and what a loader that ignores it still does."
+            },
             "suites": {
               "description": "Mechanically derived from backend availability by cmd/compatgen, never hand-edited. A suite absent from this list neither implements the group nor carries parity debt for it — which is what keeps a model refresh from inflating debt for six suites that were never asked to run the tests."
             }

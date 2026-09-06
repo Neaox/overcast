@@ -58,8 +58,15 @@ type clientInfo struct {
 }
 
 type group struct {
-	Name     string `json:"name"`
-	Kind     string `json:"kind"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+	// Parallel says the group's tests may run concurrently with one another.
+	// Only a probe group carries it, and every probe group does: a probe has
+	// no setup, no teardown and no exports (README § What a probe may bind),
+	// so nothing orders its tests. A lifecycle group's tests hand resources to
+	// one another through the context bag and must stay in order.
+	// validateScenario pins both halves.
+	Parallel bool   `json:"parallel,omitempty"`
 	Setup    []call `json:"setup"`
 	Tests    []test `json:"tests"`
 	Teardown []call `json:"teardown"`
@@ -192,6 +199,14 @@ func validateScenario(s *scenario) error {
 		seenGroups[g.Name] = struct{}{}
 		if g.Kind != groupLifecycle && g.Kind != groupProbe {
 			return fmt.Errorf("group %s: kind %q", g.Name, g.Kind)
+		}
+		// parallel is a property of the kind, both ways round. A lifecycle
+		// group that acquired it would have its tests raced against the
+		// exports they consume; a probe group that lost it would silently give
+		// back the wall clock the flag exists to buy, with nothing failing.
+		if g.Parallel != (g.Kind == groupProbe) {
+			return fmt.Errorf("group %s: kind %q carries parallel=%t; only a probe group is parallel, and every probe group is",
+				g.Name, g.Kind, g.Parallel)
 		}
 		if len(g.Tests) == 0 {
 			return fmt.Errorf("group %s has no tests", g.Name)

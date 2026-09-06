@@ -312,10 +312,15 @@ type groupBuilder struct {
 	owner *resource
 }
 
+// newGroupBuilder starts a group of the given kind. `parallel` is derived from
+// the kind here rather than set by each caller: it is a restatement of what a
+// probe group already is (no setup, no teardown, no exports), so a probe that
+// had to remember to ask for it would be one refactor away from losing it
+// silently.
 func (g *generator) newGroupBuilder(name, kind string, scope []resource) *groupBuilder {
 	return &groupBuilder{
 		g:         g,
-		group:     group{Name: name, Kind: kind, Setup: []call{}, Tests: []test{}, Teardown: []call{}},
+		group:     group{Name: name, Kind: kind, Parallel: kind == groupProbe, Setup: []call{}, Tests: []test{}, Teardown: []call{}},
 		scope:     scope,
 		exports:   make(exportKinds),
 		producers: make(map[string]string),

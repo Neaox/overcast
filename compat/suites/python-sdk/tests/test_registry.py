@@ -19,11 +19,13 @@ import json
 import os
 import sys
 import tempfile
+import threading
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.harness import TestContext, run_group  # noqa: E402
+from lib.harness import TestCase, TestContext, TestGroup, run_group  # noqa: E402
 from lib.registry import (  # noqa: E402
     ambiguous_test_names,
     build_groups_from_registry,
@@ -932,3 +934,180 @@ class GeneratedGroupInterimFailRule(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _results(buf: io.StringIO) -> list[dict]:
+    """Every `test_result` event from captured stdout, in emission order."""
+    return [
+        event
+        for event in (json.loads(line) for line in buf.getvalue().splitlines())
+        if event.get("event") == "test_result"
+    ]
+
+
+class ParallelProbeGroups(unittest.TestCase):
+    """A group carrying `parallel` runs its tests concurrently and still
+    reports them in declaration order (#1801). A group without it runs exactly
+    as it always has."""
+
+    def _barrier_group(self, n: int, *, parallel: bool) -> TestGroup:
+        """n tests, each of which blocks until all n have started. Serially the
+        group deadlocks and the barrier times out; run concurrently it clears
+        at once — so "did these overlap" is answered by the tests themselves
+        rather than by a wall-clock threshold a loaded CI machine can make
+        lie."""
+        barrier = threading.Barrier(n, timeout=20)
+
+        def fn(ctx):
+            barrier.wait()
+
+        return TestGroup(
+            suite="python-sdk", service="widgets", name="widgets-gen-probe",
+            tests=[TestCase(name=f"Probe{i:02d}", fn=fn) for i in range(n)],
+            parallel=parallel,
+        )
+
+    def test_parallel_group_runs_its_tests_concurrently(self):
+        os.environ["OVERCAST_COMPAT_PARALLEL_SLOTS"] = "8"
+        self.addCleanup(os.environ.pop, "OVERCAST_COMPAT_PARALLEL_SLOTS", None)
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            counts = run_group(self._barrier_group(8, parallel=True),
+                               TestContext("", "us-east-1", "oc-test"))
+        passed, failed, skipped, unimplemented, _cancelled = counts
+        self.assertEqual((8, 0, 0, 0), (passed, failed, skipped, unimplemented),
+                         "the barrier timed out: the tests did not overlap")
+
+    def test_results_come_out_in_declaration_order(self):
+        os.environ["OVERCAST_COMPAT_PARALLEL_SLOTS"] = "8"
+        self.addCleanup(os.environ.pop, "OVERCAST_COMPAT_PARALLEL_SLOTS", None)
+
+        # Test i sleeps (8 - i) ms, so completion order reverses declaration
+        # order; every third one fails, so statuses are distinguishable too.
+        def make(i):
+            def fn(ctx):
+                time.sleep((8 - i) / 1000)
+                if i % 3 == 0:
+                    raise RuntimeError("boom")
+            return TestCase(name=f"Probe{i:02d}", fn=fn)
+
+        group = TestGroup(suite="python-sdk", service="widgets",
+                          name="widgets-gen-probe",
+                          tests=[make(i) for i in range(8)], parallel=True)
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            run_group(group, TestContext("", "us-east-1", "oc-test"))
+
+        results = _results(buf)
+        self.assertEqual([f"Probe{i:02d}" for i in range(8)],
+                         [r["test"] for r in results])
+        self.assertEqual("fail", results[0]["status"])
+        self.assertEqual("pass", results[1]["status"])
+
+    def test_group_without_the_flag_runs_serially(self):
+        in_flight = 0
+        max_in_flight = 0
+        order = []
+        lock = threading.Lock()
+
+        def make(i):
+            def fn(ctx):
+                nonlocal in_flight, max_in_flight
+                with lock:
+                    in_flight += 1
+                    max_in_flight = max(max_in_flight, in_flight)
+                    order.append(f"Probe{i:02d}")
+                time.sleep(0.001)
+                with lock:
+                    in_flight -= 1
+            return TestCase(name=f"Probe{i:02d}", fn=fn)
+
+        group = TestGroup(suite="python-sdk", service="widgets",
+                          name="widgets-gen-widget",
+                          tests=[make(i) for i in range(5)])
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            run_group(group, TestContext("", "us-east-1", "oc-test"))
+
+        self.assertEqual(1, max_in_flight,
+                         "tests overlapped in a group that did not ask for it")
+        self.assertEqual([f"Probe{i:02d}" for i in range(5)], order)
+        self.assertEqual(5, len(_results(buf)))
+
+    def test_parallel_group_with_dependencies_falls_back_to_serial(self):
+        """The concurrent path cannot express the dependency gate, so a group
+        declaring one runs in order even where the registry says parallel. The
+        IR never produces this combination — only a probe group is parallel,
+        and a probe has no exports — but a corpus that did must not silently
+        lose the cascade skip."""
+        def boom(ctx):
+            raise RuntimeError("boom")
+
+        group = TestGroup(
+            suite="python-sdk", service="widgets", name="widgets-gen-probe",
+            tests=[
+                TestCase(name="First", fn=boom),
+                TestCase(name="Second", fn=_noop, depends=["First"]),
+            ],
+            parallel=True,
+        )
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            counts = run_group(group, TestContext("", "us-east-1", "oc-test"))
+        passed, failed, skipped, unimplemented, _cancelled = counts
+        self.assertEqual((0, 1, 1, 0), (passed, failed, skipped, unimplemented))
+        self.assertEqual("skip", _results(buf)[1]["status"])
+
+
+    def test_a_marker_outranks_the_dependency_gate(self):
+        """A test the suite marked na or skip never ran and never will, so it
+        reports why it was marked — not "dependency failed", which would move
+        an na into the skip counter and replace a skip's own reason with a
+        cascade message."""
+        def boom(ctx):
+            raise RuntimeError("boom")
+
+        group = TestGroup(
+            suite="python-sdk", service="widgets", name="widgets-gen-widget",
+            tests=[
+                TestCase(name="First", fn=boom),
+                TestCase(name="Marked", fn=_noop, depends=["First"],
+                         skip="requires docker"),
+                TestCase(name="Unavailable", fn=_noop, depends=["First"],
+                         na="boto3 has no such call"),
+                TestCase(name="Ordinary", fn=_noop, depends=["First"]),
+            ],
+        )
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            counts = run_group(group, TestContext("", "us-east-1", "oc-test"))
+        by_test = {r["test"]: r for r in _results(buf)}
+        self.assertEqual("skip", by_test["Marked"]["status"])
+        self.assertEqual("requires docker", by_test["Marked"]["error"])
+        self.assertEqual("na", by_test["Unavailable"]["status"])
+        self.assertEqual("dependency failed: First", by_test["Ordinary"]["error"])
+
+        passed, failed, skipped, unimplemented, _cancelled = counts
+        self.assertEqual((0, 1, 2, 0), (passed, failed, skipped, unimplemented))
+
+    def test_parallel_reaches_the_group_only_from_a_group_that_declares_it(self):
+        registry = {
+            "groups": [
+                {"service": "sqs", "name": "sqs-gen-probe", "generated": True,
+                 "state": "candidate", "parallel": True, "suites": ["python-sdk"],
+                 "tests": [{"name": "ListQueues"}]},
+                {"service": "sqs", "name": "sqs-gen-queue", "generated": True,
+                 "state": "candidate", "suites": ["python-sdk"],
+                 "tests": [{"name": "CreateQueue"}]},
+            ]
+        }
+        groups = {g.name: g for g in
+                  build_groups_from_registry(registry, {}, "python-sdk")}
+        self.assertTrue(groups["sqs-gen-probe"].parallel)
+        self.assertFalse(groups["sqs-gen-queue"].parallel)
+

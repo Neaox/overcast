@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // captureEvents runs fn with os.Stdout redirected to a file and returns the
@@ -233,3 +235,207 @@ func TestUnimplementedStatusIsReportedForTheWrappedSentinel(t *testing.T) {
 		t.Errorf("Get = %q, want fail — a 501 in the params says nothing about the status", got["Get"])
 	}
 }
+
+// ── Parallel groups (#1801) ──────────────────────────────────────────────────
+
+// barrierTests builds n tests, each of which blocks until every one of them has
+// started. Serially the group deadlocks and the barrier times out; run
+// concurrently it clears immediately, so "did these actually overlap" is
+// answered by the tests themselves rather than by a wall-clock threshold that
+// a loaded CI machine can make lie.
+func barrierTests(n int) []TestCase {
+	started := make(chan struct{}, n)
+	released := make(chan struct{})
+	var tests []TestCase
+	for i := 0; i < n; i++ {
+		tests = append(tests, TestCase{
+			Name: fmt.Sprintf("Probe%02d", i),
+			Fn: func(ctx context.Context, _ *TestContext) error {
+				started <- struct{}{}
+				select {
+				case <-released:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				return nil
+			},
+		})
+	}
+	go func() {
+		for i := 0; i < n; i++ {
+			<-started
+		}
+		close(released)
+	}()
+	return tests
+}
+
+// TestParallelGroupRunsItsTestsConcurrently proves the flag does what it says:
+// eight tests that each wait for all eight to have started can only finish if
+// they overlap.
+func TestParallelGroupRunsItsTestsConcurrently(t *testing.T) {
+	t.Setenv("OVERCAST_COMPAT_PARALLEL_SLOTS", "8")
+	tests := barrierTests(8)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var counts GroupCounts
+	events := captureEvents(t, func() {
+		counts = RunGroup(ctx, TestGroup{Suite: "cli", Service: "widgets", Name: "widgets-gen-probe", Parallel: true, Tests: tests})
+	})
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("the group did not finish: %v — the tests did not overlap", err)
+	}
+	if counts.Passed != 8 {
+		t.Fatalf("counts = %+v, want 8 passed", counts)
+	}
+	if got := len(events); got != 8 {
+		t.Fatalf("%d events, want 8", got)
+	}
+}
+
+// TestParallelGroupEmitsInRegistryOrder pins the half of the contract that is
+// not about speed: results come out in declaration order whatever order the
+// tests finished in, so the NDJSON a parallel group produces is the stream the
+// serial path produced.
+func TestParallelGroupEmitsInRegistryOrder(t *testing.T) {
+	t.Setenv("OVERCAST_COMPAT_PARALLEL_SLOTS", "8")
+	// Test i sleeps (8-i) ms, so completion order is the reverse of
+	// declaration order.
+	var tests []TestCase
+	for i := 0; i < 8; i++ {
+		i := i
+		tests = append(tests, TestCase{
+			Name: fmt.Sprintf("Probe%02d", i),
+			Fn: func(context.Context, *TestContext) error {
+				time.Sleep(time.Duration(8-i) * time.Millisecond)
+				if i%3 == 0 {
+					return errors.New("boom")
+				}
+				return nil
+			},
+		})
+	}
+
+	events := captureEvents(t, func() {
+		RunGroup(context.Background(), TestGroup{Suite: "cli", Service: "widgets", Name: "widgets-gen-probe", Parallel: true, Tests: tests})
+	})
+
+	var got []string
+	for _, ev := range events {
+		got = append(got, fmt.Sprint(ev["test"]))
+	}
+	want := []string{"Probe00", "Probe01", "Probe02", "Probe03", "Probe04", "Probe05", "Probe06", "Probe07"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("results emitted as %v, want declaration order %v", got, want)
+	}
+	if s := statuses(events); s["Probe00"] != "fail" || s["Probe01"] != "pass" {
+		t.Errorf("statuses = %v", s)
+	}
+}
+
+// TestGroupWithoutTheFlagRunsSerially is the other half of "a group without the
+// flag runs exactly as today": the tests observe one another running, which
+// only holds while nothing overlaps.
+func TestGroupWithoutTheFlagRunsSerially(t *testing.T) {
+	var mu sync.Mutex
+	inFlight, maxInFlight := 0, 0
+	var order []string
+
+	var tests []TestCase
+	for i := 0; i < 5; i++ {
+		name := fmt.Sprintf("Probe%02d", i)
+		tests = append(tests, TestCase{
+			Name: name,
+			Fn: func(context.Context, *TestContext) error {
+				mu.Lock()
+				inFlight++
+				if inFlight > maxInFlight {
+					maxInFlight = inFlight
+				}
+				order = append(order, name)
+				mu.Unlock()
+				time.Sleep(time.Millisecond)
+				mu.Lock()
+				inFlight--
+				mu.Unlock()
+				return nil
+			},
+		})
+	}
+
+	events := captureEvents(t, func() {
+		RunGroup(context.Background(), TestGroup{Suite: "cli", Service: "widgets", Name: "widgets-gen-widget", Tests: tests})
+	})
+	if maxInFlight != 1 {
+		t.Fatalf("%d tests ran at once in a group that did not ask for it", maxInFlight)
+	}
+	if strings.Join(order, ",") != "Probe00,Probe01,Probe02,Probe03,Probe04" {
+		t.Errorf("ran in order %v", order)
+	}
+	if len(events) != 5 {
+		t.Errorf("%d events, want 5", len(events))
+	}
+}
+
+// TestParallelGroupWithDependenciesFallsBackToSerial: the concurrent path
+// cannot express the dependency gate, so a group that declares one runs in
+// order even where the registry says parallel. The IR never produces this
+// combination — only probe groups are parallel, and a probe has no exports —
+// but a corpus that did must not silently lose the cascade skip.
+func TestParallelGroupWithDependenciesFallsBackToSerial(t *testing.T) {
+	tests := []TestCase{
+		{Name: "First", Fn: func(context.Context, *TestContext) error { return errors.New("boom") }},
+		{Name: "Second", Depends: []string{"First"}, Fn: func(context.Context, *TestContext) error { return nil }},
+	}
+	var counts GroupCounts
+	events := captureEvents(t, func() {
+		counts = RunGroup(context.Background(), TestGroup{Suite: "cli", Service: "widgets", Name: "widgets-gen-probe", Parallel: true, Tests: tests})
+	})
+	if s := statuses(events); s["Second"] != "skip" {
+		t.Fatalf("Second = %q, want skip: the dependency gate was lost", s["Second"])
+	}
+	if counts.Failed != 1 || counts.Skipped != 1 {
+		t.Errorf("counts = %+v, want 1 failed and 1 skipped", counts)
+	}
+}
+
+// TestMarkerOutranksTheDependencyGate pins the order the two checks have always
+// been in. A test the suite marked na or skip never ran and never will, so it
+// reports why it was marked — not "dependency failed", which would move an na
+// into the skip counter and replace a skip's own reason with a cascade
+// message.
+func TestMarkerOutranksTheDependencyGate(t *testing.T) {
+	tests := []TestCase{
+		{Name: "First", Fn: func(context.Context, *TestContext) error { return errors.New("boom") }},
+		{Name: "Marked", Depends: []string{"First"}, Skip: "requires docker", Fn: _noopTest},
+		{Name: "Unavailable", Depends: []string{"First"}, NA: "the AWS CLI has no such command", Fn: _noopTest},
+		{Name: "Ordinary", Depends: []string{"First"}, Fn: _noopTest},
+	}
+	var counts GroupCounts
+	events := captureEvents(t, func() {
+		counts = RunGroup(context.Background(), TestGroup{Suite: "cli", Service: "widgets", Name: "widgets-gen-widget", Tests: tests})
+	})
+
+	byTest := map[string]map[string]any{}
+	for _, ev := range events {
+		byTest[fmt.Sprint(ev["test"])] = ev
+	}
+	if got := byTest["Marked"]; got["status"] != "skip" || got["error"] != "requires docker" {
+		t.Errorf("Marked = %v, want its own skip reason", got)
+	}
+	if got := byTest["Unavailable"]; got["status"] != "na" {
+		t.Errorf("Unavailable = %v, want na", got)
+	}
+	if got := byTest["Ordinary"]; got["status"] != "skip" || got["error"] != "dependency failed: First" {
+		t.Errorf("Ordinary = %v, want the cascade skip", got)
+	}
+	// na stays out of every counter; the marked skip and the cascade skip are
+	// the two skips.
+	if counts.Failed != 1 || counts.Skipped != 2 {
+		t.Errorf("counts = %+v, want 1 failed and 2 skipped", counts)
+	}
+}
+
+func _noopTest(context.Context, *TestContext) error { return nil }

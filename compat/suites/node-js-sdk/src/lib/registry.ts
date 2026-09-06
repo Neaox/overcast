@@ -69,6 +69,13 @@ export interface RegistryGroup {
   scenario?: string;
   /** Only set on a group from registry.generated.json — see GeneratedRegistryGroup. */
   state?: "candidate" | "gated";
+  /**
+   * Only set on a group from registry.generated.json, where cmd/compatgen
+   * sets it on a probe group and on nothing else: the group's tests may run
+   * concurrently with one another. See TestGroup.parallel in harness.ts for
+   * what makes it safe.
+   */
+  parallel?: boolean;
 }
 
 export interface Registry {
@@ -410,6 +417,7 @@ export function buildGroupsFromRegistry(
       service: rg.service,
       name: rg.name,
       tests,
+      parallel: rg.parallel === true,
     };
     if (opts.setup?.[rg.name]) group.setup = opts.setup[rg.name];
     if (opts.teardown?.[rg.name]) group.teardown = opts.teardown[rg.name];

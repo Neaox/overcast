@@ -92,6 +92,15 @@ export interface TestGroup {
    * Must be fault-tolerant — wrap every delete in try/catch.
    */
   teardown?: (ctx: TestContext) => Promise<void>;
+  /**
+   * Lets the group's tests run concurrently with one another, bounded by the
+   * same slot count that bounds concurrent groups. Only a generated probe
+   * group sets it (`parallel` in registry.generated.json): its tests have no
+   * setup, no teardown, no exports and no `depends`, so nothing orders them
+   * and no test can observe another's outcome. Results are still emitted in
+   * declaration order, so the only observable difference is the wall clock.
+   */
+  parallel?: boolean;
 }
 
 // ─── NDJSON event shapes ──────────────────────────────────────────────────
@@ -395,8 +404,185 @@ async function runSetupPhase(
 }
 
 /**
+ * How many things this suite may do at once: groups in `runSuite`, and the
+ * tests of one parallel group in `runTestsConcurrently`.
+ *
+ * `OVERCAST_COMPAT_PARALLEL_SLOTS` is injected by the Go runner from the CPU
+ * count and the number of active suites; default 8. One number bounds both
+ * because it answers one question — how much load this machine should put on
+ * the emulator at once — and a second knob would only let the two drift apart.
+ */
+function parallelSlots(): number {
+  return Math.max(
+    1,
+    parseInt(process.env["OVERCAST_COMPAT_PARALLEL_SLOTS"] ?? "8", 10) || 8,
+  );
+}
+
+/** One test's events, held rather than emitted so a concurrent group can emit
+ *  them in declaration order. */
+interface TestOutcome {
+  events: (TestStartEvent | TestResultEvent)[];
+  /** The status the result event carried, for the counters and the gate. */
+  status: TestResultEvent["status"];
+}
+
+/** The `op` field, spelled exactly as it has always been: absent when the test
+ *  declares none, empty when it declares `false` to suppress the doc link. */
+function opField(tc: TestCase): { op?: string } {
+  return tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {};
+}
+
+function resultEvent(
+  group: TestGroup,
+  tc: TestCase,
+  status: TestResultEvent["status"],
+  duration_ms: number,
+  error?: string,
+): TestResultEvent {
+  return {
+    event: "test_result",
+    suite: group.suite,
+    service: group.service,
+    group: group.name,
+    test: tc.name,
+    status,
+    duration_ms,
+    ...(error !== undefined ? { error } : {}),
+    ...opField(tc),
+  };
+}
+
+/** Fold one outcome into the group counters and, for a serial run, into the
+ *  set the dependency gate reads. `na` is counted nowhere: it is excluded from
+ *  pass-rate calculations, and it does not say a dependent's prerequisite is
+ *  missing. */
+function record(
+  outcome: TestOutcome,
+  name: string,
+  counts: GroupCounts,
+  failedOrSkipped: Set<string> | null,
+): void {
+  switch (outcome.status) {
+    case "pass":
+      counts.passed++;
+      return;
+    case "na":
+      return;
+    case "skip":
+      counts.skipped++;
+      break;
+    case "unimplemented":
+      counts.unimplemented++;
+      break;
+    case "cancelled":
+      counts.cancelled++;
+      break;
+    default:
+      counts.failed++;
+  }
+  failedOrSkipped?.add(name);
+}
+
+/**
+ * Run one test, or report its na/skip marker without running it, and return
+ * the events it produces.
+ *
+ * The context is the caller's to supply: a serial run passes the group's, a
+ * concurrent one passes each test a shallow copy, because `ctx.signal` is
+ * per-test and a shared object would hand every test the last one's
+ * AbortController.
+ */
+async function runOne(
+  group: TestGroup,
+  ctx: TestContext,
+  tc: TestCase,
+  options: RunGroupOptions | undefined,
+): Promise<TestOutcome> {
+  return marker(group, tc) ?? (await execute(group, ctx, tc, options));
+}
+
+/** The outcome a test carries instead of running — na or skip — or null. */
+function marker(group: TestGroup, tc: TestCase): TestOutcome | null {
+  if (tc.na) {
+    return { events: [resultEvent(group, tc, "na", 0, tc.na)], status: "na" };
+  }
+  if (tc.skip) {
+    const reason = typeof tc.skip === "string" ? tc.skip : undefined;
+    return {
+      events: [resultEvent(group, tc, "skip", 0, reason)],
+      status: "skip",
+    };
+  }
+  return null;
+}
+
+/** Run the test function and classify its outcome. */
+async function execute(
+  group: TestGroup,
+  ctx: TestContext,
+  tc: TestCase,
+  options: RunGroupOptions | undefined,
+): Promise<TestOutcome> {
+  // Per-test AbortController for cancellation support.
+  const ac = new AbortController();
+  const acKey = `${group.name}:${tc.name}`;
+  options?.abortControllers?.set(acKey, ac);
+  ctx.signal = ac.signal;
+
+  const startEvent: TestStartEvent = {
+    event: "test_start",
+    suite: group.suite,
+    service: group.service,
+    group: group.name,
+    test: tc.name,
+  };
+  const start = Date.now();
+  try {
+    await withTimeout(raceAbort(tc.fn(ctx), ac.signal), TEST_TIMEOUT_MS, tc.name);
+    return {
+      events: [startEvent, resultEvent(group, tc, "pass", Date.now() - start)],
+      status: "pass",
+    };
+  } catch (err) {
+    const duration_ms = Date.now() - start;
+    const error =
+      err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    const status: TestResultEvent["status"] = isAbortError(err)
+      ? "cancelled"
+      : isUnimplemented(err)
+        ? "unimplemented"
+        : "fail";
+    return {
+      events: [
+        startEvent,
+        resultEvent(
+          group,
+          tc,
+          status,
+          duration_ms,
+          status === "cancelled" ? "cancelled" : error,
+        ),
+      ],
+      status,
+    };
+  } finally {
+    options?.abortControllers?.delete(acKey);
+  }
+}
+
+/**
  * Run every test in a group, honouring skip/na markers, the dependency gate,
  * per-test timeouts and cancellation.
+ *
+ * A group marked `parallel` whose tests declare no dependencies runs them
+ * concurrently; everything else runs in declaration order. Both halves of that
+ * condition are load-bearing. The concurrent path cannot express the
+ * dependency gate — it would have to decide what to skip from outcomes that
+ * have not happened yet — so a group declaring one is run serially even where
+ * the registry says parallel. The IR never produces that combination (only a
+ * probe group is parallel, and a probe has no exports for a `depends` to
+ * consume), which is why this is a guard rather than a scheduler.
  */
 async function runTestsPhase(
   group: TestGroup,
@@ -404,149 +590,83 @@ async function runTestsPhase(
   options: RunGroupOptions | undefined,
   counts: GroupCounts,
 ): Promise<void> {
-  // Track which tests passed so we can cascade-skip dependents.
-  const passedTests = new Set<string>();
+  const hasDependencies = group.tests.some((tc) => (tc.depends?.length ?? 0) > 0);
+  if (group.parallel && !hasDependencies) {
+    await runTestsConcurrently(group, ctx, options, counts);
+    return;
+  }
+  await runTestsInOrder(group, ctx, options, counts);
+}
+
+/** The serial path: one test at a time, in declaration order, each event
+ *  emitted as it happens so the dashboard sees the group progress. */
+async function runTestsInOrder(
+  group: TestGroup,
+  ctx: TestContext,
+  options: RunGroupOptions | undefined,
+  counts: GroupCounts,
+): Promise<void> {
   const failedOrSkipped = new Set<string>();
 
   for (const tc of group.tests) {
-    if (tc.na) {
-      emitEvent({
-        event: "test_result",
-        suite: group.suite,
-        service: group.service,
-        group: group.name,
-        test: tc.name,
-        status: "na",
-        duration_ms: 0,
-        error: tc.na,
-        ...(tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {}),
-      });
-      continue;
-    }
-
-    if (tc.skip) {
-      const reason = typeof tc.skip === "string" ? tc.skip : undefined;
-      emitEvent({
-        event: "test_result",
-        suite: group.suite,
-        service: group.service,
-        group: group.name,
-        test: tc.name,
-        status: "skip",
-        duration_ms: 0,
-        ...(reason ? { error: reason } : {}),
-        ...(tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {}),
-      });
-      counts.skipped++;
-      failedOrSkipped.add(tc.name);
-      continue;
-    }
-
-    // Dependency gate — skip if any declared dependency failed or was skipped.
-    if (tc.depends && tc.depends.length > 0) {
-      const failedDeps = tc.depends.filter((d) => failedOrSkipped.has(d));
-      if (failedDeps.length > 0) {
-        emitEvent({
-          event: "test_result",
-          suite: group.suite,
-          service: group.service,
-          group: group.name,
-          test: tc.name,
-          status: "skip",
-          duration_ms: 0,
-          error: `dependency failed: ${failedDeps.join(", ")}`,
-          ...(tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {}),
-        });
-        counts.skipped++;
-        failedOrSkipped.add(tc.name);
-        continue;
-      }
-    }
-
-    // Create per-test AbortController for cancellation support.
-    const ac = new AbortController();
-    const acKey = `${group.name}:${tc.name}`;
-    options?.abortControllers?.set(acKey, ac);
-
-    ctx.signal = ac.signal;
-    const start = Date.now();
-    try {
-      emitEvent({
-        event: "test_start",
-        suite: group.suite,
-        service: group.service,
-        group: group.name,
-        test: tc.name,
-      });
-      await withTimeout(
-        raceAbort(tc.fn(ctx), ac.signal),
-        TEST_TIMEOUT_MS,
-        tc.name,
+    // An na/skip marker outranks the dependency gate: a test the suite never
+    // intended to run here reports why it was marked, not what happened to
+    // something it does not depend on.
+    let outcome = marker(group, tc);
+    if (outcome === null) {
+      // Dependency gate — skip if any declared dependency failed or was skipped.
+      const failedDeps = (tc.depends ?? []).filter((d) =>
+        failedOrSkipped.has(d),
       );
-      const duration_ms = Date.now() - start;
-      emitEvent({
-        event: "test_result",
-        suite: group.suite,
-        service: group.service,
-        group: group.name,
-        test: tc.name,
-        status: "pass",
-        duration_ms,
-        ...(tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {}),
-      });
-      counts.passed++;
-      passedTests.add(tc.name);
-    } catch (err) {
-      const duration_ms = Date.now() - start;
-      const error =
-        err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-      if (isAbortError(err)) {
-        emitEvent({
-          event: "test_result",
-          suite: group.suite,
-          service: group.service,
-          group: group.name,
-          test: tc.name,
-          status: "cancelled",
-          duration_ms,
-          error: "cancelled",
-          ...(tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {}),
-        });
-        counts.cancelled++;
-        failedOrSkipped.add(tc.name);
-      } else if (isUnimplemented(err)) {
-        emitEvent({
-          event: "test_result",
-          suite: group.suite,
-          service: group.service,
-          group: group.name,
-          test: tc.name,
-          status: "unimplemented",
-          duration_ms,
-          error,
-          ...(tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {}),
-        });
-        counts.unimplemented++;
-        failedOrSkipped.add(tc.name);
-      } else {
-        emitEvent({
-          event: "test_result",
-          suite: group.suite,
-          service: group.service,
-          group: group.name,
-          test: tc.name,
-          status: "fail",
-          duration_ms,
-          error,
-          ...(tc.op !== undefined ? { op: tc.op === false ? "" : tc.op } : {}),
-        });
-        counts.failed++;
-        failedOrSkipped.add(tc.name);
-      }
-    } finally {
-      options?.abortControllers?.delete(acKey);
+      outcome =
+        failedDeps.length > 0
+          ? {
+              events: [
+                resultEvent(
+                  group,
+                  tc,
+                  "skip",
+                  0,
+                  `dependency failed: ${failedDeps.join(", ")}`,
+                ),
+              ],
+              status: "skip",
+            }
+          : await execute(group, ctx, tc, options);
     }
+    record(outcome, tc.name, counts, failedOrSkipped);
+    for (const ev of outcome.events) emitEvent(ev);
   }
+}
+
+/**
+ * Run the group's tests through a bounded queue, then emit their events in
+ * declaration order.
+ *
+ * Emitting in order rather than as each settles is what keeps this stream
+ * identical to the serial path's, test for test. The dashboard, the baseline
+ * and the flake detector all read it, and a result order that depended on
+ * which SDK call answered first would be a new source of diff noise for no
+ * benefit.
+ *
+ * No dependency bookkeeping: this path is taken only when no test declares
+ * one, so the set a serial run maintains would be read by nobody. Each test
+ * gets its own shallow copy of the context, because `ctx.signal` is per-test.
+ */
+async function runTestsConcurrently(
+  group: TestGroup,
+  ctx: TestContext,
+  options: RunGroupOptions | undefined,
+  counts: GroupCounts,
+): Promise<void> {
+  const sem = new Semaphore(parallelSlots());
+  const outcomes = await Promise.all(
+    group.tests.map((tc) => sem.run(() => runOne(group, { ...ctx }, tc, options))),
+  );
+  outcomes.forEach((outcome, i) => {
+    record(outcome, group.tests[i]!.name, counts, null);
+    for (const ev of outcome.events) emitEvent(ev);
+  });
 }
 
 export async function runGroup(
@@ -620,13 +740,7 @@ export async function runSuite(
   });
 
   // Limit concurrent group execution to avoid overwhelming the emulator.
-  // OVERCAST_COMPAT_PARALLEL_SLOTS is injected by the Go runner based on
-  // CPU count and the number of active suites (default: 8).
-  const slots = Math.max(
-    1,
-    parseInt(process.env["OVERCAST_COMPAT_PARALLEL_SLOTS"] ?? "8", 10) || 8,
-  );
-  const sem = new Semaphore(slots);
+  const sem = new Semaphore(parallelSlots());
 
   // Run all groups through the semaphore; each gets its own context copy.
   const groupResults = await Promise.all(

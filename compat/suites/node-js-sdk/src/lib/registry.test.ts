@@ -512,6 +512,44 @@ describe("generated registry loading", () => {
   });
 });
 
+describe("generated group parallel scheduling", () => {
+  // `parallel` is what tells runGroup a probe group's tests may overlap
+  // (#1801). It has to reach the harness group, and only from a registry group
+  // that declares it — a group that says nothing keeps the serial behaviour
+  // every group had before the field existed.
+  const registry: Registry = {
+    version: 1,
+    groups: [
+      {
+        service: "sqs",
+        name: "sqs-gen-probe",
+        tests: [{ name: "ListQueues" }],
+        generated: true,
+        state: "candidate",
+        parallel: true,
+        suites: ["node-js-sdk"],
+      },
+      {
+        service: "sqs",
+        name: "sqs-gen-queue",
+        tests: [{ name: "CreateQueue" }],
+        generated: true,
+        state: "candidate",
+        suites: ["node-js-sdk"],
+      },
+    ],
+  };
+
+  it("carries parallel from the group that declares it, and from no other", () => {
+    const groups = buildGroupsFromRegistry(registry, {}, {
+      suite: "node-js-sdk",
+    });
+    const byName = new Map(groups.map((g) => [g.name, g]));
+    assert.equal(byName.get("sqs-gen-probe")?.parallel, true);
+    assert.equal(byName.get("sqs-gen-queue")?.parallel, false);
+  });
+});
+
 describe("generated group suites scoping", () => {
   const registryWithSuites = (suites: string[]): Registry => ({
     version: 1,

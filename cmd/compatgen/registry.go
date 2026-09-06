@@ -47,13 +47,17 @@ type generatedRegistry struct {
 }
 
 type generatedGroup struct {
-	Service   string          `json:"service"`
-	Name      string          `json:"name"`
-	Generated bool            `json:"generated"`
-	Scenario  string          `json:"scenario"`
-	State     string          `json:"state"`
-	Suites    []string        `json:"suites"`
-	Tests     []generatedTest `json:"tests"`
+	Service   string `json:"service"`
+	Name      string `json:"name"`
+	Generated bool   `json:"generated"`
+	Scenario  string `json:"scenario"`
+	State     string `json:"state"`
+	// Parallel mirrors the scenario group's own flag, so a loader decides how
+	// to schedule a group from the registry it already read rather than by
+	// opening the scenario file first. Only a probe group carries it.
+	Parallel bool            `json:"parallel,omitempty"`
+	Suites   []string        `json:"suites"`
+	Tests    []generatedTest `json:"tests"`
 }
 
 type generatedTest struct {
@@ -96,6 +100,7 @@ func buildRegistry(scenarios []*scenario, backends []string, promotions *compatm
 				Generated: true,
 				Scenario:  scenarioPath(s.Service),
 				State:     promotionStateOf(promotions, g.Name),
+				Parallel:  g.Parallel,
 				Suites:    suites,
 			}
 			for _, t := range g.Tests {

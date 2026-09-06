@@ -46,6 +46,10 @@
       "properties": {
         "name": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "description": "The registry group name: <service>-gen-<resource> or <service>-gen-probe." },
         "kind": { "type": "string", "enum": ["lifecycle", "probe"] },
+        "parallel": {
+          "type": "boolean",
+          "description": "The group's tests may run concurrently with one another, bounded by the interpreter's own parallel-slot count. Present and true on every probe group and on no lifecycle group: a probe has no setup, no teardown and no exports, so nothing orders its tests, while a lifecycle group's tests hand resources to one another through the context bag. An interpreter that ignores it still runs the group correctly, in order."
+        },
         "setup": {
           "type": "array",
           "items": { "$ref": "#/definitions/Call" },
