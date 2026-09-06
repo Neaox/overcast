@@ -8,7 +8,7 @@
       "name": "organizations-gen-organization",
       "generated": true,
       "scenario": "compat/model/scenarios/organizations.json",
-      "state": "candidate",
+      "state": "gated",
       "suites": [
         "cli",
         "dotnet-sdk",
@@ -29,7 +29,7 @@
       "name": "organizations-gen-ou",
       "generated": true,
       "scenario": "compat/model/scenarios/organizations.json",
-      "state": "candidate",
+      "state": "gated",
       "suites": [
         "cli",
         "dotnet-sdk",
@@ -92,7 +92,7 @@
       "name": "organizations-gen-policy",
       "generated": true,
       "scenario": "compat/model/scenarios/organizations.json",
-      "state": "candidate",
+      "state": "gated",
       "suites": [
         "cli",
         "dotnet-sdk",
@@ -155,7 +155,7 @@
       "name": "organizations-gen-probe",
       "generated": true,
       "scenario": "compat/model/scenarios/organizations.json",
-      "state": "candidate",
+      "state": "gated",
       "parallel": true,
       "suites": [
         "cli",
@@ -240,7 +240,7 @@
       "name": "organizations-gen-root",
       "generated": true,
       "scenario": "compat/model/scenarios/organizations.json",
-      "state": "candidate",
+      "state": "gated",
       "suites": [
         "cli",
         "dotnet-sdk",
@@ -261,7 +261,7 @@
       "name": "sqs-gen-batch",
       "generated": true,
       "scenario": "compat/model/scenarios/sqs.json",
-      "state": "candidate",
+      "state": "gated",
       "suites": [
         "cli",
         "dotnet-sdk",
@@ -301,7 +301,7 @@
       "name": "sqs-gen-message",
       "generated": true,
       "scenario": "compat/model/scenarios/sqs.json",
-      "state": "candidate",
+      "state": "gated",
       "suites": [
         "cli",
         "dotnet-sdk",
@@ -341,7 +341,7 @@
       "name": "sqs-gen-probe",
       "generated": true,
       "scenario": "compat/model/scenarios/sqs.json",
-      "state": "candidate",
+      "state": "gated",
       "parallel": true,
       "suites": [
         "cli",
@@ -363,7 +363,7 @@
       "name": "sqs-gen-queue",
       "generated": true,
       "scenario": "compat/model/scenarios/sqs.json",
-      "state": "candidate",
+      "state": "gated",
       "suites": [
         "cli",
         "dotnet-sdk",
