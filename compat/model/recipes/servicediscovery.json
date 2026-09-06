@@ -1,0 +1,218 @@
+{
+  "$comment": "AWS Cloud Map (servicediscovery) — the AWS JSON 1.1 member of Phase I4's pilot trio (docs/plans/inert-tier-rollout.md §8, G4 wave 1 of docs/plans/compat-coverage-modelgen.md §5). Overcast declares no capability row for it, so every operation here is Tier 0: each probe records `unimplemented` and each lifecycle group records `skip` on the 501 its create raises. Cloud Map's shape is a chain — a namespace holds services, a service holds instances — so the three lifecycles below `require` each other in that order, and every group creates the whole chain beneath it in setup. The namespace is an HTTP one throughout: a private DNS namespace needs a VPC and a public one needs a registrable domain, and neither is something a compat run owns, while an HTTP namespace needs nothing but a name and is the namespace type DiscoverInstances is designed around. The other thing that shapes the file is that Cloud Map is asynchronous where AWS's other JSON services are not: CreateHttpNamespace, DeleteNamespace, RegisterInstance, DeregisterInstance and UpdateService all answer with an OperationId rather than with the thing they made, and AWS documents polling GetOperation until its Status leaves PENDING. That is why every resource here declares `async`, and why the namespace's own id is read back through GetOperation's Targets map rather than out of a create response that does not carry it.",
+  "service": "servicediscovery",
+  "neverProbe": {
+    "CreateHttpNamespace": "Creates a namespace in the caller's account. Cloud Map allows a limited number per account and nothing in a probe group deletes what it makes.",
+    "CreatePrivateDnsNamespace": "Creates a namespace and, with it, a Route 53 private hosted zone attached to a VPC in the caller's account. The hosted zone is billed and outlives the run.",
+    "CreatePublicDnsNamespace": "Creates a namespace and a Route 53 **public** hosted zone, which is billed monthly and answers queries from the internet until somebody deletes it.",
+    "CreateService": "Creates a service inside a namespace and counts against the account's service quota; nothing here removes it.",
+    "DeleteNamespace": "Deletes a namespace, and with it the hosted zone Cloud Map created for it. A DNS namespace's zone is not recoverable, and the records under it stop resolving at once.",
+    "DeleteService": "Deletes a service. Every client resolving through it stops finding instances immediately.",
+    "DeleteServiceAttributes": "Removes attributes from a live service; the values it deletes are not recoverable.",
+    "DeregisterInstance": "Removes an instance from service discovery, so every client resolving that service stops being given it.",
+    "DiscoverInstancesRevision": "Not refused for danger — it reads and changes nothing — but for what it could assert. Its whole response is one revision counter, and a counter read for a namespace that does not exist says nothing true about the service. It is covered instead by DiscoverInstances on the service the run owns.",
+    "RegisterInstance": "Registers an instance into a live service, so clients resolving it are handed an endpoint the caller did not publish.",
+    "TagResource": "Tags a live namespace, service or instance, and nothing in a probe group removes what it adds.",
+    "UntagResource": "Removes tags from a live resource; the tags it deletes are not recoverable, and cost allocation is keyed on them.",
+    "UpdateHttpNamespace": "Replaces a namespace's description on someone else's namespace.",
+    "UpdateInstanceCustomHealthStatus": "Marks a live instance healthy or unhealthy, which is what decides whether clients are given it at all.",
+    "UpdatePrivateDnsNamespace": "Rewrites the SOA record of the private hosted zone behind a live namespace, changing how long every negative answer under it is cached.",
+    "UpdatePublicDnsNamespace": "The same rewrite against a public hosted zone, where the cached answers are the internet's.",
+    "UpdateService": "Replaces a live service's DNS and health-check configuration wholesale — AWS documents members left out of the change as reset to their defaults.",
+    "UpdateServiceAttributes": "Writes attributes onto a live service, overwriting whatever an owner had set under the same keys."
+  },
+  "resources": [
+    {
+      "$comment": "An HTTP namespace, which is the one namespace type that needs neither a VPC nor a domain. CreateHttpNamespace answers with an OperationId and not with the namespace, so the id comes back through GetOperation's Targets map — Targets is keyed by the OperationTargetType enum, so `$.Operation.Targets.NAMESPACE` is the namespace this create made. That is AWS's own documented way to follow an asynchronous Cloud Map call, and it makes GetOperation part of the create's verification rather than something the probe group has to guess at. The ARN comes off the read rather than a second derived call: nothing before the tag tests needs it, and the read runs first. `from` is absent from the mutation because UpdateHttpNamespace takes a Namespace change structure while the create takes a bare Description — the member paths do not line up, so the create sets the initial description itself and only the update's value is compared.",
+      "id": "namespace",
+      "create": {
+        "op": "CreateHttpNamespace",
+        "params": {
+          "Name": { "$name": "ns" },
+          "Description": "compat scenario namespace"
+        }
+      },
+      "exports": { "operationId": "$.OperationId" },
+      "derived": [
+        {
+          "export": "id",
+          "op": "GetOperation",
+          "params": { "OperationId": { "$ref": "namespace.operationId" } },
+          "path": "$.Operation.Targets.NAMESPACE"
+        }
+      ],
+      "binds": { "Id": "namespace.id", "ResourceARN": "namespace.arn" },
+      "read": {
+        "op": "GetNamespace",
+        "identityPath": "$.Namespace.Id",
+        "identity": "id",
+        "exports": { "arn": "$.Namespace.Arn" }
+      },
+      "list": {
+        "$comment": "ListNamespaces carries no @paginated items member, so itemsPath is derived from the output's sole top-level list instead. The listing is account-wide; membership is by the id the create allocated.",
+        "op": "ListNamespaces",
+        "identityPath": "$.Id",
+        "identity": "id"
+      },
+      "mutable": [
+        {
+          "op": "UpdateHttpNamespace",
+          "member": "Namespace.Description",
+          "to": "compat scenario namespace, updated",
+          "readPath": "$.Namespace.Description"
+        }
+      ],
+      "tags": {
+        "tag": { "op": "TagResource", "member": "Tags" },
+        "untag": { "op": "UntagResource", "member": "TagKeys" },
+        "list": { "op": "ListTagsForResource", "path": "$.Tags" }
+      },
+      "delete": { "op": "DeleteNamespace" },
+      "async": { "maxAttempts": 30, "delayMs": 2000 }
+    },
+    {
+      "$comment": "A service inside the namespace. Type HTTP matches the namespace: a DNS-typed service needs a DnsConfig whose records only mean something in a DNS namespace. Unlike the namespace, CreateService answers with the whole Service, so the id and the ARN come straight off the create. `async` is here for the update rather than the create: UpdateService answers with an OperationId, so the description a read-back compares is not guaranteed to be there on the first read. The service attributes are the authored trio — a write, a read of the value it wrote, and a delete that takes it away again — and ListOperations is scoped to this service's own id, which is the only filter that makes an operations listing say anything about the resource under test.",
+      "id": "service",
+      "requires": ["namespace"],
+      "create": {
+        "op": "CreateService",
+        "params": {
+          "Name": { "$name": "svc" },
+          "NamespaceId": { "$ref": "namespace.id" },
+          "Type": "HTTP",
+          "Description": "compat scenario service"
+        }
+      },
+      "exports": { "id": "$.Service.Id", "arn": "$.Service.Arn" },
+      "binds": { "Id": "service.id", "ServiceId": "service.id", "ResourceARN": "service.arn" },
+      "read": {
+        "op": "GetService",
+        "identityPath": "$.Service.Id",
+        "identity": "id"
+      },
+      "list": {
+        "op": "ListServices",
+        "identityPath": "$.Id",
+        "identity": "id"
+      },
+      "mutable": [
+        {
+          "op": "UpdateService",
+          "member": "Service.Description",
+          "to": "compat scenario service, updated",
+          "readPath": "$.Service.Description"
+        }
+      ],
+      "tags": {
+        "tag": { "op": "TagResource", "member": "Tags" },
+        "untag": { "op": "UntagResource", "member": "TagKeys" },
+        "list": { "op": "ListTagsForResource", "path": "$.Tags" }
+      },
+      "delete": { "op": "DeleteService" },
+      "async": { "maxAttempts": 15, "delayMs": 2000 },
+      "operations": [
+        {
+          "op": "UpdateServiceAttributes",
+          "params": { "Attributes": { "compat": "scenario" } },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": { "op": "GetServiceAttributes" },
+              "checks": { "$.ServiceAttributes.Attributes.compat": { "equals": "scenario" } }
+            }
+          ]
+        },
+        {
+          "$comment": "Its own test, after the write above, so the operation is exercised as a read rather than only as somebody else's read-back. ServiceArn rather than the attribute: it is the value the response carries that the run can compare against something it already knows.",
+          "op": "GetServiceAttributes",
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": { "$.ServiceAttributes.ServiceArn": { "equals": { "$ref": "service.arn" } } }
+            }
+          ]
+        },
+        {
+          "op": "DeleteServiceAttributes",
+          "params": { "Attributes": ["compat"] },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": { "op": "GetServiceAttributes" },
+              "checks": { "$.ServiceAttributes.Attributes.compat": { "missing": true } }
+            }
+          ]
+        },
+        {
+          "$comment": "Nothing is registered against this service, so a page rather than a populated page is what an honest assertion says.",
+          "op": "ListInstances",
+          "assert": [
+            { "kind": "responseField", "checks": { "$.Instances": { "isList": true } } }
+          ]
+        },
+        {
+          "$comment": "DiscoverInstances is the read an HTTP namespace exists for, and it addresses the service by name rather than by id — which is why it takes the two $name values the namespace and the service were created with rather than an export.",
+          "op": "DiscoverInstances",
+          "params": {
+            "NamespaceName": { "$name": "ns" },
+            "ServiceName": { "$name": "svc" }
+          },
+          "assert": [
+            { "kind": "responseField", "checks": { "$.Instances": { "isList": true } } }
+          ]
+        },
+        {
+          "$comment": "Filtered to this service's own id: an account-wide operations listing would say nothing about the resource under test, and the service's own update has put at least one operation into it.",
+          "op": "ListOperations",
+          "params": {
+            "Filters": [
+              {
+                "Name": "SERVICE_ID",
+                "Condition": "EQ",
+                "Values": [{ "$ref": "service.id" }]
+              }
+            ]
+          },
+          "assert": [
+            { "kind": "responseField", "checks": { "$.Operations": { "isList": true } } }
+          ]
+        }
+      ]
+    },
+    {
+      "$comment": "An instance registered into the service. RegisterInstance answers with an OperationId like the namespace create does, so the instance's own id is read back through GetInstance — filtered by the id the run chose, which is the $name it registered under. AWS_INSTANCE_IPV4 is the attribute an HTTP-namespace instance is discovered by, and 203.0.113.10 is from the TEST-NET-3 block RFC 5737 reserves for documentation, so it routes nowhere. notFound is written out rather than derived: GetInstance declares two not-found-shaped errors, InstanceNotFound and ServiceNotFound, and the one a deregistered instance raises is the first.",
+      "id": "instance",
+      "requires": ["service"],
+      "create": {
+        "op": "RegisterInstance",
+        "params": {
+          "InstanceId": { "$name": "i" },
+          "Attributes": { "AWS_INSTANCE_IPV4": "203.0.113.10" }
+        }
+      },
+      "exports": { "operationId": "$.OperationId" },
+      "derived": [
+        {
+          "export": "id",
+          "op": "GetInstance",
+          "params": { "InstanceId": { "$name": "i" } },
+          "path": "$.Instance.Id"
+        }
+      ],
+      "binds": { "InstanceId": "instance.id" },
+      "read": {
+        "op": "GetInstance",
+        "identityPath": "$.Instance.Id",
+        "identity": "id"
+      },
+      "list": {
+        "op": "ListInstances",
+        "identityPath": "$.Id",
+        "identity": "id"
+      },
+      "delete": { "op": "DeregisterInstance" },
+      "notFound": { "error": "InstanceNotFound" },
+      "async": { "maxAttempts": 30, "delayMs": 2000 }
+    }
+  ]
+}

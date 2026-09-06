@@ -731,6 +731,228 @@
       ]
     },
     {
+      "service": "servicediscovery",
+      "name": "servicediscovery-gen-instance",
+      "generated": true,
+      "scenario": "compat/model/scenarios/servicediscovery.json",
+      "state": "candidate",
+      "suites": [
+        "cli",
+        "dotnet-sdk",
+        "go-sdk",
+        "java-sdk",
+        "node-js-sdk",
+        "python-sdk",
+        "rust-sdk"
+      ],
+      "tests": [
+        {
+          "name": "RegisterInstance"
+        },
+        {
+          "name": "GetInstance",
+          "depends": [
+            "RegisterInstance"
+          ]
+        },
+        {
+          "name": "ListInstances",
+          "depends": [
+            "RegisterInstance"
+          ]
+        },
+        {
+          "name": "DeregisterInstance",
+          "depends": [
+            "RegisterInstance"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "servicediscovery",
+      "name": "servicediscovery-gen-namespace",
+      "generated": true,
+      "scenario": "compat/model/scenarios/servicediscovery.json",
+      "state": "candidate",
+      "suites": [
+        "cli",
+        "dotnet-sdk",
+        "go-sdk",
+        "java-sdk",
+        "node-js-sdk",
+        "python-sdk",
+        "rust-sdk"
+      ],
+      "tests": [
+        {
+          "name": "CreateHttpNamespace"
+        },
+        {
+          "name": "GetNamespace",
+          "depends": [
+            "CreateHttpNamespace"
+          ]
+        },
+        {
+          "name": "UpdateHttpNamespace",
+          "depends": [
+            "CreateHttpNamespace"
+          ]
+        },
+        {
+          "name": "TagResource",
+          "depends": [
+            "GetNamespace"
+          ]
+        },
+        {
+          "name": "ListTagsForResource",
+          "depends": [
+            "GetNamespace"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "depends": [
+            "GetNamespace"
+          ]
+        },
+        {
+          "name": "ListNamespaces",
+          "depends": [
+            "CreateHttpNamespace"
+          ]
+        },
+        {
+          "name": "DeleteNamespace",
+          "depends": [
+            "CreateHttpNamespace"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "servicediscovery",
+      "name": "servicediscovery-gen-probe",
+      "generated": true,
+      "scenario": "compat/model/scenarios/servicediscovery.json",
+      "state": "candidate",
+      "parallel": true,
+      "suites": [
+        "cli",
+        "dotnet-sdk",
+        "go-sdk",
+        "java-sdk",
+        "node-js-sdk",
+        "python-sdk",
+        "rust-sdk"
+      ],
+      "tests": [
+        {
+          "name": "GetInstancesHealthStatus"
+        },
+        {
+          "name": "GetOperation"
+        }
+      ]
+    },
+    {
+      "service": "servicediscovery",
+      "name": "servicediscovery-gen-service",
+      "generated": true,
+      "scenario": "compat/model/scenarios/servicediscovery.json",
+      "state": "candidate",
+      "suites": [
+        "cli",
+        "dotnet-sdk",
+        "go-sdk",
+        "java-sdk",
+        "node-js-sdk",
+        "python-sdk"
+      ],
+      "tests": [
+        {
+          "name": "CreateService"
+        },
+        {
+          "name": "GetService",
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "UpdateService",
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "TagResource",
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "ListTagsForResource",
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "UpdateServiceAttributes",
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "GetServiceAttributes",
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "DeleteServiceAttributes",
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "ListInstances",
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "DiscoverInstances"
+        },
+        {
+          "name": "ListOperations",
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "ListServices",
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "DeleteService",
+          "depends": [
+            "CreateService"
+          ]
+        }
+      ]
+    },
+    {
       "service": "sqs",
       "name": "sqs-gen-batch",
       "generated": true,
