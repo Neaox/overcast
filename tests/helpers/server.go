@@ -20,6 +20,7 @@ import (
 	"github.com/overcast-sh/overcast/internal/clock"
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/inithooks"
+	"github.com/overcast-sh/overcast/internal/lifecycle"
 	"github.com/overcast-sh/overcast/internal/router"
 	"github.com/overcast-sh/overcast/internal/state"
 )
@@ -37,7 +38,10 @@ type TestServer struct {
 	// Clock is the mock clock injected into all services on this server.
 	// It is only set when WithMockClock() is passed to NewTestServer;
 	// for real-clock servers it is nil.
-	// Use Clock.Add(d) to advance time without any real sleep.
+	//
+	// Clock.Add(d) advances time without any real sleep, but it does not wait
+	// for the transitions it fires — reach for ts.AdvanceClock(d) whenever the
+	// test reads back what one of them did.
 	Clock *clock.Mock
 
 	// shutdownOnce makes Shutdown and the registered t.Cleanup interchangeable:
@@ -121,7 +125,7 @@ type serverOptions struct {
 // Example — advancing time in a test:
 //
 //	srv := helpers.NewTestServer(t, helpers.WithMockClock())
-//	srv.Clock.Add(35 * time.Second) // instant — no real sleep
+//	srv.AdvanceClock(35 * time.Second) // instant, and waits for the transitions
 func NewTestServer(t *testing.T, opts ...Option) *TestServer {
 	if t == nil {
 		panic("helpers.NewTestServer: t must not be nil — a *testing.T is required for cleanup registration")
@@ -217,7 +221,39 @@ func NewTestServer(t *testing.T, opts ...Option) *TestServer {
 		ts.shutdownOnce.Do(func() { cleanup(ctx) })
 	})
 	t.Cleanup(srv.Close)
+	// Drop this clock's Schedulers from the settle registry once the server is
+	// gone, so a package that builds thousands of servers does not retain every
+	// Scheduler any of them made until the test binary exits.
+	if so.mock != nil {
+		t.Cleanup(func() { lifecycle.Forget(so.mock) })
+	}
 	return ts
+}
+
+// AdvanceClock advances the server's mock clock by d and returns only once
+// every lifecycle transition that came due has run to completion.
+//
+// Prefer it to srv.Clock.Add wherever the next line reads back what the
+// transition was supposed to do. Add does not wait for the callbacks it fires:
+// the mock runs each on a goroutine of its own and sleeps a single millisecond
+// before returning, so a test that advances and then calls DescribeX is racing
+// the transition — it wins on an idle machine and loses on a loaded CI runner,
+// where the failure reads as the transition being broken rather than as not
+// having happened yet. See tests/AGENTS.md § "Mock clocks — advancing time is
+// not the same as waiting for it".
+//
+// A zero d settles what is already due without moving time. It settles every
+// service on this server, not only the one under test, and it covers exactly
+// what lifecycle.Scheduler drives: work a service runs on a
+// goroutine of its own — the Docker-backed paths — is not scheduled through the
+// Scheduler and is not waited for here.
+//
+// Requires WithMockClock().
+func (ts *TestServer) AdvanceClock(d time.Duration) {
+	if ts.Clock == nil {
+		panic("helpers: AdvanceClock requires a server built with WithMockClock()")
+	}
+	lifecycle.AdvanceAndSettleAll(ts.Clock, d)
 }
 
 // Reset wipes all state on the server. Useful when a test wants to verify
