@@ -424,9 +424,14 @@ const (
 	// rangeIgnored is a Range header the server must answer as if it were
 	// absent: a range unit it does not understand (RFC 9110 §14.2 requires
 	// that one to be ignored) or a syntactically invalid byte-range-spec.
-	// AWS answers those with the whole object and a 200, verified against
-	// real S3 in https://github.com/localstack/localstack/issues/9076, where
-	// `bytes=1-0` and `bytes=15-1` both return the full body.
+	// AWS answers those with the whole object and a 200.
+	//
+	// Answering 200 to a Range nobody could satisfy reads as permissiveness,
+	// and floci and ministack both return 416 here, so this looks like the
+	// bug rather than the fix. It is not: confirmed against real S3 on
+	// 2026-09-06 — `bytes=abc`, `bytes=1-0`, `bytes=15-1` and `items=1-2`
+	// all return the full body. Transcript, and the command to re-run it, in
+	// docs/dev/compatibility/looks-like-a-bug.md.
 	rangeIgnored rangeOutcome = iota
 	// rangeSatisfiable is a valid range overlapping the object: a 206.
 	rangeSatisfiable
@@ -484,7 +489,8 @@ func applyObjectRange(w http.ResponseWriter, r *http.Request, obj *Object) (obje
 // byte-range-spec whose last-byte-pos precedes its first-byte-pos *invalid*,
 // and one whose first-byte-pos is past the end of the representation
 // *unsatisfiable*. Only the second is a 416 — an invalid one is ignored, and
-// the client gets the whole object.
+// the client gets the whole object. Real S3 agrees; see rangeIgnored above
+// and docs/dev/compatibility/looks-like-a-bug.md before making one stricter.
 func parseByteRange(header string, totalSize int64) (start, end int64, outcome rangeOutcome) {
 	header = strings.TrimSpace(header)
 	if !strings.HasPrefix(header, "bytes=") {
