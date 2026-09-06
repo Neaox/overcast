@@ -7,11 +7,10 @@
 > All three interpreters are on `main` (`python-sdk` #1787, `node-js-sdk` #1788,
 > `cli` #1790), and every §4.1 criterion and §4.2's criteria 1–3 are met in all
 > three suites. §4.2 criterion 5, the regeneration demonstration, is met as of
-> 2026-09-06 (#1818 then #1813). One thing remains before the pilot is done:
-> the first candidate → gated promotion (§4.2 criterion 4's second half — the
-> soak machinery landed with #1792/#1798 and now needs three agreeing nightly
-> runs). See the § 2 note dated 2026-09-06 for what has landed and what has
-> not.
+> 2026-09-06 (#1818 then #1813), and so is criterion 4's second half: the first
+> candidate → gated promotion happened by itself on 2026-09-06 (#1871, three
+> agreeing nightly runs) — **G2 is done, #1768 closed.** G4 has started,
+> tracked as #1883. See the § 2 notes dated 2026-09-06.
 > Proposed 2026-08-03. Owner: TBD.
 > Siblings written concurrently, and part of the same tier programme:
 > [inert-tier-rollout.md](./inert-tier-rollout.md) (Tier 1 implementation — the
@@ -264,16 +263,17 @@ at full operation depth (§3.9).
 > yet. Candidate groups gate nothing, which is why 56 generated tests × 3 suites
 > do not appear in the baseline.
 >
-> **Open, and the whole of G2's remainder.** Two things, in decreasing order
-> of what they gate:
+> **Both of G2's remaining items are done (2026-09-06).**
 >
-> - **The first candidate → gated promotion** (§4.2 criterion 4). The machinery
->   is merged and the ledger is empty because it now needs three agreeing
->   nightly runs, which could not start before the groups were on `main`.
->   Nothing to build; something to wait for.
-> - **#1801, running a probe group's tests in parallel within the group.** A
->   performance follow-up rather than a gate, and the one measured lever for
->   `cli` (§3.10).
+> - **The first candidate → gated promotion** (§4.2 criterion 4) happened by
+>   itself: the nightly `promote` job opened #1871 from three agreeing runs and
+>   it merged, gating all nine generated groups. The one thing it found was a
+>   test written to break at exactly this moment —
+>   `TestCheckedInGeneratedRegistryLeavesGatesUnchanged` pinned "every generated
+>   group is `candidate`" — and #1879 rewrote it to pin candidate-vs-gated
+>   behaviour, non-vacuously in either file state.
+> - **#1801, running a probe group's tests in parallel within the group**, landed
+>   as #1823 (cli's probe group 21 s → 5 s; per-group results identical).
 >
 > **#1813, the §4.2 criterion 5 regeneration demonstration, is done** — the OU
 > lifecycle recipe (#1818) and then the inert emulator half. Regeneration after
@@ -281,7 +281,7 @@ at full operation depth (§3.9).
 > tests went `skip`/`unimplemented` → `pass` in all three interpreters; the
 > §4.2 note dated 2026-09-06 carries the before/after table.
 >
-> #1768 tracks the rest.
+> #1768 closed 2026-09-06.
 
 > **G3 is done — 2026-09-06.** All four typed backends landed, one PR each
 > (plus two go-sdk follow-ups), all under #1820: `go-sdk` (#1830, then #1836
@@ -290,8 +290,8 @@ at full operation depth (§3.9).
 > produces results identical, test for test, to the three interpreters and to
 > each other: **39 `pass` / 23 `unimplemented` / 0 `fail` / 0 `skip`**, three
 > runs each. `compat/suites/registry.generated.json` is still the nine
-> pilot groups / 62 tests, all `candidate`, but every group's `suites` now
-> lists all seven backends: `cli, dotnet-sdk, go-sdk, java-sdk, node-js-sdk,
+> pilot groups / 62 tests (all `gated` since #1871, later the same day), and
+> every group's `suites` now lists all seven backends: `cli, dotnet-sdk, go-sdk, java-sdk, node-js-sdk,
 > python-sdk, rust-sdk`. `compat/model/gaps.json` is unchanged at 29 entries,
 > all `never-probe` — no emitter refused anything in the pilot corpus.
 >
@@ -1652,9 +1652,9 @@ original scope stays legible.
 | --- | --- | --- | --- | --- |
 | **G0** Foundations | **Done** — #1356, #1357, #1367, #1370, and the loader tail under #1393, all seven suite PRs merged and the issue closed. `suites` scoping was honoured for every group in four suites and for generated groups only in `java-sdk`, `dotnet-sdk` and `rust-sdk` until #1737 aligned the three and re-seeded their baseline shards — see the §2 note | Shard `compat/baseline.json` → `compat/baseline/<suite>.json` (+ size budget); `--shard i/n` and `--generated-registry-file` in `cmd/compat`; `registry.generated.schema.json`; all 8 loaders read the generated sibling and fall back to a scenario resolver hook; `candidate`/`gated` state honoured by both gates; `compat/AGENTS.md` amendment for generated `suites` scoping + the lint that bounds it | M | With an **empty** generated registry, every gate, report and dashboard behaves exactly as today; baseline shards aggregate byte-identically; the scoping lint rejects a hand-written group that adds `suites` |
 | **G1** Model layer | **Done** — `internal/awsmodel` #1359, shape snapshot via inert-tier I1 with `sqs` added in #1684, `cmd/compatgen` and `compat/model/` in #1709. The model-utilisation follow-ups (#1795, closed) then moved three derivations out of the recipes and into the generator — see the §2 note | Extract `internal/awsmodel` AST reader; `cmd/compatgen` skeleton; the pruned shape snapshot `models/aws/shapes/` + `shapes-sha256` (shared deliverable with [inert-tier-rollout.md](./inert-tier-rollout.md) Phase I1 — build once, whichever plan gets there first); IR + recipe JSON schemas; `--scaffold`, `--review-report`, `--explain`; `gaps.json` | M | `make compat-model-check` regenerates byte-identically offline; the sha gate catches a hand edit; the snapshot is within its size budget; scaffolding a service produces a recipe skeleton a human can complete |
-| **G2** Pilot | **Code complete**, tracked as **#1768**. All three interpreters are merged — `python-sdk` #1787, `node-js-sdk` #1788 (+ #1796), `cli` #1790 — and the seven pilot groups run in all three suites with zero failures, identical across three runs, inside the §4.3 budget; the §2 note has the tally. Every §4.1 criterion and §4.2's 1–3 are met. #1813, the §4.2 criterion 5 regeneration demonstration, is met (#1818 then #1813): regeneration changed no byte of the corpus and the generated OU tests started passing on their own, in all three interpreters. Open: the first candidate → gated promotion, whose machinery landed with #1792/#1798 and which needs three agreeing nightly runs. #1801 is a performance follow-up, not a gate | `python-sdk`, `node-js-sdk` and `cli` interpreters; `recipes/sqs.json` + `recipes/organizations.json`; the §4 acceptance criteria | L | Every §4.1 and §4.2 criterion met, including the regeneration demonstration in §4.2.5 |
+| **G2** Pilot | **Done**, tracked as **#1768** (closed 2026-09-06). All three interpreters are merged — `python-sdk` #1787, `node-js-sdk` #1788 (+ #1796), `cli` #1790 — and the seven pilot groups run in all three suites with zero failures, identical across three runs, inside the §4.3 budget; the §2 note has the tally. Every §4.1 criterion and §4.2's 1–3 are met. #1813, the §4.2 criterion 5 regeneration demonstration, is met (#1818 then #1813): regeneration changed no byte of the corpus and the generated OU tests started passing on their own, in all three interpreters. The first candidate → gated promotion (machinery #1792/#1798) happened on 2026-09-06 as #1871, gating all nine groups; #1879 made the gate test state-aware. #1801 landed as #1823 | `python-sdk`, `node-js-sdk` and `cli` interpreters; `recipes/sqs.json` + `recipes/organizations.json`; the §4 acceptance criteria | L | Every §4.1 and §4.2 criterion met, including the regeneration demonstration in §4.2.5 |
 | **G3** Typed backends | **Done**, tracked as **#1820**. All four typed backends landed, one PR each: `go-sdk` (#1830, plus #1836 for emit-time SDK type resolution and #1833 for the precedent notes), `java-sdk` (#1851), `dotnet-sdk` (#1848), `rust-sdk` (#1853). Every backend produces results identical, test for test, to the three interpreters and to each other — 39 `pass` / 23 `unimplemented` / 0 `fail` / 0 `skip`, three runs each — and every generated group's `suites` now lists all seven backends. §3.2's binding decision, measured rather than assumed: only `go-sdk` reads the vendored SDK at emit time; `java-sdk`, `dotnet-sdk` and `rust-sdk` derive types from the pinned model alone. G4 fleet rollout is unblocked; see the §2 note dated 2026-09-06 | Source emitters for `go-sdk`, then `java-sdk`, `dotnet-sdk`, `rust-sdk` (one suite per PR); member→field naming rules per language | L each | Generated source compiles in the suite's normal build; the pilot groups produce **identical** results to the interpreter suites; generated `suites` scoping widens automatically on regeneration |
-| **G4** Tier-1 fleet rollout | Not started | One service per PR, ordered by [inert-tier-rollout.md](./inert-tier-rollout.md) then [full-emulation-priority.md](./full-emulation-priority.md); capped probe groups for [services-never-emulated.md](./services-never-emulated.md) | L, parallelizable per service | Per service: recipe reviewed, no unexplained refusal in `gaps.json`, soak passed, CI wall-clock within budget, coverage metric moves |
+| **G4** Tier-1 fleet rollout | **Started**, tracked as **#1883** — wave 1 is the three services with committed snapshots (`batch`, `elastic-load-balancing`, `servicediscovery`; the inert tier's Phase I4 pilot trio), one stacked PR each, all Tier 0 today so every probe test lands `unimplemented` and every lifecycle group `skip` until the inert tier implements them (the #1818 → #1821 precedent). Known gap before any Query/REST-XML service is implemented: #1878 (rust-sdk XML → document) | One service per PR, ordered by [inert-tier-rollout.md](./inert-tier-rollout.md) then [full-emulation-priority.md](./full-emulation-priority.md); capped probe groups for [services-never-emulated.md](./services-never-emulated.md) | L, parallelizable per service | Per service: recipe reviewed, no unexplained refusal in `gaps.json`, soak passed, CI wall-clock within budget, coverage metric moves |
 | **G5** Steady state | Not started | Weekly model-refresh PR regenerates scenarios; coverage becomes the dashboard headline; `--slowest N` latency census | S | A model-refresh PR shows added/removed operations per service and cannot break the gate; coverage per service/tier is published |
 | **G6** Native-group migration (§3.11; overlaps G4/G5, starts any time after G3) | Not started | Port the existing 94 hand-written groups to authored IR scenarios, group by group: same registry names, one parallel soak cycle, results must match, then delete the per-language code. Exceptions file + lint for what stays native (streaming, presigned flows, the idiom suite). | L, parallelizable per group | Per group: soak-parity with the native predecessor, native code deleted, registry names unchanged; fleet-wide: rust/dotnet parity debt reaches zero via backends, the exceptions file is the only remaining native test code and every entry carries a reason |
 
