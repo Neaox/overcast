@@ -102,6 +102,8 @@ compat/suites/rust-sdk/
       json.rs      ← paths, canonical rendering, JSON equality
       errors.rs    ← the error surfaces this SDK has, and the matcher
       capture.rs   ← the interceptor that keeps the raw response body
+      xml.rs       ← the Query/REST XML body as a document, for the wires JSON
+                     parsing cannot read
       exec.rs      ← running a group, and the closed assertion set
       failure.rs   ← the six-field failure message
       tests.rs errorfixtures.rs      ← its unit tests
@@ -351,11 +353,45 @@ in `src/main.rs` exists to catch a build earlier.
 the assertions walk that. `aws-sdk-*` output types carry no `serde` derive at
 the pinned versions and Rust has no reflection, so the alternative would be a
 generated converter per modeled output shape — written from accessor signatures
-a Go program cannot read. The two AWS JSON protocols in scope serialize modeled
-member names verbatim, so a path resolves against exactly the names the scenario
-file spells. The SDK still deserializes on its own path, so a response it cannot
+a Go program cannot read. The two AWS JSON protocols serialize modeled member
+names verbatim, so a path resolves against exactly the names the scenario file
+spells. The SDK still deserializes on its own path, so a response it cannot
 parse still fails the call. A REST protocol, which binds members to headers and
 to the status line, would need more than this.
+
+**An AWS Query or REST XML body goes through `src/scenario/xml.rs` first**
+(#1878). Parsing XML as JSON yields `null`, so before that every response
+assertion against a Query service failed while the other seven suites passed —
+invisible only because every such service was Tier 0 and answered 501. The
+conversion drops the root element, unwraps the `<Op>Response`/`<Op>Result`
+envelope and its `ResponseMetadata`, flattens `<member>` lists (a list of one
+included — the rule is by name, not by count), folds `<entry><key>/<value>`
+maps to objects, and makes a repeated element name a list in document order.
+An element sent with no content is `[]`, because the wire does not say whether
+it is an empty string or an empty list and only `[]` satisfies both `isList`
+and `nonEmpty`'s emptiness. Which conversion runs is decided by the body's own
+first non-space byte, not by a protocol the emitter would have to carry into
+the runtime: no JSON body begins with `<`.
+
+Three consequences to hold on to:
+
+- **Scalars stay text, and `equals` reads the literal's spelling.** The wire has
+  no types and this crate has no model at run time. A document therefore records
+  which wire it came off (`capture::Wire`) and `json::equal` compares an
+  XML-derived scalar against the literal — so `equals: 30` holds against
+  `<Interval>30</Interval>`, as it does in every model-backed backend, while a
+  JSON document keeps the IR's strict rule that `"30"` is not `30`. Do not
+  "simplify" that into a global coercion; the two are different wires.
+- **A context value exported from an XML response is a string.** Nothing in the
+  corpus exports a numeric member from a Query service, and if one ever does,
+  `Binder::i32` will refuse the string rather than send a wrong number. Fix it
+  there, deliberately, rather than by typing the document from how its text
+  happens to look — ELB's own `ProxyProtocol` policy attribute is a modeled
+  string whose value is `"true"`.
+- **The conventions implemented are `awsQuery`'s.** REST XML's wrapper lists and
+  `ec2Query`'s `<item>` are not; `xml.rs`'s
+  `a_rest_xml_wrapper_is_not_flattened` pins that, and the first scenario over
+  either protocol is what should change it.
 
 ---
 
