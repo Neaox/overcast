@@ -546,6 +546,21 @@ func errNoSuchKey(key string) *protocol.AWSError {
 	}
 }
 
+// errInvalidRange is S3's answer to a valid but unsatisfiable Range header.
+// Per AWS's S3 error list
+// (https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html) the
+// code is InvalidRange with HTTP 416. AWS's document also carries
+// RangeRequested and ActualObjectSize members, which the shared
+// protocol.WriteXMLError envelope does not model; the Content-Range: bytes
+// */<size> sent alongside it carries the object's size to the caller.
+func errInvalidRange() *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidRange",
+		Message:    "The requested range is not satisfiable",
+		HTTPStatus: http.StatusRequestedRangeNotSatisfiable,
+	}
+}
+
 func errBucketAlreadyExists(name string) *protocol.AWSError {
 	return &protocol.AWSError{
 		Code:       "BucketAlreadyOwnedByYou",

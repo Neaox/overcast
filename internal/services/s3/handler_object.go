@@ -241,36 +241,7 @@ func (h *Handler) GetObject(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 
-	w.Header().Set("Content-Type", obj.ContentType)
-	w.Header().Set("Content-Length", strconv.FormatInt(obj.ContentLength, 10))
-	w.Header().Set("ETag", obj.ETag)
-	w.Header().Set("Last-Modified", obj.LastModified.UTC().Format(http.TimeFormat))
-	w.Header().Set("x-amz-request-id", protocol.RequestIDFromContext(r.Context()))
-	setVersionIDHeader(w, obj)
-	writeObjectStorageClass(w, obj)
-	h.setExpirationHeader(r.Context(), w, obj)
-
-	// Restore stored response headers.
-	if obj.ContentDisposition != "" {
-		w.Header().Set("Content-Disposition", obj.ContentDisposition)
-	}
-	if obj.ContentEncoding != "" {
-		w.Header().Set("Content-Encoding", obj.ContentEncoding)
-	}
-	if obj.ContentLanguage != "" {
-		w.Header().Set("Content-Language", obj.ContentLanguage)
-	}
-	if obj.CacheControl != "" {
-		w.Header().Set("Cache-Control", obj.CacheControl)
-	}
-	if obj.Expires != "" {
-		w.Header().Set("Expires", obj.Expires)
-	}
-
-	// Restore user metadata headers.
-	for k, v := range obj.Metadata {
-		w.Header().Set("x-amz-meta-"+k, v)
-	}
+	h.writeObjectReadHeaders(w, r, obj)
 
 	// ETag conditional requests (RFC 7232).
 	// If-Match: return 412 if ETags don't match.
@@ -288,31 +259,61 @@ func (h *Handler) GetObject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Handle Range request (RFC 7233 / AWS S3 spec).
-	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
-		start, end, ok := parseByteRange(rangeHeader, obj.ContentLength)
-		if !ok {
-			w.Header().Set("Content-Range", "bytes */"+strconv.FormatInt(obj.ContentLength, 10))
-			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
-			return
-		}
-		rangeLen := end - start + 1
-		if _, err := f.Seek(start, io.SeekStart); err != nil {
+	rng, ok := applyObjectRange(w, r, obj)
+	if !ok {
+		return
+	}
+	if rng.partial {
+		if _, err := f.Seek(rng.start, io.SeekStart); err != nil {
 			protocol.WriteXMLError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 			return
 		}
-		w.Header().Set("Content-Range", "bytes "+
-			strconv.FormatInt(start, 10)+"-"+
-			strconv.FormatInt(end, 10)+"/"+
-			strconv.FormatInt(obj.ContentLength, 10))
-		w.Header().Set("Content-Length", strconv.FormatInt(rangeLen, 10))
 		w.WriteHeader(http.StatusPartialContent)
-		_, _ = io.Copy(w, io.LimitReader(f, rangeLen))
+		_, _ = io.Copy(w, io.LimitReader(f, rng.length()))
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(w, f)
+}
+
+// writeObjectReadHeaders writes the headers every successful object read
+// carries, so GetObject and HeadObject cannot answer the same object
+// differently. RFC 9110 §9.3.2 says a HEAD response's header fields SHOULD be
+// the ones a GET would have sent, and AWS honours that; HeadObject kept its own
+// copy of this list and the copy was missing the x-amz-meta-* loop, so
+// head_object read back no user metadata at all (#1704).
+func (h *Handler) writeObjectReadHeaders(w http.ResponseWriter, r *http.Request, obj *Object) {
+	w.Header().Set("Content-Type", obj.ContentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(obj.ContentLength, 10))
+	w.Header().Set("ETag", obj.ETag)
+	w.Header().Set("Last-Modified", obj.LastModified.UTC().Format(http.TimeFormat))
+	w.Header().Set("x-amz-request-id", protocol.RequestIDFromContext(r.Context()))
+	setVersionIDHeader(w, obj)
+	writeObjectStorageClass(w, obj)
+	h.setExpirationHeader(r.Context(), w, obj)
+
+	// Response headers the write supplied, each omitted when it did not.
+	setIfNotEmpty(w, "Content-Disposition", obj.ContentDisposition)
+	setIfNotEmpty(w, "Content-Encoding", obj.ContentEncoding)
+	setIfNotEmpty(w, "Content-Language", obj.ContentLanguage)
+	setIfNotEmpty(w, "Cache-Control", obj.CacheControl)
+	setIfNotEmpty(w, "Expires", obj.Expires)
+
+	// User metadata. Keys are stored lower-cased, as AWS stores them, and
+	// Header.Set canonicalises the name on the way out — both ends are
+	// case-insensitive, and every SDK lower-cases them again on the way in.
+	for name, value := range obj.Metadata {
+		w.Header().Set("x-amz-meta-"+name, value)
+	}
+}
+
+// setIfNotEmpty sets a response header only when the object recorded a value
+// for it — AWS sends no header at all otherwise.
+func setIfNotEmpty(w http.ResponseWriter, header, value string) {
+	if value != "" {
+		w.Header().Set(header, value)
+	}
 }
 
 // readObjectMeta is the read-side counterpart to getObjectMeta that checks the
@@ -403,56 +404,144 @@ func (h *Handler) resolveVersion(ctx context.Context, bucket, key, versionID str
 	return obj, nil
 }
 
-// parseByteRange parses a "Range: bytes=X-Y" header value and returns the
-// resolved (start, end) byte positions (both inclusive) relative to a body of
-// totalSize bytes.  Returns (0, 0, false) for any unsatisfiable range.
-func parseByteRange(header string, totalSize int64) (start, end int64, ok bool) {
+// objectRange is a Range header resolved against one object's body.
+type objectRange struct {
+	// partial is true when the answer must be a 206 covering start..end.
+	partial    bool
+	start, end int64 // inclusive, meaningful only when partial
+}
+
+// length is the number of bytes the range covers.
+func (rng objectRange) length() int64 { return rng.end - rng.start + 1 }
+
+// rangeOutcome classifies a Range header against an object's size. The three
+// answers are three different responses; collapsing rangeIgnored into
+// rangeUnsatisfiable, as a single "not ok" did, is what made a Range S3 cannot
+// parse a 416 instead of the whole object.
+type rangeOutcome int
+
+const (
+	// rangeIgnored is a Range header the server must answer as if it were
+	// absent: a range unit it does not understand (RFC 9110 §14.2 requires
+	// that one to be ignored) or a syntactically invalid byte-range-spec.
+	// AWS answers those with the whole object and a 200, verified against
+	// real S3 in https://github.com/localstack/localstack/issues/9076, where
+	// `bytes=1-0` and `bytes=15-1` both return the full body.
+	rangeIgnored rangeOutcome = iota
+	// rangeSatisfiable is a valid range overlapping the object: a 206.
+	rangeSatisfiable
+	// rangeUnsatisfiable is a valid range that covers none of the object,
+	// which RFC 9110 §15.5.17 answers with 416 and S3 spells InvalidRange.
+	rangeUnsatisfiable
+)
+
+// applyObjectRange resolves the request's Range header against obj, writes the
+// framing headers the answer needs, and reports whether the caller should carry
+// on producing a response.
+//
+// It reports false having already written the whole response for an
+// unsatisfiable range. That answer goes through protocol.WriteXMLError, which
+// is the fix for #1705 twice over: the caller gets the InvalidRange document an
+// SDK can raise a modelled error from, and the Content-Length follows from the
+// bytes actually written rather than announcing the object's length and then
+// sending nothing — a mismatch that leaves the connection desynchronised for
+// whatever request reuses it next. The Content-Range: bytes */<size> that RFC
+// 9110 §15.5.17 requires on a 416 is set first, so it survives onto the error
+// response.
+func applyObjectRange(w http.ResponseWriter, r *http.Request, obj *Object) (objectRange, bool) {
+	header := r.Header.Get("Range")
+	if header == "" {
+		return objectRange{}, true
+	}
+
+	start, end, outcome := parseByteRange(header, obj.ContentLength)
+	if outcome == rangeIgnored {
+		return objectRange{}, true
+	}
+	if outcome == rangeUnsatisfiable {
+		w.Header().Set("Content-Range", "bytes */"+strconv.FormatInt(obj.ContentLength, 10))
+		protocol.WriteXMLError(w, r, errInvalidRange())
+		return objectRange{}, false
+	}
+
+	rng := objectRange{partial: true, start: start, end: end}
+	w.Header().Set("Content-Range", "bytes "+
+		strconv.FormatInt(start, 10)+"-"+
+		strconv.FormatInt(end, 10)+"/"+
+		strconv.FormatInt(obj.ContentLength, 10))
+	w.Header().Set("Content-Length", strconv.FormatInt(rng.length(), 10))
+	return rng, true
+}
+
+// parseByteRange parses a "Range: bytes=X-Y" header value against a body of
+// totalSize bytes. When the outcome is rangeSatisfiable it returns the resolved
+// (start, end) byte positions, both inclusive; the positions are meaningless
+// otherwise.
+//
+// The distinction the outcome carries is RFC 9110's: §14.1.1 calls a
+// byte-range-spec whose last-byte-pos precedes its first-byte-pos *invalid*,
+// and one whose first-byte-pos is past the end of the representation
+// *unsatisfiable*. Only the second is a 416 — an invalid one is ignored, and
+// the client gets the whole object.
+func parseByteRange(header string, totalSize int64) (start, end int64, outcome rangeOutcome) {
 	header = strings.TrimSpace(header)
 	if !strings.HasPrefix(header, "bytes=") {
-		return 0, 0, false
+		return 0, 0, rangeIgnored
 	}
 	spec := strings.TrimPrefix(header, "bytes=")
-	// Only the first range specifier is handled (no multi-range).
-	first := strings.SplitN(spec, ",", 2)[0]
-	first = strings.TrimSpace(first)
+	// Only the first range specifier is handled: AWS does not support
+	// retrieving multiple ranges of data per GET request.
+	first := strings.TrimSpace(strings.SplitN(spec, ",", 2)[0])
 	dashIdx := strings.Index(first, "-")
 	if dashIdx < 0 {
-		return 0, 0, false
+		return 0, 0, rangeIgnored
 	}
-	lhs := first[:dashIdx]
-	rhs := first[dashIdx+1:]
+	lhs, rhs := first[:dashIdx], first[dashIdx+1:]
 
 	switch {
 	case lhs == "" && rhs != "":
-		// bytes=-N  →  last N bytes
+		// bytes=-N  →  the last N bytes.
 		n, err := strconv.ParseInt(rhs, 10, 64)
-		if err != nil || n <= 0 {
-			return 0, 0, false
+		if err != nil || n < 0 {
+			return 0, 0, rangeIgnored
+		}
+		if n == 0 || totalSize == 0 {
+			// Zero bytes asked for, or an empty object: nothing to overlap.
+			return 0, 0, rangeUnsatisfiable
 		}
 		if n > totalSize {
+			// A suffix longer than the object is the whole object, not an
+			// error (RFC 9110 §14.1.1).
 			n = totalSize
 		}
-		return totalSize - n, totalSize - 1, true
+		return totalSize - n, totalSize - 1, rangeSatisfiable
 	case lhs != "" && rhs == "":
-		// bytes=N-  →  from N to end
+		// bytes=N-  →  from N to the end.
 		s, err := strconv.ParseInt(lhs, 10, 64)
-		if err != nil || s < 0 || s >= totalSize {
-			return 0, 0, false
+		if err != nil || s < 0 {
+			return 0, 0, rangeIgnored
 		}
-		return s, totalSize - 1, true
-	default:
-		s, err1 := strconv.ParseInt(lhs, 10, 64)
-		e, err2 := strconv.ParseInt(rhs, 10, 64)
-		if err1 != nil || err2 != nil {
-			return 0, 0, false
+		if s >= totalSize {
+			return 0, 0, rangeUnsatisfiable
 		}
-		if s < 0 || e < s || s >= totalSize {
-			return 0, 0, false
+		return s, totalSize - 1, rangeSatisfiable
+	case lhs != "" && rhs != "":
+		s, startErr := strconv.ParseInt(lhs, 10, 64)
+		e, endErr := strconv.ParseInt(rhs, 10, 64)
+		if startErr != nil || endErr != nil || s < 0 || e < s {
+			return 0, 0, rangeIgnored
+		}
+		if s >= totalSize {
+			return 0, 0, rangeUnsatisfiable
 		}
 		if e >= totalSize {
+			// A range starting inside the object truncates to its end.
 			e = totalSize - 1
 		}
-		return s, e, true
+		return s, e, rangeSatisfiable
+	default:
+		// A bare "bytes=-" names neither a position nor a suffix length.
+		return 0, 0, rangeIgnored
 	}
 }
 
@@ -489,28 +578,18 @@ func (h *Handler) HeadObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", obj.ContentType)
-	w.Header().Set("Content-Length", strconv.FormatInt(obj.ContentLength, 10))
-	w.Header().Set("ETag", obj.ETag)
-	w.Header().Set("Last-Modified", obj.LastModified.UTC().Format(http.TimeFormat))
-	w.Header().Set("x-amz-request-id", protocol.RequestIDFromContext(r.Context()))
-	setVersionIDHeader(w, obj)
-	writeObjectStorageClass(w, obj)
-	h.setExpirationHeader(r.Context(), w, obj)
-	if obj.ContentDisposition != "" {
-		w.Header().Set("Content-Disposition", obj.ContentDisposition)
+	h.writeObjectReadHeaders(w, r, obj)
+
+	// HeadObject accepts Range too, and answers it with the same status and
+	// framing GetObject does — only the body is left out, which net/http does
+	// for every HEAD response.
+	rng, ok := applyObjectRange(w, r, obj)
+	if !ok {
+		return
 	}
-	if obj.ContentEncoding != "" {
-		w.Header().Set("Content-Encoding", obj.ContentEncoding)
-	}
-	if obj.ContentLanguage != "" {
-		w.Header().Set("Content-Language", obj.ContentLanguage)
-	}
-	if obj.CacheControl != "" {
-		w.Header().Set("Cache-Control", obj.CacheControl)
-	}
-	if obj.Expires != "" {
-		w.Header().Set("Expires", obj.Expires)
+	if rng.partial {
+		w.WriteHeader(http.StatusPartialContent)
+		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
