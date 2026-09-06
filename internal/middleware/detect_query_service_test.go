@@ -67,7 +67,7 @@ func TestDetectService_labelsQueryProtocolByItsAction(t *testing.T) {
 
 // The failure this test exists for: a body the caller never read. detectService
 // takes the body variadically, so every call site that omits it silently loses
-// step 3b and falls through to s3 — and the compiler cannot say so.
+// step 3 and falls through to s3 — and the compiler cannot say so.
 func TestDetectService_withoutTheBodyCannotClassifyQuery(t *testing.T) {
 	r, _ := queryRequest("Action=GetQueueUrl&Version=2012-11-05&QueueName=q")
 

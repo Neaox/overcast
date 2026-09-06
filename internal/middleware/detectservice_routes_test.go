@@ -26,7 +26,7 @@ import (
 //
 // Unsigned is the case under test because it is the only one the prefix switch
 // decides. A request carrying a SigV4 credential scope is classified from that
-// scope at step 3 for everything the switch does not claim, which is why most
+// scope at step 3b for everything the switch does not claim, which is why most
 // of the entries below read "s3" without anything being broken — see the
 // per-group notes. Asserting the signed case as well would mostly assert that
 // serviceFromAuthCredential echoes its input.

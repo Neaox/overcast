@@ -1448,7 +1448,7 @@ func targetDispatch(dispatchers []TargetDispatcher, queryDispatchers []QueryDisp
 			// Version is a stricter discriminator than action name — it avoids
 			// action name collisions between services (e.g. both SES and
 			// CloudFormation implement "GetTemplate").
-			if qd, ok := queryOwner(queryDispatchers, version, action); ok {
+			if qd, ok := queryOwner(operationRegistry, queryDispatchers, version, action); ok {
 				qd.DispatchQuery(w, r)
 				return
 			}
@@ -1641,7 +1641,7 @@ func queryGetMiddleware(queryDispatchers *[]QueryDispatcher, operationRegistry *
 			}
 			action := r.FormValue("Action")
 			version := r.FormValue("Version")
-			if qd, ok := queryOwner(*queryDispatchers, version, action); ok {
+			if qd, ok := queryOwner(operationRegistry, *queryDispatchers, version, action); ok {
 				qd.DispatchQuery(w, r)
 				return
 			}
@@ -1911,18 +1911,66 @@ func writeScopeMismatch(w http.ResponseWriter, r *http.Request, claim awsapi.Cla
 
 // queryOwner returns the dispatcher that explicitly owns an AWS Query request.
 // API version wins over action name because actions can be shared by services.
-func queryOwner(dispatchers []QueryDispatcher, version, action string) (QueryDispatcher, bool) {
+//
+// The second pass matches on the action name alone, and AWS reuses names freely
+// across services. Elastic Load Balancing Classic (2012-06-01) and ELBv2
+// (2015-12-01) share the whole vocabulary a load balancer needs —
+// DescribeTags, DescribeLoadBalancers, CreateLoadBalancer,
+// DescribeLoadBalancerAttributes — and Overcast implements only v2, so every
+// Classic call fell into the action pass and was answered by ELBv2's handler:
+// a 200 in the 2015-12-01 namespace, or a 400 naming an ELBv2 member the
+// Classic caller never sent (#1884). Neither is an answer to the question that
+// was asked, and both hide the 501 an unimplemented service owes it.
+//
+// So the models decide first. queryVersionService resolves (Version, Action) to
+// exactly one service, which is the same fact each QueryVersionOwner states
+// about itself, read from the one place both can share.
+//
+// The guard only ever withdraws a claim, never grants one. Where the models can
+// attribute nothing — no Version at all, a version they do not carry, or a pair
+// several modeled services declare — it names no service and the action pass
+// decides exactly as it did before.
+func queryOwner(operationRegistry *awsapi.Registry, dispatchers []QueryDispatcher, version, action string) (QueryDispatcher, bool) {
 	for _, qd := range dispatchers {
 		if owner, ok := qd.(QueryVersionOwner); ok && owner.OwnsVersion(version) {
 			return qd, true
 		}
 	}
+	modeled := queryVersionService(operationRegistry, version, action)
 	for _, qd := range dispatchers {
-		if owner, ok := qd.(QueryActionOwner); ok && owner.OwnsAction(action) {
-			return qd, true
+		owner, ok := qd.(QueryActionOwner)
+		if !ok || !owner.OwnsAction(action) {
+			continue
 		}
+		if modeled != "" && !dispatcherIsService(qd, modeled) {
+			continue
+		}
+		return qd, true
 	}
 	return nil, false
+}
+
+// queryVersionService names the Overcast service the pinned models attribute an
+// AWS Query (Version, Action) pair to, or "" when they cannot attribute it —
+// which Claim.Service already spells as the empty string for a pair that
+// several modeled services declare.
+func queryVersionService(operationRegistry *awsapi.Registry, version, action string) string {
+	claim, ok := operationRegistry.ClaimQuery(version, action)
+	if !ok {
+		return ""
+	}
+	return claim.Service
+}
+
+// dispatcherIsService reports whether a Query dispatcher is the named service.
+// A dispatcher that does not name itself gets the benefit of the doubt, because
+// this answer is only ever used to take a claim away.
+func dispatcherIsService(qd QueryDispatcher, service string) bool {
+	named, ok := qd.(Service)
+	if !ok {
+		return true
+	}
+	return named.Name() == service
 }
 
 // v2APIsDispatch returns a handler that dispatches /v2/apis requests to either

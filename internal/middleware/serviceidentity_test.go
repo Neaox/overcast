@@ -44,7 +44,7 @@ func signedTargetRequest(signingName, target string) *http.Request {
 
 // TestDetectServiceMapsSigningNameToServiceKey covers the classification half.
 //
-// detectService's step 3 reads the credential scope, which carries the SigV4
+// detectService's step 3b reads the credential scope, which carries the SigV4
 // signing name, and returned it unchanged. For most services that is harmless
 // because the two names are equal, but where they differ the answer was a name
 // nothing downstream knows: the generated registry is keyed by Overcast's key,
@@ -75,9 +75,11 @@ func TestDetectServiceMapsSigningNameToServiceKey(t *testing.T) {
 		{"appregistry applications", "servicecatalog", http.MethodGet, "/applications", "appregistry", "appregistry"},
 		{"appregistry attribute groups", "servicecatalog", http.MethodGet, "/attribute-groups", "servicecatalog", "appregistry"},
 
-		// Query-protocol services. Step 3 runs ahead of step 3b's Action
-		// lookup, so the credential scope decides these and the signing name
-		// is the only name in the request.
+		// Query-protocol services, addressed with no body here, so step 3's
+		// Action/Version lookup has nothing to read and the credential scope
+		// decides them at step 3b. A Query request that *does* carry a body is
+		// decided by its API version — see
+		// TestSharedSigningNameIsSeparatedByTheQueryAPIVersion.
 		{"cloudwatch", "monitoring", http.MethodPost, "/", "monitoring", "cloudwatch"},
 		{"elbv2", "elasticloadbalancing", http.MethodPost, "/", "elasticloadbalancing", "elbv2"},
 

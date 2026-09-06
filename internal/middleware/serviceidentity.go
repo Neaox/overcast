@@ -54,7 +54,7 @@ package middleware
 //     "apigateway" would authorize it as one.
 //
 // In each case the broader service is the right answer for a scope that reaches
-// step 3, so the identity default already gives it.
+// step 3b, so the identity default already gives it.
 func serviceKeyForSigningName(signingName string) string {
 	switch signingName {
 	case "kafka":
@@ -72,6 +72,14 @@ func serviceKeyForSigningName(signingName string) string {
 	case "monitoring":
 		return "cloudwatch"
 	case "elasticloadbalancing":
+		// ELBv2. ELB *Classic* signs with the same name, so this arm can only
+		// name one of the two — and the scope was never what separates them.
+		// Both are AWS Query on POST "/", where the API version names the
+		// service exactly (2012-06-01 Classic, 2015-12-01 v2), so
+		// detectService reads that first and reaches this arm only for a
+		// request carrying no version at all. ELBv2 is the right answer there:
+		// it is the ELB service Overcast serves, and it is what such a request
+		// reached before the version was consulted. See #1884.
 		return "elbv2"
 	case "states":
 		return "stepfunctions"
@@ -115,6 +123,14 @@ func iamActionPrefix(serviceKey string) string {
 	case "opensearch":
 		return "es"
 	case "elbv2":
+		return "elasticloadbalancing"
+	case "elastic-load-balancing":
+		// ELB Classic, which detectService now names for a 2012-06-01 Query
+		// request. AWS authorizes both ELB services under the one prefix, so
+		// this key and "elbv2" deliberately answer with the same string; the
+		// key is the model's identity for a service Overcast does not
+		// implement, and without this arm a Classic call would be authorized
+		// against a prefix no policy can name.
 		return "elasticloadbalancing"
 	case "stepfunctions":
 		return "states"
