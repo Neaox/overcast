@@ -7,6 +7,7 @@ import io.overcast.compat.harness.TestGroup;
 import io.overcast.compat.harness.Runner;
 import io.overcast.compat.harness.InteractiveRunner;
 import io.overcast.compat.registry.Registry;
+import io.overcast.compat.registry.ScenarioBackend;
 
 import java.util.*;
 
@@ -53,11 +54,44 @@ public final class Main {
         Map<String, TestFn> setups    = new LinkedHashMap<>();
         Map<String, TestFn> teardowns = new LinkedHashMap<>();
 
-        for (ServiceGroup sg : serviceGroups(clients)) {
-            implSources.add(new Registry.ImplSource(sg.sourceName(), sg.impls()));
-            setups.putAll(sg.setups());
-            teardowns.putAll(sg.teardowns());
+        try {
+            for (ServiceGroup sg : serviceGroups(clients)) {
+                implSources.add(new Registry.ImplSource(sg.sourceName(), sg.impls()));
+                mergeHooks(setups, sg.setups(), "setup", sg.sourceName());
+                mergeHooks(teardowns, sg.teardowns(), "teardown", sg.sourceName());
+            }
+        } catch (IllegalStateException e) {
+            System.err.println(e.getMessage());
+            System.exit(1);
+            return;
         }
+
+        // The generated groups resolve through the ScenarioBackend hook rather
+        // than through the impl map, which is the loader's designed extension
+        // point for them. Their setup and teardown hooks are ordinary entries in
+        // the two maps below — the hook resolves tests only — and cannot collide
+        // with a hand-written group's, whose names never contain "-gen-".
+        List<ServiceGroup> generated = ScenariosGen.all(clients);
+        Map<String, TestFn> generatedImpls;
+        try {
+            generatedImpls = generatedImpls(generated);
+        } catch (IllegalStateException e) {
+            System.err.println(e.getMessage());
+            System.exit(1);
+            return;
+        }
+        try {
+            for (ServiceGroup sg : generated) {
+                mergeHooks(setups, sg.setups(), "setup", sg.sourceName());
+                mergeHooks(teardowns, sg.teardowns(), "teardown", sg.sourceName());
+            }
+        } catch (IllegalStateException e) {
+            System.err.println(e.getMessage());
+            System.exit(1);
+            return;
+        }
+        ScenarioBackend backend = (group, test) ->
+                generatedImpls.get(Registry.qualifiedKey(group.name(), test.name()));
 
         Map<String, TestFn> impls;
         try {
@@ -80,7 +114,7 @@ public final class Main {
         // ── Load registry and build groups ─────────────────────────────────────
         List<TestGroup> allGroups;
         try {
-            allGroups = Registry.buildGroups(SUITE, impls, setups, teardowns, capabilities);
+            allGroups = Registry.buildGroups(SUITE, impls, setups, teardowns, capabilities, backend);
         } catch (IllegalStateException e) {
             // Unusable impl registrations — see Registry#validateImpls. Aborting
             // is the point: binding a test to another group's implementation
@@ -118,7 +152,7 @@ public final class Main {
                                 .toList();
                         return tests.isEmpty() ? null
                                 : new TestGroup(g.suite(), g.service(), g.name(), tests,
-                                                g.setup(), g.teardown());
+                                                g.setup(), g.teardown(), g.parallel());
                     })
                     .filter(Objects::nonNull)
                     .toList();
@@ -169,6 +203,48 @@ public final class Main {
                 new ShieldGroup(clients),
                 new ElastiCacheGroup(clients),
                 new EfsGroup(clients));
+    }
+
+    /**
+     * Flattens the generated service groups' impl maps, refusing a key two of
+     * them both register.
+     *
+     * <p>{@code Registry.validateImpls} does not see these — the backend resolves
+     * them lazily, by group and test — so the duplicate check is the one guard
+     * they get, and it is the same one {@code mergeImpls} gives the hand-written
+     * half.
+     *
+     * @throws IllegalStateException if any key is registered more than once.
+     */
+    static Map<String, TestFn> generatedImpls(List<ServiceGroup> generated) {
+        List<Registry.ImplSource> sources = new ArrayList<>();
+        for (ServiceGroup sg : generated) {
+            sources.add(new Registry.ImplSource(sg.sourceName(), sg.impls()));
+        }
+        return Registry.mergeImpls(sources, SUITE);
+    }
+
+    /**
+     * Merges one service group's setup or teardown hooks into the suite's map,
+     * refusing a group name two of them both register.
+     *
+     * <p>{@code putAll} would keep the last registration silently, and the
+     * group whose hook was dropped would run without its setup — reporting a
+     * cascade of failures naming its tests rather than the collision that
+     * caused them. {@link Registry#mergeImpls} already refuses the same thing
+     * for test implementations; these two maps are what it does not see.
+     *
+     * @throws IllegalStateException if {@code group} is already registered.
+     */
+    static void mergeHooks(Map<String, TestFn> into, Map<String, TestFn> from,
+                           String phase, String source) {
+        from.forEach((group, fn) -> {
+            if (into.putIfAbsent(group, fn) != null) {
+                throw new IllegalStateException(String.format(
+                        "[%s] duplicate %s registration for group \"%s\" (%s); one of them would never run",
+                        SUITE, phase, group, source));
+            }
+        });
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────

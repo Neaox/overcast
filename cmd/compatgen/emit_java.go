@@ -1,0 +1,1033 @@
+//go:build dev
+
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+// The java-sdk source emitter — docs/plans/compat-coverage-modelgen.md §3.2 D1,
+// phase G3.
+//
+// The three interpreters execute the scenario IR at run time. The AWS SDK for
+// Java v2 has no public dynamic-dispatch API, and the plan rejects reaching
+// into its marshaller layer to fake one: the whole value of running eight
+// suites is that each exercises its own real typed serialization path. So this
+// file emits Java source — one method per scenario test, each building a real
+// typed `<Op>Request` and calling a real client method — which the java-sdk
+// suite's ordinary `mvn package` compiles.
+//
+// What is emitted is the *data* plus the typed calls. Semantics — the context
+// bag, value expressions, the closed check set, error matching, `eventually`,
+// the six-field failure message — live once in the suite's hand-written
+// io.overcast.compat.scenario package and are never re-emitted.
+//
+// # The naming table
+//
+// Everything this emitter knows about spelling Java is in the javaName*
+// functions below, and `-explain -lang java` (explain_typed.go) renders through
+// the same javaRequestLines, so the pseudo-code a reader reproduces a failure
+// with is the source the emitter wrote. The table is:
+//
+//	service   → software.amazon.awssdk.services.<lower(serviceName)>
+//	client    → <serviceName>Client
+//	operation → <Op>Request.builder()…build() and client.<unCapitalize(Op)>(request)
+//	member    → .<unCapitalize(Member)>(value)
+//	value     → the member's own modeled type, spelled by emit_java_spell.go
+//
+// where serviceName is the SDK id run through the AWS SDK for Java v2 code
+// generator's own pascalCase — see javaServiceName.
+//
+// # Why the model is the authority, and the SDK is not read
+//
+// The plan's typed-backend binding decision (§3.2) says a typed backend
+// resolves its SDK's field types at emit time wherever the SDK's nullability is
+// not derivable from the model. For Java it is: every scalar is boxed, so a
+// builder setter takes the value whatever the member's optionality, and a boxed
+// zero is serialized rather than dropped. The suite measures both facts on the
+// wire (JavaSdkWireFactsTest) rather than asserting them from the plan.
+//
+// One thing the model cannot answer is whether the *pinned* SDK has the
+// operation at all — the snapshot is generated from a newer revision of the AWS
+// model than any released SDK. That axis is answered by the compiler: an
+// operation the pinned SDK does not declare is a `mvn package` failure naming
+// the class, not a wrong request, and the fix is the version pin in
+// compat/suites/java-sdk/pom.xml. It is the same evidence the Go backend's
+// suite build gives, arriving at the same point in the pipeline.
+
+// javaSuiteDir is where the emitted files live, repository-relative.
+const javaSuiteDir = "compat/suites/java-sdk/src/main/java/io/overcast/compat/groups"
+
+// javaEmitReason is the refusal a member the emitter cannot express produces.
+// Unlike most reasons in gaps.json it does not mean "no test": the operation is
+// generated and the interpreters run it. It means this backend cannot compile
+// it, so the whole group is scoped away from java-sdk in the generated registry
+// — a suite that cannot execute a group must not be listed as able to.
+const javaEmitReason = "java-emit-unsupported"
+
+// javaEmission is one service's emitted source plus what it could not express.
+type javaEmission struct {
+	// Path is the emitted file, repository-relative.
+	Path string
+	// Contents is the Java source.
+	Contents []byte
+	// Refused names the groups this backend cannot execute, and Gaps says why.
+	Refused map[string]bool
+	Gaps    []gap
+}
+
+// emitJava renders one service's generated groups as Java source for the
+// java-sdk suite.
+func emitJava(gen *generation) (*javaEmission, error) {
+	s := gen.scenario
+	e := &javaEmission{
+		Path:    javaSuiteDir + "/" + javaFileName(s.Service),
+		Refused: map[string]bool{},
+	}
+
+	groups := make([]group, 0, len(s.Groups))
+	for _, g := range s.Groups {
+		if refusals := javaRefusals(gen, g); len(refusals) > 0 {
+			e.Refused[g.Name] = true
+			e.Gaps = append(e.Gaps, refusals...)
+			continue
+		}
+		groups = append(groups, g)
+	}
+
+	if err := javaMethodNamesAreUnique(s.Service, groups); err != nil {
+		return nil, err
+	}
+
+	// The body is written first so the import block can name exactly what it
+	// turned out to need: which model classes a service reaches for depends on
+	// the member types its calls touch, and an unused import is noise in a file
+	// that is reviewed as a diff.
+	sp := newJavaSpeller(gen.model, s.Client.SDKID)
+	class := javaNameClass(s.Service)
+	body := &javaWriter{}
+	if err := javaWriteBody(body, gen, sp, class, groups); err != nil {
+		return nil, err
+	}
+
+	w := &javaWriter{}
+	w.linef("// Code generated by cmd/compatgen; DO NOT EDIT.")
+	w.linef("")
+	w.linef("package io.overcast.compat.groups;")
+	w.linef("")
+	for _, path := range javaImports(sp, groups) {
+		w.linef("import %s;", path)
+	}
+	w.linef("")
+	w.lines = append(w.lines, body.lines...)
+	e.Contents = []byte(w.String())
+	sortGaps(e.Gaps)
+	return e, nil
+}
+
+// javaImports is the emitted file's import block, sorted. Java has no import
+// formatter the generator runs, so the order is produced rather than corrected;
+// one sorted block keeps the diff stable.
+func javaImports(sp *javaSpeller, groups []group) []string {
+	sdkID := sp.sdkID
+	paths := []string{
+		"io.overcast.compat.clients.AwsClients",
+		"io.overcast.compat.harness.TestContext",
+		"io.overcast.compat.harness.TestFn",
+		"io.overcast.compat.scenario.Call",
+		"io.overcast.compat.scenario.Clause",
+		"io.overcast.compat.scenario.Group",
+		javaNameClientClassPath(sdkID),
+		"java.util.List",
+		"java.util.Map",
+	}
+	if javaUsesCheck(groups) {
+		paths = append(paths, "io.overcast.compat.scenario.Check")
+	}
+	if javaUsesErrorSpec(groups) {
+		paths = append(paths, "io.overcast.compat.scenario.ErrorSpec")
+	}
+	if javaUsesWhere(groups) {
+		paths = append(paths, "io.overcast.compat.scenario.Where")
+	}
+	if javaUsesValues(groups) {
+		paths = append(paths, "io.overcast.compat.scenario.Values")
+	}
+	modelPackage := javaNameModelPackage(sdkID)
+	for _, g := range groups {
+		for _, c := range callsOf(g) {
+			paths = append(paths, modelPackage+"."+javaNameRequest(c.Op))
+		}
+	}
+	for _, name := range sp.modelImports() {
+		paths = append(paths, modelPackage+"."+name)
+	}
+	sort.Strings(paths)
+	return dedupeStrings(paths)
+}
+
+func javaWriteBody(w *javaWriter, gen *generation, sp *javaSpeller, class string, groups []group) error {
+	s := gen.scenario
+	file := scenarioPath(s.Service)
+
+	w.linef("/**")
+	w.linef(" * The generated %s groups.", s.Service)
+	w.linef(" *")
+	w.linef(" * <p>Generated from %s by cmd/compatgen. The semantics live in", file)
+	w.linef(" * {@code io.overcast.compat.scenario}; this file is the data and the typed SDK")
+	w.linef(" * calls.")
+	w.linef(" */")
+	w.linef("public final class %s implements ServiceGroup {", class)
+	w.linef("")
+	for _, g := range groups {
+		w.linef("    private static final Group %s =", javaNameGroupConst(g.Name))
+		w.linef("            new Group(%s, %s);", javaQuote(g.Name), javaQuote(file))
+	}
+	w.linef("")
+	w.linef("    private final AwsClients clients;")
+	w.linef("    private volatile %s client;", javaNameClientClass(s.Client.SDKID))
+	w.linef("")
+	w.linef("    public %s(AwsClients clients) {", class)
+	w.linef("        this.clients = clients;")
+	w.linef("    }")
+	w.linef("")
+	w.linef("    @Override")
+	w.linef("    public String sourceName() {")
+	w.linef("        return %s;", javaQuote("scenarios/"+s.Service))
+	w.linef("    }")
+	w.linef("")
+	w.linef("    @Override")
+	w.linef("    public Map<String, TestFn> impls() {")
+	w.linef("        return Map.ofEntries(")
+	var entries []string
+	for _, g := range groups {
+		for _, t := range g.Tests {
+			entries = append(entries, fmt.Sprintf("Map.entry(%s, this::%s)",
+				javaQuote(g.Name+":"+t.Name), javaNameTestMethod(g.Name, t.Name)))
+		}
+	}
+	javaWriteJoined(w, "                ", entries, ");")
+	w.linef("    }")
+	w.linef("")
+	w.linef("    @Override")
+	w.linef("    public Map<String, TestFn> setups() {")
+	w.linef("        return Map.ofEntries(")
+	entries = entries[:0]
+	for _, g := range groups {
+		entries = append(entries, fmt.Sprintf("Map.entry(%s, this::%s)",
+			javaQuote(g.Name), javaNameSetupMethod(g.Name)))
+	}
+	javaWriteJoined(w, "                ", entries, ");")
+	w.linef("    }")
+	w.linef("")
+	w.linef("    @Override")
+	w.linef("    public Map<String, TestFn> teardowns() {")
+	w.linef("        return Map.ofEntries(")
+	entries = entries[:0]
+	for _, g := range groups {
+		entries = append(entries, fmt.Sprintf("Map.entry(%s, this::%s)",
+			javaQuote(g.Name), javaNameTeardownMethod(g.Name)))
+	}
+	javaWriteJoined(w, "                ", entries, ");")
+	w.linef("    }")
+	w.linef("")
+	w.linef("    /**")
+	w.linef("     * This service's client, built once from the endpoint, region and credentials")
+	w.linef("     * the suite's hand-written groups share. A generated group configures its own")
+	w.linef("     * rather than adding an accessor to AwsClients for every service the generator")
+	w.linef("     * learns to cover; nothing else about the client differs.")
+	w.linef("     */")
+	w.linef("    private %s cl() {", javaNameClientClass(s.Client.SDKID))
+	w.linef("        if (client == null) {")
+	w.linef("            synchronized (this) {")
+	w.linef("                if (client == null) {")
+	w.linef("                    client = clients.configure(%s.builder()).build();", javaNameClientClass(s.Client.SDKID))
+	w.linef("                }")
+	w.linef("            }")
+	w.linef("        }")
+	w.linef("        return client;")
+	w.linef("    }")
+
+	for _, g := range groups {
+		if err := javaWriteGroup(w, sp, g); err != nil {
+			return err
+		}
+	}
+	w.linef("}")
+	return nil
+}
+
+// javaWriteJoined writes a comma-separated argument list one entry per line, so
+// a generated file reads in a diff.
+func javaWriteJoined(w *javaWriter, indent string, entries []string, closing string) {
+	for i, entry := range entries {
+		suffix := ","
+		if i == len(entries)-1 {
+			suffix = ")" + strings.TrimPrefix(closing, ")")
+		}
+		w.linef("%s%s%s", indent, entry, suffix)
+	}
+	if len(entries) == 0 {
+		w.linef("%s%s", indent, closing)
+	}
+}
+
+// javaWriteGroup emits one group: its setup and teardown hooks — registered
+// even when empty, because an empty phase is a no-op and not a missing one —
+// and one method per test.
+func javaWriteGroup(w *javaWriter, sp *javaSpeller, g group) error {
+	w.linef("")
+	w.linef("    private void %s(TestContext t) {", javaNameSetupMethod(g.Name))
+	if err := javaWriteHookBody(w, sp, g, "runSetup", g.Setup); err != nil {
+		return err
+	}
+	w.linef("    }")
+
+	w.linef("")
+	w.linef("    private void %s(TestContext t) {", javaNameTeardownMethod(g.Name))
+	if err := javaWriteHookBody(w, sp, g, "runTeardown", g.Teardown); err != nil {
+		return err
+	}
+	w.linef("    }")
+
+	for _, t := range g.Tests {
+		w.linef("")
+		w.linef("    private void %s(TestContext t) {", javaNameTestMethod(g.Name, t.Name))
+		w.linef("        %s.runTest(t, %s,", javaNameGroupConst(g.Name), javaQuote(t.Name))
+		if err := javaWriteCall(w, sp, t.Call, "                ", ","); err != nil {
+			return err
+		}
+		w.linef("                List.of(")
+		for i, a := range t.Assert {
+			suffix := ","
+			if i == len(t.Assert)-1 {
+				suffix = ""
+			}
+			if err := javaWriteClause(w, sp, a, "                        ", suffix); err != nil {
+				return err
+			}
+		}
+		w.linef("                ));")
+		w.linef("    }")
+	}
+	return nil
+}
+
+func javaWriteHookBody(w *javaWriter, sp *javaSpeller, g group, method string, calls []call) error {
+	if len(calls) == 0 {
+		w.linef("        // No %s steps: an empty phase is a no-op, not a missing one.",
+			strings.ToLower(strings.TrimPrefix(method, "run")))
+		w.linef("        %s.%s(t);", javaNameGroupConst(g.Name), method)
+		return nil
+	}
+	w.linef("        %s.%s(t,", javaNameGroupConst(g.Name), method)
+	for i, c := range calls {
+		suffix := ","
+		if i == len(calls)-1 {
+			suffix = ");"
+		}
+		if err := javaWriteCall(w, sp, c, "                ", suffix); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// javaWriteCall emits one scenario Call: the operation, the params as the
+// scenario file writes them, the typed request build, the client method and the
+// exports. suffix is whatever terminates the call in the position it sits in —
+// a comma inside an argument list, or the parenthesis and semicolon that close
+// a statement.
+func javaWriteCall(w *javaWriter, sp *javaSpeller, c call, indent, suffix string) error {
+	lines, err := javaRequestLines(sp, c.Op, c.Params)
+	if err != nil {
+		return err
+	}
+	raw, err := javaRawParams(c.Params)
+	if err != nil {
+		return err
+	}
+	w.linef("%snew Call(%s, %s,", indent, javaQuote(c.Op), javaQuote(raw))
+	w.linef("%s        b -> %s", indent, lines[0])
+	for i, line := range lines[1:] {
+		end := ""
+		if i == len(lines)-2 {
+			end = ","
+		}
+		w.linef("%s                %s%s", indent, line, end)
+	}
+	w.linef("%s        r -> %s)", indent, javaNameClientCall(c.Op))
+	exports := sortedStringKeys(c.Export)
+	for i, path := range exports {
+		end := ""
+		if i == len(exports)-1 {
+			end = suffix
+		}
+		w.linef("%s        .export(%s, %s)%s", indent, javaQuote(path), javaQuote(c.Export[path]), end)
+	}
+	if len(exports) == 0 {
+		w.lines[len(w.lines)-1] += suffix
+	}
+	return nil
+}
+
+// javaWriteClause emits one assertion clause through the factories in
+// io.overcast.compat.scenario, which are the same closed set ir.go builds.
+func javaWriteClause(w *javaWriter, sp *javaSpeller, a assertion, indent, suffix string) error {
+	switch a.Kind {
+	case assertResponseField:
+		w.linef("%sClause.responseField(", indent)
+		javaWriteChecks(w, a.Checks, indent+"        ")
+		w.linef("%s)%s", indent, suffix)
+	case assertReadback:
+		w.linef("%sClause.readback(", indent)
+		if err := javaWriteCall(w, sp, *a.Call, indent+"        ", ","); err != nil {
+			return err
+		}
+		javaWriteChecks(w, a.Checks, indent+"        ")
+		w.linef("%s)%s", indent, suffix)
+	case assertListContains, assertAbsent:
+		if a.Kind == assertAbsent && a.Error != nil {
+			w.linef("%sClause.absentByError(", indent)
+			if err := javaWriteCall(w, sp, *a.Call, indent+"        ", ","); err != nil {
+				return err
+			}
+			w.linef("%s        ErrorSpec.of(%s, %s))%s", indent, javaQuote(a.Error.Shape), javaQuote(a.Error.Code), suffix)
+			return nil
+		}
+		name := "listContains"
+		if a.Kind == assertAbsent {
+			name = "absentFromList"
+		}
+		w.linef("%sClause.%s(", indent, name)
+		if a.Call == nil {
+			w.linef("%s        null,", indent)
+		} else if err := javaWriteCall(w, sp, *a.Call, indent+"        ", ","); err != nil {
+			return err
+		}
+		// The closing parenthesis is written unconditionally, on a line of its
+		// own as goWriteClause does. Hanging it off the last Where — which is
+		// how this read until a clause carrying none was constructed — leaves
+		// the call unterminated when the where list is empty.
+		wheres := sortedValueKeys(a.Where)
+		w.linef("%s        %s%s", indent, javaQuote(a.ItemsPath), javaComma(len(wheres) > 0))
+		for i, path := range wheres {
+			value, err := javaValue(a.Where[path])
+			if err != nil {
+				return err
+			}
+			w.linef("%s        Where.of(%s, %s)%s", indent, javaQuote(path), value, javaComma(i < len(wheres)-1))
+		}
+		w.linef("%s)%s", indent, suffix)
+	case assertErrorCode:
+		w.linef("%sClause.errorCode(ErrorSpec.of(%s, %s))%s", indent, javaQuote(a.Error.Shape), javaQuote(a.Error.Code), suffix)
+	case assertEventually:
+		w.linef("%sClause.eventually(%d, %d,", indent, a.MaxAttempts, a.DelayMs)
+		if err := javaWriteClause(w, sp, *a.Assert, indent+"        ", ")"+suffix); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("cannot emit assertion kind %q", a.Kind)
+	}
+	return nil
+}
+
+// javaWriteChecks emits a clause's checks in path order, so a failure message is
+// the same on every run and in every backend.
+func javaWriteChecks(w *javaWriter, checks map[string]check, indent string) {
+	paths := sortedCheckPaths(checks)
+	for i, path := range paths {
+		suffix := ","
+		if i == len(paths)-1 {
+			suffix = ""
+		}
+		w.linef("%s%s%s", indent, javaCheck(path, checks[path]), suffix)
+	}
+}
+
+func javaCheck(path string, c check) string {
+	switch {
+	case c.NonEmpty:
+		return fmt.Sprintf("Check.nonEmpty(%s)", javaQuote(path))
+	case c.IsList:
+		return fmt.Sprintf("Check.isList(%s)", javaQuote(path))
+	case c.Missing:
+		return fmt.Sprintf("Check.missing(%s)", javaQuote(path))
+	case c.Matches != "":
+		return fmt.Sprintf("Check.matches(%s, %s)", javaQuote(path), javaQuote(c.Matches))
+	default:
+		value, err := javaValue(c.Equals)
+		if err != nil {
+			// Unreachable: javaValue is total over the IR's value grammar, and
+			// validateAssertion has already rejected anything else.
+			value = fmt.Sprintf("%#v", c.Equals)
+		}
+		return fmt.Sprintf("Check.equalTo(%s, %s)", javaQuote(path), value)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The naming table — shared with -explain -lang java (explain_typed.go)
+// ---------------------------------------------------------------------------
+
+// javaPascal is the AWS SDK for Java v2 code generator's own pascalCase: split
+// the name on word boundaries, lower-case each part and capitalize its first
+// letter. SQS → Sqs, DynamoDB → DynamoDb, WAFV2 → Wafv2,
+// ListAWSServiceAccessForOrganization → ListAwsServiceAccessForOrganization,
+// AWSOrganizationsNotInUse → AwsOrganizationsNotInUse.
+//
+// It names three things in the SDK — the service, an operation's request class,
+// and every enum and structure class — and it is *not* how a method or a setter
+// is named, which is javaUnCapitalize over the raw name. The two disagree
+// exactly where an acronym is involved, which is why both are here rather than
+// one being derived from the other: Organizations really does declare
+// `listAWSServiceAccessForOrganization(ListAwsServiceAccessForOrganizationRequest)`.
+func javaPascal(name string) string {
+	var out strings.Builder
+	for _, part := range javaSplitOnWordBoundaries(name) {
+		if part == "" {
+			continue
+		}
+		lower := strings.ToLower(part)
+		out.WriteString(strings.ToUpper(lower[:1]) + lower[1:])
+	}
+	return out.String()
+}
+
+// javaServiceName is the SDK's own name for a service, which the client class
+// and the package are named after.
+//
+// compat/model/README.md § Naming records the derivations known to break;
+// neither pilot service is one, and the override table belongs here when a
+// scenario names one.
+func javaServiceName(sdkID string) string { return javaPascal(sdkID) }
+
+// javaSplitOnWordBoundaries reproduces the AWS SDK for Java v2 code generator's
+// splitter, which is what makes DynamoDB into DynamoDb and leaves Wafv2 alone.
+// The rules, in order: every non-alphanumeric run is a separator; a version
+// suffix behind an acronym splits off; a lower→upper transition *followed by
+// another letter* is a boundary; an acronym run followed by a capitalized word
+// is a boundary; and a digit followed by a letter is a boundary.
+func javaSplitOnWordBoundaries(s string) []string {
+	result := javaNonAlnum.ReplaceAllString(s, " ")
+	result = javaLowerAcronymVersion.ReplaceAllString(result, "$1 v$2 ")
+	result = javaUpperAcronymVersion.ReplaceAllString(result, "$1 V$2 ")
+	result = javaSplitCamelBoundaries(result)
+	result = javaAcronymBoundary.ReplaceAllString(result, "$1 $2")
+	result = javaDigitBoundary.ReplaceAllString(result, "$1 $2")
+	return strings.Fields(result)
+}
+
+// javaSplitCamelBoundaries is the SDK splitter's camel-case rule, which it
+// spells `([a-z])([A-Z][a-zA-Z])` — a lower→upper transition is a boundary only
+// where a letter follows the capital.
+//
+// It is hand-rolled because RE2 has no lookahead and the third character is
+// what a Go replacement would consume, which changes where the *next* match can
+// start. The trailing letter is load-bearing rather than incidental: the SDK
+// reads a trailing single capital as part of the word before it, so `FooB` is
+// one word (`Foob`) and not two (`FooB`), and a class name spelled the second
+// way does not exist to import.
+//
+// The scan consumes three characters per match, which is what a non-overlapping
+// ReplaceAll does, so `aBcDe` splits once (`a BcDe`) rather than twice.
+func javaSplitCamelBoundaries(s string) string {
+	r := []rune(s)
+	var out strings.Builder
+	for i := 0; i < len(r); {
+		if i+2 < len(r) && isLowerRune(r[i]) && isUpperRune(r[i+1]) && isLetterRune(r[i+2]) {
+			out.WriteRune(r[i])
+			out.WriteRune(' ')
+			out.WriteRune(r[i+1])
+			out.WriteRune(r[i+2])
+			i += 3
+			continue
+		}
+		out.WriteRune(r[i])
+		i++
+	}
+	return out.String()
+}
+
+// javaNamePackage is the Java package for a service's client.
+func javaNamePackage(sdkID string) string {
+	return "software.amazon.awssdk.services." + strings.ToLower(javaServiceName(sdkID))
+}
+
+// javaNameModelPackage is where the SDK puts a service's request, enum and
+// structure classes.
+func javaNameModelPackage(sdkID string) string { return javaNamePackage(sdkID) + ".model" }
+
+// javaNameClientClass is the sync client: SqsClient, OrganizationsClient.
+func javaNameClientClass(sdkID string) string { return javaServiceName(sdkID) + "Client" }
+
+func javaNameClientClassPath(sdkID string) string {
+	return javaNamePackage(sdkID) + "." + javaNameClientClass(sdkID)
+}
+
+// javaNameRequest is the operation's request class: CreateQueueRequest, and
+// ListAwsServiceAccessForOrganizationRequest for an operation whose name carries
+// an acronym.
+func javaNameRequest(op string) string { return javaPascal(op) + "Request" }
+
+// javaNameClientCall is the client method call, given a request already built.
+func javaNameClientCall(op string) string {
+	return fmt.Sprintf("cl().%s((%s) r)", javaMethod(op), javaNameRequest(op))
+}
+
+// javaMethod is the client method for an operation, and javaSetter the builder
+// setter for a member. Both are the AWS SDK for Java v2 code generator's
+// unCapitalize — the leading run of capitals is lower-cased, except its last
+// letter when a lowercase letter follows, so ListAccounts → listAccounts and
+// AWSServiceAccessPrincipals → awsServiceAccessPrincipals — plus the rename a
+// name it cannot declare a method under gets; see javaMethodName.
+func javaMethod(op string) string { return javaMethodName(op, false) }
+
+func javaSetter(member string) string { return javaMethodName(member, true) }
+
+// javaMethodName is unCapitalize plus the SDK's rename of a name it cannot
+// declare a method under: it appends "Value".
+//
+// Two kinds of name need it, and the table holds only names where the rename is
+// certain. A Java keyword or literal is not an identifier at all — SSM models a
+// `default` member. `build` and `sdkFields` are declared on every request
+// builder by SdkBuilder and SdkPojo, so a *setter* of either name is renamed
+// too; a client method is not, which is why onBuilder says which of the two
+// this name is. Anything else the SDK happens to rename is a `mvn package`
+// failure naming the class, which is the same channel the version pin reports
+// through; guessing wider here would emit `<name>Value` for a setter that is
+// really called `<name>`.
+func javaMethodName(name string, onBuilder bool) string {
+	out := javaUnCapitalize(name)
+	if javaReservedNames[out] || (onBuilder && javaBuilderOwnMethods[out]) {
+		return out + "Value"
+	}
+	return out
+}
+
+// javaBuilderOwnMethods are the methods a request builder already declares, so
+// a member of the same name cannot be a setter.
+var javaBuilderOwnMethods = map[string]bool{"build": true, "sdkFields": true}
+
+// javaReservedNames are the Java keywords and literals, which are not
+// identifiers at all. See javaMethodName for why the list stops here.
+var javaReservedNames = map[string]bool{
+	// JLS 3.9, 3.10.3 and 3.10.7.
+	"abstract": true, "assert": true, "boolean": true, "break": true,
+	"byte": true, "case": true, "catch": true, "char": true,
+	"class": true, "const": true, "continue": true, "default": true,
+	"do": true, "double": true, "else": true, "enum": true,
+	"extends": true, "final": true, "finally": true, "float": true,
+	"for": true, "goto": true, "if": true, "implements": true,
+	"import": true, "instanceof": true, "int": true, "interface": true,
+	"long": true, "native": true, "new": true, "package": true,
+	"private": true, "protected": true, "public": true, "return": true,
+	"short": true, "static": true, "strictfp": true, "super": true,
+	"switch": true, "synchronized": true, "this": true, "throw": true,
+	"throws": true, "transient": true, "try": true, "void": true,
+	"volatile": true, "while": true,
+	"true": true, "false": true, "null": true,
+}
+
+func javaUnCapitalize(name string) string {
+	if name == "" {
+		return name
+	}
+	runes := []rune(name)
+	var out strings.Builder
+	i := 0
+	for {
+		out.WriteRune(toLowerRune(runes[i]))
+		i++
+		if i >= len(runes) || !isUpperRune(runes[i]) {
+			break
+		}
+		if i+1 < len(runes) && isLowerRune(runes[i+1]) {
+			break
+		}
+	}
+	out.WriteString(string(runes[i:]))
+	return out.String()
+}
+
+func isUpperRune(r rune) bool  { return r >= 'A' && r <= 'Z' }
+func isLowerRune(r rune) bool  { return r >= 'a' && r <= 'z' }
+func isLetterRune(r rune) bool { return isUpperRune(r) || isLowerRune(r) }
+func toLowerRune(r rune) rune {
+	if isUpperRune(r) {
+		return r + ('a' - 'A')
+	}
+	return r
+}
+
+// javaRequestLines renders the lines that build one call's typed request. It is
+// the emitter's build lambda and, line for line, what `-explain -lang java`
+// prints, which is what keeps the two from drifting.
+//
+// The first line opens the builder, each middle line is one setter, and the last
+// is `.build()`. Nothing wraps: one setter per line is what makes the emitted
+// source and the explanation the same strings, and what makes a generated file
+// reviewable as a diff.
+func javaRequestLines(sp *javaSpeller, op string, params map[string]any) ([]string, error) {
+	lines := []string{javaNameRequest(op) + ".builder()"}
+	for _, member := range sortedValueKeys(params) {
+		target, err := sp.memberTarget(op, member)
+		if err != nil {
+			return nil, fmt.Errorf("%s.%s: %w", op, member, err)
+		}
+		value, err := sp.value(target, params[member], member)
+		if err != nil {
+			return nil, fmt.Errorf("%s.%s: %w", op, member, err)
+		}
+		lines = append(lines, "."+sp.setterFor(target, member)+"("+value+")")
+	}
+	return append(lines, ".build()"), nil
+}
+
+// javaValue renders one IR value as an *untyped* Java expression: an object is a
+// Values.map, a list a Values.list, a scalar itself, and each of the five
+// expression forms a Values factory. Nothing else is representable, which is
+// what makes this total.
+//
+// Untyped is right in the two places it is used. An assertion's expected value
+// is compared in the IR's own type system against a response read back as a
+// document, so it is data on both sides. And the argument of a value expression
+// — a $concat part, the list a $index takes — is evaluated at run time, where
+// there is no member type to spell it against; only the expression's *result*
+// has one, which is what a Binder accessor converts it to. Input members
+// themselves go through javaSpeller instead.
+func javaValue(v any) (string, error) {
+	if key, arg, ok := exprOf(v); ok {
+		switch key {
+		case "$lit":
+			inner, err := javaValue(arg)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("Values.lit(%s)", inner), nil
+		case "$ref":
+			return fmt.Sprintf("Values.ref(%s)", javaQuote(arg.(string))), nil
+		case "$name":
+			return fmt.Sprintf("Values.name(%s)", javaQuote(arg.(string))), nil
+		case "$concat":
+			var parts []string
+			for _, part := range arg.([]any) {
+				rendered, err := javaValue(part)
+				if err != nil {
+					return "", err
+				}
+				parts = append(parts, rendered)
+			}
+			return fmt.Sprintf("Values.concat(%s)", strings.Join(parts, ", ")), nil
+		case "$index":
+			pair := arg.([]any)
+			inner, err := javaValue(pair[0])
+			if err != nil {
+				return "", err
+			}
+			n, err := integerOf(pair[1])
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("Values.index(%s, %d)", inner, n), nil
+		}
+	}
+	switch value := v.(type) {
+	case nil:
+		return "null", nil
+	case string:
+		return javaQuote(value), nil
+	case bool:
+		return strconv.FormatBool(value), nil
+	case json.Number:
+		return javaUntypedNumber(value.String()), nil
+	case float64:
+		return javaUntypedNumber(strconv.FormatFloat(value, 'g', -1, 64)), nil
+	case []any:
+		items := make([]string, 0, len(value))
+		for _, item := range value {
+			rendered, err := javaValue(item)
+			if err != nil {
+				return "", err
+			}
+			items = append(items, rendered)
+		}
+		return "Values.list(" + strings.Join(items, ", ") + ")", nil
+	case map[string]any:
+		var parts []string
+		for _, k := range sortedKeys(value) {
+			rendered, err := javaValue(value[k])
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, javaQuote(k), rendered)
+		}
+		return "Values.map(" + strings.Join(parts, ", ") + ")", nil
+	}
+	return "", fmt.Errorf("no Java expression for %T", v)
+}
+
+// javaUntypedNumber renders a number outside a typed slot. Every such number is
+// compared as JSON against a response the runtime normalised to a double, so it
+// is written as a double here rather than as an int a Java `equals` would find
+// unequal to one.
+func javaUntypedNumber(rendered string) string {
+	if !strings.ContainsAny(rendered, ".eE") {
+		return rendered + ".0"
+	}
+	return rendered
+}
+
+// javaRawParams renders a call's params as the scenario file writes them —
+// expressions unevaluated — for failure-message field 3 when a value could not
+// be evaluated and nothing was sent. It is the same canonical JSON the
+// interpreters print in that case.
+func javaRawParams(params map[string]any) (string, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if params == nil {
+		params = map[string]any{}
+	}
+	if err := enc.Encode(params); err != nil {
+		return "", err
+	}
+	return strings.TrimRight(buf.String(), "\n"), nil
+}
+
+// ---------------------------------------------------------------------------
+// Identifiers
+// ---------------------------------------------------------------------------
+
+func javaFileName(service string) string { return javaNameClass(service) + ".java" }
+
+// javaNameClass is the generated class for one service's groups.
+func javaNameClass(service string) string { return "Scenarios" + goCamel(service) + "Gen" }
+
+// javaNameGroupConst is the static Group constant: sqs-gen-queue →
+// GROUP_SQS_GEN_QUEUE.
+func javaNameGroupConst(group string) string {
+	return "GROUP_" + strings.ToUpper(strings.ReplaceAll(group, "-", "_"))
+}
+
+func javaNameSetupMethod(group string) string { return "setup" + goCamel(group) }
+
+func javaNameTeardownMethod(group string) string { return "teardown" + goCamel(group) }
+
+func javaNameTestMethod(group, test string) string { return "test" + goCamel(group) + test }
+
+// javaMethodNamesAreUnique refuses a service whose group and test names collide
+// once folded into Java identifiers. Two names differing only in where their
+// hyphens fall would otherwise emit two methods of the same name, and the suite
+// would fail to build with no indication of which pair caused it.
+//
+// Detecting the collision is uniqueNames (emit_shared.go); what is Java's own
+// is which identifiers a group claims — the static Group constant included.
+func javaMethodNamesAreUnique(service string, groups []group) error {
+	var claims []nameClaim
+	for _, g := range groups {
+		claims = append(claims,
+			nameClaim{javaNameGroupConst(g.Name), g.Name + " constant"},
+			nameClaim{javaNameSetupMethod(g.Name), g.Name + " setup"},
+			nameClaim{javaNameTeardownMethod(g.Name), g.Name + " teardown"})
+		for _, t := range g.Tests {
+			claims = append(claims, nameClaim{javaNameTestMethod(g.Name, t.Name), g.Name + "/" + t.Name})
+		}
+	}
+	return uniqueNames(service, "Java", claims)
+}
+
+// ---------------------------------------------------------------------------
+// Refusals
+// ---------------------------------------------------------------------------
+
+// javaRefusals reports the members of a group's calls this backend cannot
+// express. A group with any is not emitted and is scoped away from java-sdk.
+//
+// Detection attempts the very spelling emission would write, through a throwaway
+// speller: one code path decides "can this be emitted" and "how", so the two
+// cannot drift, and a group that is refused leaves no import behind.
+func javaRefusals(gen *generation, g group) []gap {
+	probe := newJavaSpeller(gen.model, gen.scenario.Client.SDKID)
+	return refusals(gen, g, javaEmitReason, refusalChecks{
+		member: func(op, member string, v any) error {
+			target, err := probe.memberTarget(op, member)
+			if err != nil {
+				return err
+			}
+			if _, err := probe.value(target, v, member); err != nil {
+				return fmt.Errorf("%s.%s cannot be spelled as Java: %v", op, member, err)
+			}
+			return nil
+		},
+	})
+}
+
+// javaUsesClauses and its siblings report which parts of the scenario
+// vocabulary a service's emitted file actually reaches for, so the import block
+// names nothing it does not use.
+func javaUsesCheck(groups []group) bool {
+	return javaAnyAssertion(groups, func(a assertion) bool { return len(a.Checks) > 0 })
+}
+
+func javaUsesErrorSpec(groups []group) bool {
+	return javaAnyAssertion(groups, func(a assertion) bool { return a.Error != nil })
+}
+
+func javaUsesWhere(groups []group) bool {
+	return javaAnyAssertion(groups, func(a assertion) bool { return len(a.Where) > 0 })
+}
+
+// javaUsesValues asks whether any value expression is emitted anywhere: in a
+// call's params, or in an assertion's expected value or where entry. The search
+// is expr.go's own walk, so "is this an expression" is answered in one place
+// for the validator and every emitter alike.
+func javaUsesValues(groups []group) bool {
+	for _, g := range groups {
+		for _, c := range callsOf(g) {
+			for _, v := range c.Params {
+				if hasExpr(v) {
+					return true
+				}
+			}
+		}
+	}
+	return javaAnyAssertion(groups, func(a assertion) bool {
+		for _, c := range a.Checks {
+			if hasExpr(c.Equals) {
+				return true
+			}
+		}
+		for _, v := range a.Where {
+			if hasExpr(v) {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func javaAnyAssertion(groups []group, want func(a assertion) bool) bool {
+	var walk func(a assertion) bool
+	walk = func(a assertion) bool {
+		if want(a) {
+			return true
+		}
+		return a.Assert != nil && walk(*a.Assert)
+	}
+	for _, g := range groups {
+		for _, t := range g.Tests {
+			for _, a := range t.Assert {
+				if walk(a) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------
+// The index file
+// ---------------------------------------------------------------------------
+
+// javaIndexPath is the file Main calls into. It is emitted whether or not
+// java-sdk is a scenario backend, so the suite compiles either way.
+var javaIndexPath = javaSuiteDir + "/ScenariosGen.java"
+
+// emitJavaIndex renders the list of generated service classes.
+func emitJavaIndex(services []string) []byte {
+	sorted := append([]string(nil), services...)
+	sort.Strings(sorted)
+	w := &javaWriter{}
+	w.linef("// Code generated by cmd/compatgen; DO NOT EDIT.")
+	w.linef("")
+	w.linef("package io.overcast.compat.groups;")
+	w.linef("")
+	w.linef("import io.overcast.compat.clients.AwsClients;")
+	w.linef("")
+	w.linef("import java.util.List;")
+	w.linef("")
+	w.linef("/**")
+	w.linef(" * Every generated service group, which Main merges with the hand-written ones.")
+	w.linef(" *")
+	w.linef(" * <p>The list is empty until cmd/compatgen's scenarioBackends table names")
+	w.linef(" * java-sdk.")
+	w.linef(" */")
+	w.linef("public final class ScenariosGen {")
+	w.linef("")
+	w.linef("    private ScenariosGen() {")
+	w.linef("    }")
+	w.linef("")
+	w.linef("    /** The generated groups, in service order. */")
+	if len(sorted) == 0 {
+		w.linef("    public static List<ServiceGroup> all(AwsClients clients) {")
+		w.linef("        return List.of();")
+		w.linef("    }")
+	} else {
+		w.linef("    public static List<ServiceGroup> all(AwsClients clients) {")
+		w.linef("        return List.of(")
+		for i, service := range sorted {
+			suffix := ","
+			if i == len(sorted)-1 {
+				suffix = ");"
+			}
+			w.linef("                new %s(clients)%s", javaNameClass(service), suffix)
+		}
+		w.linef("    }")
+	}
+	w.linef("}")
+	return []byte(w.String())
+}
+
+// ---------------------------------------------------------------------------
+// Writing
+// ---------------------------------------------------------------------------
+
+// javaWriter accumulates source lines. Java has no gofmt, so what is written
+// here is the file's actual layout: four-space indents, one setter per line,
+// LF endings and one trailing newline.
+type javaWriter struct{ lines []string }
+
+func (w *javaWriter) linef(format string, args ...any) {
+	w.lines = append(w.lines, fmt.Sprintf(format, args...))
+}
+
+func (w *javaWriter) String() string { return strings.Join(w.lines, "\n") + "\n" }
+
+// javaComma is the separator between two arguments of an emitted call, and
+// nothing after the last one: Java has no trailing comma in an argument list.
+func javaComma(more bool) string {
+	if more {
+		return ","
+	}
+	return ""
+}
+
+func dedupeStrings(sorted []string) []string {
+	out := sorted[:0]
+	var last string
+	for i, s := range sorted {
+		if i > 0 && s == last {
+			continue
+		}
+		out = append(out, s)
+		last = s
+	}
+	return out
+}
+
+// The AWS SDK for Java v2 code generator's word splitter, rule by rule.
+var (
+	javaNonAlnum            = regexp.MustCompile(`[^A-Za-z0-9]+`)
+	javaLowerAcronymVersion = regexp.MustCompile(`([^a-z]{2,})v([0-9]+)`)
+	javaUpperAcronymVersion = regexp.MustCompile(`([^A-Z]{2,})V([0-9]+)`)
+	javaAcronymBoundary     = regexp.MustCompile(`([A-Z]+)([A-Z][a-z])`)
+	javaDigitBoundary       = regexp.MustCompile(`([0-9])([a-zA-Z])`)
+)

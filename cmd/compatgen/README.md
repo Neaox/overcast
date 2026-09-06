@@ -6,7 +6,8 @@ scenario IR (`compat/model/scenarios/`), the refusal report
 (`compat/model/gaps.json`), the generated registry sibling
 (`compat/suites/registry.generated.json`) and — for the suites whose SDK has
 no dynamic-dispatch API — the source they compile
-(`compat/suites/go-sdk/internal/groups/scenarios_*_gen.go`). It is a
+(`compat/suites/go-sdk/internal/groups/scenarios_*_gen.go`,
+`compat/suites/java-sdk/src/main/java/io/overcast/compat/groups/Scenarios*Gen.java`). It is a
 build-time tool whose output is committed data; nothing under `compat/`
 imports it or any other emulator Go code.
 
@@ -155,12 +156,16 @@ into their marshaller layers to fake one, because the reason for running eight
 suites is that each exercises its own real typed serialization path. So
 `emit_go.go` writes Go instead — one function per scenario test, each building
 a real `*sqs.CreateQueueInput` and calling a real client method — which the
-`go-sdk` suite's ordinary build compiles.
+`go-sdk` suite's ordinary build compiles, and `emit_java.go` writes Java the
+same way: one method per test, each building a real `CreateQueueRequest` and
+calling a real client method, compiled by the `java-sdk` suite's
+`mvn package`.
 
 What is emitted is the *data* plus the typed calls. The semantics — the
 context bag, `$name`/`$ref`, the closed check set, error matching,
 `eventually`, the six-field failure message — are written once by hand in
-`compat/suites/go-sdk/internal/scenario` and never re-emitted.
+`compat/suites/go-sdk/internal/scenario` and
+`compat/suites/java-sdk/.../io/overcast/compat/scenario`, and never re-emitted.
 
 ### Where the types come from
 
@@ -212,11 +217,79 @@ Two things keep the emitter honest:
 
   Nothing in the pilot corpus reaches any of them.
 
+### Where the Java types come from — and why they are not read
+
+`emit_java.go` reads no SDK. The plan's binding decision (§3.2) asks a typed
+backend to resolve its SDK's field types at emit time *wherever the SDK's
+nullability is not derivable from the model*, and for the AWS SDK for Java v2 it
+is: every scalar is boxed, so a builder setter takes the value whatever the
+member's optionality and a boxed `0` really is serialized. The suite measures
+both facts on the wire — `JavaSdkWireFactsTest` sends `ReceiveMessage`'s
+`VisibilityTimeout` as `0` through a real client against a loopback server — so
+that the emitter's licence to skip the lookup is a measurement rather than a
+claim. It is also why the Java table has no counterpart to the Go emitter's
+value-typed-zero refusal: the two backends genuinely differ there.
+
+| modeled member | value | emitted |
+| --- | --- | --- |
+| `string` | `"blue"` | `"blue"` |
+| `integer` | `30` | `30` |
+| `long` | `30` | `30L` |
+| `byte` | `1` | `(byte) 1` |
+| `float` | `1.5` | `1.5f` |
+| `boolean` | `false` | `false` |
+| enum `Color` | `"blue"` | `"blue"`, into `.color(String)` |
+| `list<QueueAttributeName>` | `["All"]` | `List.of("All")`, into `.…WithStrings` |
+| `map<QueueAttributeName,string>` | `{"a":"b"}` | `Map.of("a", "b")`, into `.…WithStrings` |
+| `list<structure Tag>` | `[{"Key":"k"}]` | `List.of(Tag.builder().key("k").build())` |
+| `string` | `{"$ref":"q"}` | `b.string("M", Values.ref("q"))` |
+
+**An enum is spelled as its wire value, never as the enum class.** The SDK gives
+every enum-typed member a String form — a scalar enum's is an overload of the
+same name, and a list of enums or a map with an enum key or value gets a second
+setter named `<member>WithStrings` — and both send the model's own value
+unchanged. `Enum.fromValue` would not: a value the **pinned** SDK does not know
+becomes `UNKNOWN_TO_SDK_VERSION`, whose `toString` is the four-character string
+`"null"`, and that is what goes on the wire. `JavaSdkWireFactsTest` measures both
+halves. It also puts this backend where the Go one already is —
+`types.QueueAttributeName("All")` passes the model's value straight through too.
+One list or map down is as far as the String form reaches; an enum nested deeper
+is refused.
+
+Two things keep it honest, and they are the same two the Go emitter has:
+
+- **One naming table.** Everything it knows about spelling Java is in
+  `emit_java.go`'s `javaName*` functions and `emit_java_spell.go`'s
+  `javaSpeller`, and `-explain -lang java` renders through the same
+  `javaRequestLines`. `TestExplainJavaRendersTheEmittedCall` asserts it.
+- **It refuses rather than guesses.** These produce
+  `java-emit-unsupported:<Member>` in `gaps.json`, and the group is then scoped
+  away from `java-sdk`: a modeled kind with no IR literal; a member the model
+  does not give the operation, an operation with a unit input included; a
+  literal of the wrong JSON type; a number that is not whole, or is out of range
+  for the member's Java type; a modeled type with no Java literal at all
+  (`bigInteger`, `bigDecimal`); a map the model does not key by a string; an
+  enum nested deeper than the SDK's String form reaches; a value expression
+  bound to a composite member; and an explicit `null`, which the SDK spells as
+  "unset" and so cannot send. Nothing in the pilot corpus reaches any of them.
+
+What the model cannot answer is whether the **pinned** SDK has the operation at
+all — the shape snapshot is generated from a newer revision of the AWS model
+than any released SDK, and for the pilot corpus five Organizations operations
+are newer than `2.31.7`. That axis is answered by the compiler: an operation the
+pinned SDK does not declare is a `mvn package` failure naming the class, not a
+wrong request, and the fix is the version pin in
+`compat/suites/java-sdk/pom.xml`. It is the one axis the compiler answers and
+the model cannot; spelling enums as their wire values takes the *other* pin
+hazard — a value the pinned SDK does not know — out of the emitter entirely.
+
 The emitted bytes go through `go/format` before they are written, and
 generation fails if they will not parse. A golden file under
 `testdata/golden/` holds the emitted source for the fixture service, so what
 the emitter writes is reviewed as a diff rather than inferred from the
-generator's code.
+generator's code. The Java emitter has its own golden
+(`ScenariosWidgetsGen.java.golden`) on the same terms; there is no formatter to
+run over it, so the emitter produces the file's final layout directly.
 
 ## Determinism
 
@@ -234,7 +307,10 @@ under `testdata/` (shapes, recipe and values). The emitted Go is proved to
 parse and to be gofmt-clean here, while the proof that it *compiles* is the
 `go-sdk` suite's own build.
 
-**Which tests read which SDK.** The emitter needs real Go types, so
+**Which tests read which SDK.** Only the Go emitter reads one — the Java
+emitter resolves against the fixture model the rest of the generator's tests
+already load, which is what makes its tests hermetic without a second module.
+The Go emitter needs real Go types, so
 `testdata/awssdk` is a checked-in stand-in for the AWS SDK for Go v2: a module
 of its own, under the SDK's own module path, declaring the fixture service's
 input structs and nothing else. Every test of the emitter — the golden file,
@@ -250,8 +326,9 @@ also the only place a real fetch can happen — the first run in a fresh
 environment downloads what type-checking the two pilot services needs, and the
 module cache serves every run after it.
 
-`OVERCAST_UPDATE_GOLDEN=1 go test -tags dev -run TestEmitGo ./cmd/compatgen`
-rewrites `testdata/golden/scenarios_widgets_gen.go.golden`. Read the diff
+`OVERCAST_UPDATE_GOLDEN=1 go test -tags dev -run 'TestEmitGo|TestEmitJava' ./cmd/compatgen`
+rewrites `testdata/golden/scenarios_widgets_gen.go.golden` and
+`testdata/golden/ScenariosWidgetsGen.java.golden`. Read the diff
 before committing it — the golden file is the review artifact for what the
 emitter writes, and one regenerated without being read proves nothing. Its five resources between
 them carry every recipe role — a full lifecycle, a pre-existing resource, a

@@ -76,7 +76,18 @@ func renderGo(env renderEnv, s *scenario, g *group, t *test) string {
 	})
 }
 
-func javaStyle() style {
+// javaStyle renders a call through the emitter's own spelling table
+// (javaRequestLines, over emit_java_spell.go), so `-explain -lang java` prints
+// the statements cmd/compatgen writes into
+// compat/suites/java-sdk/.../Scenarios*Gen.java rather than a second
+// description of them. The definition of done for a typed backend asks for one
+// naming table; this is how there comes to be only one.
+//
+// sp is nil when the scenario's own model could not be read, which must never
+// happen to generation but can happen to `-explain` on a checkout with no shape
+// snapshot for the service. Saying so beats printing a spelling that would be a
+// guess.
+func javaStyle(sp *javaSpeller, loadErr error) style {
 	st := typedStyle()
 	st.name = func(suffix string) string { return fmt.Sprintf("runId + \"-\" + group + \"-%s\"", suffix) }
 	st.object = func(entries [][2]string) string {
@@ -88,20 +99,39 @@ func javaStyle() style {
 	}
 	st.list = func(items []string) string { return "List.of(" + strings.Join(items, ", ") + ")" }
 	st.pathExpr = func(root, path string) string { return root + pathAsGetters(path, "()") }
-	st.call = func(op string, members [][2]string) string {
-		var setters []string
-		for _, m := range members {
-			setters = append(setters, "."+lowerFirst(m[0])+"("+m[1]+")")
+	// No st.call override: callLines supersedes it for every call this style
+	// renders, and a second spelling of one would be the drift this backend's
+	// one-naming-table rule exists to prevent.
+	st.callLines = func(op string, params map[string]any) []string {
+		if loadErr != nil {
+			return []string{fmt.Sprintf("// the service's shape snapshot could not be read: %v", loadErr)}
 		}
-		return fmt.Sprintf("client.%s(%sRequest.builder()%s.build())", lowerFirst(op), op, strings.Join(setters, ""))
+		lines, err := javaRequestLines(sp, op, params)
+		if err != nil {
+			// Unreachable for a committed scenario: the emitter refuses at
+			// generation time what it cannot render, so a value this cannot
+			// spell never reaches a scenario file.
+			return []string{fmt.Sprintf("// %v", err)}
+		}
+		out := []string{javaNameRequest(op) + " request = " + lines[0]}
+		for i, line := range lines[1:] {
+			end := ""
+			if i == len(lines)-2 {
+				end = ";"
+			}
+			out = append(out, "        "+line+end)
+		}
+		return append(out, fmt.Sprintf("client.%s(request)", javaMethod(op)))
 	}
 	return st
 }
 
-func renderJava(_ renderEnv, s *scenario, g *group, t *test) string {
-	e := &explainer{st: javaStyle()}
+func renderJava(env renderEnv, s *scenario, g *group, t *test) string {
+	sp, loadErr := env.javaSpeller(s.Service, s.Client.SDKID)
+	e := &explainer{st: javaStyle(sp, loadErr)}
 	return e.test(s, g, t, func() {
-		e.linef("%sClient client = %sClient.builder().endpointOverride(endpoint).build();", pascalSDK(s.Client.SDKID), pascalSDK(s.Client.SDKID))
+		client := javaNameClientClass(s.Client.SDKID)
+		e.linef("%s client = %s.builder().endpointOverride(endpoint).build();", client, client)
 		e.linef("String group = %s;", quote(g.Name))
 	})
 }

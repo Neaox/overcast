@@ -133,7 +133,7 @@ public final class InteractiveRunner {
                             .filter(tc -> requested.contains(tc.name()))
                             .toList();
                     groupsToRun.add(new TestGroup(group.suite(), group.service(), group.name(),
-                            filtered, group.setup(), group.teardown()));
+                            filtered, group.setup(), group.teardown(), group.parallel()));
                 } else {
                     groupsToRun.add(group);
                 }

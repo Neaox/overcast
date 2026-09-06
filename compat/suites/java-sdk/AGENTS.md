@@ -45,13 +45,26 @@ Pipes, WAFv2, Shield, ElastiCache and EFS. It runs in the compat CI matrix
 | ---------- | ----------------------------------------------------------------- |
 | Language   | Java 17+ (compiled with `--release 17`; verified against a Java 25 JDK) |
 | Build tool | Maven 3.9+ (`pom.xml`), no wrapper checked in                     |
-| AWS client | `software.amazon.awssdk:*` v2, BOM-managed, pinned in `pom.xml` (`2.31.7` as of this writing) |
+| AWS client | `software.amazon.awssdk:*` v2, BOM-managed, pinned in `pom.xml` (`2.40.0` as of this writing) |
 | CI image   | `maven:3.9-eclipse-temurin-17-alpine` (build stage) → `eclipse-temurin:17-jre-alpine` (runtime) |
 
 > SDK upgrade policy: [compat/AGENTS.md § SDK version pinning](../../AGENTS.md#sdk-version-pinning--upgrade-strategy).
 > Note the pinned-versions table there names the BOM as the source of truth
 > for this suite rather than a fixed version number, since every service
 > artifact tracks the BOM.
+>
+> **The pin has a floor the generated groups set.** `cmd/compatgen` spells a
+> generated call from the pinned *shape snapshot*, which is generated from a
+> newer revision of the AWS model than any released SDK, so the BOM has to be at
+> least as new as the operations the snapshot covers. `2.31.7` was not: five
+> Organizations operations the generated probe group calls
+> (`DescribeResponsibilityTransfer`, `ListInboundResponsibilityTransfers`,
+> `ListOutboundResponsibilityTransfers`,
+> `ListAccountsWithInvalidEffectivePolicy`,
+> `ListEffectivePolicyValidationErrors`) do not exist in it, and `2.40.0` is the
+> earliest release that declares all of them. That is the whole reason the pin
+> moved. The arrangement is deliberate: a missing operation is a compile error
+> naming the class, never a wrong request on the wire.
 
 ---
 
@@ -68,7 +81,8 @@ compat/suites/java-sdk/
   src/main/java/io/overcast/compat/
     Main.java              ← entry point; wires clients, merges impls, loads registry, runs
     clients/
-      AwsClients.java      ← lazily-initialised per-service client factory
+      AwsClients.java      ← lazily-initialised per-service client factory, plus
+                             `configure` for the generated groups' own clients
     harness/
       TestContext.java     ← per-group state bag
       TestCase.java        ← record: name, fn, op, skip, depends
@@ -80,17 +94,32 @@ compat/suites/java-sdk/
     registry/
       Registry.java         ← loads registry.json + registry.generated.json, builds groups
       ScenarioBackend.java  ← extension point for generated groups (see below)
+    scenario/               ← hand-written runtime for the generated groups (see below)
+      Group.java            ← setup → tests → teardown, and every assertion kind
+      Call.java             ← one call: op, raw params, typed build, client method, exports
+      Clause/Check/Where/ErrorSpec.java ← the closed assertion vocabulary
+      Values/Value/Binder/ContextBag.java ← $ref, $name, $concat, $index, typed
+      Doc/Json/Paths.java   ← SDK response → document, canonical JSON, path resolution
+      Errors.java           ← error matching over this SDK's surfaces
+      Failure/UnimplementedFailure.java ← the six-field message, and the 501 classification
     groups/
       ServiceGroup.java     ← interface every group class implements
       S3Group.java
       SqsGroup.java
       DynamoDbGroup.java
       …                     ← one file per AWS service, 28 in total
+      ScenariosGen.java     ← GENERATED index of the generated group classes
+      Scenarios<Service>Gen.java ← GENERATED, one per service in the scenario corpus
 
   src/test/java/io/overcast/compat/
     MainRegistrationTest.java           ← this suite's own registrations vs. real registry.json
+    GeneratedGroupsRegistrationTest.java ← the generated groups resolve through the backend
     registry/RegistryTest.java          ← Registry loader unit tests
     registry/GeneratedRegistryTest.java ← registry.generated.json + ScenarioBackend resolution
+    scenario/GroupExecutionTest.java    ← the runtime, against an in-memory fake service
+    scenario/ValuesAndDocumentTest.java ← values, documents, paths, canonical JSON
+    scenario/ErrorFixturesTest.java     ← the shared error-matching conformance fixtures
+    scenario/JavaSdkWireFactsTest.java  ← the SDK facts the emitter derives from the model
 ```
 
 **One file per AWS service.** Never split a service across multiple group
@@ -311,23 +340,56 @@ list `Runner.runSuite` executes.
 
 A **generated** group (one with `"generated": true` in
 `registry.generated.json`) is not implemented by a registered impl the way a
-hand-written group is — it is meant to be executed by an interpreter reading
-the group's scenario IR. `ScenarioBackend` (`registry/ScenarioBackend.java`)
-is the extension point that interpreter plugs into: it is the last resolution
-step, after the group-qualified and bare impl-key lookups and before the
-not-implemented sentinel.
+hand-written group is. `ScenarioBackend` (`registry/ScenarioBackend.java`) is
+the extension point it resolves through: the last resolution step, after the
+group-qualified and bare impl-key lookups and before the not-implemented
+sentinel. **This suite implements it**, in `Main`, over the generated classes
+`ScenariosGen.all(clients)` returns.
 
-**Nothing implements `ScenarioBackend` in this suite yet.**
-`registry.generated.json` is currently empty (`"groups": []`) — see its own
-`comment` field — so this has no observable effect today. Once the generator
-starts emitting groups scoped to `java-sdk`, a generated group this suite has
-no backend for reports as a hard **failure** naming the group
-(`generated group "<group>" is scoped to java-sdk but java-sdk has no
-scenario backend`), not a skip — see `Registry#buildGroups`. Do not add a
-`ScenarioBackend` implementation speculatively; wait until there is a real
-interpreter to wire in.
+**The generated classes are emitted by `cmd/compatgen` and must never be edited
+by hand.** `make generate-compat-model` rewrites them wholly from
+`compat/model/scenarios/<service>.json`, and `make compat-model-check` fails if
+the committed files are not byte-identical to what the generator produces. What
+is emitted is the *data* plus the typed calls — one method per scenario test,
+each building a real `<Op>Request` and calling a real client method. The
+semantics live once, by hand, in `io.overcast.compat.scenario`, and
+[compat/model/README.md](../../model/README.md) is normative for every rule in
+there.
 
----
+Four consequences are worth knowing before touching either half:
+
+- **A generated group's setup and teardown are ordinary entries** in the maps
+  `Main` passes to `Registry.buildGroups`; the backend hook resolves tests only.
+  A generated group name always carries `-gen-`, which no hand-written group
+  does, so the two halves cannot collide.
+- **Adding a service to the generated corpus needs a `pom.xml` entry.** The
+  emitter writes `software.amazon.awssdk.services.<service>` imports; it cannot
+  add the Maven dependency that puts them on the classpath, and a missing one is
+  a compile failure naming the package.
+- **The BOM pin is a floor, not a preference** — see [Runtime](#runtime) above.
+- **An enum reaches the request as its wire value, not as the enum class.** The
+  emitter writes `.type("SERVICE_CONTROL_POLICY")` and
+  `.attributeNamesWithStrings(List.of("All"))` — the SDK's String overload for a
+  scalar enum, and its `<member>WithStrings` setter for a list of enums or a map
+  with an enum key or value. `Enum.fromValue` is deliberately not used: a value
+  the *pinned* SDK does not know becomes `UNKNOWN_TO_SDK_VERSION`, whose
+  `toString` is the four-character string `"null"`, and that is what would go on
+  the wire. `JavaSdkWireFactsTest` measures both halves. An enum nested deeper
+  than one list or map inside the setter's own argument has no String form in the
+  SDK at all and is refused (`java-emit-unsupported:<Member>`).
+- **A group the registry marks `parallel` runs its tests concurrently.** Only a
+  generated probe group is marked — a probe is one call that creates nothing,
+  exports nothing and reads no other test's resource. `Runner` bounds the
+  concurrency with the same `OVERCAST_COMPAT_PARALLEL_SLOTS` that bounds groups,
+  emits the results in declaration order so the NDJSON is identical to a serial
+  run's test for test, and falls back to serial if any test declares a
+  `depends`, which the concurrent path cannot gate on.
+
+A generated group scoped to `java-sdk` that the backend cannot resolve still
+reports as a hard **failure** naming the group (`generated group "<group>" is
+scoped to java-sdk but java-sdk has no scenario backend`), not a skip — see
+`Registry#buildGroups`. `GeneratedGroupsRegistrationTest` is what catches that
+before a run does.
 
 ## Registration tests
 
@@ -349,10 +411,41 @@ without starting a run:
 `registry/RegistryTest.java` and `registry/GeneratedRegistryTest.java` cover
 the loader itself (merge/validate/build behaviour and
 `registry.generated.json` handling) independently of this suite's own
-registrations.
+registrations. `GeneratedGroupsRegistrationTest.java` does the same for the
+generated half: every generated test the registry scopes to this suite resolves
+through the backend, every key is group-qualified, and nothing is registered
+twice.
 
-Run just these with `mvn -B test` from this directory — no live Overcast
-instance required.
+The `scenario/` tests cover the runtime the generated groups call into, against
+an in-memory fake service rather than a live emulator, plus two things that are
+not about this suite alone:
+
+- **`ErrorFixturesTest`** runs the shared conformance corpus,
+  `compat/model/testdata/errors`, through this suite's matcher, so a rule only
+  one backend implements fails here rather than being discovered when a
+  generated group disagrees with itself across suites. Every fixture and case it
+  cannot observe is a named node that **aborts with the reason**, never a silent
+  `continue`: a case missing from the tree is indistinguishable from one that
+  passed.
+
+  It is skipped whole when the corpus is not above the working directory, which
+  is the case **inside the Docker build** — the image's context is
+  `compat/suites/`, so the model directory is not in it. That is why CI runs this
+  suite's `mvn -B test` from *this directory* in the checkout, as the `java-sdk
+  suite` step of `Compat suite unit tests`
+  ([.github/workflows/test.yml](../../../.github/workflows/test.yml)), rather
+  than relying on the image build the way the rust-sdk suite does. The image
+  build still runs everything else here.
+- **`JavaSdkWireFactsTest`** measures, on the wire against a loopback server, the
+  two SDK facts `cmd/compatgen` derives from the model instead of from the SDK: a
+  builder setter takes the value whatever the member's optionality, and a boxed
+  `0` is serialized rather than dropped. If a future SDK changed either answer
+  the emitter would start writing requests that quietly omit a member, and this
+  fails first.
+
+Run all of these with `mvn -B test` from this directory — no live Overcast
+instance required. That is the same command CI runs, so a green run here is the
+whole of what that job checks.
 
 ---
 
@@ -384,7 +477,11 @@ instance required.
 - Never use `Thread.sleep` with a fixed duration inside a test — use a poll
   loop with a maximum retry count for genuinely asynchronous behaviour.
 - Never construct an AWS SDK client inside a test method — obtain it from the
-  injected `AwsClients`.
+  injected `AwsClients`. A generated group's own client is an exception in form
+  only: it goes through `AwsClients.configure`, so there is still one description
+  of how a client in this suite is configured.
+- Never hand-edit `ScenariosGen.java` or `Scenarios<Service>Gen.java` — they are
+  generator output, and `make compat-model-check` fails on a hand edit.
 - Never register an impl key without the `group:` qualifier — the
   registration tests reject it, and CI's `mvn package` fails the image build.
 - Never add a setup entry without a corresponding teardown entry.

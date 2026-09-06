@@ -774,24 +774,32 @@ jobs:
   # Cheap by construction: no emulator, no Overcast binary, no Docker. Each
   # test either builds a registry in memory or reads registry.json off disk.
   #
-  # Three suites are deliberately absent:
+  # Two suites are deliberately absent:
   #
-  #   java-sdk    already covered. Its Dockerfile runs `mvn package`, and
-  #               surefire runs RegistryTest and MainRegistrationTest as part
-  #               of it, so an unusable registration fails the image build that
-  #               every compat run performs.
-  #   rust-sdk    same arrangement, now that its Dockerfile runs `cargo test`
-  #               beside the `cargo build` — the dependency layer is already
-  #               compiled there, which is what makes it nearly free.
+  #   rust-sdk    already covered: its Dockerfile runs `cargo test` beside the
+  #               `cargo build` — the dependency layer is already compiled
+  #               there, which is what makes it nearly free. Repeating it here
+  #               would mean compiling the whole AWS SDK a second time for a
+  #               verdict CI already has.
   #   dotnet-sdk  carries no unit tests to run.
   #
-  # Repeating java or rust here would mean resolving the whole AWS SDK, or
-  # compiling it, a second time for a verdict CI already has.
+  # java-sdk was in that list, on the same reasoning: its Dockerfile runs `mvn
+  # package`, and surefire runs the registration tests as part of it. That
+  # covers the registration half and nothing else. The image's build context is
+  # compat/suites/, so `compat/model/testdata/errors` — the shared
+  # error-matching conformance corpus every backend must agree about — is not in
+  # it, and ErrorFixturesTest aborts there rather than running. Nothing else in
+  # CI ran it, so the one test written to catch a matcher rule only one backend
+  # implements was asserting nothing on every push. Running `mvn -B test` from
+  # the suite directory in the checkout is where that corpus is reachable, which
+  # is what the step below is for; the registration tests come along with it.
   compat-suite-unit-tests:
     name: Compat suite unit tests
     needs: changes
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Maven resolves the AWS SDK BOM on a cold cache, which is this job's one
+    # long conversation with a package registry.
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -828,6 +836,16 @@ jobs:
           python-version: "3.14"
           cache: pip
           cache-dependency-path: compat/suites/python-sdk/requirements.txt
+
+      # Temurin 17 is what the suite's own Dockerfile builds and runs on, and
+      # pom.xml sets `maven.compiler.release` to 17; a newer JDK here would
+      # compile against a different platform API than the image does.
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        if: needs.changes.outputs.code == 'true'
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
 
       # `npm ci` rather than a bare `node --test`: the last case in
       # registry.test.ts imports the suite's real group files, and those import
@@ -870,6 +888,17 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         working-directory: compat/suites/cli
         run: go test -count=1 ./...
+
+      # From the suite directory, not from the repository root: ErrorFixturesTest
+      # walks up from the working directory to find compat/model/testdata/errors,
+      # and `mvn -B test` here is the only place in CI that corpus is reachable
+      # (see the note above this job). It also runs the registry loader tests,
+      # the scenario runtime tests and JavaSdkWireFactsTest — no emulator, no
+      # Docker, no live AWS.
+      - name: java-sdk suite
+        if: needs.changes.outputs.code == 'true'
+        working-directory: compat/suites/java-sdk
+        run: mvn -B test --no-transfer-progress
 
       # compat/ui (the compat dashboard) is a separate Vite/React app from web/
       # (see compat/AGENTS.md § Separation boundary) and had no CI coverage at

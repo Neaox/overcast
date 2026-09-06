@@ -22,13 +22,18 @@ import (
 
 // scenarioBackends lists the suites that can execute scenario IR, sorted.
 // Add a suite here in the PR that lands its interpreter or source emitter.
-var scenarioBackends = []string{"cli", "go-sdk", "node-js-sdk", "python-sdk"}
+var scenarioBackends = []string{"cli", "go-sdk", "java-sdk", "node-js-sdk", "python-sdk"}
 
 // goSDKSuite is the suite the Go source emitter (emit_go.go) writes for. It is
 // named rather than spelled inline because two things key on it: whether the
 // emitted files are produced at all, and which groups the emitter could not
 // express.
 const goSDKSuite = "go-sdk"
+
+// javaSDKSuite is the suite the Java source emitter (emit_java.go) writes for,
+// named for the same two reasons goSDKSuite is: whether the emitted files are
+// produced at all, and which groups the emitter could not express.
+const javaSDKSuite = "java-sdk"
 
 // hasBackend reports whether a suite can execute scenario IR.
 func hasBackend(suite string) bool { return slices.Contains(scenarioBackends, suite) }
@@ -82,11 +87,11 @@ type generatedTest struct {
 func scenarioPath(service string) string { return scenarioDir + "/" + service + ".json" }
 
 // unableSuites names, per group, the suites whose backend exists but cannot
-// execute that group — today only the Go emitter, which refuses a group whose
-// input members it has no Go expression for (emit_go.go). Such a group is
-// scoped to the suites that can run it, so a backend is never listed as able to
-// execute something it will not compile; a group no suite can run is left out
-// of the registry entirely, as one with no backends at all already is.
+// execute that group. Each source emitter reports its own — a group whose input
+// members it has no expression for in that language. Such a group is scoped to
+// the suites that can run it, so a backend is never listed as able to execute
+// something it will not compile; a group no suite can run is left out of the
+// registry entirely, as one with no backends at all already is.
 type unableSuites map[string]map[string]bool
 
 func (u unableSuites) suitesFor(backends []string, group string) []string {

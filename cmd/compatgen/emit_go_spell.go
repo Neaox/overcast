@@ -3,12 +3,10 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"go/types"
 	"math"
 	"strconv"
-	"strings"
 )
 
 // The type-spelling table: one IR value plus the SDK's own field type, as Go
@@ -219,7 +217,7 @@ func (sp *goSpeller) slice(u *types.Slice, v any, member, indent string) (string
 	}
 	items, ok := v.([]any)
 	if !ok {
-		return "", fmt.Errorf("a list member wants a JSON array, got %s", goValueKind(v))
+		return "", fmt.Errorf("a list member wants a JSON array, got %s", valueKind(v))
 	}
 	name, err := sp.typeName(u)
 	if err != nil {
@@ -244,7 +242,7 @@ func (sp *goSpeller) mapping(u *types.Map, v any, member, indent string) (string
 	}
 	entries, ok := v.(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("a map member wants a JSON object, got %s", goValueKind(v))
+		return "", fmt.Errorf("a map member wants a JSON object, got %s", valueKind(v))
 	}
 	name, err := sp.typeName(u)
 	if err != nil {
@@ -264,7 +262,7 @@ func (sp *goSpeller) mapping(u *types.Map, v any, member, indent string) (string
 func (sp *goSpeller) structure(t types.Type, u *types.Struct, v any, member, indent string, elide bool) (string, error) {
 	members, ok := v.(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("a structure member wants a JSON object, got %s", goValueKind(v))
+		return "", fmt.Errorf("a structure member wants a JSON object, got %s", valueKind(v))
 	}
 	name, err := sp.typeName(t)
 	if err != nil {
@@ -393,33 +391,45 @@ func goBasicLiteral(b *types.Basic, v any) (string, error) {
 	case b.Info()&types.IsString != 0:
 		s, ok := v.(string)
 		if !ok {
-			return "", fmt.Errorf("a %s member wants a string, got %s", b.Name(), goValueKind(v))
+			return "", fmt.Errorf("a %s member wants a string, got %s", b.Name(), valueKind(v))
 		}
 		return strconv.Quote(s), nil
 	case b.Info()&types.IsBoolean != 0:
 		out, ok := v.(bool)
 		if !ok {
-			return "", fmt.Errorf("a %s member wants a boolean, got %s", b.Name(), goValueKind(v))
+			return "", fmt.Errorf("a %s member wants a boolean, got %s", b.Name(), valueKind(v))
 		}
 		return strconv.FormatBool(out), nil
 	case b.Info()&types.IsInteger != 0:
-		n, ok := goNumberOf(v)
+		n, ok := numberOf(v)
 		if !ok {
-			return "", fmt.Errorf("a %s member wants a number, got %s", b.Name(), goValueKind(v))
+			return "", fmt.Errorf("a %s member wants a number, got %s", b.Name(), valueKind(v))
 		}
-		if n != math.Trunc(n) {
-			return "", fmt.Errorf("a %s member wants a whole number, got %v", b.Name(), n)
+		if !n.Whole {
+			return "", fmt.Errorf("a %s member wants a whole number, got %s", b.Name(), n.Text)
 		}
-		if min, max, known := goIntRange(b.Kind()); known && (n < min || n > max) {
-			return "", fmt.Errorf("%v is out of range for %s", n, b.Name())
+		// A whole number wider than an int64 is out of range for every Go
+		// integer type, so it is refused before the type's own range is
+		// consulted rather than being folded to one that fits.
+		if !n.Fits {
+			return "", fmt.Errorf("%s is out of range for %s", n.Text, b.Name())
 		}
-		return strconv.FormatInt(int64(n), 10), nil
+		if min, max, known := goIntRange(b.Kind()); known && (n.Int < min || n.Int > max) {
+			return "", fmt.Errorf("%s is out of range for %s", n.Text, b.Name())
+		}
+		return strconv.FormatInt(n.Int, 10), nil
 	case b.Info()&types.IsFloat != 0:
-		n, ok := goNumberOf(v)
+		n, ok := numberOf(v)
 		if !ok {
-			return "", fmt.Errorf("a %s member wants a number, got %s", b.Name(), goValueKind(v))
+			return "", fmt.Errorf("a %s member wants a number, got %s", b.Name(), valueKind(v))
 		}
-		return strconv.FormatFloat(n, 'g', -1, 64), nil
+		// A literal a float64 cannot carry, and one a float32 member cannot,
+		// are the same fault: the constant would not compile, or would compile
+		// to ±Inf. Both are refused rather than emitted.
+		if !n.Representable || (b.Kind() == types.Float32 && math.Abs(n.Float) > math.MaxFloat32) {
+			return "", fmt.Errorf("%s is out of range for %s", n.Text, b.Name())
+		}
+		return strconv.FormatFloat(n.Float, 'g', -1, 64), nil
 	}
 	return "", fmt.Errorf("no IR literal builds a %s", b.Name())
 }
@@ -440,7 +450,7 @@ func goZeroLiteral(b *types.Basic) string {
 	return ""
 }
 
-func goIntRange(kind types.BasicKind) (min, max float64, known bool) {
+func goIntRange(kind types.BasicKind) (min, max int64, known bool) {
 	switch kind {
 	case types.Int8:
 		return math.MinInt8, math.MaxInt8, true
@@ -452,39 +462,4 @@ func goIntRange(kind types.BasicKind) (min, max float64, known bool) {
 		return math.MinInt64, math.MaxInt64, true
 	}
 	return 0, 0, false
-}
-
-func goNumberOf(v any) (float64, bool) {
-	switch n := v.(type) {
-	case json.Number:
-		f, err := n.Float64()
-		return f, err == nil
-	case float64:
-		return n, true
-	case int:
-		return float64(n), true
-	}
-	return 0, false
-}
-
-// goValueKind names an IR value's JSON type for an error message.
-func goValueKind(v any) string {
-	switch value := v.(type) {
-	case nil:
-		return "null"
-	case string:
-		return "a string"
-	case bool:
-		return "a boolean"
-	case json.Number, float64, int:
-		return "a number"
-	case []any:
-		return "a list"
-	case map[string]any:
-		if len(value) == 0 {
-			return "an object"
-		}
-		return "an object (" + strings.Join(sortedKeys(value), ", ") + ")"
-	}
-	return fmt.Sprintf("a %T", v)
 }
