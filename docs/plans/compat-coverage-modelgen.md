@@ -3,11 +3,12 @@
 > Status: **in progress** — G0 and G1 are done, and **G2 is code complete**.
 > All three interpreters are on `main` (`python-sdk` #1787, `node-js-sdk` #1788,
 > `cli` #1790), and every §4.1 criterion and §4.2's criteria 1–3 are met in all
-> three suites. Two things remain before the pilot is done: the first
-> candidate → gated promotion (§4.2 criterion 4's second half — the soak
-> machinery landed with #1792/#1798 and now needs three agreeing nightly runs)
-> and the regeneration demonstration (§4.2 criterion 5, #1813). See the § 2
-> note dated 2026-09-06 for what has landed and what has not.
+> three suites. §4.2 criterion 5, the regeneration demonstration, is met as of
+> 2026-09-06 (#1818 then #1813). One thing remains before the pilot is done:
+> the first candidate → gated promotion (§4.2 criterion 4's second half — the
+> soak machinery landed with #1792/#1798 and now needs three agreeing nightly
+> runs). See the § 2 note dated 2026-09-06 for what has landed and what has
+> not.
 > Proposed 2026-08-03. Owner: TBD.
 > Siblings written concurrently, and part of the same tier programme:
 > [inert-tier-rollout.md](./inert-tier-rollout.md) (Tier 1 implementation — the
@@ -260,20 +261,24 @@ at full operation depth (§3.9).
 > yet. Candidate groups gate nothing, which is why 56 generated tests × 3 suites
 > do not appear in the baseline.
 >
-> **Open, and the whole of G2's remainder.** Three things, in decreasing order
+> **Open, and the whole of G2's remainder.** Two things, in decreasing order
 > of what they gate:
 >
 > - **The first candidate → gated promotion** (§4.2 criterion 4). The machinery
 >   is merged and the ledger is empty because it now needs three agreeing
 >   nightly runs, which could not start before the groups were on `main`.
 >   Nothing to build; something to wait for.
-> - **#1813, the §4.2 criterion 5 regeneration demonstration.** Two PRs: the OU
->   lifecycle recipe (#1818, in flight) and then the inert emulator half.
 > - **#1801, running a probe group's tests in parallel within the group.** A
 >   performance follow-up rather than a gate, and the one measured lever for
 >   `cli` (§3.10).
 >
-> #1768 tracks all three.
+> **#1813, the §4.2 criterion 5 regeneration demonstration, is done** — the OU
+> lifecycle recipe (#1818) and then the inert emulator half. Regeneration after
+> the implementation changed no byte of the corpus, and the same generated
+> tests went `skip`/`unimplemented` → `pass` in all three interpreters; the
+> §4.2 note dated 2026-09-06 carries the before/after table.
+>
+> #1768 tracks the rest.
 
 Counts below were computed from the checked-in generated artifacts, not from
 `STATUS.md` — **`STATUS.md` prose is stale** (it describes Shield as "Stub — all
@@ -1254,6 +1259,62 @@ operations, exactly one declared capability** — `DescribeOrganization`,
 > `organizations-gen-root` 1 `unimplemented`, `organizations-gen-ou` 8 `skip`,
 > 0 `fail` throughout.
 
+> **Criterion 5, second half — demonstrated (2026-09-06, #1813).** The emulator
+> half landed: `ListRoots` and the five organizational-unit operations are
+> `StatusInert` on `internal/services/organizations` over the shared Tier 1
+> runtime. **Criterion 5 is met**, by #1818 (the recipe) and this PR.
+>
+> **Regeneration produced no diff at all, and that is the result, not a
+> shortfall.** `go run -tags dev ./cmd/compatgen` after the implementation
+> rewrites `scenarios/organizations.json`, `gaps.json` and
+> `registry.generated.json` byte-identically; `-check` is clean at the same
+> commit as it was before. The generator's own view of the six operations did
+> change — `capabilitiesFor` reads `capabilities.AllCapabilities`, where all
+> six now carry a row — but nothing downstream of that had anything left to do:
+> the recipe already gave each of them a lifecycle role, so `probeGroup` had
+> already skipped them and `uncoveredImplemented` had nothing to refuse. Had
+> the recipe *not* claimed them, that pass would have refused all six instead —
+> five `probe-of-implemented-op` and, for `UpdateOrganizationalUnit`, one
+> `update-without-mutable`. The reason regeneration is silent is that #1818 did
+> the work a step earlier.
+>
+> So the corpus is invariant across the implementation landing, and the tests
+> move on their own. That is criterion 5 in its strongest form — not "the
+> generated tests changed to match the new implementation" but "the generated
+> tests did not change, and started passing" — and it is what §3.1 promised:
+> a lifecycle over undeclared operations "starts passing the day the service
+> reaches Tier 1, with no test edit".
+>
+> **The run.** Two slim images, one built from `origin/main` (recipe landed,
+> emulator not) and one from this branch, each driven by the *same* generated
+> corpus through all three interpreters. Nine runs after the change — three per
+> interpreter — were identical to each other, and each interpreter agreed with
+> the other two:
+>
+> | group | before | after |
+> | --- | --- | --- |
+> | `organizations-gen-ou` (8 tests) | 8 `skip` | **8 `pass`** |
+> | `organizations-gen-root` (1) | 1 `unimplemented` | **1 `pass`** |
+> | `organizations-gen-probe` (22) | 22 `unimplemented` | 22 `unimplemented` |
+> | `organizations-gen-policy` (8) | 8 `pass` | 8 `pass` |
+> | `organizations-gen-organization` (1) | 1 `pass` | 1 `pass` |
+>
+> `0 fail` in every cell, before and after, in `python-sdk`, `node-js-sdk` and
+> `cli` alike. The `skip → pass` reading is the correction the first-half note
+> above predicted: the group's setup `ListRoots` was the 501, so its eight
+> tests were skipped rather than recorded `unimplemented`.
+>
+> Zero trace: after all nine runs against one instance,
+> `ListOrganizationalUnitsForParent` on the root returns `[]` and
+> `ListPolicies` returns `[]`. Each lifecycle's own delete test removes the
+> resource, so the group teardown then reports `skipped` with the modeled
+> not-found — the same benign shape `organizations-gen-policy` has always had.
+>
+> **No file under `compat/suites/` changed** — not in #1818, which touched only
+> the generated `registry.generated.json`, and not here, which touched nothing
+> under it at all. That untouched directory is the whole of what the criterion
+> asserts.
+
 Acceptance criteria:
 
 1. `organizations-gen-probe` covers the 62 undeclared operations; **all record
@@ -1289,7 +1350,7 @@ Acceptance criteria:
 > | 2 — `DescribeOrganization` passes with a shape assertion | **Met** | it passes, as does the same ARN check inside `organizations-gen-policy/CreatePolicy`. First compat coverage any `StatusInert` operation has had |
 > | 3 — independently runnable, creates nothing, needs no teardown | **Met for the two groups it describes** | `organizations-gen-organization` and `organizations-gen-probe`; the policy group creates a real policy and has a teardown |
 > | 4 — three identical runs; the groups promote through the normal soak with no hand edits | **Half met** | the runs are identical in all three suites; nothing has promoted yet |
-> | 5 — the regeneration demonstration | **Open — #1813** | the OU lifecycle recipe (#1818, in flight), then the inert emulator implementation |
+> | 5 — the regeneration demonstration | **Met — #1813** | the OU lifecycle recipe (#1818) then the inert emulator implementation; regeneration changed no byte of the corpus and the same generated tests went `skip`/`unimplemented` → `pass` in all three interpreters. See the criterion 5 note above |
 >
 > Criterion 4's second half is not blocked on anything: `promotions.json` is
 > `groups: {}` because the nightly `promote` job (#1792, #1798) needs three
@@ -1462,7 +1523,7 @@ original scope stays legible.
 | --- | --- | --- | --- | --- |
 | **G0** Foundations | **Done** — #1356, #1357, #1367, #1370, and the loader tail under #1393, all seven suite PRs merged and the issue closed. `suites` scoping was honoured for every group in four suites and for generated groups only in `java-sdk`, `dotnet-sdk` and `rust-sdk` until #1737 aligned the three and re-seeded their baseline shards — see the §2 note | Shard `compat/baseline.json` → `compat/baseline/<suite>.json` (+ size budget); `--shard i/n` and `--generated-registry-file` in `cmd/compat`; `registry.generated.schema.json`; all 8 loaders read the generated sibling and fall back to a scenario resolver hook; `candidate`/`gated` state honoured by both gates; `compat/AGENTS.md` amendment for generated `suites` scoping + the lint that bounds it | M | With an **empty** generated registry, every gate, report and dashboard behaves exactly as today; baseline shards aggregate byte-identically; the scoping lint rejects a hand-written group that adds `suites` |
 | **G1** Model layer | **Done** — `internal/awsmodel` #1359, shape snapshot via inert-tier I1 with `sqs` added in #1684, `cmd/compatgen` and `compat/model/` in #1709. The model-utilisation follow-ups (#1795, closed) then moved three derivations out of the recipes and into the generator — see the §2 note | Extract `internal/awsmodel` AST reader; `cmd/compatgen` skeleton; the pruned shape snapshot `models/aws/shapes/` + `shapes-sha256` (shared deliverable with [inert-tier-rollout.md](./inert-tier-rollout.md) Phase I1 — build once, whichever plan gets there first); IR + recipe JSON schemas; `--scaffold`, `--review-report`, `--explain`; `gaps.json` | M | `make compat-model-check` regenerates byte-identically offline; the sha gate catches a hand edit; the snapshot is within its size budget; scaffolding a service produces a recipe skeleton a human can complete |
-| **G2** Pilot | **Code complete**, tracked as **#1768**. All three interpreters are merged — `python-sdk` #1787, `node-js-sdk` #1788 (+ #1796), `cli` #1790 — and the seven pilot groups run in all three suites with zero failures, identical across three runs, inside the §4.3 budget; the §2 note has the tally. Every §4.1 criterion and §4.2's 1–3 are met. Open: the first candidate → gated promotion, whose machinery landed with #1792/#1798 and which needs three agreeing nightly runs; and #1813, the §4.2 criterion 5 regeneration demonstration (#1818 in flight). #1801 is a performance follow-up, not a gate | `python-sdk`, `node-js-sdk` and `cli` interpreters; `recipes/sqs.json` + `recipes/organizations.json`; the §4 acceptance criteria | L | Every §4.1 and §4.2 criterion met, including the regeneration demonstration in §4.2.5 |
+| **G2** Pilot | **Code complete**, tracked as **#1768**. All three interpreters are merged — `python-sdk` #1787, `node-js-sdk` #1788 (+ #1796), `cli` #1790 — and the seven pilot groups run in all three suites with zero failures, identical across three runs, inside the §4.3 budget; the §2 note has the tally. Every §4.1 criterion and §4.2's 1–3 are met. #1813, the §4.2 criterion 5 regeneration demonstration, is met (#1818 then #1813): regeneration changed no byte of the corpus and the generated OU tests started passing on their own, in all three interpreters. Open: the first candidate → gated promotion, whose machinery landed with #1792/#1798 and which needs three agreeing nightly runs. #1801 is a performance follow-up, not a gate | `python-sdk`, `node-js-sdk` and `cli` interpreters; `recipes/sqs.json` + `recipes/organizations.json`; the §4 acceptance criteria | L | Every §4.1 and §4.2 criterion met, including the regeneration demonstration in §4.2.5 |
 | **G3** Typed backends | Not started | Source emitters for `go-sdk`, then `java-sdk`, `dotnet-sdk`, `rust-sdk` (one suite per PR); member→field naming rules per language | L each | Generated source compiles in the suite's normal build; the pilot groups produce **identical** results to the interpreter suites; generated `suites` scoping widens automatically on regeneration |
 | **G4** Tier-1 fleet rollout | Not started | One service per PR, ordered by [inert-tier-rollout.md](./inert-tier-rollout.md) then [full-emulation-priority.md](./full-emulation-priority.md); capped probe groups for [services-never-emulated.md](./services-never-emulated.md) | L, parallelizable per service | Per service: recipe reviewed, no unexplained refusal in `gaps.json`, soak passed, CI wall-clock within budget, coverage metric moves |
 | **G5** Steady state | Not started | Weekly model-refresh PR regenerates scenarios; coverage becomes the dashboard headline; `--slowest N` latency census | S | A model-refresh PR shows added/removed operations per service and cannot break the gate; coverage per service/tier is published |
