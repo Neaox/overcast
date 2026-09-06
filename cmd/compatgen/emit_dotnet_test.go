@@ -341,6 +341,31 @@ func TestCsString_escapesWhatCSharpWouldMisread(t *testing.T) {
 	}
 }
 
+// TestDotnetServiceNameOverridesTheLongNames pins the one derivation the AWS
+// SDK for .NET does not follow. Its packages keep several services under the
+// long names they launched with, so the rule "Amazon. plus the SDK id" names a
+// namespace that does not exist for them — AWSSDK.SimpleNotificationService has
+// no Amazon.SNS — and the emitted file then fails the whole dotnet-sdk suite's
+// build rather than one group. Everything else still derives.
+func TestDotnetServiceNameOverridesTheLongNames(t *testing.T) {
+	for _, tc := range []struct{ sdkID, namespace, client, config string }{
+		{"SNS", "Amazon.SimpleNotificationService", "AmazonSimpleNotificationServiceClient", "AmazonSimpleNotificationServiceConfig"},
+		{"SQS", "Amazon.SQS", "AmazonSQSClient", "AmazonSQSConfig"},
+		{"Organizations", "Amazon.Organizations", "AmazonOrganizationsClient", "AmazonOrganizationsConfig"},
+		{"Elastic Load Balancing", "Amazon.ElasticLoadBalancing", "AmazonElasticLoadBalancingClient", "AmazonElasticLoadBalancingConfig"},
+	} {
+		if got := dotnetNameNamespace(tc.sdkID); got != tc.namespace {
+			t.Errorf("dotnetNameNamespace(%q) = %s, want %s", tc.sdkID, got, tc.namespace)
+		}
+		if got := dotnetNameClientClass(tc.sdkID); got != tc.client {
+			t.Errorf("dotnetNameClientClass(%q) = %s, want %s", tc.sdkID, got, tc.client)
+		}
+		if got := dotnetNameConfigClass(tc.sdkID); got != tc.config {
+			t.Errorf("dotnetNameConfigClass(%q) = %s, want %s", tc.sdkID, got, tc.config)
+		}
+	}
+}
+
 // TestDotnetMethodNamesAreUnique refuses two names that fold to one C#
 // identifier before the suite fails to build with no indication of which pair
 // caused it.

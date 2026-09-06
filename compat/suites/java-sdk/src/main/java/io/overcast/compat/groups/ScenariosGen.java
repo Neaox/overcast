@@ -24,6 +24,7 @@ public final class ScenariosGen {
                 new ScenariosElasticLoadBalancingGen(clients),
                 new ScenariosOrganizationsGen(clients),
                 new ScenariosServicediscoveryGen(clients),
+                new ScenariosSnsGen(clients),
                 new ScenariosSqsGen(clients));
     }
 }

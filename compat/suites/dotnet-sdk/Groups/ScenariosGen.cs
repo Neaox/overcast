@@ -19,6 +19,7 @@ internal static class ScenarioGroups
         new ScenariosElasticLoadBalancing(clients),
         new ScenariosOrganizations(clients),
         new ScenariosServicediscovery(clients),
+        new ScenariosSns(clients),
         new ScenariosSqs(clients),
     ];
 }

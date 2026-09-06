@@ -956,6 +956,188 @@
       ]
     },
     {
+      "service": "sns",
+      "name": "sns-gen-probe",
+      "generated": true,
+      "scenario": "compat/model/scenarios/sns.json",
+      "state": "candidate",
+      "parallel": true,
+      "suites": [
+        "cli",
+        "dotnet-sdk",
+        "go-sdk",
+        "java-sdk",
+        "node-js-sdk",
+        "python-sdk",
+        "rust-sdk"
+      ],
+      "tests": [
+        {
+          "name": "CheckIfPhoneNumberIsOptedOut"
+        },
+        {
+          "name": "GetDataProtectionPolicy"
+        },
+        {
+          "name": "GetEndpointAttributes"
+        },
+        {
+          "name": "GetPlatformApplicationAttributes"
+        },
+        {
+          "name": "GetSMSAttributes"
+        },
+        {
+          "name": "GetSMSSandboxAccountStatus"
+        },
+        {
+          "name": "ListEndpointsByPlatformApplication"
+        },
+        {
+          "name": "ListOriginationNumbers"
+        },
+        {
+          "name": "ListPhoneNumbersOptedOut"
+        },
+        {
+          "name": "ListPlatformApplications"
+        },
+        {
+          "name": "ListSMSSandboxPhoneNumbers"
+        }
+      ]
+    },
+    {
+      "service": "sns",
+      "name": "sns-gen-subscription",
+      "generated": true,
+      "scenario": "compat/model/scenarios/sns.json",
+      "state": "candidate",
+      "suites": [
+        "cli",
+        "dotnet-sdk",
+        "go-sdk",
+        "java-sdk",
+        "node-js-sdk",
+        "python-sdk",
+        "rust-sdk"
+      ],
+      "tests": [
+        {
+          "name": "Subscribe"
+        },
+        {
+          "name": "GetSubscriptionAttributes",
+          "depends": [
+            "Subscribe"
+          ]
+        },
+        {
+          "name": "SetSubscriptionAttributes",
+          "depends": [
+            "Subscribe"
+          ]
+        },
+        {
+          "name": "GetTopicAttributesAfterCreate",
+          "op": "GetTopicAttributes"
+        },
+        {
+          "name": "ListSubscriptionsByTopic"
+        },
+        {
+          "name": "ListSubscriptions"
+        },
+        {
+          "name": "Unsubscribe",
+          "depends": [
+            "Subscribe"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "sns",
+      "name": "sns-gen-topic",
+      "generated": true,
+      "scenario": "compat/model/scenarios/sns.json",
+      "state": "candidate",
+      "suites": [
+        "cli",
+        "dotnet-sdk",
+        "go-sdk",
+        "java-sdk",
+        "node-js-sdk",
+        "python-sdk",
+        "rust-sdk"
+      ],
+      "tests": [
+        {
+          "name": "CreateTopic"
+        },
+        {
+          "name": "GetTopicAttributes",
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "SetTopicAttributes",
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "TagResource",
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "ListTagsForResource",
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "Publish",
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "PublishBatch",
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "ConfirmSubscription",
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "ListTopics",
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "DeleteTopic",
+          "depends": [
+            "CreateTopic"
+          ]
+        }
+      ]
+    },
+    {
       "service": "sqs",
       "name": "sqs-gen-batch",
       "generated": true,

@@ -1,0 +1,182 @@
+{
+  "$comment": "Amazon SNS — the second Query service in the generated corpus (G4 wave 2 of docs/plans/compat-coverage-modelgen.md §5) and the first wave-2 service whose operations Overcast implements, so these groups produce real pass/fail rather than the `unimplemented`/`skip` wave 1 recorded. Two resources: the topic, and a subscription on a topic of its own. One thing shapes the whole file, and it is the reason the subscription group is not the topic group's mirror image: SNS auto-confirms a subscription only for the protocols whose endpoint is another AWS resource — sqs, lambda, firehose, application — and a recipe is one service's scenario file with one client, so nothing here can create an SQS queue to subscribe. The remaining protocols all leave the subscription in PendingConfirmation until the endpoint owner clicks a link nobody in a compat run can read. So the subscription is an email one, created with ReturnSubscriptionArn true — the member AWS added for exactly this case, which returns the real ARN even while the subscription is unconfirmed — and its membership tests match on TopicArn and Protocol rather than on the ARN, because AWS reports an unconfirmed subscription in ListSubscriptions and ListSubscriptionsByTopic with the literal string `PendingConfirmation` in place of its ARN. Matching on the ARN would pass against Overcast (which confirms nothing and lists the real ARN) and fail against AWS, which is the wrong way round for an assertion. For the same reason the subscription declares no `list`: the derived list-membership clause compares one identity path against one export, and the honest comparison here needs two members neither of which is the identity. Absence after Unsubscribe is proven by `notFound` instead, which GetSubscriptionAttributes' modeled errors derive on their own. Neither resource declares `async`: SNS documents no consistency window for a topic or a subscription — the one thing it does document as delayed is message delivery to subscribers, which nothing here asserts.",
+  "service": "sns",
+  "neverProbe": {
+    "AddPermission": "Adds a statement to a live topic's access policy, granting the named AWS accounts the named actions on it. Nothing in a probe group removes what it adds, and the result is another account holding rights over the caller's topic.",
+    "CreatePlatformApplication": "Registers push credentials (an APNs certificate, an FCM server key) as a platform application in the caller's account. The credentials are stored, the application is billable to use, and nothing here deletes it.",
+    "CreatePlatformEndpoint": "Registers a device token against a platform application, which is what makes a device a push target. A probe would enrol a device nobody asked to enrol.",
+    "CreateSMSSandboxPhoneNumber": "Starts SMS-sandbox verification for a phone number, which sends a one-time password by SMS to whoever holds it. A probe would text a stranger.",
+    "DeleteEndpoint": "Removes a platform endpoint, so the device behind it stops receiving push notifications. AWS documents the call as idempotent, which means it reports nothing when it has destroyed something.",
+    "DeletePlatformApplication": "Deletes a platform application and every endpoint under it, so every device registered against it stops receiving notifications at once.",
+    "DeleteSMSSandboxPhoneNumber": "Removes a verified destination number from the account's SMS sandbox, which stops the account being able to text it until somebody re-verifies it.",
+    "OptInPhoneNumber": "Opts a phone number back in to receiving SMS from the account after its holder opted out. Opting somebody back in is the one SMS action whose whole purpose is to override a person's stated preference, and AWS allows it only once every 30 days.",
+    "PutDataProtectionPolicy": "Replaces a live topic's data protection policy wholesale, so the redaction and blocking rules an owner relies on to keep PII out of a topic are gone the moment the call lands.",
+    "RemovePermission": "Removes a statement from a live topic's access policy by label, so whichever account that statement was for loses its access immediately.",
+    "SetEndpointAttributes": "Writes attributes onto a live platform endpoint — Enabled among them, which is what decides whether a device is sent anything at all.",
+    "SetPlatformApplicationAttributes": "Writes attributes onto a live platform application, including the push credentials themselves and the event-notification topics AWS reports delivery failures to.",
+    "SetSMSAttributes": "Sets the account-wide SMS preferences: the monthly spend limit, the default sender id, the delivery-status role. These are one set per account, so a probe would overwrite the caller's own settings and could not put them back.",
+    "VerifySMSSandboxPhoneNumber": "Completes SMS-sandbox verification with a one-time password. It is a write against the account's sandbox, and a probe guessing a password is the shape of a brute-force attempt rather than of a read."
+  },
+  "allowProbe": {
+    "CheckIfPhoneNumberIsOptedOut": "Reads whether a phone number has opted out of the account's SMS and changes nothing; SNS simply does not spell it Get. The number it is given is in the 555-0100 documentation range, so the read is about nobody."
+  },
+  "resources": [
+    {
+      "$comment": "The topic. CreateTopic answers with the ARN, which is the only identity SNS gives a topic, so it is both the export and what the read and the list compare. The create sets DisplayName for two reasons: AWS leaves it empty on a new topic, so the mutation below is a real change rather than a first write, and AWS applies CreateTopic's own Attributes map — which the subscription group's GetTopicAttributesAfterCreate is where this file checks, for the ordering reason given there; the mutation itself goes through the AttributeName/AttributeValue pair SNS spells every Set*Attributes call with, so `member` is AttributeValue and the attribute being changed is a param rather than part of the member path. That is also why there is no `from`: `from` is merged into the create params at the member path, and CreateTopic has no AttributeValue member for it to land in — the create sets DisplayName through its own Attributes map instead. notFound is left to the derivation: GetTopicAttributes declares exactly one not-found-shaped error, NotFoundException, whose Query code is NotFound.",
+      "id": "topic",
+      "create": {
+        "op": "CreateTopic",
+        "params": {
+          "Name": { "$name": "t" },
+          "Attributes": { "DisplayName": "compat scenario topic" }
+        }
+      },
+      "exports": { "id": "$.TopicArn" },
+      "binds": { "TopicArn": "topic.id", "ResourceArn": "topic.id" },
+      "read": {
+        "op": "GetTopicAttributes",
+        "identityPath": "$.Attributes.TopicArn",
+        "identity": "id"
+      },
+      "list": {
+        "$comment": "ListTopics is account-wide and paginated; membership is by the ARN the create allocated, which no other run can hold. itemsPath is derived from @paginated.items (Topics).",
+        "op": "ListTopics",
+        "identityPath": "$.TopicArn",
+        "identity": "id"
+      },
+      "mutable": [
+        {
+          "op": "SetTopicAttributes",
+          "params": { "AttributeName": "DisplayName" },
+          "member": "AttributeValue",
+          "to": "compat scenario topic, updated",
+          "readPath": "$.Attributes.DisplayName"
+        }
+      ],
+      "tags": {
+        "tag": { "op": "TagResource", "member": "Tags" },
+        "untag": { "op": "UntagResource", "member": "TagKeys" },
+        "list": { "op": "ListTagsForResource", "path": "$.Tags" }
+      },
+      "delete": { "op": "DeleteTopic" },
+      "operations": [
+        {
+          "$comment": "A MessageId is all a successful Publish returns, and it is a UUID on AWS — so the assertion is the shape of one rather than merely non-empty, which a response echoing anything at all would satisfy.",
+          "op": "Publish",
+          "params": {
+            "TopicArn": { "$ref": "topic.id" },
+            "Subject": "compat scenario",
+            "Message": "compat scenario message"
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.MessageId": { "matches": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" }
+              }
+            }
+          ]
+        },
+        {
+          "$comment": "Two entries, so the per-entry result really is per entry: the batch reports entry 1's own id back beside a message id of its own, and the absence clause says entry 1 is not in Failed — a batch that accepted nothing and a batch that accepted everything have different Successful lists but the same empty Failed one only in the second case.",
+          "op": "PublishBatch",
+          "params": {
+            "PublishBatchRequestEntries": [
+              { "Id": "1", "Subject": "compat scenario 1", "Message": "compat scenario batch message 1" },
+              { "Id": "2", "Subject": "compat scenario 2", "Message": "compat scenario batch message 2" }
+            ]
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Successful[0].Id": { "equals": "1" },
+                "$.Successful[0].MessageId": { "matches": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+                "$.Successful[1].Id": { "equals": "2" }
+              }
+            },
+            { "kind": "absent", "itemsPath": "$.Failed", "where": { "$.Id": "1" } }
+          ]
+        },
+        {
+          "$comment": "The only assertion a compat run can make about ConfirmSubscription. A real token arrives in the confirmation message sent to the endpoint's owner, which nothing in a single-service scenario can read, so the covered path is the negative one: SNS validates the token, and answers one it never issued with InvalidParameter, the same answer it gives any other malformed parameter. The token here carries no run id on purpose: it must be a token SNS never issued to anybody.",
+          "op": "ConfirmSubscription",
+          "params": { "Token": "compat-scenario-token-that-sns-never-issued" },
+          "assert": [
+            { "kind": "errorCode", "error": { "shape": "InvalidParameterException" } }
+          ]
+        }
+      ]
+    },
+    {
+      "$comment": "An email subscription on a topic of its own. Everything unusual about it is in the file's own comment above: email is the protocol left once cross-service endpoints are out of reach, ReturnSubscriptionArn is what makes the ARN readable while the subscription is unconfirmed, and the two listings match on TopicArn and Protocol because AWS spells an unconfirmed subscription's ARN `PendingConfirmation` in both of them. The mutation is the subscription's filter policy: it is the one attribute SetSubscriptionAttributes accepts for every protocol — RawMessageDelivery and DeliveryPolicy are for the SQS and HTTP/S endpoints this recipe cannot create — and Subscribe sets an initial policy through its own Attributes map so that the update is a change rather than a first write.",
+      "id": "subscription",
+      "requires": ["topic"],
+      "create": {
+        "op": "Subscribe",
+        "params": {
+          "Protocol": "email",
+          "Endpoint": { "$concat": [{ "$name": "s" }, "@example.com"] },
+          "ReturnSubscriptionArn": true,
+          "Attributes": { "FilterPolicy": "{\"compat\":[\"scenario\"]}" }
+        }
+      },
+      "exports": { "id": "$.SubscriptionArn" },
+      "binds": { "SubscriptionArn": "subscription.id" },
+      "read": {
+        "op": "GetSubscriptionAttributes",
+        "identityPath": "$.Attributes.SubscriptionArn",
+        "identity": "id"
+      },
+      "mutable": [
+        {
+          "op": "SetSubscriptionAttributes",
+          "params": { "AttributeName": "FilterPolicy" },
+          "member": "AttributeValue",
+          "to": "{\"compat\":[\"scenario\",\"updated\"]}",
+          "readPath": "$.Attributes.FilterPolicy"
+        }
+      ],
+      "delete": { "op": "Unsubscribe" },
+      "operations": [
+        {
+          "$comment": "A topic assertion in the subscription group, and the placement is the point. AWS applies CreateTopic's own Attributes map — DisplayName among them — so a topic read straight after its create should carry the display name the create asked for. The topic group cannot check that: its own read is the create's read-back, every one of its eleven tests depends on that create, and a mutation of DisplayName runs before anything else could look. This group creates a topic in setup and never mutates it, so it is the one place in the corpus where a topic's attributes are still exactly what the create left them, and a test here gates nothing — it exports nothing and no test depends on it.",
+          "name": "GetTopicAttributesAfterCreate",
+          "op": "GetTopicAttributes",
+          "params": { "TopicArn": { "$ref": "topic.id" } },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Attributes.TopicArn": { "equals": { "$ref": "topic.id" } },
+                "$.Attributes.DisplayName": { "equals": "compat scenario topic" }
+              }
+            }
+          ]
+        },
+        {
+          "$comment": "Scoped to the topic the group owns, so the only subscription in the page is the one under test.",
+          "op": "ListSubscriptionsByTopic",
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.Subscriptions",
+              "where": { "$.TopicArn": { "$ref": "topic.id" }, "$.Protocol": "email" }
+            }
+          ]
+        },
+        {
+          "$comment": "Account-wide, so the match has to name the topic: the ARN the create allocated is the one identifier in the item that no other run can hold. AWS pages this listing, and a subscription past the first page would not be found — the same exposure the topic group's ListTopics membership has, and the same one every account-wide listing in the corpus has.",
+          "op": "ListSubscriptions",
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.Subscriptions",
+              "where": { "$.TopicArn": { "$ref": "topic.id" }, "$.Protocol": "email" }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

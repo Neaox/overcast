@@ -28,6 +28,16 @@
         "GetOperation": { "OperationId": "compatscenariooperationnotfound0-00000000" }
       }
     },
+    "sns": {
+      "$comment": "Five identifiers of SNS resources that do not exist, in the documentation account rather than the caller's, so no probe can reach the topic the run created. Three of them are ARNs and their shapes matter: a topic ARN is arn:aws:sns:<region>:<account>:<name>, a platform application ARN is app/<platform>/<name> under the same prefix and an endpoint ARN is endpoint/<platform>/<name>/<uuid> — a value of the wrong shape is answered InvalidParameter rather than the not-found a probe is written for. GetDataProtectionPolicy needs an entry rather than a binding because the topic resource binds ResourceArn, and a probe may not draw on a value the run owns. The phone number is in the 555-0100 to 555-0199 block the North American Numbering Plan reserves for fictional use in every area code, so CheckIfPhoneNumberIsOptedOut asks about nobody.",
+      "operations": {
+        "CheckIfPhoneNumberIsOptedOut": { "phoneNumber": "+12025550100" },
+        "GetDataProtectionPolicy": { "ResourceArn": "arn:aws:sns:us-east-1:123456789012:compat-scenario-nonexistent" },
+        "GetEndpointAttributes": { "EndpointArn": "arn:aws:sns:us-east-1:123456789012:endpoint/GCM/compat-scenario-nonexistent/00000000-0000-0000-0000-000000000000" },
+        "GetPlatformApplicationAttributes": { "PlatformApplicationArn": "arn:aws:sns:us-east-1:123456789012:app/GCM/compat-scenario-nonexistent" },
+        "ListEndpointsByPlatformApplication": { "PlatformApplicationArn": "arn:aws:sns:us-east-1:123456789012:app/GCM/compat-scenario-nonexistent" }
+      }
+    },
     "sqs": {
       "$comment": "TaskHandle is base64 on AWS — StartMessageMoveTask hands back an opaque encoded handle — so the placeholder is base64 too: an unencoded string is answered with a validation error rather than the not-found the probe is written for. This one decodes to {\"taskId\":\"compat-scenario\"}. QueueUrl and SourceArn name a queue in an account that is not the caller's, so a probe of AddPermission, RemovePermission, CancelMessageMoveTask or ListMessageMoveTasks cannot reach the queue the run created.",
       "operations": {
