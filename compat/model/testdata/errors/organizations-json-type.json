@@ -1,0 +1,34 @@
+{
+  "id": "organizations-json-type",
+  "title": "Organizations not-found, AWS JSON 1.1, __type without a namespace",
+  "why": "The ordinary JSON 1.1 shape: no awsQueryError, so the modeled shape and the wire code are the same string, and __type carries it bare. An SDK that models the error mints an exception class of the same name, which is the fourth surface rule 1 lists.",
+  "carriers": ["exceptionName", "bodyType"],
+  "wire": {
+    "status": 400,
+    "exceptionName": "PolicyNotFoundException",
+    "headers": {},
+    "body": {
+      "__type": "PolicyNotFoundException",
+      "message": "You specified a policy that doesn't exist."
+    }
+  },
+  "expect": [
+    {
+      "name": "a clause naming the shape, matched against the body",
+      "error": { "shape": "PolicyNotFoundException", "code": "PolicyNotFoundException" },
+      "matches": true,
+      "via": "bodyType"
+    },
+    {
+      "name": "the same clause, matched against the SDK's exception class",
+      "error": { "shape": "PolicyNotFoundException", "code": "PolicyNotFoundException" },
+      "matches": true,
+      "via": "exceptionName"
+    },
+    {
+      "name": "a near miss on the shape",
+      "error": { "shape": "NotFoundException", "code": "NotFoundException" },
+      "matches": false
+    }
+  ]
+}

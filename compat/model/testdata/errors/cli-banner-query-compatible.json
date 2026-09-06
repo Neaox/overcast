@@ -1,0 +1,33 @@
+{
+  "id": "cli-banner-query-compatible",
+  "title": "The AWS CLI's own error banner, awsQueryCompatible with the header present",
+  "why": "The same not-found as cli-banner, from a service that does send x-amzn-query-error — real SQS, and Overcast once #1816 lands. botocore's BaseJSONParser._do_query_compatible_error_parse replaces the __type-derived code with the header's Query code whenever the header is present, and the CLI's banner is a rendering of that same Error.Code, so `aws sqs delete-queue` against real AWS prints `An error occurred (AWS.SimpleQueueService.NonExistentQueue) when calling the DeleteQueue operation`. Measured, not inferred: aws-cli 2.36.18 against a stub answering this body with and without the header prints exactly these two banners. The modeled shape is not on stderr at all here: a modeled error is rendered as the banner and nothing else, so the CLI echoes no JSON body for the shape to be read from. A clause naming only the shape therefore cannot match, which is the mirror of cli-banner's Query-code clause and the reason a generated clause carries both spellings.",
+  "carriers": ["cliBanner"],
+  "wire": {
+    "stderr": "aws sqs delete-queue: exit status 254: An error occurred (AWS.SimpleQueueService.NonExistentQueue) when calling the DeleteQueue operation: The specified queue does not exist."
+  },
+  "expect": [
+    {
+      "name": "a clause naming the modeled shape and the Query code",
+      "error": { "shape": "QueueDoesNotExist", "code": "AWS.SimpleQueueService.NonExistentQueue" },
+      "matches": true,
+      "via": "cliBanner"
+    },
+    {
+      "name": "a clause naming only the Query code",
+      "error": { "shape": "AWS.SimpleQueueService.NonExistentQueue", "code": "AWS.SimpleQueueService.NonExistentQueue" },
+      "matches": true,
+      "via": "cliBanner"
+    },
+    {
+      "name": "a clause naming only the modeled shape",
+      "error": { "shape": "QueueDoesNotExist", "code": "QueueDoesNotExist" },
+      "matches": false
+    },
+    {
+      "name": "a near miss the banner's code ends with",
+      "error": { "shape": "NonExistentQueue", "code": "NonExistentQueue" },
+      "matches": false
+    }
+  ]
+}

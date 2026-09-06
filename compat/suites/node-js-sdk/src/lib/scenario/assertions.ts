@@ -85,9 +85,12 @@ function evaluateCheck(
   }
 
   if ("matches" in check) {
-    if (typeof found.value !== "string") {
-      return { path, expected: `a string matching /${check.matches}/`, actual };
-    }
+    // The pattern is compiled before the value is looked at, so what the
+    // failure says does not depend on what came back: a pattern this engine
+    // rejects reads "unsupported pattern" whether the path resolved to a
+    // string or to a number. python and cli report it the same way, and
+    // compiling second would have made one broken scenario file fail two
+    // different ways across the three.
     let re: RegExp;
     try {
       re = new RegExp(check.matches);
@@ -101,6 +104,9 @@ function evaluateCheck(
         expected: `pattern ${check.matches}`,
         actual: `unsupported pattern: ${err instanceof Error ? err.message : String(err)}`,
       };
+    }
+    if (typeof found.value !== "string") {
+      return { path, expected: `a string matching /${check.matches}/`, actual };
     }
     if (re.test(found.value)) return null;
     return { path, expected: `a string matching /${check.matches}/`, actual };

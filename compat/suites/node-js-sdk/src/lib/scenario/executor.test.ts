@@ -248,7 +248,14 @@ describe("eventually", () => {
     const err = await failureOf(() => runScenarioTest(h.env, test));
     assert.deepEqual(h.slept, [2000, 2000]);
     assert.ok(err.message.includes("readback at $.Attributes.QueueArn"));
-    assert.ok(err.message.includes("[eventually: 3 attempts 2000ms apart]"));
+    // The give-up prefix is fixed byte-for-byte by compat/model/README.md
+    // § Failure messages; python-sdk and cli emit the same string.
+    assert.ok(
+      err.message.startsWith(
+        "eventually gave up after 3 attempt(s) 2000ms apart; last failure: ",
+      ),
+      err.message,
+    );
     // Field 6 names the inner clause, not the wrapper.
     assert.ok(err.message.includes(`${SCENARIO_FILE} assert[0].assert)`));
   });
@@ -392,7 +399,7 @@ describe("setup and teardown", () => {
     assert.equal(h.env.ctx.bag.get("dlq.arn"), "arn:dlq");
   });
 
-  it("throws the bare message so the harness reads `setup failed: <error>`", async () => {
+  it("throws the bare message so the harness reads `setup failed: <message>`", async () => {
     const h = harness({
       CreateQueue: () => {
         throw sdkError("ServiceUnavailable");

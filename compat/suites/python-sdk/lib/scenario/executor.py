@@ -208,32 +208,56 @@ def error_names(exc: Exception) -> list[str]:
     """Every name an SDK error reports itself under.
 
     The SDKs disagree about whether they surface the modeled shape name or the
-    wire code, so compat/model/README.md § Assertions has an interpreter accept
-    either against either. For boto3 that means: the exception class botocore
-    minted (the shape name, when the code matched a modeled error), the parsed
-    ``Error.Code`` (which for a JSON protocol comes from ``__type``, and which
-    Overcast fills with SQS's legacy ``AWS.SimpleQueueService.*`` code), and the
-    ``x-amzn-query-error`` header AWS uses for the same purpose."""
+    wire code, so compat/model/README.md § Errors has an interpreter accept
+    either against either, over a fixed list of surfaces. This reads the three
+    boto3 actually has:
+
+    * the exception class botocore minted, which is the modeled shape's name
+      whenever ``Error.Code`` matched a modeled error's code;
+    * ``Error.Code`` — one field, wherever the code came from. botocore
+      resolves it from the body's ``__type`` (namespace already stripped), from
+      ``x-amzn-errortype`` or the body's ``code``/``Code`` member for REST JSON,
+      and replaces it with the ``x-amzn-query-error`` code for a
+      query-compatible service. There is no ``Error.__type`` and no top-level
+      ``__type`` to read: botocore never sets either, so looking for them would
+      be reading a key only a test fixture could put there. ``Error.code`` is
+      read because the Errors table names that spelling, but botocore does not
+      use it;
+    * the ``x-amzn-query-error`` header itself, which is on the response
+      whether or not the parser preferred it.
+
+    Each is read in every spelling ``_spellings`` lists. The shared fixtures
+    under ``compat/model/testdata/errors`` pin the outcomes;
+    ``tests/test_error_fixtures.py`` runs them against this."""
     names = [type(exc).__name__]
     response = getattr(exc, "response", None)
     if isinstance(response, dict):
         error = response.get("Error") or {}
-        for key in ("Code", "__type"):
-            value = error.get(key)
-            if isinstance(value, str) and value:
-                names.append(value.rsplit("#", 1)[-1])
-        wire_type = response.get("__type")
-        if isinstance(wire_type, str) and wire_type:
-            names.append(wire_type.rsplit("#", 1)[-1])
+        for key in ("Code", "code"):
+            names.extend(_spellings(error.get(key)))
         headers = (response.get("ResponseMetadata") or {}).get("HTTPHeaders") or {}
-        query_error = headers.get("x-amzn-query-error")
-        if isinstance(query_error, str) and query_error:
-            names.append(query_error.split(";")[0])
+        names.extend(_spellings(headers.get("x-amzn-query-error")))
     seen: list[str] = []
     for name in names:
-        if name not in seen:
+        if name and name not in seen:
             seen.append(name)
     return seen
+
+
+def _spellings(value: Any) -> list[str]:
+    """One raw surface, in every spelling a clause may name it by: the value
+    itself, what follows the last ``#`` of a Smithy id, and what precedes the
+    first ``;`` of the header's ``<code>;<fault>`` form. Splitting only at
+    those separators is what keeps matching an equality: no spelling of
+    ``ResourceNotFoundException`` is ever ``NotFoundException``."""
+    if not isinstance(value, str) or not value:
+        return []
+    out = [value]
+    if "#" in value:
+        out.append(value.rsplit("#", 1)[-1])
+    if ";" in value:
+        out.append(value.split(";", 1)[0])
+    return out
 
 
 def describe_error(exc: Optional[Exception]) -> str:

@@ -589,11 +589,13 @@ func TestErrorClauseMatchesTheCodeExactly(t *testing.T) {
 		},
 		{
 			// Nothing this parser recognises — a CLI that died before the wire.
-			// Containment is all that is left, and it beats reporting no match.
-			name:  "containment is the fallback when no code surface is present",
+			// There is no containment fallback: the message names the code but
+			// states none, so the clause fails naming the raw stderr rather
+			// than accepting prose as evidence of the error.
+			name:  "no code surface at all does not match, however the message reads",
 			shape: "ValidationError", code: "ValidationError",
 			cliErr:    errors.New(`aws widgets create-thing: exit status 252: Invalid length for parameter Name, ValidationError`),
-			wantMatch: true,
+			wantMatch: false,
 		},
 	}
 	for _, tc := range cases {

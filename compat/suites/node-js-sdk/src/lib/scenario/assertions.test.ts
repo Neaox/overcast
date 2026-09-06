@@ -104,6 +104,18 @@ describe("checks", () => {
     assert.match(mismatch.actual, /^unsupported pattern: /);
   });
 
+  it("reports an unsupported pattern whatever the value's type is", () => {
+    // The pattern is compiled before the value is looked at, so a broken
+    // scenario file reads the same way against a number as against a string —
+    // which is how python and cli report it, and what stops one file failing
+    // two different ways across the three interpreters.
+    const pattern = "(?P<name>foo)";
+    const mismatch = evaluateChecks({ Id: 42 }, { "$.Id": { matches: pattern } }, ctx);
+    assert.ok(mismatch !== null);
+    assert.equal(mismatch.expected, `pattern ${pattern}`);
+    assert.match(mismatch.actual, /^unsupported pattern: /);
+  });
+
   it("missing holds when any segment is absent and fails when it resolves", () => {
     assert.equal(
       evaluateChecks({ Tags: {} }, { "$.Tags.compat": { missing: true } }, ctx),

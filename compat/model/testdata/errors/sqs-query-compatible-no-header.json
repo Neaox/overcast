@@ -1,0 +1,32 @@
+{
+  "id": "sqs-query-compatible-no-header",
+  "title": "SQS not-found, awsQueryCompatible, header absent (Overcast today)",
+  "why": "The same error as sqs-query-compatible-header, from an emulator that does not send x-amzn-query-error yet (#1810). The pair is what makes the header a surface rather than a decoration: the clause naming only the Query code matches with the header and does not match without it, and no interpreter may paper over the difference by matching on containment.",
+  "carriers": ["bodyType"],
+  "wire": {
+    "status": 400,
+    "headers": {},
+    "body": {
+      "__type": "com.amazonaws.sqs#QueueDoesNotExist",
+      "message": "The specified queue does not exist."
+    }
+  },
+  "expect": [
+    {
+      "name": "a clause naming the modeled shape",
+      "error": { "shape": "QueueDoesNotExist", "code": "AWS.SimpleQueueService.NonExistentQueue" },
+      "matches": true,
+      "via": "bodyType"
+    },
+    {
+      "name": "a clause naming only the Query code",
+      "error": { "shape": "AWS.SimpleQueueService.NonExistentQueue", "code": "AWS.SimpleQueueService.NonExistentQueue" },
+      "matches": false
+    },
+    {
+      "name": "a near miss on the shape",
+      "error": { "shape": "DoesNotExist", "code": "DoesNotExist" },
+      "matches": false
+    }
+  ]
+}

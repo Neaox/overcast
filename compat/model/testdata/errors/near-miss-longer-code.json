@@ -1,0 +1,33 @@
+{
+  "id": "near-miss-longer-code",
+  "title": "Near miss: the observed code ends with the one the clause names",
+  "why": "Half of the pair that pins equality rather than containment. ResourceNotFoundException ends with NotFoundException and starts with ResourceNotFound, and neither of those is this error: they are different branches of the service, and a clause that accepted them would pass while the emulator answered with something else.",
+  "carriers": ["exceptionName", "bodyType"],
+  "wire": {
+    "status": 400,
+    "exceptionName": "ResourceNotFoundException",
+    "headers": {},
+    "body": {
+      "__type": "ResourceNotFoundException",
+      "message": "The resource was not found."
+    }
+  },
+  "expect": [
+    {
+      "name": "the code the error states",
+      "error": { "shape": "ResourceNotFoundException", "code": "ResourceNotFoundException" },
+      "matches": true,
+      "via": "bodyType"
+    },
+    {
+      "name": "a suffix of the observed code",
+      "error": { "shape": "NotFoundException", "code": "NotFoundException" },
+      "matches": false
+    },
+    {
+      "name": "a prefix of the observed code",
+      "error": { "shape": "ResourceNotFound", "code": "ResourceNotFound" },
+      "matches": false
+    }
+  ]
+}
