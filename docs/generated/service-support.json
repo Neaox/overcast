@@ -8519,12 +8519,13 @@
           "operation": "CreateLoadBalancer",
           "category": "Load Balancers",
           "status": "✅ Supported",
-          "notes": "Threads Type, Scheme, IpAddressType, Subnets, SecurityGroups and Tags"
+          "notes": "Threads Type, Scheme, IpAddressType and Tags; requires at least one Subnets or SubnetMappings member, which is validated and then discarded — Availability Zones are not modelled"
         },
         {
           "operation": "DescribeLoadBalancers",
           "category": "Load Balancers",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "An unresolvable LoadBalancerArns or Names entry raises LoadBalancerNotFound and a value that is not a load balancer ARN raises ValidationError; naming neither lists the region"
         },
         {
           "operation": "DeleteLoadBalancer",
@@ -8535,12 +8536,13 @@
           "operation": "CreateTargetGroup",
           "category": "Target Groups",
           "status": "✅ Supported",
-          "notes": "Threads TargetType, ProtocolVersion, IpAddressType, the HealthCheck* family, Matcher and Tags; health checks are stored and echoed but not evaluated against targets"
+          "notes": "Threads TargetType, ProtocolVersion, IpAddressType, the HealthCheck* family, Matcher and Tags; validates Protocol against the documented enum and Port against 1-65535; health checks are stored and echoed but not evaluated against targets"
         },
         {
           "operation": "DescribeTargetGroups",
           "category": "Target Groups",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "An unresolvable TargetGroupArns or Names entry raises TargetGroupNotFound and a value that is not a target group ARN raises ValidationError; naming neither lists the region"
         },
         {
           "operation": "DeleteTargetGroup",
@@ -8573,7 +8575,8 @@
         {
           "operation": "DescribeListeners",
           "category": "Listeners",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "An unresolvable ListenerArns entry raises ListenerNotFound and an unresolvable LoadBalancerArn raises LoadBalancerNotFound; naming neither lists the region"
         },
         {
           "operation": "DeleteListener",

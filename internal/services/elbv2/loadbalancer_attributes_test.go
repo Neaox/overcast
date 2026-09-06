@@ -136,9 +136,13 @@ func TestLoadBalancerAttributes_unknownARNIsNotFound(t *testing.T) {
 		"ModifyLoadBalancerAttributes":   h.ModifyLoadBalancerAttributes,
 		"DescribeLoadBalancerAttributes": h.DescribeLoadBalancerAttributes,
 	} {
+		// 400, not 404: the ELBv2 API reference gives LoadBalancerNotFound an
+		// HTTP status of 400, as it does every one of its documented errors.
+		// These answered 404 while the code lived in its own helper here; it
+		// comes from identifierScope now, with the Describe* paths (#1718).
 		rec := elbv2Call(t, fn, url.Values{"LoadBalancerArn": {missing}})
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("%s on an unknown ARN = %d, want 404: %s", name, rec.Code, rec.Body.String())
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s on an unknown ARN = %d, want 400: %s", name, rec.Code, rec.Body.String())
 		}
 		if !strings.Contains(rec.Body.String(), "LoadBalancerNotFound") {
 			t.Errorf("%s error code: %s", name, rec.Body.String())

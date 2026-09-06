@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
-
-	"github.com/google/uuid"
+	"strings"
 
 	"github.com/overcast-sh/overcast/internal/protocol"
 	"github.com/overcast-sh/overcast/internal/serviceutil"
@@ -19,6 +19,23 @@ type createLoadBalancerReq struct {
 	IpAddressType string     `json:"IpAddressType"`
 	VpcId         string     `json:"VpcId"`
 	Tags          []elbv2Tag `json:"Tags"`
+
+	// Subnets and SubnetMappings are the two ways a request names the subnets
+	// a load balancer lives in. They are read for validation only — a load
+	// balancer with none of either cannot exist on AWS — and are not stored,
+	// because Overcast does not model a load balancer's Availability Zones.
+	Subnets        []string        `json:"Subnets"`
+	SubnetMappings []subnetMapping `json:"SubnetMappings"`
+}
+
+// subnetMapping is one member of CreateLoadBalancer's SubnetMappings. Only
+// SubnetId is read; the address members exist so a request that sends them
+// decodes rather than being silently dropped a member at a time.
+type subnetMapping struct {
+	SubnetId           string `json:"SubnetId"`
+	AllocationId       string `json:"AllocationId"`
+	PrivateIPv4Address string `json:"PrivateIPv4Address"`
+	IPv6Address        string `json:"IPv6Address"`
 }
 
 type describeLoadBalancersReq struct {
@@ -41,10 +58,13 @@ type createTargetGroupReq struct {
 	Name            string `json:"Name"`
 	Protocol        string `json:"Protocol"`
 	ProtocolVersion string `json:"ProtocolVersion"`
-	Port            int    `json:"Port"`
-	VpcId           string `json:"VpcId"`
-	TargetType      string `json:"TargetType"`
-	IpAddressType   string `json:"IpAddressType"`
+	// Port is a pointer so that "not sent" and "sent as 0" stay distinct: a
+	// lambda target group carries no port at all, while an explicit 0 is
+	// outside the legal range and has to be rejected.
+	Port          *int   `json:"Port"`
+	VpcId         string `json:"VpcId"`
+	TargetType    string `json:"TargetType"`
+	IpAddressType string `json:"IpAddressType"`
 
 	HealthCheckEnabled         *bool       `json:"HealthCheckEnabled"`
 	HealthCheckProtocol        string      `json:"HealthCheckProtocol"`
@@ -279,11 +299,20 @@ func (h *Handler) createLoadBalancerTyped(ctx context.Context, req *createLoadBa
 	if scheme == "" {
 		scheme = "internet-facing"
 	}
+	// Subnets are what give a load balancer its network presence, so one with
+	// none of them cannot exist on AWS and accepting it produces a resource no
+	// real deployment could have (#1718). AWS asks an application load balancer
+	// for two subnets in two Availability Zones on top of this; Overcast does
+	// not resolve a subnet to its zone here, so it enforces only the rule that
+	// holds for every load balancer type.
+	if len(req.Subnets) == 0 && len(req.SubnetMappings) == 0 {
+		return nil, errValidation("At least one subnet must be specified")
+	}
 	region := h.region(ctx)
 	account := h.accountID()
 
-	lbID := uuid.NewString()
-	arn := loadBalancerARN(region, account, lbType, name, lbID[:8])
+	lbID := arnResourceID()
+	arn := loadBalancerARN(region, account, lbType, name, lbID)
 	dnsName := h.loadBalancerDNSName(name, lbID, region)
 
 	lb := &LoadBalancer{
@@ -319,6 +348,11 @@ func (h *Handler) describeLoadBalancersTyped(ctx context.Context, req *describeL
 	if err != nil {
 		return nil, protocol.ErrInternalError
 	}
+	if aerr := resolveIdentifiers(loadBalancerScope, req.LoadBalancerArns, req.Names, lbs,
+		func(lb *LoadBalancer) string { return lb.LoadBalancerArn },
+		func(lb *LoadBalancer) string { return lb.LoadBalancerName }); aerr != nil {
+		return nil, aerr
+	}
 	lbs = selectLBs(lbs, req.LoadBalancerArns, req.Names)
 	sort.Slice(lbs, func(i, j int) bool { return lbs[i].LoadBalancerName < lbs[j].LoadBalancerName })
 
@@ -339,10 +373,8 @@ func (h *Handler) deleteLoadBalancerTyped(ctx context.Context, req *deleteLoadBa
 		return nil, errMissingParam("LoadBalancerArn")
 	}
 	region := h.region(ctx)
-	if _, found, err := h.getLB(ctx, region, arn); err != nil {
-		return nil, protocol.ErrInternalError
-	} else if !found {
-		return nil, errNotFound("LoadBalancer", arn)
+	if _, aerr := h.requireLoadBalancer(ctx, region, arn); aerr != nil {
+		return nil, aerr
 	}
 	if err := h.deleteLB(ctx, region, arn); err != nil {
 		return nil, protocol.ErrInternalError
@@ -427,6 +459,48 @@ func applyHealthCheckDefaults(tg *TargetGroup) {
 	}
 }
 
+// targetGroupProtocols is the ProtocolEnum a target group's Protocol has to be
+// one of, in the ELBv2 API reference's own order.
+// https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_CreateTargetGroup.html
+var targetGroupProtocols = []string{"HTTP", "HTTPS", "TCP", "TLS", "UDP", "TCP_UDP", "GENEVE"}
+
+// validateTargetGroupProtocol rejects a Protocol outside the enum.
+//
+// An absent Protocol is accepted rather than required, because a lambda target
+// group carries none; what #1718 asked for is that a value AWS would refuse
+// stops being stored and echoed back. The message follows the shape AWS's Query
+// services answer a constraint violation with — clients branch on the
+// ValidationError code, not on the prose.
+func validateTargetGroupProtocol(proto string) *protocol.AWSError {
+	if proto == "" || slices.Contains(targetGroupProtocols, proto) {
+		return nil
+	}
+	return errValidation(fmt.Sprintf(
+		"1 validation error detected: Value '%s' at 'protocol' failed to satisfy constraint: "+
+			"Member must satisfy enum value set: [%s]",
+		proto, strings.Join(targetGroupProtocols, ", ")))
+}
+
+// validateTargetGroupPort rejects a Port outside 1–65535. A nil Port is a Port
+// the request did not send — a lambda target group has none — which is why the
+// field is a pointer.
+func validateTargetGroupPort(port *int) *protocol.AWSError {
+	if port == nil {
+		return nil
+	}
+	switch {
+	case *port < 1:
+		return errValidation(fmt.Sprintf(
+			"1 validation error detected: Value '%d' at 'port' failed to satisfy constraint: "+
+				"Member must have value greater than or equal to 1", *port))
+	case *port > 65535:
+		return errValidation(fmt.Sprintf(
+			"1 validation error detected: Value '%d' at 'port' failed to satisfy constraint: "+
+				"Member must have value less than or equal to 65535", *port))
+	}
+	return nil
+}
+
 func (h *Handler) createTargetGroupTyped(ctx context.Context, req *createTargetGroupReq) (*xmlTypedCreateTargetGroupResponse, *protocol.AWSError) {
 	name := req.Name
 	if name == "" {
@@ -436,25 +510,31 @@ func (h *Handler) createTargetGroupTyped(ctx context.Context, req *createTargetG
 	if tgType == "" {
 		tgType = "instance"
 	}
+	if aerr := validateTargetGroupProtocol(req.Protocol); aerr != nil {
+		return nil, aerr
+	}
+	if aerr := validateTargetGroupPort(req.Port); aerr != nil {
+		return nil, aerr
+	}
 	region := h.region(ctx)
 	account := h.accountID()
 
-	tgID := uuid.NewString()
-	arn := fmt.Sprintf("arn:aws:elasticloadbalancing:%s:%s:targetgroup/%s/%s",
-		region, account, name, tgID[:12])
+	arn := targetGroupARN(region, account, name, arnResourceID())
 
 	tg := &TargetGroup{
 		TargetGroupArn:     arn,
 		TargetGroupName:    name,
 		Protocol:           req.Protocol,
 		ProtocolVersion:    req.ProtocolVersion,
-		Port:               req.Port,
 		VpcId:              req.VpcId,
 		TargetType:         tgType,
 		IpAddressType:      req.IpAddressType,
 		HealthCheckEnabled: true,
 		Region:             region,
 		Tags:               tagsFromWire(req.Tags),
+	}
+	if req.Port != nil {
+		tg.Port = *req.Port
 	}
 	applyHealthCheckReq(tg, req.HealthCheckEnabled, req.HealthCheckProtocol, req.HealthCheckPort, req.HealthCheckPath,
 		req.HealthCheckIntervalSeconds, req.HealthCheckTimeoutSeconds, req.HealthyThresholdCount, req.UnhealthyThresholdCount, req.Matcher)
@@ -480,11 +560,9 @@ func (h *Handler) modifyTargetGroupTyped(ctx context.Context, req *modifyTargetG
 		return nil, errMissingParam("TargetGroupArn")
 	}
 	region := h.region(ctx)
-	tg, found, err := h.getTG(ctx, region, arn)
-	if err != nil {
-		return nil, protocol.ErrInternalError
-	} else if !found {
-		return nil, errTGNotFound(arn)
+	tg, aerr := h.requireTargetGroup(ctx, region, arn)
+	if aerr != nil {
+		return nil, aerr
 	}
 
 	applyHealthCheckReq(tg, req.HealthCheckEnabled, req.HealthCheckProtocol, req.HealthCheckPort, req.HealthCheckPath,
@@ -508,11 +586,9 @@ func (h *Handler) modifyTargetGroupAttributesTyped(ctx context.Context, req *mod
 		return nil, errMissingParam("TargetGroupArn")
 	}
 	region := h.region(ctx)
-	tg, found, err := h.getTG(ctx, region, arn)
-	if err != nil {
-		return nil, protocol.ErrInternalError
-	} else if !found {
-		return nil, errTGNotFound(arn)
+	tg, aerr := h.requireTargetGroup(ctx, region, arn)
+	if aerr != nil {
+		return nil, aerr
 	}
 
 	tg.Attributes = mergeAttributes(tg.Attributes, req.Attributes)
@@ -534,11 +610,9 @@ func (h *Handler) describeTargetGroupAttributesTyped(ctx context.Context, req *d
 		return nil, errMissingParam("TargetGroupArn")
 	}
 	region := h.region(ctx)
-	tg, found, err := h.getTG(ctx, region, arn)
-	if err != nil {
-		return nil, protocol.ErrInternalError
-	} else if !found {
-		return nil, errTGNotFound(arn)
+	tg, aerr := h.requireTargetGroup(ctx, region, arn)
+	if aerr != nil {
+		return nil, aerr
 	}
 
 	resp := &xmlDescribeTargetGroupAttributesResponse{
@@ -555,11 +629,9 @@ func (h *Handler) modifyLoadBalancerAttributesTyped(ctx context.Context, req *mo
 		return nil, errMissingParam("LoadBalancerArn")
 	}
 	region := h.region(ctx)
-	lb, found, err := h.getLB(ctx, region, arn)
-	if err != nil {
-		return nil, protocol.ErrInternalError
-	} else if !found {
-		return nil, errNotFound("LoadBalancer", arn)
+	lb, aerr := h.requireLoadBalancer(ctx, region, arn)
+	if aerr != nil {
+		return nil, aerr
 	}
 
 	lb.Attributes = mergeAttributes(lb.Attributes, req.Attributes)
@@ -581,11 +653,9 @@ func (h *Handler) describeLoadBalancerAttributesTyped(ctx context.Context, req *
 		return nil, errMissingParam("LoadBalancerArn")
 	}
 	region := h.region(ctx)
-	lb, found, err := h.getLB(ctx, region, arn)
-	if err != nil {
-		return nil, protocol.ErrInternalError
-	} else if !found {
-		return nil, errNotFound("LoadBalancer", arn)
+	lb, aerr := h.requireLoadBalancer(ctx, region, arn)
+	if aerr != nil {
+		return nil, aerr
 	}
 
 	resp := &xmlDescribeLoadBalancerAttributesResponse{
@@ -646,6 +716,11 @@ func (h *Handler) describeTargetGroupsTyped(ctx context.Context, req *describeTa
 	if err != nil {
 		return nil, protocol.ErrInternalError
 	}
+	if aerr := resolveIdentifiers(targetGroupScope, req.TargetGroupArns, req.Names, tgs,
+		func(tg *TargetGroup) string { return tg.TargetGroupArn },
+		func(tg *TargetGroup) string { return tg.TargetGroupName }); aerr != nil {
+		return nil, aerr
+	}
 	tgs = selectTGs(tgs, req.TargetGroupArns, req.Names)
 	sort.Slice(tgs, func(i, j int) bool { return tgs[i].TargetGroupName < tgs[j].TargetGroupName })
 
@@ -666,10 +741,8 @@ func (h *Handler) deleteTargetGroupTyped(ctx context.Context, req *deleteTargetG
 		return nil, errMissingParam("TargetGroupArn")
 	}
 	region := h.region(ctx)
-	if _, found, err := h.getTG(ctx, region, arn); err != nil {
-		return nil, protocol.ErrInternalError
-	} else if !found {
-		return nil, errTGNotFound(arn)
+	if _, aerr := h.requireTargetGroup(ctx, region, arn); aerr != nil {
+		return nil, aerr
 	}
 	if err := h.deleteTG(ctx, region, arn); err != nil {
 		return nil, protocol.ErrInternalError
@@ -687,16 +760,12 @@ func (h *Handler) createListenerTyped(ctx context.Context, req *createListenerRe
 	}
 	region := h.region(ctx)
 
-	if _, found, err := h.getLB(ctx, region, lbArn); err != nil {
-		return nil, protocol.ErrInternalError
-	} else if !found {
-		return nil, errNotFound("LoadBalancer", lbArn)
+	if _, aerr := h.requireLoadBalancer(ctx, region, lbArn); aerr != nil {
+		return nil, aerr
 	}
 
-	lID := uuid.NewString()
-
 	l := &Listener{
-		ListenerArn:     listenerARN(lbArn, lID[:12]),
+		ListenerArn:     listenerARN(lbArn, arnResourceID()),
 		LoadBalancerArn: lbArn,
 		Protocol:        req.Protocol,
 		Port:            req.Port,
@@ -716,9 +785,33 @@ func (h *Handler) createListenerTyped(ctx context.Context, req *createListenerRe
 
 func (h *Handler) describeListenersTyped(ctx context.Context, req *describeListenersReq) (*xmlTypedDescribeListenersResponse, *protocol.AWSError) {
 	region := h.region(ctx)
+	// LoadBalancerArn names one load balancer rather than describing a property
+	// listeners are matched on, so an unresolvable one is that load balancer's
+	// not-found error — the same rule the ListenerArns list gets below.
+	if req.LoadBalancerArn != "" {
+		if _, aerr := h.requireLoadBalancer(ctx, region, req.LoadBalancerArn); aerr != nil {
+			return nil, aerr
+		}
+	}
 	listeners, err := h.listListenersByLB(ctx, region, req.LoadBalancerArn)
 	if err != nil {
 		return nil, protocol.ErrInternalError
+	}
+	// ListenerArns are resolved against the whole region rather than against
+	// the list just read: with a LoadBalancerArn also given that list holds one
+	// load balancer's listeners, and a listener on another one is "not the one
+	// you asked about" rather than "does not exist".
+	if len(req.ListenerArns) > 0 {
+		known := listeners
+		if req.LoadBalancerArn != "" {
+			if known, err = h.listListenersByLB(ctx, region, ""); err != nil {
+				return nil, protocol.ErrInternalError
+			}
+		}
+		if aerr := resolveIdentifiers(listenerScope, req.ListenerArns, nil, known,
+			func(l *Listener) string { return l.ListenerArn }, nil); aerr != nil {
+			return nil, aerr
+		}
 	}
 
 	f := newIdentifierFilter(req.ListenerArns)
@@ -742,10 +835,8 @@ func (h *Handler) deleteListenerTyped(ctx context.Context, req *deleteListenerRe
 		return nil, errMissingParam("ListenerArn")
 	}
 	region := h.region(ctx)
-	if _, found, err := h.getListener(ctx, region, arn); err != nil {
-		return nil, protocol.ErrInternalError
-	} else if !found {
-		return nil, errNotFound("Listener", arn)
+	if _, aerr := h.requireListener(ctx, region, arn); aerr != nil {
+		return nil, aerr
 	}
 	if err := h.store.Delete(ctx, nsListeners, listenerKey(region, arn)); err != nil {
 		return nil, protocol.ErrInternalError
@@ -941,7 +1032,7 @@ func (h *Handler) addTagsTyped(ctx context.Context, req *addTagsReq) (*xmlTypedA
 			}
 			continue
 		}
-		return nil, errNotFound("Resource", arn)
+		return nil, scopeForARN(arn).errNotFound(arn)
 	}
 
 	return &xmlTypedAddTagsResponse{
@@ -983,7 +1074,7 @@ func (h *Handler) removeTagsTyped(ctx context.Context, req *removeTagsReq) (*xml
 			}
 			continue
 		}
-		return nil, errNotFound("Resource", arn)
+		return nil, scopeForARN(arn).errNotFound(arn)
 	}
 
 	return &xmlTypedRemoveTagsResponse{
@@ -1026,7 +1117,7 @@ func (h *Handler) describeTagsTyped(ctx context.Context, req *describeTagsReq) (
 				descs = append(descs, tagDescXML(tg.TargetGroupArn, tg.Tags))
 				continue
 			}
-			return nil, errNotFound("Resource", arn)
+			return nil, scopeForARN(arn).errNotFound(arn)
 		}
 	}
 
