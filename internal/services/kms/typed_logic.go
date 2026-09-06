@@ -89,10 +89,13 @@ type scheduleKeyDeletionRequest struct {
 }
 
 type scheduleKeyDeletionResponse struct {
-	KeyId        string  `json:"KeyId" cbor:"KeyId"`
-	KeyArn       string  `json:"KeyArn" cbor:"KeyArn"`
-	DeletionDate float64 `json:"DeletionDate" cbor:"DeletionDate"`
-	KeyState     string  `json:"KeyState" cbor:"KeyState"`
+	KeyId  string `json:"KeyId" cbor:"KeyId"`
+	KeyArn string `json:"KeyArn" cbor:"KeyArn"`
+	// DeletionDate is a Timestamp, which this protocol renders as epoch
+	// seconds — the documented example response shows 1.4820192E9.
+	DeletionDate        float64 `json:"DeletionDate" cbor:"DeletionDate"`
+	KeyState            string  `json:"KeyState" cbor:"KeyState"`
+	PendingWindowInDays int     `json:"PendingWindowInDays" cbor:"PendingWindowInDays"`
 }
 
 type cancelKeyDeletionResponse struct {
@@ -362,6 +365,10 @@ func (h *Handler) scheduleKeyDeletionTyped(ctx context.Context, req *scheduleKey
 		KeyArn:       k.ARN,
 		DeletionDate: float64(deletionDate.UnixMilli()) / 1000.0,
 		KeyState:     k.KeyState,
+		// "The waiting period before the KMS key is deleted" — the value that
+		// applied, so a caller reads back what it asked for and discovers the
+		// 30-day default when it asked for nothing.
+		PendingWindowInDays: days,
 	}, nil
 }
 
