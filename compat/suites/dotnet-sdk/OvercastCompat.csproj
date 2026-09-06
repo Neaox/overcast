@@ -14,13 +14,22 @@
     <InternalsVisibleTo Include="OvercastCompat.Tests" />
   </ItemGroup>
 
+  <!-- The AWS SDK for .NET, pinned. The generated groups under Groups/ are
+       compiled against these exact packages, and cmd/compatgen's emitter reads
+       the shape model rather than the SDK (see cmd/compatgen/emit_dotnet.go),
+       so a package older than the pinned model is a compile error here rather
+       than a refusal there. AWSSDK.Organizations is therefore pinned at a
+       version that declares every operation models/aws/shapes/organizations.json
+       carries - 4.0.0 predates five of them, ResponsibilityTransfer among them
+       - and AWSSDK.Core rises to the version that package requires. -->
   <ItemGroup>
-    <PackageReference Include="AWSSDK.Core" Version="4.0.0" />
+    <PackageReference Include="AWSSDK.Core" Version="4.0.102.3" />
     <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.0.0" />
     <PackageReference Include="AWSSDK.EventBridge" Version="4.0.0" />
     <PackageReference Include="AWSSDK.IdentityManagement" Version="4.0.0" />
     <PackageReference Include="AWSSDK.KeyManagementService" Version="4.0.0" />
     <PackageReference Include="AWSSDK.Lambda" Version="4.0.0" />
+    <PackageReference Include="AWSSDK.Organizations" Version="4.0.101.4" />
     <PackageReference Include="AWSSDK.S3" Version="4.0.0" />
     <PackageReference Include="AWSSDK.SecretsManager" Version="4.0.0" />
     <PackageReference Include="AWSSDK.SecurityToken" Version="4.0.0" />

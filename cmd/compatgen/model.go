@@ -249,6 +249,68 @@ func (m *serviceModel) MemberTarget(structure, member string) (string, bool) {
 	return entry.Target, true
 }
 
+// preludeShapeTypes is the Smithy type behind each prelude shape, which
+// preludeKinds deliberately rounds: byte, short, integer and long are all
+// "integer" to Kind, and float, double and bigDecimal are all "float". A
+// backend that has to choose a numeric literal's suffix, or the scalar type a
+// value is converted to, needs the distinction back — and ShapeType is where
+// it lives.
+var preludeShapeTypes = map[string]string{
+	"smithy.api#String":           "string",
+	"smithy.api#Blob":             "blob",
+	"smithy.api#Boolean":          "boolean",
+	"smithy.api#PrimitiveBoolean": "boolean",
+	"smithy.api#Byte":             "byte",
+	"smithy.api#Short":            "short",
+	"smithy.api#Integer":          "integer",
+	"smithy.api#PrimitiveInteger": "integer",
+	"smithy.api#Long":             "long",
+	"smithy.api#PrimitiveLong":    "long",
+	"smithy.api#Float":            "float",
+	"smithy.api#Double":           "double",
+	"smithy.api#BigInteger":       "bigInteger",
+	"smithy.api#BigDecimal":       "bigDecimal",
+	"smithy.api#Timestamp":        "timestamp",
+	"smithy.api#Document":         "document",
+	"smithy.api#Unit":             "unit",
+}
+
+// ShapeType is the shape's own Smithy type, unrounded: byte, short, integer,
+// long, bigInteger, float, double, bigDecimal, string, enum, boolean, list,
+// map, structure, union. A `string` shape carrying the legacy @enum trait
+// answers "enum", as Kind does, because the two spellings of an enum are the
+// same thing to every caller, and a `set` answers "list" for the same reason.
+// Use Kind where the rounded classification is what is wanted; use this where
+// the exact width matters.
+func (m *serviceModel) ShapeType(target string) string {
+	if t, ok := preludeShapeTypes[target]; ok {
+		return t
+	}
+	shape, ok := m.Shapes[target]
+	if !ok {
+		return "unknown"
+	}
+	switch {
+	case shape.Type == "string" && hasTrait(shape.Traits, "smithy.api#enum"):
+		return "enum"
+	case shape.Type == "set":
+		return "list"
+	}
+	return shape.Type
+}
+
+// ElementTarget is the shape a list's members target, or "" for a shape that
+// is not a list.
+func (m *serviceModel) ElementTarget(target string) string { return m.Shapes[target].Member }
+
+// KeyTarget is the shape a map's keys target, or "" for a shape that is not a
+// map.
+func (m *serviceModel) KeyTarget(target string) string { return m.Shapes[target].Key }
+
+// ValueTarget is the shape a map's values target, or "" for a shape that is
+// not a map.
+func (m *serviceModel) ValueTarget(target string) string { return m.Shapes[target].Value }
+
 // Kind classifies a shape as one of: string, enum, integer, float, boolean,
 // timestamp, blob, document, list, map, structure, union, unit.
 func (m *serviceModel) Kind(target string) string {

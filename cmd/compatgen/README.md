@@ -8,9 +8,10 @@ scenario IR (`compat/model/scenarios/`), the refusal report
 no dynamic-dispatch API — the source they compile
 (`compat/suites/go-sdk/internal/groups/scenarios_*_gen.go`,
 `compat/suites/java-sdk/src/main/java/io/overcast/compat/groups/Scenarios*Gen.java`,
-`compat/suites/rust-sdk/src/groups/scenarios_*_gen.rs`). It is a
-build-time tool whose output is committed data; nothing under `compat/`
-imports it or any other emulator Go code.
+`compat/suites/dotnet-sdk/Groups/Scenarios*Gen.cs`,
+`compat/suites/rust-sdk/src/groups/scenarios_*_gen.rs`). It is a build-time
+tool whose output is committed data; nothing under `compat/` imports it or any
+other emulator Go code.
 
 The IR, the recipe format and the refusal vocabulary are documented in
 [compat/model/README.md](../../compat/model/README.md). The design is
@@ -286,12 +287,51 @@ the model cannot; spelling enums as their wire values takes the *other* pin
 hazard — a value the pinned SDK does not know — out of the emitter entirely.
 
 The emitted bytes go through `go/format` before they are written, and
-generation fails if they will not parse. A golden file under
-`testdata/golden/` holds the emitted source for the fixture service, so what
-the emitter writes is reviewed as a diff rather than inferred from the
-generator's code. The Java emitter has its own golden
-(`ScenariosWidgetsGen.java.golden`) on the same terms; there is no formatter to
-run over it, so the emitter produces the file's final layout directly.
+generation fails if they will not parse. Every source emitter has a golden file
+under `testdata/golden/` holding what it writes for the fixture service, so its
+output is reviewed as a diff rather than inferred from the generator's code.
+Only Go has a formatter this program can run; the others produce their file's
+final layout directly.
+
+### The .NET emitter, and why it reads the model instead
+
+`emit_dotnet.go` writes the `dotnet-sdk` suite's
+`Groups/Scenarios<Service>Gen.cs` on the same split — data plus typed calls,
+with the semantics written once by hand in that suite's `Scenario/` namespace.
+What differs is where the member's type comes from: the .NET emitter never
+loads the SDK. Three measured facts make that safe, and the emitter's own
+header records how each was measured:
+
+| fact | consequence |
+| --- | --- |
+| AWSSDK v4 made every value-typed member nullable (`int?`) | a zero really is sent, so the value-typed-zero refusal go-sdk needs has nothing to refuse |
+| C# target-typing spells the composites | `["All"]`, `new() { ["k"] = "v" }` and `[new() { Id = "1" }]` name no SDK type at all |
+| an enum is a `ConstantClass` with an implicit conversion from `string` | a bare string literal, and a `Bind<string>` result, both assign |
+
+So the whole spelling table is driven by the member's *modeled* kind, and the
+emitted file names exactly one SDK type per call: `<Op>Request`. The cost is
+stated rather than hidden — this backend cannot refuse an operation the
+vendored SDK does not declare, or a member it renamed, because it never asks;
+both become a compile error in the suite's own build, which is loud but
+suite-wide rather than scoped to one group. `OvercastCompat.csproj` pins the
+package versions that keep them from arising, and says so.
+
+Two refusals remain, both read off the model, and both scope the group away
+from `dotnet-sdk` in the registry:
+
+| refusal | what it means |
+| --- | --- |
+| the modeled kind has no C# literal | a timestamp, blob, document, union, bigInteger or bigDecimal |
+| a value expression on a composite member | `$ref`/`$name` resolve into one scalar slot, never a list |
+
+`-explain -lang dotnet` renders through the same `dotnetInputLines`, so the
+pseudo-code a reader reproduces a failure with is the source the emitter wrote;
+`TestExplainDotnetRendersTheEmittedCall` asserts it.
+
+There is no formatter for the emitted C# — the .NET SDK ships none this suite
+runs — so the layout `emit_dotnet.go` writes is the layout committed, and
+`testdata/golden/ScenariosWidgetsGen.cs.golden` is where it is reviewed. The
+proof that it *compiles* is the dotnet-sdk suite's own Docker build.
 
 ### The Rust emitter reads the model instead
 
@@ -362,18 +402,17 @@ check from the command line. CI runs both.
 `go test -tags dev ./cmd/compatgen` runs unit tests over a fixture service
 under `testdata/` (shapes, recipe and values). The emitted Go is proved to
 parse and to be gofmt-clean here, while the proof that it *compiles* is the
-`go-sdk` suite's own build; the emitted Rust is proved deterministic and
-golden-identical here, and the proof that it compiles is the rust-sdk suite's
-Docker build.
+`go-sdk` suite's own build. The emitted Java, C# and Rust are proved
+deterministic and golden-identical here, and the proof that each compiles is
+its own suite's Docker build.
 
-**Which tests read which SDK.** Only the Go emitter reads one — the Java and
-Rust emitters resolve against the fixture model the rest of the generator's
+**Which tests read which SDK.** Only the Go emitter reads one — the Java, .NET
+and Rust emitters resolve against the fixture model the rest of the generator's
 tests already load, which is what makes their tests hermetic without a second
-module.
-The Go emitter needs real Go types, so
+module. The Go emitter needs real Go types, so
 `testdata/awssdk` is a checked-in stand-in for the AWS SDK for Go v2: a module
 of its own, under the SDK's own module path, declaring the fixture service's
-input structs and nothing else. Every test of the emitter — the golden file,
+input structs and nothing else. Every test of that emitter — the golden file,
 the spelling table, each refusal, the `-explain` agreement — resolves against
 it, so it type-checks real Go with no module cache and no network.
 
@@ -386,9 +425,10 @@ also the only place a real fetch can happen — the first run in a fresh
 environment downloads what type-checking the two pilot services needs, and the
 module cache serves every run after it.
 
-`OVERCAST_UPDATE_GOLDEN=1 go test -tags dev -run 'TestEmitGo|TestEmitJava' ./cmd/compatgen`
-rewrites `testdata/golden/scenarios_widgets_gen.go.golden` and
-`testdata/golden/ScenariosWidgetsGen.java.golden`. Read the diff
+`OVERCAST_UPDATE_GOLDEN=1 go test -tags dev -run TestEmit ./cmd/compatgen`
+rewrites `testdata/golden/scenarios_widgets_gen.go.golden`,
+`testdata/golden/ScenariosWidgetsGen.java.golden` and
+`testdata/golden/ScenariosWidgetsGen.cs.golden`. Read the diff
 before committing it — the golden file is the review artifact for what the
 emitter writes, and one regenerated without being read proves nothing. Its five resources between
 them carry every recipe role — a full lifecycle, a pre-existing resource, a

@@ -80,13 +80,23 @@ func (env renderEnv) javaSpeller(service, sdkID string) (*javaSpeller, error) {
 }
 
 // shapes resolves one service's pinned shapes for a rendering that spells its
-// members from the model rather than from an SDK — Java and Rust both do. The
-// error is returned rather than fatal for the same reason javaSpeller's is.
+// members from the model rather than from an SDK — Java, .NET and Rust all do.
+// The error is returned rather than fatal for the same reason javaSpeller's is.
 func (env renderEnv) shapes(service string) (*serviceModel, error) {
 	if env.model == nil {
 		return nil, fmt.Errorf("internal: no shape source was configured")
 	}
 	return env.model(service)
+}
+
+// dotnetSpeller resolves one service's modeled shapes for the .NET rendering,
+// off the same shared source javaSpeller reads.
+func (env renderEnv) dotnetSpeller(service string) (*dotnetSpeller, error) {
+	model, err := env.shapes(service)
+	if err != nil {
+		return nil, err
+	}
+	return &dotnetSpeller{model: model}, nil
 }
 
 // repoShapes reads a service's pinned shape snapshot from the repository.
@@ -108,13 +118,16 @@ func modelServiceOf(root, service string) string {
 	if err != nil {
 		return service
 	}
-	var r struct {
-		Model string `json:"model"`
-	}
-	if err := json.Unmarshal(contents, &r); err != nil || r.Model == "" {
+	// Decoded into the recipe itself, so the Model-or-service fallback is
+	// recipe.modelService's and not a second copy of it. Loosely, not through
+	// loadRecipe: this wants one field on a checkout whose schemas may not be
+	// readable, and an `-explain` that refused because a recipe failed
+	// validation would be no use to the reader who reached for it.
+	r := recipe{Service: service}
+	if err := json.Unmarshal(contents, &r); err != nil {
 		return service
 	}
-	return r.Model
+	return r.modelService()
 }
 
 var renderers = map[string]renderer{

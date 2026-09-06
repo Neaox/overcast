@@ -423,6 +423,19 @@ the top of that tree, and each image copies it in as `/registry.json`
 docker build -f compat/suites/java-sdk/Dockerfile -t oc-java-sdk-compat compat/suites
 ```
 
+`dotnet-sdk` is the one exception, and it widens rather than narrows: its
+context is **`compat/`**, because the unit tests its build stage runs include
+the shared error-matching conformance fixtures under
+`compat/model/testdata/errors` (see [Errors](../model/README.md#errors)), which
+`compat/suites/` does not contain — and a fixture a suite silently does not run
+looks exactly like one it passes. A `Dockerfile.dockerignore` beside that
+suite's Dockerfile keeps the wider context cheap and applies to it alone.
+
+```bash
+# Build just the dotnet-sdk image
+docker build -f compat/suites/dotnet-sdk/Dockerfile -t oc-dotnet-sdk-compat compat
+```
+
 ### Flags that read a results file instead of producing one
 
 `--max-failures`, `--compare-baseline`, `--update-baseline`, `--report` and

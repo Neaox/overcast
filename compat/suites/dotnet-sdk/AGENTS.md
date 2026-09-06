@@ -321,14 +321,33 @@ that interpreter plugs into: it is the last resolution step, after the
 group-qualified and bare impl-key lookups and before the not-implemented
 sentinel.
 
-**Nothing implements `ScenarioBackend` in this suite yet.**
-`registry.generated.json` is currently empty (`"groups": []`) — see its own
-`comment` field — so this has no observable effect today. Once the generator
-starts emitting groups scoped to `dotnet-sdk`, a generated group this suite
-has no backend for reports as a hard **failure** naming the group
-(`generated group "<group>" is scoped to dotnet-sdk but dotnet-sdk has no
-scenario backend`), not a skip. Do not add a `ScenarioBackend` implementation
-speculatively; wait until there is a real interpreter to wire in.
+**This suite is a source emitter, not an interpreter.** The AWS SDK for .NET
+has no public dynamic-dispatch API, so `cmd/compatgen` writes one C# method per
+scenario test into `Groups/Scenarios<Service>Gen.cs` — each building a real
+typed `<Op>Request` and calling a real client method — and `Program.cs`
+registers those as the `ScenarioBackend`. Never edit a generated file; run
+`make generate-compat-model` and read the diff.
+
+The split is **data plus typed calls**. The semantics — the context bag,
+`$name`/`$ref`, the closed check set, error matching, `eventually`, the
+six-field failure message — are written once by hand in `Scenario/` and are
+never re-emitted. `compat/model/README.md` is the normative description of
+every rule in there; where the two disagree, `Scenario/` is wrong.
+
+Two things about the generated half are worth knowing before you touch it:
+
+- **The emitter reads the shape model, not the SDK.** `emit_dotnet.go`'s header
+  records the three measured facts that make that safe — AWSSDK v4's nullable
+  value types, C#'s target-typed `new()` and collection expressions, and
+  `ConstantClass`'s implicit conversion from `string` — and the one cost: an
+  operation the pinned package does not declare, or a member it renamed, is a
+  **compile error in this project**, not a refusal in `gaps.json`. That is why
+  `OvercastCompat.csproj` pins a version of `AWSSDK.Organizations` newer than
+  the rest, and says so.
+- **A generated group this suite is scoped to but cannot resolve is a hard
+  failure**, naming the group (`generated group "<group>" is scoped to
+  dotnet-sdk but dotnet-sdk has no scenario backend`), never a skip.
+  `Tests/ScenarioRegistrationTests.cs` catches that before a compat run does.
 
 ---
 
@@ -350,7 +369,27 @@ against the real `registry.json`, without starting a run:
 
 `Tests/GeneratedRegistryTests.cs` covers the loader itself (build/validate
 behaviour and `registry.generated.json`/`ScenarioBackend` handling)
-independently of this suite's own registrations.
+independently of this suite's own registrations, and three more files cover the
+generated half:
+
+- `ScenarioRegistrationTests.cs` — every generated test the registry scopes to
+  this suite resolves to an emitted method, and every emitted method has a
+  registry test. A gap either way is a stale `make generate-compat-model`.
+- `ScenarioTests.cs` and `ScenarioDocumentTests.cs` — the `Scenario/` runtime
+  against real SDK request and response objects: the six-field failure message,
+  the closed check set, `eventually`'s give-up wording, an absent list reading
+  like an empty one, and a composed failure never being sniffed for "501".
+- `ScenarioErrorFixtureTests.cs` — the shared error-matching conformance set
+  (`compat/model/testdata/errors`), which every backend must answer
+  identically. This suite **replays each fixture's wire through a real client**
+  rather than constructing exception types by hand: an in-process
+  `HttpListener` answers with the fixture's status, headers and body and the
+  SDK unmarshals it, which is what makes the `x-amzn-query-error` carrier an
+  observation rather than an assumption. The two `cliBanner` fixtures are the
+  only ones this suite cannot see, and it names them rather than skipping
+  quietly. The Dockerfile copies the fixture directory in for exactly this
+  test, which is why this suite's build context is `compat/` rather than
+  `compat/suites/`.
 
 This project did not exist before
 [#1697](https://github.com/overcast-sh/overcast/pull/1697) — until then this

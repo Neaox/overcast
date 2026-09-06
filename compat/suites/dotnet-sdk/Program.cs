@@ -14,11 +14,17 @@ var skipDocker = Environment.GetEnvironmentVariable("OVERCAST_COMPAT_SKIP_DOCKER
 
 var clients = new AwsClients(endpoint, region);
 var serviceGroups = ServiceGroups.All(clients);
+// The generated groups are kept apart from the hand-written ones on purpose.
+// Their impls are resolved through the loader's ScenarioBackend hook rather
+// than merged into the impl map, which is where a generated group belongs in
+// the resolution order (#1393); their setup and teardown hooks are ordinary
+// registrations and go into the same two maps.
+var scenarioGroups = ScenarioGroups.All(clients);
 
 var setups = new Dictionary<string, SetupFn>(StringComparer.Ordinal);
 var teardowns = new Dictionary<string, SetupFn>(StringComparer.Ordinal);
 
-foreach (var group in serviceGroups)
+foreach (var group in serviceGroups.Concat(scenarioGroups))
 {
     foreach (var entry in group.Setups())
     {
@@ -49,6 +55,27 @@ catch (InvalidOperationException ex)
     return;
 }
 
+// One map per generated service class, merged with the same duplicate check
+// the hand-written half gets: two classes claiming one generated test would
+// otherwise leave one of them unreachable with nothing said about it.
+Dictionary<string, TestFn> scenarioImpls;
+try
+{
+    scenarioImpls = RegistryLoader.MergeImpls(
+        scenarioGroups.Select(group => (group.SourceName, group.Impls())), suite);
+}
+catch (InvalidOperationException ex)
+{
+    Console.Error.WriteLine(ex.Message);
+    Environment.Exit(1);
+    return;
+}
+
+// Generated groups are always registered group-qualified, so the backend needs
+// no bare-name fallback and cannot bind one group's test to another's.
+ScenarioBackend backend = (group, test) =>
+    scenarioImpls.TryGetValue($"{group.Name}:{test.Name}", out var implementation) ? implementation : null;
+
 var capabilities = new HashSet<string>(StringComparer.Ordinal);
 if (!skipDocker)
 {
@@ -58,7 +85,7 @@ if (!skipDocker)
 IReadOnlyList<TestGroup> allGroups;
 try
 {
-    allGroups = RegistryLoader.BuildGroups(suite, impls, setups, teardowns, capabilities);
+    allGroups = RegistryLoader.BuildGroups(suite, impls, setups, teardowns, capabilities, backend);
 }
 catch (InvalidOperationException ex)
 {

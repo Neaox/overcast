@@ -38,7 +38,17 @@ public sealed class AwsClients
         _region = RegionEndpoint.GetBySystemName(region);
     }
 
-    private T CreateClient<T>(Func<AWSCredentials, ClientConfig, T> factory, ClientConfig config) where T : AmazonServiceClient
+    /// <summary>
+    /// Builds one service client against the endpoint, region and placeholder
+    /// credentials every group shares.
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than private because the generated scenario groups build
+    /// their own clients through it: adding a named accessor above for every
+    /// service cmd/compatgen learns to cover would be a line of this file per
+    /// AWS service, and nothing else about those clients differs.
+    /// </remarks>
+    internal T CreateClient<T>(Func<AWSCredentials, ClientConfig, T> factory, ClientConfig config) where T : AmazonServiceClient
     {
         config.ServiceURL = _endpoint;
         config.UseHttp = _endpoint.StartsWith("http://", StringComparison.OrdinalIgnoreCase);

@@ -136,7 +136,18 @@ func renderJava(env renderEnv, s *scenario, g *group, t *test) string {
 	})
 }
 
-func dotnetStyle() style {
+// dotnetStyle renders a call through the emitter's own spelling table
+// (dotnetInputLines, over emit_dotnet.go's dotnetSpeller), so
+// `-explain -lang dotnet` prints the statements cmd/compatgen writes into
+// compat/suites/dotnet-sdk/Groups/Scenarios*Gen.cs rather than a second
+// description of them. The definition of done for a typed backend asks for one
+// naming table; this is how there comes to be only one.
+//
+// loadErr is non-nil when the service's shape snapshot could not be read. That
+// must never happen to generation, which has already loaded it, but it can
+// happen to `-explain` on a partial checkout. Saying so beats printing a
+// spelling that would be a guess.
+func dotnetStyle(sp *dotnetSpeller, loadErr error) style {
 	st := typedStyle()
 	st.object = func(entries [][2]string) string {
 		var parts []string
@@ -154,14 +165,30 @@ func dotnetStyle() style {
 		}
 		return fmt.Sprintf("await client.%sAsync(new %sRequest { %s })", op, op, strings.Join(parts, ", "))
 	}
+	st.callLines = func(op string, params map[string]any) []string {
+		if loadErr != nil {
+			return []string{fmt.Sprintf("// the service's shape snapshot could not be read: %v", loadErr)}
+		}
+		lines, err := dotnetInputLines(sp, op, params, "")
+		if err != nil {
+			// Unreachable for a committed scenario: the emitter refuses at
+			// generation time what it cannot render, so a value this cannot
+			// spell never reaches a scenario file.
+			return []string{fmt.Sprintf("// %v", err)}
+		}
+		return append(lines, fmt.Sprintf("await Cl().%sAsync(request)", op))
+	}
 	return st
 }
 
-func renderDotnet(_ renderEnv, s *scenario, g *group, t *test) string {
-	e := &explainer{st: dotnetStyle()}
+func renderDotnet(env renderEnv, s *scenario, g *group, t *test) string {
+	sp, loadErr := env.dotnetSpeller(s.Service)
+	e := &explainer{st: dotnetStyle(sp, loadErr)}
 	return e.test(s, g, t, func() {
-		e.linef("var client = new Amazon%sClient(new Amazon%sConfig { ServiceURL = endpoint });", pascalSDK(s.Client.SDKID), pascalSDK(s.Client.SDKID))
+		e.linef("var client = new %s(new %s { ServiceURL = endpoint });",
+			dotnetNameClientClass(s.Client.SDKID), dotnetNameConfigClass(s.Client.SDKID))
 		e.linef("var group = %s;", quote(g.Name))
+		e.commentf("b is the Binder the generated Build lambda receives")
 	})
 }
 

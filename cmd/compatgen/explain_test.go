@@ -9,18 +9,14 @@ import (
 )
 
 func TestExplain_rendersEveryLanguage(t *testing.T) {
-	f, gen := generateFixture(t)
+	_, gen := generateFixture(t)
 	g, tc, ok := gen.scenario.findTest("widgets-gen-widget", "CreateWidget")
 	if !ok {
 		t.Fatal("fixture has no CreateWidget")
 	}
 	for _, lang := range rendererNames() {
 		t.Run(lang, func(t *testing.T) {
-			// All three source-emitting backends render through their own
-			// emitter, so every one of their inputs is supplied: the vendored
-			// SDK's types for Go, the shape snapshot for Java and Rust.
-			env := renderEnv{goTypes: fixtureGoTypes(), model: staticModel(f.model)}
-			out := renderers[lang](env, gen.scenario, g, tc)
+			out := renderers[lang](fixtureRenderEnv(gen), gen.scenario, g, tc)
 			// Operation names are spelled per language (get_widget, getWidget,
 			// GetWidget), so compare with case and separators folded.
 			folded := strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(out))
@@ -78,6 +74,15 @@ func TestReport_listsCoverageRefusalsAndSamples(t *testing.T) {
 	if again.String() != report {
 		t.Fatal("the report is not deterministic")
 	}
+}
+
+// fixtureRenderEnv is the `-explain` environment for the fixture service, with
+// every source-emitting backend's input supplied: the stand-in Go SDK's types
+// for Go, and the fixture's own shape model for Java, .NET and Rust. The
+// fixture has no recipe under compat/model/recipes, which is why renderEnv
+// takes a resolver rather than a directory.
+func fixtureRenderEnv(gen *generation) renderEnv {
+	return renderEnv{goTypes: fixtureGoTypes(), model: staticModel(gen.model)}
 }
 
 // staticModel is the renderEnv loader for a test that already holds the model

@@ -15,8 +15,10 @@ namespace OvercastCompat.Registry;
 /// order, after the group-qualified and bare impl keys and before the
 /// not-implemented sentinel. Returns null when the backend cannot execute the
 /// test.
-/// <para>Nothing implements it yet. Until one does, a generated group scoped to
-/// this suite reports a failure rather than a skip.</para>
+/// <para>The suite's implementation is the generated groups under Groups/ that
+/// cmd/compatgen writes, collected by ScenarioGroups.All and registered in
+/// Program.cs. A generated group scoped to this suite that the backend does not
+/// resolve still reports a failure rather than a skip.</para>
 /// </remarks>
 internal delegate TestFn? ScenarioBackend(RegistryLoader.RegistryGroup group, RegistryLoader.RegistryTest test);
 
@@ -93,7 +95,8 @@ public static class RegistryLoader
                 group.Name,
                 TopoSort(group.Tests).Select(test => BuildTestCase(group, test, suite, impls, capabilities, ambiguous, backend)).ToList(),
                 setups.TryGetValue(group.Name, out var setup) ? setup : null,
-                teardowns.TryGetValue(group.Name, out var teardown) ? teardown : null))
+                teardowns.TryGetValue(group.Name, out var teardown) ? teardown : null,
+                group.Parallel))
             .ToList();
     }
 
@@ -494,6 +497,19 @@ public static class RegistryLoader
         /// <summary>True for a group read from registry.generated.json.</summary>
         [JsonPropertyName("generated")]
         public bool Generated { get; init; }
+
+        /// <summary>
+        /// Whether the group's tests may run concurrently with one another.
+        /// </summary>
+        /// <remarks>
+        /// Only a generated probe group carries it: a probe has no setup, no
+        /// teardown and no exports, so nothing orders its tests. A loader that
+        /// ignored the flag would still be correct - it would run the group in
+        /// order - which is what makes it safe to read from the registry rather
+        /// than from the scenario file.
+        /// </remarks>
+        [JsonPropertyName("parallel")]
+        public bool Parallel { get; init; }
 
         /// <summary>"candidate" or "gated" - generated groups only.</summary>
         [JsonPropertyName("state")]

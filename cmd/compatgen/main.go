@@ -149,7 +149,7 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 	// The typed backends compile source rather than interpreting the IR, so
 	// their files are outputs of this run too. unable collects the groups an
 	// emitter refused, which decides each group's `suites` below.
-	var goServices, javaServices, rustServices []string
+	var goServices, javaServices, dotnetServices, rustServices []string
 	unable := unableSuites{}
 	// The Go emitter spells each member as the vendored SDK declares it, so it
 	// reads that SDK's own types out of the go-sdk suite's module — the one the
@@ -218,6 +218,16 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 			javaServices = append(javaServices, r.Service)
 			markUnable(unable, javaSDKSuite, emission.Refused)
 		}
+		if hasBackend(dotnetSDKSuite) {
+			emission, err := emitDotnet(gen)
+			if err != nil {
+				return nil, nil, fmt.Errorf("%s: %w", r.Service, err)
+			}
+			outputs[emission.Path] = emission.Contents
+			gaps.Gaps = append(gaps.Gaps, emission.Gaps...)
+			dotnetServices = append(dotnetServices, r.Service)
+			markUnable(unable, dotnetSDKSuite, emission.Refused)
+		}
 		if hasBackend(rustSDKSuite) {
 			emission, err := emitRust(gen)
 			if err != nil {
@@ -238,6 +248,10 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 	}
 	outputs[goIndexPath] = goIndex
 	outputs[javaIndexPath] = emitJavaIndex(javaServices)
+	// Same for the dotnet-sdk index: Program.cs calls ScenarioGroups.All
+	// unconditionally, so the file has to exist — empty — where the backend is
+	// off.
+	outputs[dotnetIndexPath] = emitDotnetIndex(dotnetServices)
 	// Same for the Rust index: src/groups/mod.rs declares the module
 	// unconditionally, so it has to exist — empty — for a checkout where
 	// scenarioBackends does not name rust-sdk.
@@ -288,13 +302,15 @@ func validateOutput(c *corpus, rel string, contents []byte) error {
 		// gofmt-clean, which emitGo proves by running go/format over the bytes
 		// it is about to return and failing generation if it will not parse.
 		return nil
-	case strings.HasPrefix(rel, javaSuiteDir+"/"), strings.HasPrefix(rel, rustSuiteDir+"/"):
-		// Emitted Java and Rust have no JSON schema either, and no formatter the
-		// generator can run to prove they parse: cmd/compatgen is a Go program,
-		// and CI's docs job carries neither a JDK nor a Rust toolchain. Their
-		// contract is each suite's own build — `mvn package`, `cargo build` —
-		// which compiles every emitted file, the same evidence the go-sdk suite's
-		// build gives, arriving one step later.
+	case strings.HasPrefix(rel, javaSuiteDir+"/"),
+		strings.HasPrefix(rel, dotnetSuiteDir+"/"),
+		strings.HasPrefix(rel, rustSuiteDir+"/"):
+		// Emitted Java, C# and Rust have no JSON schema either, and no formatter
+		// the generator can run to prove they parse: cmd/compatgen is a Go
+		// program, and CI's docs job carries no JDK, .NET SDK or Rust toolchain.
+		// Their contract is each suite's own build — `mvn package`, `dotnet
+		// publish`, `cargo build` — which compiles every emitted file, the same
+		// evidence the go-sdk suite's build gives, arriving one step later.
 		return nil
 	}
 	return fmt.Errorf("internal: no schema is checked for generated file %s", rel)
@@ -323,6 +339,9 @@ func runGenerate(opts options, stdout io.Writer) error {
 		return err
 	}
 	if err := checkStaleEmittedJava(opts.root, outputs, opts.check); err != nil {
+		return err
+	}
+	if err := checkStaleEmittedDotnet(opts.root, outputs, opts.check); err != nil {
 		return err
 	}
 	if err := checkStaleEmittedRust(opts.root, outputs, opts.check); err != nil {
@@ -439,6 +458,15 @@ func checkStaleEmitted(root string, outputs outputSet, check bool, dir, language
 		return fmt.Errorf("emitted %s file(s) with no scenario: %s; run `make generate-compat-model` to remove them", language, strings.Join(stale, ", "))
 	}
 	return nil
+}
+
+// checkStaleEmittedDotnet is the same rule for the dotnet-sdk suite, whose
+// emitted classes sit beside the hand-written group classes in one directory
+// the project compiles whole.
+func checkStaleEmittedDotnet(root string, outputs outputSet, check bool) error {
+	return checkStaleEmitted(root, outputs, check, dotnetSuiteDir, "C#", func(name string) bool {
+		return strings.HasPrefix(name, "Scenarios") && strings.HasSuffix(name, "Gen.cs")
+	})
 }
 
 // markUnable records that one backend refused a set of groups, so buildRegistry

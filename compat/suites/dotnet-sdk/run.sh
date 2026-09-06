@@ -3,7 +3,13 @@ set -e
 
 IMAGE="oc-dotnet-sdk-compat"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONTEXT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# The build context is compat/, not compat/suites/: the suite's unit tests run
+# during the image build (see the Dockerfile) and one of them is the shared
+# error-matching conformance set under compat/model/testdata/errors, which every
+# backend has to answer identically. A context stopping at compat/suites/ could
+# not reach it, and a fixture a suite silently does not run looks exactly like
+# one it passes. Dockerfile.dockerignore keeps the wider context cheap.
+CONTEXT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # bin/ and obj/ are pruned: they hold generated sources (AssemblyInfo.cs) whose
 # content varies by machine and configuration, so hashing them would rebuild the
@@ -11,8 +17,8 @@ CONTEXT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SRC_HASH=$(find "$SCRIPT_DIR" \( -name bin -o -name obj \) -prune -o \
   -type f \( -name '*.cs' -o -name '*.csproj' -o -name 'Dockerfile' -o -name 'run.sh' \) -print \
   | sort | xargs md5sum 2>/dev/null | md5sum | cut -c1-12)
-REGISTRY_HASH=$(cat "$CONTEXT_DIR/registry.json" "$CONTEXT_DIR/registry.generated.json" \
-  | md5sum | cut -c1-12)
+REGISTRY_HASH=$(cat "$CONTEXT_DIR/suites/registry.json" "$CONTEXT_DIR/suites/registry.generated.json" \
+  "$CONTEXT_DIR"/model/testdata/errors/*.json | md5sum | cut -c1-12)
 VERSIONED_IMAGE="${IMAGE}:${SRC_HASH}-${REGISTRY_HASH}"
 
 # Retry docker build up to 3 times to handle transient TLS / registry timeouts.
