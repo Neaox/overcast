@@ -658,7 +658,7 @@ func (h *Handler) DescribeLaunchTemplates(w http.ResponseWriter, r *http.Request
 	requestedIDs := selectedIDs(parseIndexedParam(r, "LaunchTemplateId"))
 	requestedNames := selectedIDs(parseIndexedParam(r, "LaunchTemplateName"))
 	// AWS takes one selector or the other, never both.
-	if len(requestedIDs) > 0 && len(requestedNames) > 0 {
+	if !requestedIDs.empty() && !requestedNames.empty() {
 		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "InvalidParameterCombination",
 			Message:    "You may specify launch template IDs or launch template names, but not both.",
@@ -678,13 +678,16 @@ func (h *Handler) DescribeLaunchTemplates(w http.ResponseWriter, r *http.Request
 		byID[lt.LaunchTemplateID] = true
 		byName[lt.LaunchTemplateName] = true
 	}
-	for id := range requestedIDs {
+	// In the order the caller sent them: AWS fails an id list on the first bad
+	// entry, and ranging the set instead made which one gets named vary
+	// between runs.
+	for _, id := range requestedIDs.all() {
 		if !byID[id] {
 			protocol.WriteEC2QueryXMLError(w, r, errLaunchTemplateIDNotFound(id))
 			return
 		}
 	}
-	for name := range requestedNames {
+	for _, name := range requestedNames.all() {
 		if !byName[name] {
 			protocol.WriteEC2QueryXMLError(w, r, errLaunchTemplateNameNotFound(name))
 			return

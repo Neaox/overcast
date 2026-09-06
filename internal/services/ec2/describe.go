@@ -47,7 +47,7 @@ func requestQuery(r *http.Request, idParam string) describeQuery {
 // unselectedQuery reads the filters of a describe with no `<Resource>Id.N`
 // parameter to select on — DescribeRegions, DescribeTags and the like.
 func unselectedQuery(r *http.Request) describeQuery {
-	return describeQuery{ids: idSelection{}, filters: eachFilter(r)}
+	return describeQuery{ids: selectedIDs(nil), filters: eachFilter(r)}
 }
 
 // typedQuery is requestQuery's twin for an operation reached through the typed

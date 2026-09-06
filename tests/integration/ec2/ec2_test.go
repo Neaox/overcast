@@ -2215,22 +2215,14 @@ func TestDeleteInternetGateway_success(t *testing.T) {
 		t.Errorf("expected <return>true</return> in response, got: %s", b)
 	}
 
-	// And: the gateway is gone from DescribeInternetGateways
+	// And: naming the deleted gateway is now an error rather than an empty
+	// list. That is how AWS reports a deleted resource to a describe that
+	// named it, and how a refresh or a waiter finds out (#1708).
 	descResp := ec2Query(t, srv, "DescribeInternetGateways", url.Values{
 		"InternetGatewayId.1": []string{igwResult.InternetGateway.InternetGatewayID},
 	})
 	defer descResp.Body.Close()
-	helpers.AssertStatus(t, descResp, http.StatusOK)
-	var descResult struct {
-		InternetGatewaySet []struct {
-			InternetGatewayID string `xml:"internetGatewayId"`
-		} `xml:"internetGatewaySet>item"`
-	}
-	db := readBody(t, descResp)
-	xml.Unmarshal(db, &descResult) //nolint:errcheck
-	if len(descResult.InternetGatewaySet) != 0 {
-		t.Errorf("expected 0 internet gateways after delete, got %d", len(descResult.InternetGatewaySet))
-	}
+	assertEC2QueryError(t, descResp, http.StatusBadRequest, "InvalidInternetGatewayID.NotFound")
 }
 
 // ─── VPC Peering Connections ──────────────────────────────────────────────────

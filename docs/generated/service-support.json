@@ -3258,13 +3258,13 @@
           "operation": "DescribeInstances",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Selects by InstanceId.N; Filters: availability-zone, image-id, instance-id, instance-state-code, instance-state-name, instance-type, placement.availability-zone, subnet-id, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
+          "notes": "Selects by InstanceId.N, raising InvalidInstanceID.NotFound for an ID the region does not hold and InvalidInstanceID.Malformed for one that is not an ID; Filters: availability-zone, image-id, instance-id, instance-state-code, instance-state-name, instance-type, placement.availability-zone, subnet-id, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeInternetGateways",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Selects by InternetGatewayId.N; Filters: attachment.state, attachment.vpc-id, internet-gateway-id, tag:\u003ckey\u003e, tag-key, tag-value"
+          "notes": "Selects by InternetGatewayId.N, raising InvalidInternetGatewayID.NotFound for an ID the region does not hold and InvalidInternetGatewayId.Malformed for one that is not an ID; Filters: attachment.state, attachment.vpc-id, internet-gateway-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeKeyPairs",
@@ -3282,7 +3282,7 @@
           "operation": "DescribeNetworkInterfaces",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Selects by NetworkInterfaceId.N; Filters: availability-zone, description, mac-address, network-interface-id, status, subnet-id, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
+          "notes": "Selects by NetworkInterfaceId.N, raising InvalidNetworkInterfaceID.NotFound for an ID the region does not hold and InvalidNetworkInterfaceId.Malformed for one that is not an ID; Filters: availability-zone, description, mac-address, network-interface-id, status, subnet-id, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeRegions",
@@ -3294,19 +3294,19 @@
           "operation": "DescribeRouteTables",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Selects by RouteTableId.N; includes NAT gateway routes; Filters: association.main, association.route-table-association-id, association.subnet-id, route-table-id, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
+          "notes": "Selects by RouteTableId.N, raising InvalidRouteTableID.NotFound for an ID the region does not hold and InvalidRouteTableId.Malformed for one that is not an ID; includes NAT gateway routes; Filters: association.main, association.route-table-association-id, association.subnet-id, route-table-id, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeSecurityGroups",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Selects by GroupId.N; Filters: description, group-id, group-name, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
+          "notes": "Selects by GroupId.N, raising InvalidGroup.NotFound for an ID the region does not hold and InvalidGroupId.Malformed for one that is not an ID; Filters: description, group-id, group-name, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeSubnets",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Selects by SubnetId.N; includes tagSet for CDK subnet groups; Filters: availability-zone, cidr-block, state, subnet-id, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
+          "notes": "Selects by SubnetId.N, raising InvalidSubnetID.NotFound for an ID the region does not hold and InvalidSubnetID.Malformed for one that is not an ID; includes tagSet for CDK subnet groups; Filters: availability-zone, cidr-block, state, subnet-id, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeTags",
@@ -3354,7 +3354,7 @@
           "operation": "DescribeVpcs",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Selects by VpcId.N; Filters: cidr, isDefault, state, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
+          "notes": "Selects by VpcId.N, raising InvalidVpcID.NotFound for an ID the region does not hold and InvalidVpcID.Malformed for one that is not an ID; Filters: cidr, isDefault, state, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DetachInternetGateway",

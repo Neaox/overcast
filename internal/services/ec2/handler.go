@@ -587,6 +587,9 @@ func (h *Handler) describeVpcs(ctx context.Context, q describeQuery) (*xmlDescri
 	if aerr != nil {
 		return nil, aerr
 	}
+	if aerr := resolveIDs(vpcIDScope, requested, vpcs, func(v *VPC) string { return v.VpcID }); aerr != nil {
+		return nil, aerr
+	}
 
 	tags, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {

@@ -234,6 +234,45 @@ func answerBothMutation(t *testing.T, action string, c mutationCase) (legacy, ty
 	return run(hLegacy, false), run(hTyped, true)
 }
 
+// ── Fixture identifiers a Describe* probe names ──────────────────────────────
+
+// The fixtures an `after` probe queries back by ID list, spelled the way AWS
+// spells an ID — because an explicit ID list is now resolved against the
+// region rather than filtered with (describe_ids.go), and a probe naming
+// "rtb-mut-del" would answer InvalidRouteTableId.Malformed on both paths: a
+// comparison that still passes while proving nothing about what the mutation
+// wrote.
+//
+// Seventeen hex characters rather than eight, which is also what keeps them
+// out of mintedMutationIDs' mask above: masking a fixture ID would let a real
+// divergence between two seeded handlers compare equal.
+const (
+	vpcMutDel = "vpc-00000000000000de1"
+
+	subnetMutDel  = "subnet-00000000000000de1"
+	subnetMutAttr = "subnet-00000000000000a11"
+
+	sgMutDel    = "sg-00000000000000de1"
+	sgMutAuthIn = "sg-00000000000000a01"
+	sgMutAuthEg = "sg-00000000000000a02"
+	sgMutRevIn  = "sg-000000000000005e1"
+	sgMutRevEg  = "sg-000000000000005e2"
+
+	instanceMutAttr = "i-00000000000000a11"
+
+	rtbMutDel      = "rtb-00000000000000de1"
+	rtbMutRoute    = "rtb-000000000000000c1"
+	rtbMutDelRoute = "rtb-000000000000000c2"
+	rtbMutAssoc    = "rtb-00000000000000a55"
+	rtbMutDisassoc = "rtb-00000000000000d15"
+
+	igwMutDel    = "igw-00000000000000de1"
+	igwMutAttach = "igw-000000000000a11ac"
+	igwMutDetach = "igw-000000000000de1ac"
+
+	eniMutDel = "eni-00000000000000de1"
+)
+
 // ── Seed helpers ─────────────────────────────────────────────────────────
 
 func seedVPC(t *testing.T, h *Handler, id string) *VPC {
@@ -472,10 +511,10 @@ func mutationCases() map[string][]mutationCase {
 		"DeleteVpc": {
 			{
 				name:   "success",
-				seed:   func(t *testing.T, h *Handler) { seedVPC(t, h, "vpc-mut-del") },
-				params: url.Values{"VpcId": {"vpc-mut-del"}},
+				seed:   func(t *testing.T, h *Handler) { seedVPC(t, h, vpcMutDel) },
+				params: url.Values{"VpcId": {vpcMutDel}},
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeVpcs", indexed("VpcId", "vpc-mut-del"))
+					return dispatchLegacy(t, h, "DescribeVpcs", indexed("VpcId", vpcMutDel))
 				},
 			},
 			{
@@ -511,11 +550,11 @@ func mutationCases() map[string][]mutationCase {
 				name: "success",
 				seed: func(t *testing.T, h *Handler) {
 					seedVPC(t, h, "vpc-mut-a")
-					seedSubnet(t, h, "subnet-mut-del", "vpc-mut-a")
+					seedSubnet(t, h, subnetMutDel, "vpc-mut-a")
 				},
-				params: url.Values{"SubnetId": {"subnet-mut-del"}},
+				params: url.Values{"SubnetId": {subnetMutDel}},
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeSubnets", indexed("SubnetId", "subnet-mut-del"))
+					return dispatchLegacy(t, h, "DescribeSubnets", indexed("SubnetId", subnetMutDel))
 				},
 			},
 			{
@@ -553,10 +592,10 @@ func mutationCases() map[string][]mutationCase {
 		"DeleteSecurityGroup": {
 			{
 				name:   "success",
-				seed:   func(t *testing.T, h *Handler) { seedSG(t, h, "sg-mut-del", "vpc-mut-a") },
-				params: url.Values{"GroupId": {"sg-mut-del"}},
+				seed:   func(t *testing.T, h *Handler) { seedSG(t, h, sgMutDel, "vpc-mut-a") },
+				params: url.Values{"GroupId": {sgMutDel}},
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeSecurityGroups", indexed("GroupId", "sg-mut-del"))
+					return dispatchLegacy(t, h, "DescribeSecurityGroups", indexed("GroupId", sgMutDel))
 				},
 			},
 			{
@@ -585,10 +624,10 @@ func mutationCases() map[string][]mutationCase {
 		"AuthorizeSecurityGroupIngress": {
 			{
 				name:   "appends-the-rule",
-				seed:   func(t *testing.T, h *Handler) { seedSG(t, h, "sg-mut-auth-in", "vpc-mut-a") },
-				params: merge(url.Values{"GroupId": {"sg-mut-auth-in"}}, ipPermParams(1, "tcp", 443, 443, "0.0.0.0/0")),
+				seed:   func(t *testing.T, h *Handler) { seedSG(t, h, sgMutAuthIn, "vpc-mut-a") },
+				params: merge(url.Values{"GroupId": {sgMutAuthIn}}, ipPermParams(1, "tcp", 443, 443, "0.0.0.0/0")),
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeSecurityGroups", indexed("GroupId", "sg-mut-auth-in"))
+					return dispatchLegacy(t, h, "DescribeSecurityGroups", indexed("GroupId", sgMutAuthIn))
 				},
 			},
 			{name: "missing-permissions", seed: func(t *testing.T, h *Handler) { seedSG(t, h, "sg-mut-auth-empty", "vpc-mut-a") }, params: url.Values{"GroupId": {"sg-mut-auth-empty"}}},
@@ -596,10 +635,10 @@ func mutationCases() map[string][]mutationCase {
 		"AuthorizeSecurityGroupEgress": {
 			{
 				name:   "appends-the-rule",
-				seed:   func(t *testing.T, h *Handler) { seedSG(t, h, "sg-mut-auth-eg", "vpc-mut-a") },
-				params: merge(url.Values{"GroupId": {"sg-mut-auth-eg"}}, ipPermParams(1, "tcp", 22, 22, "10.0.0.0/16")),
+				seed:   func(t *testing.T, h *Handler) { seedSG(t, h, sgMutAuthEg, "vpc-mut-a") },
+				params: merge(url.Values{"GroupId": {sgMutAuthEg}}, ipPermParams(1, "tcp", 22, 22, "10.0.0.0/16")),
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeSecurityGroups", indexed("GroupId", "sg-mut-auth-eg"))
+					return dispatchLegacy(t, h, "DescribeSecurityGroups", indexed("GroupId", sgMutAuthEg))
 				},
 			},
 		},
@@ -607,15 +646,15 @@ func mutationCases() map[string][]mutationCase {
 			{
 				name: "removes-the-rule",
 				seed: func(t *testing.T, h *Handler) {
-					sg := seedSG(t, h, "sg-mut-rev-in", "vpc-mut-a")
+					sg := seedSG(t, h, sgMutRevIn, "vpc-mut-a")
 					sg.IpPermissions = []IpPermission{{IpProtocol: "tcp", FromPort: 443, ToPort: 443, IpRanges: []IpRange{{CidrIp: "0.0.0.0/0"}}}}
 					if aerr := h.store.putSecurityGroup(context.Background(), sg); aerr != nil {
 						t.Fatalf("putSecurityGroup: %s", aerr.Message)
 					}
 				},
-				params: merge(url.Values{"GroupId": {"sg-mut-rev-in"}}, ipPermParams(1, "tcp", 443, 443, "0.0.0.0/0")),
+				params: merge(url.Values{"GroupId": {sgMutRevIn}}, ipPermParams(1, "tcp", 443, 443, "0.0.0.0/0")),
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeSecurityGroups", indexed("GroupId", "sg-mut-rev-in"))
+					return dispatchLegacy(t, h, "DescribeSecurityGroups", indexed("GroupId", sgMutRevIn))
 				},
 			},
 			{
@@ -628,15 +667,15 @@ func mutationCases() map[string][]mutationCase {
 			{
 				name: "removes-the-rule",
 				seed: func(t *testing.T, h *Handler) {
-					sg := seedSG(t, h, "sg-mut-rev-eg", "vpc-mut-a")
+					sg := seedSG(t, h, sgMutRevEg, "vpc-mut-a")
 					sg.IpPermissionsEgress = []IpPermission{{IpProtocol: "-1", IpRanges: []IpRange{{CidrIp: "0.0.0.0/0"}}}}
 					if aerr := h.store.putSecurityGroup(context.Background(), sg); aerr != nil {
 						t.Fatalf("putSecurityGroup: %s", aerr.Message)
 					}
 				},
-				params: merge(url.Values{"GroupId": {"sg-mut-rev-eg"}}, ipPermParams(1, "-1", 0, 0, "0.0.0.0/0")),
+				params: merge(url.Values{"GroupId": {sgMutRevEg}}, ipPermParams(1, "-1", 0, 0, "0.0.0.0/0")),
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeSecurityGroups", indexed("GroupId", "sg-mut-rev-eg"))
+					return dispatchLegacy(t, h, "DescribeSecurityGroups", indexed("GroupId", sgMutRevEg))
 				},
 			},
 		},
@@ -745,20 +784,20 @@ func mutationCases() map[string][]mutationCase {
 		"ModifyInstanceAttribute": {
 			{
 				name:   "instance-type-persisted",
-				seed:   func(t *testing.T, h *Handler) { seedInstance(t, h, "i-mut-attr", 80, "stopped") },
-				params: url.Values{"InstanceId": {"i-mut-attr"}, "InstanceType.Value": {"m5.large"}},
+				seed:   func(t *testing.T, h *Handler) { seedInstance(t, h, instanceMutAttr, 80, "stopped") },
+				params: url.Values{"InstanceId": {instanceMutAttr}, "InstanceType.Value": {"m5.large"}},
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeInstances", indexed("InstanceId", "i-mut-attr"))
+					return dispatchLegacy(t, h, "DescribeInstances", indexed("InstanceId", instanceMutAttr))
 				},
 			},
 		},
 		"ModifySubnetAttribute": {
 			{
 				name:   "map-public-ip-persisted",
-				seed:   func(t *testing.T, h *Handler) { seedSubnet(t, h, "subnet-mut-attr", "vpc-mut-a") },
-				params: url.Values{"SubnetId": {"subnet-mut-attr"}, "MapPublicIpOnLaunch.Value": {"true"}},
+				seed:   func(t *testing.T, h *Handler) { seedSubnet(t, h, subnetMutAttr, "vpc-mut-a") },
+				params: url.Values{"SubnetId": {subnetMutAttr}, "MapPublicIpOnLaunch.Value": {"true"}},
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeSubnets", indexed("SubnetId", "subnet-mut-attr"))
+					return dispatchLegacy(t, h, "DescribeSubnets", indexed("SubnetId", subnetMutAttr))
 				},
 			},
 		},
@@ -847,10 +886,10 @@ func mutationCases() map[string][]mutationCase {
 		"DeleteRouteTable": {
 			{
 				name:   "success",
-				seed:   func(t *testing.T, h *Handler) { seedRouteTable(t, h, "rtb-mut-del", "vpc-mut-a") },
-				params: url.Values{"RouteTableId": {"rtb-mut-del"}},
+				seed:   func(t *testing.T, h *Handler) { seedRouteTable(t, h, rtbMutDel, "vpc-mut-a") },
+				params: url.Values{"RouteTableId": {rtbMutDel}},
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeRouteTables", indexed("RouteTableId", "rtb-mut-del"))
+					return dispatchLegacy(t, h, "DescribeRouteTables", indexed("RouteTableId", rtbMutDel))
 				},
 			},
 			{
@@ -868,10 +907,10 @@ func mutationCases() map[string][]mutationCase {
 		"CreateRoute": {
 			{
 				name:   "success",
-				seed:   func(t *testing.T, h *Handler) { seedRouteTable(t, h, "rtb-mut-route", "vpc-mut-a") },
-				params: url.Values{"RouteTableId": {"rtb-mut-route"}, "DestinationCidrBlock": {"0.0.0.0/0"}, "GatewayId": {"igw-mut-fixed"}},
+				seed:   func(t *testing.T, h *Handler) { seedRouteTable(t, h, rtbMutRoute, "vpc-mut-a") },
+				params: url.Values{"RouteTableId": {rtbMutRoute}, "DestinationCidrBlock": {"0.0.0.0/0"}, "GatewayId": {"igw-mut-fixed"}},
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeRouteTables", indexed("RouteTableId", "rtb-mut-route"))
+					return dispatchLegacy(t, h, "DescribeRouteTables", indexed("RouteTableId", rtbMutRoute))
 				},
 			},
 		},
@@ -879,15 +918,15 @@ func mutationCases() map[string][]mutationCase {
 			{
 				name: "success",
 				seed: func(t *testing.T, h *Handler) {
-					rt := seedRouteTable(t, h, "rtb-mut-delroute", "vpc-mut-a")
+					rt := seedRouteTable(t, h, rtbMutDelRoute, "vpc-mut-a")
 					rt.Routes = append(rt.Routes, Route{DestinationCidrBlock: "0.0.0.0/0", GatewayID: "igw-mut-fixed", Origin: "CreateRoute"})
 					if aerr := h.store.putRouteTable(context.Background(), rt); aerr != nil {
 						t.Fatalf("putRouteTable: %s", aerr.Message)
 					}
 				},
-				params: url.Values{"RouteTableId": {"rtb-mut-delroute"}, "DestinationCidrBlock": {"0.0.0.0/0"}},
+				params: url.Values{"RouteTableId": {rtbMutDelRoute}, "DestinationCidrBlock": {"0.0.0.0/0"}},
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeRouteTables", indexed("RouteTableId", "rtb-mut-delroute"))
+					return dispatchLegacy(t, h, "DescribeRouteTables", indexed("RouteTableId", rtbMutDelRoute))
 				},
 			},
 			{
@@ -900,12 +939,12 @@ func mutationCases() map[string][]mutationCase {
 			{
 				name: "success",
 				seed: func(t *testing.T, h *Handler) {
-					seedRouteTable(t, h, "rtb-mut-assoc", "vpc-mut-a")
+					seedRouteTable(t, h, rtbMutAssoc, "vpc-mut-a")
 					seedSubnet(t, h, "subnet-mut-assoc", "vpc-mut-a")
 				},
-				params: url.Values{"RouteTableId": {"rtb-mut-assoc"}, "SubnetId": {"subnet-mut-assoc"}},
+				params: url.Values{"RouteTableId": {rtbMutAssoc}, "SubnetId": {"subnet-mut-assoc"}},
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeRouteTables", indexed("RouteTableId", "rtb-mut-assoc"))
+					return dispatchLegacy(t, h, "DescribeRouteTables", indexed("RouteTableId", rtbMutAssoc))
 				},
 			},
 		},
@@ -913,7 +952,7 @@ func mutationCases() map[string][]mutationCase {
 			{
 				name: "success",
 				seed: func(t *testing.T, h *Handler) {
-					rt := seedRouteTable(t, h, "rtb-mut-disassoc", "vpc-mut-a")
+					rt := seedRouteTable(t, h, rtbMutDisassoc, "vpc-mut-a")
 					rt.Associations = []RouteTableAssociation{{AssociationID: "rtbassoc-mut-fixed", RouteTableID: rt.RouteTableID, SubnetID: "subnet-mut-a", Main: false}}
 					if aerr := h.store.putRouteTable(context.Background(), rt); aerr != nil {
 						t.Fatalf("putRouteTable: %s", aerr.Message)
@@ -921,7 +960,7 @@ func mutationCases() map[string][]mutationCase {
 				},
 				params: url.Values{"AssociationId": {"rtbassoc-mut-fixed"}},
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeRouteTables", indexed("RouteTableId", "rtb-mut-disassoc"))
+					return dispatchLegacy(t, h, "DescribeRouteTables", indexed("RouteTableId", rtbMutDisassoc))
 				},
 			},
 			{name: "not-found", params: url.Values{"AssociationId": {"rtbassoc-mut-nope"}}},
@@ -941,10 +980,10 @@ func mutationCases() map[string][]mutationCase {
 		"DeleteInternetGateway": {
 			{
 				name:   "success",
-				seed:   func(t *testing.T, h *Handler) { seedIGW(t, h, "igw-mut-del", "") },
-				params: url.Values{"InternetGatewayId": {"igw-mut-del"}},
+				seed:   func(t *testing.T, h *Handler) { seedIGW(t, h, igwMutDel, "") },
+				params: url.Values{"InternetGatewayId": {igwMutDel}},
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeInternetGateways", indexed("InternetGatewayId", "igw-mut-del"))
+					return dispatchLegacy(t, h, "DescribeInternetGateways", indexed("InternetGatewayId", igwMutDel))
 				},
 			},
 			{
@@ -958,11 +997,11 @@ func mutationCases() map[string][]mutationCase {
 				name: "success",
 				seed: func(t *testing.T, h *Handler) {
 					seedVPC(t, h, "vpc-mut-a")
-					seedIGW(t, h, "igw-mut-attach", "")
+					seedIGW(t, h, igwMutAttach, "")
 				},
-				params: url.Values{"InternetGatewayId": {"igw-mut-attach"}, "VpcId": {"vpc-mut-a"}},
+				params: url.Values{"InternetGatewayId": {igwMutAttach}, "VpcId": {"vpc-mut-a"}},
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeInternetGateways", indexed("InternetGatewayId", "igw-mut-attach"))
+					return dispatchLegacy(t, h, "DescribeInternetGateways", indexed("InternetGatewayId", igwMutAttach))
 				},
 			},
 			{
@@ -974,10 +1013,10 @@ func mutationCases() map[string][]mutationCase {
 		"DetachInternetGateway": {
 			{
 				name:   "success",
-				seed:   func(t *testing.T, h *Handler) { seedIGW(t, h, "igw-mut-detach", "vpc-mut-a") },
-				params: url.Values{"InternetGatewayId": {"igw-mut-detach"}, "VpcId": {"vpc-mut-a"}},
+				seed:   func(t *testing.T, h *Handler) { seedIGW(t, h, igwMutDetach, "vpc-mut-a") },
+				params: url.Values{"InternetGatewayId": {igwMutDetach}, "VpcId": {"vpc-mut-a"}},
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeInternetGateways", indexed("InternetGatewayId", "igw-mut-detach"))
+					return dispatchLegacy(t, h, "DescribeInternetGateways", indexed("InternetGatewayId", igwMutDetach))
 				},
 			},
 			{
@@ -1210,10 +1249,10 @@ func mutationCases() map[string][]mutationCase {
 		"DeleteNetworkInterface": {
 			{
 				name:   "success",
-				seed:   func(t *testing.T, h *Handler) { seedNetworkInterface(t, h, "eni-mut-del", "subnet-mut-a", "vpc-mut-a") },
-				params: url.Values{"NetworkInterfaceId": {"eni-mut-del"}},
+				seed:   func(t *testing.T, h *Handler) { seedNetworkInterface(t, h, eniMutDel, "subnet-mut-a", "vpc-mut-a") },
+				params: url.Values{"NetworkInterfaceId": {eniMutDel}},
 				after: func(t *testing.T, h *Handler, _ string) string {
-					return dispatchLegacy(t, h, "DescribeNetworkInterfaces", indexed("NetworkInterfaceId", "eni-mut-del"))
+					return dispatchLegacy(t, h, "DescribeNetworkInterfaces", indexed("NetworkInterfaceId", eniMutDel))
 				},
 			},
 		},

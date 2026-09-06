@@ -179,17 +179,17 @@ func TestDescribeVpcs_selectors(t *testing.T) {
 		params url.Values
 		want   []string
 	}{
-		{name: "no selectors returns everything", params: url.Values{}, want: []string{"vpc-default", "vpc-mine"}},
-		{name: "VpcId.N", params: url.Values{"VpcId.1": {"vpc-mine"}}, want: []string{"vpc-mine"}},
-		{name: "vpc-id filter", params: filterParams("vpc-id", "vpc-mine"), want: []string{"vpc-mine"}},
-		{name: "isDefault true", params: filterParams("isDefault", "true"), want: []string{"vpc-default"}},
-		{name: "isDefault false", params: filterParams("isDefault", "false"), want: []string{"vpc-mine"}},
-		{name: "isDefault is case-insensitive", params: filterParams("isDefault", "True"), want: []string{"vpc-default"}},
-		{name: "a value may be a wildcard", params: filterParams("vpc-id", "vpc-m*"), want: []string{"vpc-mine"}},
+		{name: "no selectors returns everything", params: url.Values{}, want: []string{"vpc-0abcdef0", "vpc-0defa017"}},
+		{name: "VpcId.N", params: url.Values{"VpcId.1": {"vpc-0abcdef0"}}, want: []string{"vpc-0abcdef0"}},
+		{name: "vpc-id filter", params: filterParams("vpc-id", "vpc-0abcdef0"), want: []string{"vpc-0abcdef0"}},
+		{name: "isDefault true", params: filterParams("isDefault", "true"), want: []string{"vpc-0defa017"}},
+		{name: "isDefault false", params: filterParams("isDefault", "false"), want: []string{"vpc-0abcdef0"}},
+		{name: "isDefault is case-insensitive", params: filterParams("isDefault", "True"), want: []string{"vpc-0defa017"}},
+		{name: "a value may be a wildcard", params: filterParams("vpc-id", "vpc-0abc*"), want: []string{"vpc-0abcdef0"}},
 		{
 			name: "selectors are AND-ed",
 			params: url.Values{
-				"VpcId.1":          {"vpc-mine"},
+				"VpcId.1":          {"vpc-0abcdef0"},
 				"Filter.1.Name":    {"isDefault"},
 				"Filter.1.Value.1": {"true"},
 			},
@@ -201,9 +201,12 @@ func TestDescribeVpcs_selectors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := defaultVPCHandler(t)
 			ctx := context.Background()
+			// Well-formed IDs (eight hex characters, the shape shortID mints)
+			// rather than readable words: a `VpcId.N` case names one, and an
+			// explicit ID list is held to AWS's shape — see describe_ids.go.
 			for _, v := range []*VPC{
-				{VpcID: "vpc-default", State: "available", CidrBlock: "172.31.0.0/16", IsDefault: true},
-				{VpcID: "vpc-mine", State: "available", CidrBlock: "10.42.0.0/16"},
+				{VpcID: "vpc-0defa017", State: "available", CidrBlock: "172.31.0.0/16", IsDefault: true},
+				{VpcID: "vpc-0abcdef0", State: "available", CidrBlock: "10.42.0.0/16"},
 			} {
 				if aerr := h.store.putVPC(ctx, v); aerr != nil {
 					t.Fatalf("putVPC: %v", aerr.Message)

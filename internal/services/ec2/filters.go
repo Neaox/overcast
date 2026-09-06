@@ -319,7 +319,16 @@ func (q filterQuery[T]) matches(res T) bool {
 // this is a type rather than a bare set lookup: every describe spelled out
 // `len(ids) > 0 && !ids[id]` for itself, and one of them getting it wrong would
 // have hidden every resource in the region.
-type idSelection map[string]bool
+//
+// The order the caller sent them in is kept alongside the set. It is not
+// decoration: AWS fails an id list on the *first* bad id, so resolveIDs
+// (describe_ids.go) has to walk the list the way the caller wrote it, and a
+// map alone would have made which id gets named in the error a coin toss
+// between runs.
+type idSelection struct {
+	ids []string
+	set map[string]bool
+}
 
 // requestedIDs reads `<param>.1`, `<param>.2`, … from the request.
 func requestedIDs(r *http.Request, param string) idSelection {
@@ -333,12 +342,15 @@ func requestedIDs(r *http.Request, param string) idSelection {
 // the Query codec fills a gap with the zero string rather than truncating, and
 // an ID a caller never sent must not become a selection of "".
 func selectedIDs(values []string) idSelection {
-	sel := idSelection{}
+	sel := idSelection{set: map[string]bool{}}
 	for _, v := range values {
 		if v == "" {
 			break
 		}
-		sel[v] = true
+		if !sel.set[v] {
+			sel.ids = append(sel.ids, v)
+		}
+		sel.set[v] = true
 	}
 	return sel
 }
@@ -346,8 +358,14 @@ func selectedIDs(values []string) idSelection {
 // has reports whether a resource was asked for. An empty selection asks for all
 // of them.
 func (sel idSelection) has(id string) bool {
-	return len(sel) == 0 || sel[id]
+	return len(sel.ids) == 0 || sel.set[id]
 }
+
+// empty reports whether the caller named no IDs at all.
+func (sel idSelection) empty() bool { return len(sel.ids) == 0 }
+
+// all is the IDs the caller named, in the order they sent them, deduplicated.
+func (sel idSelection) all() []string { return sel.ids }
 
 // ── The two ways a filter reaches a handler ──────────────────────────────────
 //
