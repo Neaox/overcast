@@ -1026,7 +1026,7 @@ func (h *Handler) listUsersTyped(ctx context.Context, _ *listUsersReq) (*listUse
 	}
 	xmlUsers := make([]userXML, 0, len(users))
 	for i := range users {
-		xmlUsers = append(xmlUsers, toUserXML(&users[i]))
+		xmlUsers = append(xmlUsers, toUserXMLForList(&users[i]))
 	}
 	return &listUsersResp{Xmlns: iamXMLNS, Result: listUsersResult{
 		Users: listMembersXML[userXML]{Members: xmlUsers, Tag: "member"}, IsTruncated: false,
@@ -1233,7 +1233,7 @@ func (h *Handler) listRolesTyped(ctx context.Context, _ *listRolesReq) (*listRol
 	}
 	xmlRoles := make([]roleXML, 0, len(roles))
 	for i := range roles {
-		xmlRoles = append(xmlRoles, toRoleXML(&roles[i]))
+		xmlRoles = append(xmlRoles, toRoleXMLForList(&roles[i]))
 	}
 	return &listRolesResp{Xmlns: iamXMLNS, Result: listRolesResult{
 		Roles: listMembersXML[roleXML]{Members: xmlRoles, Tag: "member"}, IsTruncated: false,
@@ -1520,7 +1520,7 @@ func (h *Handler) listPoliciesTyped(ctx context.Context, _ *listPoliciesReq) (*l
 	}
 	xmlPolicies := make([]policyXML, 0, len(policies))
 	for i := range policies {
-		xmlPolicies = append(xmlPolicies, toPolicyXML(&policies[i], usage[policies[i].Arn]))
+		xmlPolicies = append(xmlPolicies, toPolicyXMLForList(&policies[i], usage[policies[i].Arn]))
 	}
 	return &listPoliciesResp{Xmlns: iamXMLNS, Result: listPoliciesResult{
 		Policies: listMembersXML[policyXML]{Members: xmlPolicies, Tag: "member"}, IsTruncated: false,

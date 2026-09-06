@@ -3682,7 +3682,7 @@
           "operation": "ListUsers",
           "category": "Users",
           "status": "✅ Supported",
-          "notes": "Returns AWS's listing subset: no `Tags` — call the matching `Get` for those"
+          "notes": "Returns AWS's listing subset: no `Tags` and no `PermissionsBoundary` — call `GetUser` for those"
         },
         {
           "operation": "UpdateUser",
@@ -3800,7 +3800,7 @@
           "operation": "ListRoles",
           "category": "Roles",
           "status": "✅ Supported",
-          "notes": "Returns AWS's listing subset: no `Tags` — call the matching `Get` for those"
+          "notes": "Returns AWS's listing subset: no `Tags` and no `PermissionsBoundary` — call `GetRole` for those"
         },
         {
           "operation": "DeleteRole",
@@ -3960,7 +3960,7 @@
           "operation": "ListPolicies",
           "category": "Managed policies",
           "status": "✅ Supported",
-          "notes": "Returns AWS's listing subset: no `Tags`. Carries the same derived `AttachmentCount` and `PermissionsBoundaryUsageCount` as `GetPolicy`"
+          "notes": "Returns AWS's listing subset: no `Tags` and no `Description` — call `GetPolicy` for those. Carries the same derived `AttachmentCount` and `PermissionsBoundaryUsageCount` as `GetPolicy`"
         },
         {
           "operation": "DeletePolicy",
