@@ -77,7 +77,7 @@ see [How a VPC is backed by a Docker network](../networking/vpc-backing.md).
 | VPC peering                                          | An accepted peering routes traffic between the VPCs | The state machine runs; no cross-network routing is established                                                |
 | NACLs, VPC Flow Logs, DHCP option sets               | Full API                                            | Not emulated; `DescribeDhcpOptions` returns a fabricated default                                               |
 | `Describe*` filters                                  | Every documented filter name is honoured            | A filter name Overcast has not implemented is **refused**, not ignored                                         |
-| `Describe*` resource IDs                             | An unknown or malformed ID in an ID list is an error | Same, for the seven operations listed in [Resource IDs](./ec2/limitations.md#resource-ids); the rest still answer an empty list |
+| `Describe*` resource IDs                             | An unknown or malformed ID in an ID list is an error | Same, with AWS's per-resource code — see [Resource IDs](./ec2/limitations.md#resource-ids)                      |
 | Without Docker                                       | Not applicable                                      | Every networking feature degrades to metadata only: API responses stay correct, container connectivity is lost |
 
 Overlapping CIDRs, the Docker-network model behind all of this, and the full

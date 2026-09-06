@@ -9,18 +9,14 @@ import (
 )
 
 func TestExplain_rendersEveryLanguage(t *testing.T) {
-	f, gen := generateFixture(t)
+	_, gen := generateFixture(t)
 	g, tc, ok := gen.scenario.findTest("widgets-gen-widget", "CreateWidget")
 	if !ok {
 		t.Fatal("fixture has no CreateWidget")
 	}
 	for _, lang := range rendererNames() {
 		t.Run(lang, func(t *testing.T) {
-			env := renderEnv{
-				goTypes: fixtureGoTypes(),
-				model:   func(string) (*serviceModel, error) { return f.model, nil },
-			}
-			out := renderers[lang](env, gen.scenario, g, tc)
+			out := renderers[lang](fixtureRenderEnv(gen), gen.scenario, g, tc)
 			// Operation names are spelled per language (get_widget, getWidget,
 			// GetWidget), so compare with case and separators folded.
 			folded := strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(out))
@@ -78,4 +74,10 @@ func TestReport_listsCoverageRefusalsAndSamples(t *testing.T) {
 	if again.String() != report {
 		t.Fatal("the report is not deterministic")
 	}
+}
+
+// staticModel is the renderEnv loader for a test that already holds the model
+// it wants every lookup to answer with.
+func staticModel(model *serviceModel) func(string) (*serviceModel, error) {
+	return func(string) (*serviceModel, error) { return model, nil }
 }

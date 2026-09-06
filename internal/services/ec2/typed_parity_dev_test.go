@@ -143,9 +143,11 @@ func parityCases() map[string][]parityCase {
 		},
 		"DescribeVpcPeeringConnections": {
 			{name: "all", params: url.Values{}},
-			{name: "by-id", params: indexedParams("VpcPeeringConnectionId", "pcx-parity")},
+			{name: "by-id", params: indexedParams("VpcPeeringConnectionId", pcxParity)},
 			{name: "by-status", params: filterParams("status-code", "active")},
 			{name: "unknown-filter", params: unknown},
+			{name: "unknown-id", params: indexedParams("VpcPeeringConnectionId", "pcx-00000000")},
+			{name: "malformed-id", params: indexedParams("VpcPeeringConnectionId", "not-an-id")},
 		},
 		"DescribeTags": {
 			{name: "all", params: url.Values{}},
@@ -155,15 +157,28 @@ func parityCases() map[string][]parityCase {
 		},
 		"DescribeAddresses": {
 			{name: "all", params: url.Values{}},
-			{name: "by-id", params: indexedParams("AllocationId", "eipalloc-parity")},
+			{name: "by-id", params: indexedParams("AllocationId", eipallocParity)},
 			{name: "by-public-ip", params: filterParams("public-ip", "203.0.113.7")},
+			{name: "by-public-ip-selector", params: indexedParams("PublicIp", "203.0.113.7")},
 			{name: "unknown-filter", params: unknown},
+			// The allocation scope carries no Malformed code, so the
+			// malformed-id row here is checking that both paths answer
+			// InvalidAllocationID.NotFound rather than a code AWS never sends.
+			{name: "unknown-id", params: indexedParams("AllocationId", "eipalloc-00000000")},
+			{name: "malformed-id", params: indexedParams("AllocationId", "not-an-id")},
+			{name: "unknown-public-ip", params: indexedParams("PublicIp", "192.0.2.55")},
+			{name: "malformed-public-ip", params: indexedParams("PublicIp", "not-an-ip")},
+			{name: "malformed-address-beats-unknown-allocation", params: mergeParams(
+				indexedParams("AllocationId", "eipalloc-00000000"),
+				indexedParams("PublicIp", "not-an-ip"))},
 		},
 		"DescribeNatGateways": {
 			{name: "all", params: url.Values{}},
-			{name: "by-id", params: indexedParams("NatGatewayId", "nat-parity")},
+			{name: "by-id", params: indexedParams("NatGatewayId", natParity)},
 			{name: "by-vpc", params: filterParams("vpc-id", vpcParityA)},
 			{name: "unknown-filter", params: unknown},
+			{name: "unknown-id", params: indexedParams("NatGatewayId", "nat-00000000")},
+			{name: "malformed-id", params: indexedParams("NatGatewayId", "not-an-id")},
 		},
 		"DescribeNetworkInterfaces": {
 			{name: "all", params: url.Values{}},
@@ -175,15 +190,21 @@ func parityCases() map[string][]parityCase {
 		},
 		"DescribeVpnGateways": {
 			{name: "all", params: url.Values{}},
-			{name: "by-id", params: indexedParams("VpnGatewayId", "vgw-parity")},
+			{name: "by-id", params: indexedParams("VpnGatewayId", vgwParity)},
 			{name: "by-state", params: filterParams("state", "available")},
 			{name: "unknown-filter", params: unknown},
+			// No Malformed code documented for this resource either, so the
+			// malformed row pins the NotFound answer.
+			{name: "unknown-id", params: indexedParams("VpnGatewayId", "vgw-00000000")},
+			{name: "malformed-id", params: indexedParams("VpnGatewayId", "not-an-id")},
 		},
 		"DescribeVpcEndpoints": {
 			{name: "all", params: url.Values{}},
-			{name: "by-id", params: indexedParams("VpcEndpointId", "vpce-parity")},
+			{name: "by-id", params: indexedParams("VpcEndpointId", vpceParity)},
 			{name: "by-service", params: filterParams("service-name", "com.amazonaws.*.s3")},
 			{name: "unknown-filter", params: unknown},
+			{name: "unknown-id", params: indexedParams("VpcEndpointId", "vpce-00000000")},
+			{name: "malformed-id", params: indexedParams("VpcEndpointId", "not-an-id")},
 		},
 		"DescribeDhcpOptions": {
 			{name: "all", params: url.Values{}},
@@ -212,6 +233,20 @@ func indexedParams(param string, values ...string) url.Values {
 	return p
 }
 
+// mergeParams is for the one case that sends two ID selectors at once —
+// DescribeAddresses is the only describe with two.
+func mergeParams(sets ...url.Values) url.Values {
+	out := url.Values{}
+	for _, set := range sets {
+		for k, vs := range set {
+			for _, v := range vs {
+				out.Add(k, v)
+			}
+		}
+	}
+	return out
+}
+
 func attributeParams(vpcID, attribute string) url.Values {
 	p := url.Values{}
 	if vpcID != "" {
@@ -231,10 +266,16 @@ func attributeParams(vpcID, attribute string) url.Values {
 // both dispatch paths, so the comparison would still pass while checking
 // nothing.
 //
-// Only the resource types #1708 covers are spelled this way. The rest
-// (rtb-parity, vgw-parity, nat-parity, …) keep readable IDs, because their
-// describes do not resolve an ID list yet; when one does, its fixture moves
+// Only resource types whose describe resolves an ID list are spelled this way.
+// The rest (rtb-parity, rtbassoc-parity, key-parity, …) keep readable IDs,
+// because no case names them in an ID list; when one does, its fixture moves
 // here.
+//
+// #1847's five joined them: the allocation and the virtual private gateway are
+// here even though their scopes check no shape (the EC2 reference documents no
+// Malformed code for either), because a fixture that reads as an ID everywhere
+// else and as prose in two places is the kind of inconsistency the next
+// scope-widening trips over.
 const (
 	vpcParityA = "vpc-000000a0"
 	vpcParityB = "vpc-000000b0"
@@ -251,6 +292,17 @@ const (
 	igwParity = "igw-000000a0"
 
 	eniParity = "eni-000000a0"
+
+	pcxParity = "pcx-000000a0"
+
+	eipallocParity = "eipalloc-000000a0"
+	eipallocOther  = "eipalloc-000000b0"
+
+	natParity = "nat-000000a0"
+
+	vgwParity = "vgw-000000a0"
+
+	vpceParity = "vpce-000000a0"
 )
 
 // ── The fixture ─────────────────────────────────────────────────────────────
@@ -326,23 +378,23 @@ func seedParityFixture(t *testing.T, h *Handler) {
 	fail("putIGW other", h.store.putInternetGateway(ctx, &InternetGateway{InternetGatewayID: "igw-parity-detached"}))
 
 	fail("putPeering", h.store.putVpcPeeringConnection(ctx, &VpcPeeringConnection{
-		VpcPeeringConnectionID: "pcx-parity",
+		VpcPeeringConnectionID: pcxParity,
 		RequesterVpcInfo:       VpcPeeringConnectionVpcInfo{VpcID: vpcParityA, CidrBlock: "10.0.0.0/16", Region: "us-east-1"},
 		AccepterVpcInfo:        VpcPeeringConnectionVpcInfo{VpcID: vpcParityB, CidrBlock: "10.1.0.0/16", Region: "us-east-1"},
 		Status:                 VpcPeeringConnectionStatus{Code: "active", Message: "Active"},
 	}))
 
 	fail("putElasticIP", h.store.putElasticIP(ctx, &ElasticIP{
-		AllocationID: "eipalloc-parity", PublicIP: "203.0.113.7", Domain: "vpc",
+		AllocationID: eipallocParity, PublicIP: "203.0.113.7", Domain: "vpc",
 	}))
 	fail("putElasticIP other", h.store.putElasticIP(ctx, &ElasticIP{
-		AllocationID: "eipalloc-other", PublicIP: "203.0.113.8", Domain: "vpc",
+		AllocationID: eipallocOther, PublicIP: "203.0.113.8", Domain: "vpc",
 	}))
 
 	fail("putNatGateway", h.store.putNatGateway(ctx, &NatGateway{
-		NatGatewayID: "nat-parity", SubnetID: subnetParityA, VpcID: vpcParityA,
+		NatGatewayID: natParity, SubnetID: subnetParityA, VpcID: vpcParityA,
 		State: "available", CreateTime: "2026-01-01T00:00:00Z",
-		AllocationID: "eipalloc-parity", PublicIP: "203.0.113.7", PrivateIP: "10.0.1.20",
+		AllocationID: eipallocParity, PublicIP: "203.0.113.7", PrivateIP: "10.0.1.20",
 	}))
 
 	fail("putENI", h.store.putNetworkInterface(ctx, &NetworkInterface{
@@ -352,13 +404,13 @@ func seedParityFixture(t *testing.T, h *Handler) {
 	}))
 
 	fail("putVpnGateway", h.store.putVpnGateway(ctx, &VpnGateway{
-		VpnGatewayID: "vgw-parity", State: "available", Type: "ipsec.1",
+		VpnGatewayID: vgwParity, State: "available", Type: "ipsec.1",
 		AvailabilityZone: "us-east-1a", AmazonSideAsn: 64512,
 		Attachments: []VpnGatewayAttachment{{VpcID: vpcParityA, State: "attached"}},
 	}))
 
 	fail("putVpcEndpoint", h.store.putVpcEndpoint(ctx, &VpcEndpoint{
-		VpcEndpointID: "vpce-parity", VpcID: vpcParityA,
+		VpcEndpointID: vpceParity, VpcID: vpcParityA,
 		ServiceName: "com.amazonaws.us-east-1.s3", State: "available", VpcEndpointType: "Gateway",
 	}))
 

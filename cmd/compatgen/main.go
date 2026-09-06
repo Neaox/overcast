@@ -149,7 +149,7 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 	// The typed backends compile source rather than interpreting the IR, so
 	// their files are outputs of this run too. unable collects the groups an
 	// emitter refused, which decides each group's `suites` below.
-	var goServices, javaServices []string
+	emitted := make(map[string][]string, len(sourceBackends))
 	unable := unableSuites{}
 	// The Go emitter spells each member as the vendored SDK declares it, so it
 	// reads that SDK's own types out of the go-sdk suite's module — the one the
@@ -198,36 +198,30 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 			return nil, nil, err
 		}
 		outputs[scenarioPath(r.Service)] = contents
-		if hasBackend(goSDKSuite) {
-			emission, err := emitGo(gen, goTypes)
+		for _, backend := range sourceBackends {
+			if !hasBackend(backend.suite) {
+				continue
+			}
+			emission, err := backend.emit(gen, goTypes)
 			if err != nil {
 				return nil, nil, fmt.Errorf("%s: %w", r.Service, err)
 			}
 			outputs[emission.Path] = emission.Contents
 			gaps.Gaps = append(gaps.Gaps, emission.Gaps...)
-			goServices = append(goServices, r.Service)
-			markUnable(unable, goSDKSuite, emission.Refused)
-		}
-		if hasBackend(javaSDKSuite) {
-			emission, err := emitJava(gen)
-			if err != nil {
-				return nil, nil, fmt.Errorf("%s: %w", r.Service, err)
-			}
-			outputs[emission.Path] = emission.Contents
-			gaps.Gaps = append(gaps.Gaps, emission.Gaps...)
-			javaServices = append(javaServices, r.Service)
-			markUnable(unable, javaSDKSuite, emission.Refused)
+			emitted[backend.suite] = append(emitted[backend.suite], r.Service)
+			markUnable(unable, backend.suite, emission.Refused)
 		}
 	}
-	// The index is emitted whether or not the backend is enabled: the go-sdk
-	// groups package calls it unconditionally, so it has to exist — empty —
-	// for a checkout where scenarioBackends does not name go-sdk.
-	goIndex, err := emitGoIndex(goServices)
-	if err != nil {
-		return nil, nil, err
+	// Each index is emitted whether or not its backend is enabled: every suite
+	// calls into its own index unconditionally, so the file has to exist —
+	// empty — for a checkout where scenarioBackends does not name that suite.
+	for _, backend := range sourceBackends {
+		index, err := backend.index(emitted[backend.suite])
+		if err != nil {
+			return nil, nil, err
+		}
+		outputs[backend.indexPath] = index
 	}
-	outputs[goIndexPath] = goIndex
-	outputs[javaIndexPath] = emitJavaIndex(javaServices)
 	sortGaps(gaps.Gaps)
 	contents, err := encodeDocument(gaps)
 	if err != nil {
@@ -270,11 +264,15 @@ func validateOutput(c *corpus, rel string, contents []byte) error {
 		// gofmt-clean, which emitGo proves by running go/format over the bytes
 		// it is about to return and failing generation if it will not parse.
 		return nil
-	case strings.HasPrefix(rel, javaSuiteDir+"/"):
-		// Emitted Java has no JSON schema either, and no formatter the generator
-		// can run to prove it parses. Its contract is the suite's own `mvn
-		// package`, which compiles every file in the package — the same evidence
-		// the go-sdk suite's build gives, arriving one step later.
+	case strings.HasPrefix(rel, javaSuiteDir+"/"),
+		strings.HasPrefix(rel, dotnetSuiteDir+"/"),
+		strings.HasPrefix(rel, rustSuiteDir+"/"):
+		// Emitted Java, C# and Rust have no JSON schema either, and no formatter
+		// the generator can run to prove they parse: cmd/compatgen is a Go
+		// program, and CI's docs job carries no JDK, .NET SDK or Rust toolchain.
+		// Their contract is each suite's own build — `mvn package`, `dotnet
+		// publish`, `cargo build` — which compiles every emitted file, the same
+		// evidence the go-sdk suite's build gives, arriving one step later.
 		return nil
 	}
 	return fmt.Errorf("internal: no schema is checked for generated file %s", rel)
@@ -299,11 +297,10 @@ func runGenerate(opts options, stdout io.Writer) error {
 	if err := checkStaleScenarios(opts.root, outputs, opts.check); err != nil {
 		return err
 	}
-	if err := checkStaleEmittedGo(opts.root, outputs, opts.check); err != nil {
-		return err
-	}
-	if err := checkStaleEmittedJava(opts.root, outputs, opts.check); err != nil {
-		return err
+	for _, backend := range sourceBackends {
+		if err := checkStaleEmitted(opts.root, outputs, opts.check, backend.dir, backend.language, backend.emittedFile); err != nil {
+			return err
+		}
 	}
 	if opts.check {
 		if err := outputs.check(opts.root); err != nil {
@@ -356,24 +353,12 @@ func checkStaleScenarios(root string, outputs outputSet, check bool) error {
 	return nil
 }
 
-// checkStaleEmittedGo catches an emitted Go file whose recipe was deleted, or
-// one left behind by a checkout where go-sdk was a scenario backend and this
-// one where it is not. The suite compiles every file in the package, so a stale
-// one is a build failure rather than dead weight.
-func checkStaleEmittedGo(root string, outputs outputSet, check bool) error {
-	return checkStaleEmitted(root, outputs, check, goSuiteDir, "Go", func(name string) bool {
-		return strings.HasPrefix(name, "scenarios_") && strings.HasSuffix(name, "_gen.go")
-	})
-}
-
-// checkStaleEmittedJava is the same rule for the java-sdk suite, whose emitted
-// classes sit beside the hand-written group classes in one package.
-func checkStaleEmittedJava(root string, outputs outputSet, check bool) error {
-	return checkStaleEmitted(root, outputs, check, javaSuiteDir, "Java", func(name string) bool {
-		return strings.HasPrefix(name, "Scenarios") && strings.HasSuffix(name, "Gen.java")
-	})
-}
-
+// A stale emitted file — one whose recipe was deleted, or one left behind by a
+// checkout where its suite was a scenario backend and this one where it is not
+// — is removed here, or reported under -check. Every suite compiles the whole
+// emitted directory, so a stale file is a build failure rather than dead
+// weight. Which files belong to which backend is sourceBackends' to say.
+//
 // checkStaleEmitted removes — or, under -check, reports — a generated source
 // file in dir that this run did not produce.
 func checkStaleEmitted(root string, outputs outputSet, check bool, dir, language string, emitted func(name string) bool) error {

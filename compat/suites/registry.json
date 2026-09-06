@@ -1107,7 +1107,18 @@
           "name": "CreateRole"
         },
         {
+          "name": "CreateRoleMalformedDocument",
+          "op": "CreateRole"
+        },
+        {
           "name": "GetRole",
+          "depends": [
+            "CreateRole"
+          ]
+        },
+        {
+          "name": "GetRoleReturnsTags",
+          "op": "GetRole",
           "depends": [
             "CreateRole"
           ]
@@ -1197,7 +1208,18 @@
           "name": "CreatePolicy"
         },
         {
+          "name": "CreatePolicyMalformedDocument",
+          "op": "CreatePolicy"
+        },
+        {
           "name": "GetPolicy",
+          "depends": [
+            "CreatePolicy"
+          ]
+        },
+        {
+          "name": "GetPolicyReturnsTags",
+          "op": "GetPolicy",
           "depends": [
             "CreatePolicy"
           ]
@@ -1209,10 +1231,25 @@
           ]
         },
         {
+          "name": "GetPolicyAttachmentCountAfterAttach",
+          "op": "GetPolicy",
+          "depends": [
+            "CreatePolicy"
+          ]
+        },
+        {
+          "name": "GetPolicyAttachmentCountAfterDetach",
+          "op": "GetPolicy",
+          "depends": [
+            "GetPolicyAttachmentCountAfterAttach"
+          ]
+        },
+        {
           "name": "DeletePolicy",
           "depends": [
             "GetPolicy",
-            "ListPolicies"
+            "ListPolicies",
+            "GetPolicyAttachmentCountAfterDetach"
           ]
         }
       ]

@@ -423,6 +423,23 @@ the top of that tree, and each image copies it in as `/registry.json`
 docker build -f compat/suites/java-sdk/Dockerfile -t oc-java-sdk-compat compat/suites
 ```
 
+`dotnet-sdk` is the one exception, and it widens rather than narrows: its
+context is **`compat/`**, because the unit tests its build stage runs include
+the shared error-matching conformance fixtures under
+`compat/model/testdata/errors` (see [Errors](../model/README.md#errors)), which
+`compat/suites/` does not contain — and a fixture a suite silently does not run
+looks exactly like one it passes. A `Dockerfile.dockerignore` beside that
+suite's Dockerfile keeps the wider context cheap and applies to it alone.
+
+`DOCKER_BUILDKIT=1` is not optional here: `Dockerfile.dockerignore` is a
+BuildKit feature and there is no `compat/.dockerignore`, so a classic build
+would send the whole 2.6 GiB context to the daemon.
+
+```bash
+# Build just the dotnet-sdk image
+DOCKER_BUILDKIT=1 docker build -f compat/suites/dotnet-sdk/Dockerfile -t oc-dotnet-sdk-compat compat
+```
+
 ### Flags that read a results file instead of producing one
 
 `--max-failures`, `--compare-baseline`, `--update-baseline`, `--report` and
@@ -1398,7 +1415,7 @@ the same SDK a month later; the only variable is the emulator.
 | node-js-sdk  | `package.json`            | `@aws-sdk/client-*` `^3.1020.0`                       |
 | python-sdk   | `requirements.txt`        | `boto3>=1.34.0`, `botocore>=1.34.0`                   |
 | go-sdk       | `go.mod`                  | `github.com/aws/aws-sdk-go-v2 v1.41.5` (+ `config/*`, `service/*`) |
-| dotnet-sdk   | `OvercastCompat.csproj`   | `AWSSDK.*` `4.0.0`                                    |
+| dotnet-sdk   | `OvercastCompat.csproj`   | `AWSSDK.*` `4.0.0`, except `AWSSDK.Core` `4.0.102.3` and `AWSSDK.Organizations` `4.0.101.4` (added) |
 | java-sdk     | `pom.xml`                 | `software.amazon.awssdk` (BOM-managed)                 |
 | rust-sdk     | `Cargo.toml`              | `aws-sdk-*` `=1.x` (exact, e.g. `=1.65.0`)            |
 | cli          | `Dockerfile`              | AWS CLI v2 (pinned via base image tag)                 |

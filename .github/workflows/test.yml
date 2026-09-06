@@ -774,31 +774,34 @@ jobs:
   # Cheap by construction: no emulator, no Overcast binary, no Docker. Each
   # test either builds a registry in memory or reads registry.json off disk.
   #
-  # Two suites are deliberately absent:
+  # One suite is deliberately absent:
   #
-  #   rust-sdk    already covered: its Dockerfile runs `cargo test` beside the
-  #               `cargo build` — the dependency layer is already compiled
-  #               there, which is what makes it nearly free. Repeating it here
-  #               would mean compiling the whole AWS SDK a second time for a
-  #               verdict CI already has.
-  #   dotnet-sdk  carries no unit tests to run.
+  #   dotnet-sdk  already covered, and for the reason java-sdk and rust-sdk
+  #               are not. Its Dockerfile runs `dotnet test` between the
+  #               restore and the publish, and its build context is compat/
+  #               rather than compat/suites/, so the shared error-matching
+  #               corpus is reachable there and its fixture case really runs.
+  #               See that suite's run.sh for why the context is wider.
   #
-  # java-sdk was in that list, on the same reasoning: its Dockerfile runs `mvn
-  # package`, and surefire runs the registration tests as part of it. That
-  # covers the registration half and nothing else. The image's build context is
-  # compat/suites/, so `compat/model/testdata/errors` — the shared
-  # error-matching conformance corpus every backend must agree about — is not in
-  # it, and ErrorFixturesTest aborts there rather than running. Nothing else in
-  # CI ran it, so the one test written to catch a matcher rule only one backend
-  # implements was asserting nothing on every push. Running `mvn -B test` from
-  # the suite directory in the checkout is where that corpus is reachable, which
-  # is what the step below is for; the registration tests come along with it.
+  # java-sdk and rust-sdk are here even though each suite's Dockerfile already
+  # runs its tests — `mvn package` runs surefire, and `cargo test` runs beside
+  # the `cargo build` — because those are not the same run. Both images are
+  # built from the compat/suites context, which does not contain
+  # `compat/model/testdata/errors` — the shared error-matching conformance
+  # corpus every backend must agree about — so those fixtures cannot be
+  # answered there, and each suite's fixture case reports what it could not run
+  # and returns. Nothing else in CI ran them, so the tests written to catch a
+  # matcher rule only one backend implements were asserting nothing on every
+  # push. This job has the whole checkout, so it is the only place that corpus
+  # is ever answered; each suite's registration tests come along with it.
   compat-suite-unit-tests:
     name: Compat suite unit tests
     needs: changes
     runs-on: ubuntu-latest
-    # Maven resolves the AWS SDK BOM on a cold cache, which is this job's one
-    # long conversation with a package registry.
+    # Raised from 10 when the java-sdk and rust-sdk suites joined: Maven
+    # resolves the AWS SDK BOM and cargo compiles a dozen aws-sdk crates, which
+    # between them are this job's whole conversation with a package registry —
+    # minutes on a cold cache, seconds on a warm one.
     timeout-minutes: 25
 
     steps:
@@ -899,6 +902,27 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         working-directory: compat/suites/java-sdk
         run: mvn -B test --no-transfer-progress
+
+      # ubuntu-latest ships a stable Rust toolchain, so nothing is installed.
+      # rust-cache rather than actions/cache: it keys on the resolved
+      # dependency set and the compiler version, keeps only the parts of the
+      # target directory worth restoring, and skips the save on a hit. Caching
+      # this suite's whole `target` would be gigabytes against the repository's
+      # 10 GB LRU budget, and would evict the Go and npm caches the steps above
+      # depend on.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: needs.changes.outputs.code == 'true'
+        with:
+          workspaces: compat/suites/rust-sdk
+
+      # Here for the same reason java-sdk is: the shared error-matching
+      # fixtures are reachable only from the whole checkout (see the note above
+      # this job). It also runs the registry loader tests and the scenario
+      # runtime tests — no emulator, no Docker, no live AWS.
+      - name: rust-sdk suite
+        if: needs.changes.outputs.code == 'true'
+        working-directory: compat/suites/rust-sdk
+        run: cargo test
 
       # compat/ui (the compat dashboard) is a separate Vite/React app from web/
       # (see compat/AGENTS.md § Separation boundary) and had no CI coverage at

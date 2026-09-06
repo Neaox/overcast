@@ -126,12 +126,16 @@ func TestCreateAutoScalingGroup_launchTemplateNotFound(t *testing.T) {
 	// Given: an empty store
 	srv := helpers.NewTestServer(t)
 
-	// When: a group names a launch template that was never created
+	// When: a group names a launch template that was never created. The zone
+	// is not what this test is about; it is there because a group has to name
+	// a zone or a subnet at all (#1843), and without one the refusal below
+	// would be the placement error rather than the template one.
 	resp := asCall(t, srv, "CreateAutoScalingGroup", map[string]string{
 		"AutoScalingGroupName":              "missing-lt-asg",
 		"LaunchTemplate.LaunchTemplateName": "never-created",
 		"MinSize":                           "1",
 		"MaxSize":                           "2",
+		"AvailabilityZones.member.1":        "us-east-1a",
 	})
 	body := xmlText(t, resp)
 
@@ -141,6 +145,9 @@ func TestCreateAutoScalingGroup_launchTemplateNotFound(t *testing.T) {
 	}
 	if !strings.Contains(body, "ValidationError") {
 		t.Errorf("body does not name ValidationError: %s", body)
+	}
+	if !strings.Contains(body, "You must use a valid fully-formed launch template.") {
+		t.Errorf("body is not the launch-template refusal: %s", body)
 	}
 	var out describeGroupsXML
 	asDecode(t, srv, "DescribeAutoScalingGroups", nil, &out)

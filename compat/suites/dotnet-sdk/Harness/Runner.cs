@@ -23,12 +23,7 @@ public static class Runner
             total_tests = groups.Sum(group => group.Tests.Count),
         });
 
-        var slots = 8;
-        if (int.TryParse(Environment.GetEnvironmentVariable("OVERCAST_COMPAT_PARALLEL_SLOTS"), out var configured) && configured > 0)
-        {
-            slots = configured;
-        }
-
+        var slots = ParallelSlots();
         var semaphore = new SemaphoreSlim(slots, slots);
         var tasks = groups.Select(async group =>
         {
@@ -56,7 +51,12 @@ public static class Runner
         });
     }
 
-    private static async Task<GroupResult> RunGroupAsync(string suite, string endpoint, string region, TestGroup group)
+    /// <summary>
+    /// Runs one group: setup, then its tests serially or concurrently, then
+    /// teardown. Internal rather than private so the suite's own tests can
+    /// drive a group without a live emulator behind it.
+    /// </summary>
+    internal static async Task<GroupResult> RunGroupAsync(string suite, string endpoint, string region, TestGroup group)
     {
         var context = new TestContext(endpoint, region, Environment.GetEnvironmentVariable("OVERCAST_COMPAT_RUN_ID") ?? "local");
         var result = new GroupResult();
@@ -79,6 +79,13 @@ public static class Runner
                 await RunTeardownAsync(group, context);
                 return result;
             }
+        }
+
+        if (group.Parallel && group.Tests.All(test => test.Depends.Count == 0))
+        {
+            await RunTestsConcurrentlyAsync(suite, group, context, result);
+            await RunTeardownAsync(group, context);
+            return result;
         }
 
         var blocked = new HashSet<string>(StringComparer.Ordinal);
@@ -128,6 +135,87 @@ public static class Runner
         return result;
     }
 
+    /// <summary>
+    /// Runs a group's tests concurrently and emits their results in
+    /// declaration order once all of them are in.
+    /// </summary>
+    /// <remarks>
+    /// Only a generated probe group is marked parallel
+    /// (registry.generated.json's "parallel"): its tests have no setup, no
+    /// teardown, no exports and no depends, so nothing orders them and no test
+    /// can observe another's outcome. Both halves of the caller's condition are
+    /// load-bearing - this path cannot express the dependency gate, because it
+    /// would have to decide what to skip from outcomes that have not happened
+    /// yet, so a group declaring one is run serially even where the registry
+    /// says parallel.
+    /// <para>Emitting in declaration order rather than as each finishes is what
+    /// keeps this stream identical to the serial path's, test for test. The
+    /// dashboard, the baseline and the flake detector all read it, and a result
+    /// order that depended on which call answered first would be a new source
+    /// of diff noise for no benefit.</para>
+    /// </remarks>
+    private static async Task RunTestsConcurrentlyAsync(string suite, TestGroup group, TestContext context, GroupResult result)
+    {
+        var slots = ParallelSlots();
+        using var semaphore = new SemaphoreSlim(slots, slots);
+        var outcomes = await Task.WhenAll(group.Tests.Select(async test =>
+        {
+            if (!string.IsNullOrWhiteSpace(test.Skip))
+            {
+                return ("skip", 0L, (string?)test.Skip);
+            }
+            await semaphore.WaitAsync();
+            try
+            {
+                var started = DateTimeOffset.UtcNow;
+                try
+                {
+                    await test.Fn(context);
+                    return ("pass", (long)(DateTimeOffset.UtcNow - started).TotalMilliseconds, (string?)null);
+                }
+                catch (Exception ex)
+                {
+                    return (IsUnimplemented(ex) ? "unimplemented" : "fail",
+                        (long)(DateTimeOffset.UtcNow - started).TotalMilliseconds, ex.Message);
+                }
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        }));
+
+        for (var i = 0; i < group.Tests.Count; i++)
+        {
+            var (status, duration, error) = outcomes[i];
+            EmitTestResult(suite, group, group.Tests[i].Name, status, duration, error);
+            switch (status)
+            {
+                case "pass":
+                    result.Passed++;
+                    break;
+                case "skip":
+                    result.Skipped++;
+                    break;
+                case "unimplemented":
+                    result.Unimplemented++;
+                    break;
+                default:
+                    result.Failed++;
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// How many things this suite may do at once - groups in RunSuiteAsync, and
+    /// the tests of one parallel group.
+    /// </summary>
+    internal static int ParallelSlots() =>
+        int.TryParse(Environment.GetEnvironmentVariable("OVERCAST_COMPAT_PARALLEL_SLOTS"), out var configured) && configured > 0
+            ? configured
+            : 8;
+
     private static async Task RunTeardownAsync(TestGroup group, TestContext context)
     {
         if (group.Teardown is null)
@@ -145,15 +233,38 @@ public static class Runner
         }
     }
 
+    /// <summary>
+    /// Whether an exception signals a 501 / not-implemented response from the
+    /// Overcast emulator.
+    /// </summary>
+    /// <remarks>
+    /// A caller that has already read the raw SDK error and classified it is
+    /// believed: an <see cref="IComposedFailure"/> states the answer itself.
+    /// The substring heuristic below is applied only to an exception nobody
+    /// classified, and never to a composed message - see IComposedFailure.
+    /// </remarks>
     public static bool IsUnimplemented(Exception exception)
     {
-        var message = exception.ToString();
-        return message.Contains("501", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("NotImplemented", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("UnknownOperationException", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("Unknown action", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("not implemented", StringComparison.OrdinalIgnoreCase);
+        for (Exception? link = exception; link is not null; link = link.InnerException)
+        {
+            if (link is IComposedFailure composed)
+            {
+                return composed.Unimplemented;
+            }
+        }
+        return LooksUnimplemented(exception.ToString());
     }
+
+    /// <summary>
+    /// The substring heuristic over one raw AWS SDK error text. Pass it what
+    /// the SDK said and nothing else.
+    /// </summary>
+    public static bool LooksUnimplemented(string text) =>
+        text.Contains("501", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("NotImplemented", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("UnknownOperationException", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("Unknown action", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("not implemented", StringComparison.OrdinalIgnoreCase);
 
     private static void EmitTestResult(string suite, TestGroup group, string test, string status, long durationMs, string? error)
     {
@@ -181,7 +292,7 @@ public static class Runner
         }
     }
 
-    private sealed class GroupResult
+    internal sealed class GroupResult
     {
         public int Passed { get; set; }
         public int Failed { get; set; }

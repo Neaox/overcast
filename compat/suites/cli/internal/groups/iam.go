@@ -3,6 +3,7 @@ package groups
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/overcast-sh/overcast-compat-cli/internal/awscli"
 	"github.com/overcast-sh/overcast-compat-cli/internal/harness"
@@ -26,25 +27,31 @@ func IAM() ServiceGroup {
 			"iam-users:ListAccessKeys":   g.ListAccessKeys,
 			"iam-users:DeleteUser":       g.DeleteUser,
 			// iam-roles
-			"iam-roles:CreateRole":               g.CreateRole,
-			"iam-roles:GetRole":                  g.GetRole,
-			"iam-roles:ListRoles":                g.ListRoles,
-			"iam-roles:AttachRolePolicy":         g.AttachRolePolicy,
-			"iam-roles:ListAttachedRolePolicies": g.ListAttachedRolePolicies,
-			"iam-roles:DetachRolePolicy":         g.DetachRolePolicy,
-			"iam-roles:PutRolePolicy":            g.PutRolePolicy,
-			"iam-roles:GetRolePolicy":            g.GetRolePolicy,
-			"iam-roles:ListRolePolicies":         g.ListRolePolicies,
-			"iam-roles:DeleteRolePolicy":         g.DeleteRolePolicy,
-			"iam-roles:CreateInstanceProfile":    g.CreateInstanceProfile,
-			"iam-roles:AddRoleToInstanceProfile": g.AddRoleToInstanceProfile,
-			"iam-roles:GetInstanceProfile":       g.GetInstanceProfile,
-			"iam-roles:DeleteRole":               g.DeleteRole,
+			"iam-roles:CreateRole":                  g.CreateRole,
+			"iam-roles:CreateRoleMalformedDocument": g.CreateRoleMalformedDocument,
+			"iam-roles:GetRole":                     g.GetRole,
+			"iam-roles:GetRoleReturnsTags":          g.GetRoleReturnsTags,
+			"iam-roles:ListRoles":                   g.ListRoles,
+			"iam-roles:AttachRolePolicy":            g.AttachRolePolicy,
+			"iam-roles:ListAttachedRolePolicies":    g.ListAttachedRolePolicies,
+			"iam-roles:DetachRolePolicy":            g.DetachRolePolicy,
+			"iam-roles:PutRolePolicy":               g.PutRolePolicy,
+			"iam-roles:GetRolePolicy":               g.GetRolePolicy,
+			"iam-roles:ListRolePolicies":            g.ListRolePolicies,
+			"iam-roles:DeleteRolePolicy":            g.DeleteRolePolicy,
+			"iam-roles:CreateInstanceProfile":       g.CreateInstanceProfile,
+			"iam-roles:AddRoleToInstanceProfile":    g.AddRoleToInstanceProfile,
+			"iam-roles:GetInstanceProfile":          g.GetInstanceProfile,
+			"iam-roles:DeleteRole":                  g.DeleteRole,
 			// iam-policies
-			"iam-policies:CreatePolicy": g.CreatePolicy,
-			"iam-policies:GetPolicy":    g.GetPolicy,
-			"iam-policies:ListPolicies": g.ListPolicies,
-			"iam-policies:DeletePolicy": g.DeletePolicy,
+			"iam-policies:CreatePolicy":                        g.CreatePolicy,
+			"iam-policies:CreatePolicyMalformedDocument":       g.CreatePolicyMalformedDocument,
+			"iam-policies:GetPolicy":                           g.GetPolicy,
+			"iam-policies:GetPolicyReturnsTags":                g.GetPolicyReturnsTags,
+			"iam-policies:ListPolicies":                        g.ListPolicies,
+			"iam-policies:GetPolicyAttachmentCountAfterAttach": g.GetPolicyAttachmentCountAfterAttach,
+			"iam-policies:GetPolicyAttachmentCountAfterDetach": g.GetPolicyAttachmentCountAfterDetach,
+			"iam-policies:DeletePolicy":                        g.DeletePolicy,
 			// iam-groups
 			"iam-groups:CreateGroup":         g.CreateGroup,
 			"iam-groups:AddUserToGroup":      g.AddUserToGroup,
@@ -97,6 +104,68 @@ func (g *iamGroup) assumePolicy() string {
 
 func (g *iamGroup) s3PolicyDoc() string {
 	return `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject"],"Resource":"*"}]}`
+}
+
+// iamMalformedPolicy is a document AWS refuses with MalformedPolicyDocument:
+// "Statements must include either an Action or NotAction element" (IAM User
+// Guide, reference_policies_elements_action.html). Every writer that takes a
+// document names that error (IAM API Reference, API_CreatePolicy.html and
+// API_CreateRole.html, Errors).
+const iamMalformedPolicy = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Resource":"*"}]}`
+
+// iamTagArgs is the --tags shorthand the role and policy fixtures are created
+// with, and the tag set GetRole and GetPolicy must hand back on the resource.
+var iamTagArgs = []string{"Key=owner,Value=compat", "Key=stage,Value=dev"}
+
+// expectIAMFailure runs a command that must fail and asserts both halves of the
+// error contract: the code AWS's model names, and the HTTP status the Query
+// protocol binds it to.
+func expectIAMFailure(t *harness.TestContext, testName, wantCode string, wantStatus int, args ...string) error {
+	status, err := awscli.RunStatus(t.Endpoint, t.Region, args...)
+	if err == nil {
+		return fmt.Errorf("%s: expected %s, got success", testName, wantCode)
+	}
+	if !strings.Contains(err.Error(), wantCode) {
+		return fmt.Errorf("%s: expected %s, got %v", testName, wantCode, err)
+	}
+	if status != wantStatus {
+		return fmt.Errorf("%s: expected HTTP %d for %s, got %d", testName, wantStatus, wantCode, status)
+	}
+	return nil
+}
+
+// assertResourceTags checks the two fixture tags on a Tags member of a Get*
+// response, which is the CLI's rendering of the tag list on the resource.
+func assertResourceTags(testName string, raw any) error {
+	got := map[string]string{}
+	items, _ := raw.([]any)
+	for _, item := range items {
+		tag, _ := item.(map[string]any)
+		key, _ := tag["Key"].(string)
+		value, _ := tag["Value"].(string)
+		got[key] = value
+	}
+	for key, value := range map[string]string{"owner": "compat", "stage": "dev"} {
+		if got[key] != value {
+			return fmt.Errorf("%s: tag %s = %q, want %q (tags: %v)", testName, key, got[key], value, got)
+		}
+	}
+	return nil
+}
+
+// iamAttachmentCount reads AttachmentCount back through get-policy.
+func (g *iamGroup) iamAttachmentCount(t *harness.TestContext, testName string) (float64, error) {
+	out, err := awscli.RunOutput(t.Endpoint, t.Region,
+		"iam", "get-policy", "--policy-arn", t.GetString("policy_arn"))
+	if err != nil {
+		return 0, err
+	}
+	policy, _ := out["Policy"].(map[string]any)
+	count, ok := policy["AttachmentCount"].(float64)
+	if !ok {
+		return 0, fmt.Errorf("%s: get-policy returned no AttachmentCount: %v", testName, policy)
+	}
+	return count, nil
 }
 
 // ─── iam-users ───────────────────────────────────────────────────────────────
@@ -231,11 +300,12 @@ func (g *iamGroup) teardownUsers(_ context.Context, t *harness.TestContext) erro
 func (g *iamGroup) setupRoles(_ context.Context, _ *harness.TestContext) error { return nil }
 
 func (g *iamGroup) CreateRole(_ context.Context, t *harness.TestContext) error {
-	out, err := awscli.RunOutput(t.Endpoint, t.Region,
+	out, err := awscli.RunOutput(t.Endpoint, t.Region, append([]string{
 		"iam", "create-role",
 		"--role-name", iamRoleNamer.Name(t),
 		"--assume-role-policy-document", g.assumePolicy(),
-	)
+		"--tags",
+	}, iamTagArgs...)...)
 	if err != nil {
 		if isAlreadyExists(err) {
 			// Role exists from a previous run — fetch its ARN so tests can proceed.
@@ -262,6 +332,30 @@ func (g *iamGroup) GetRole(_ context.Context, t *harness.TestContext) error {
 		"--role-name", iamRoleNamer.Name(t),
 	)
 	return err
+}
+
+// CreateRoleMalformedDocument pins that a trust policy AWS would refuse is
+// refused here too, rather than stored unparsed.
+func (g *iamGroup) CreateRoleMalformedDocument(_ context.Context, t *harness.TestContext) error {
+	return expectIAMFailure(t, "iam CreateRoleMalformedDocument", "MalformedPolicyDocument", 400,
+		"iam", "create-role",
+		"--role-name", iamRoleNamer.Name(t)+"-malformed",
+		"--assume-role-policy-document", iamMalformedPolicy,
+	)
+}
+
+// GetRoleReturnsTags pins that Tags supplied to create-role come back on the
+// role itself, which is where AWS documents them (API_Role.html).
+func (g *iamGroup) GetRoleReturnsTags(_ context.Context, t *harness.TestContext) error {
+	out, err := awscli.RunOutput(t.Endpoint, t.Region,
+		"iam", "get-role",
+		"--role-name", iamRoleNamer.Name(t),
+	)
+	if err != nil {
+		return err
+	}
+	role, _ := out["Role"].(map[string]any)
+	return assertResourceTags("iam GetRoleReturnsTags", role["Tags"])
 }
 
 func (g *iamGroup) ListRoles(_ context.Context, t *harness.TestContext) error {
@@ -391,6 +485,10 @@ func (g *iamGroup) teardownRoles(_ context.Context, t *harness.TestContext) erro
 	awscli.Run(t.Endpoint, t.Region, "iam", "delete-instance-profile", //nolint:errcheck
 		"--instance-profile-name", iamProfileNamer.Name(t))
 	awscli.Run(t.Endpoint, t.Region, "iam", "delete-role", "--role-name", iamRoleNamer.Name(t)) //nolint:errcheck
+	// The malformed-document case must not create anything; delete it anyway so
+	// a regression that stored it does not leak a role into the next run.
+	awscli.Run(t.Endpoint, t.Region, "iam", "delete-role", //nolint:errcheck
+		"--role-name", iamRoleNamer.Name(t)+"-malformed")
 	return nil
 }
 
@@ -423,11 +521,12 @@ func (g *iamGroup) setupPolicies(_ context.Context, t *harness.TestContext) erro
 }
 
 func (g *iamGroup) CreatePolicy(_ context.Context, t *harness.TestContext) error {
-	out, err := awscli.RunOutput(t.Endpoint, t.Region,
+	out, err := awscli.RunOutput(t.Endpoint, t.Region, append([]string{
 		"iam", "create-policy",
 		"--policy-name", iamPolicyNamer.Name(t),
 		"--policy-document", g.s3PolicyDoc(),
-	)
+		"--tags",
+	}, iamTagArgs...)...)
 	if err != nil {
 		return err
 	}
@@ -454,6 +553,78 @@ func (g *iamGroup) ListPolicies(_ context.Context, t *harness.TestContext) error
 	return err
 }
 
+// CreatePolicyMalformedDocument pins the same refusal on the identity-policy
+// writer.
+func (g *iamGroup) CreatePolicyMalformedDocument(_ context.Context, t *harness.TestContext) error {
+	return expectIAMFailure(t, "iam CreatePolicyMalformedDocument", "MalformedPolicyDocument", 400,
+		"iam", "create-policy",
+		"--policy-name", iamPolicyNamer.Name(t)+"-malformed",
+		"--policy-document", iamMalformedPolicy,
+	)
+}
+
+// GetPolicyReturnsTags pins Tags on the policy resource (API_Policy.html).
+func (g *iamGroup) GetPolicyReturnsTags(_ context.Context, t *harness.TestContext) error {
+	out, err := awscli.RunOutput(t.Endpoint, t.Region,
+		"iam", "get-policy", "--policy-arn", t.GetString("policy_arn"))
+	if err != nil {
+		return err
+	}
+	policy, _ := out["Policy"].(map[string]any)
+	return assertResourceTags("iam GetPolicyReturnsTags", policy["Tags"])
+}
+
+// GetPolicyAttachmentCountAfterAttach pins AttachmentCount moving 0 to 1.
+// "The number of entities (users, groups, and roles) that the policy is
+// attached to" (IAM API Reference, API_Policy.html) is what a cleanup script
+// reads before deleting a policy, so a stuck 0 deletes something in use.
+func (g *iamGroup) GetPolicyAttachmentCountAfterAttach(_ context.Context, t *harness.TestContext) error {
+	const testName = "iam GetPolicyAttachmentCountAfterAttach"
+	before, err := g.iamAttachmentCount(t, testName)
+	if err != nil {
+		return err
+	}
+	if before != 0 {
+		return fmt.Errorf("%s: AttachmentCount = %v before the attach, want 0", testName, before)
+	}
+	if err := awscli.Run(t.Endpoint, t.Region,
+		"iam", "attach-role-policy",
+		"--role-name", iamPolRoleNamer.Name(t),
+		"--policy-arn", t.GetString("policy_arn"),
+	); err != nil {
+		return err
+	}
+	after, err := g.iamAttachmentCount(t, testName)
+	if err != nil {
+		return err
+	}
+	if after != 1 {
+		return fmt.Errorf("%s: AttachmentCount = %v after attaching to one role, want 1", testName, after)
+	}
+	return nil
+}
+
+// GetPolicyAttachmentCountAfterDetach pins the counter moving back to 0, which
+// a counter incremented but never decremented would fail.
+func (g *iamGroup) GetPolicyAttachmentCountAfterDetach(_ context.Context, t *harness.TestContext) error {
+	const testName = "iam GetPolicyAttachmentCountAfterDetach"
+	if err := awscli.Run(t.Endpoint, t.Region,
+		"iam", "detach-role-policy",
+		"--role-name", iamPolRoleNamer.Name(t),
+		"--policy-arn", t.GetString("policy_arn"),
+	); err != nil {
+		return err
+	}
+	after, err := g.iamAttachmentCount(t, testName)
+	if err != nil {
+		return err
+	}
+	if after != 0 {
+		return fmt.Errorf("%s: AttachmentCount = %v after the detach, want 0", testName, after)
+	}
+	return nil
+}
+
 func (g *iamGroup) DeletePolicy(_ context.Context, t *harness.TestContext) error {
 	arn := t.GetString("policy_arn")
 	return awscli.Run(t.Endpoint, t.Region, "iam", "delete-policy", "--policy-arn", arn)
@@ -466,6 +637,9 @@ func (g *iamGroup) teardownPolicies(_ context.Context, t *harness.TestContext) e
 		awscli.Run(t.Endpoint, t.Region, "iam", "delete-policy", "--policy-arn", policyArn) //nolint:errcheck
 	}
 	awscli.Run(t.Endpoint, t.Region, "iam", "delete-role", "--role-name", iamPolRoleNamer.Name(t)) //nolint:errcheck
+	// Same guard as teardownRoles: the refused create-policy must leave nothing.
+	awscli.Run(t.Endpoint, t.Region, "iam", "delete-policy", //nolint:errcheck
+		"--policy-arn", "arn:aws:iam::000000000000:policy/"+iamPolicyNamer.Name(t)+"-malformed")
 	return nil
 }
 

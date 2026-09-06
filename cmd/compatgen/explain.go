@@ -30,20 +30,25 @@ import (
 type renderer func(env renderEnv, s *scenario, g *group, t *test) string
 
 // renderEnv is what a rendering needs from outside the scenario file. Only the
-// two source-emitting backends use it: they are the renderings that reproduce
+// three source-emitting backends use it: they are the renderings that reproduce
 // real emitted source, so each spells a member the way its emitter does and has
 // to read what the emitter reads — the vendored SDK's declarations for Go, the
-// pinned shape snapshot for Java. The other five are pseudo-code derived from
-// the IR alone.
+// pinned shape snapshot for Java and Rust. The other four are pseudo-code
+// derived from the IR alone.
 type renderEnv struct {
 	goTypes *goSDKTypes
-	// model resolves a service's pinned shapes. It is not the Java backend's
-	// own: every emitter that spells a member from the model rather than from
-	// its SDK reads it here, which is why it is named after what it returns
-	// and not after the first backend to ask for it. runExplain reads the
-	// repository; the generator's own tests hand over the fixture model they
-	// already hold, which is what keeps them hermetic and off the committed
-	// snapshot.
+	// model resolves a service's pinned shapes. It is not one backend's own:
+	// every emitter that spells a member from the model rather than from its
+	// SDK reads it here, which is why it is named after what it returns and not
+	// after the first backend to ask for it. runExplain reads the repository;
+	// the generator's own tests hand over the fixture model they already hold,
+	// which is what keeps them hermetic and off the committed snapshot.
+	//
+	// The error is returned to the rendering rather than being fatal, because
+	// `-explain` is a reader's tool and must still say something useful on a
+	// checkout where a snapshot cannot be read — see javaStyle and rustStyle. A
+	// nil func is "no snapshot was configured", which is what the renderings
+	// that need none are given.
 	model func(service string) (*serviceModel, error)
 }
 
@@ -67,14 +72,31 @@ func (env renderEnv) speller(sdkID string) (*goSpeller, error) {
 // `-explain` is a reader's tool and must still say something useful on a
 // checkout whose shape snapshot does not cover the service.
 func (env renderEnv) javaSpeller(service, sdkID string) (*javaSpeller, error) {
-	if env.model == nil {
-		return nil, fmt.Errorf("internal: no shape source was configured")
-	}
-	model, err := env.model(service)
+	model, err := env.shapes(service)
 	if err != nil {
 		return nil, err
 	}
 	return newJavaSpeller(model, sdkID), nil
+}
+
+// shapes resolves one service's pinned shapes for a rendering that spells its
+// members from the model rather than from an SDK — Java, .NET and Rust all do.
+// The error is returned rather than fatal for the same reason javaSpeller's is.
+func (env renderEnv) shapes(service string) (*serviceModel, error) {
+	if env.model == nil {
+		return nil, fmt.Errorf("internal: no shape source was configured")
+	}
+	return env.model(service)
+}
+
+// dotnetSpeller resolves one service's modeled shapes for the .NET rendering,
+// off the same shared source javaSpeller reads.
+func (env renderEnv) dotnetSpeller(service string) (*dotnetSpeller, error) {
+	model, err := env.shapes(service)
+	if err != nil {
+		return nil, err
+	}
+	return &dotnetSpeller{model: model}, nil
 }
 
 // repoShapes reads a service's pinned shape snapshot from the repository.
@@ -96,13 +118,16 @@ func modelServiceOf(root, service string) string {
 	if err != nil {
 		return service
 	}
-	var r struct {
-		Model string `json:"model"`
-	}
-	if err := json.Unmarshal(contents, &r); err != nil || r.Model == "" {
+	// Decoded into the recipe itself, so the Model-or-service fallback is
+	// recipe.modelService's and not a second copy of it. Loosely, not through
+	// loadRecipe: this wants one field on a checkout whose schemas may not be
+	// readable, and an `-explain` that refused because a recipe failed
+	// validation would be no use to the reader who reached for it.
+	r := recipe{Service: service}
+	if err := json.Unmarshal(contents, &r); err != nil {
 		return service
 	}
-	return r.Model
+	return r.modelService()
 }
 
 var renderers = map[string]renderer{

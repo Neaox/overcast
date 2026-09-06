@@ -304,7 +304,7 @@ describe("DRY-refactor ratchets (docs/plans/web-ui-dry-refactor.md §7)", () => 
   })
 
   it("has no local DetailRow/InfoRow/MetaRow definitions left", () => {
-    // Directly mirrors the classnames/no-local-detail-row rule; kept here too
+    // Directly mirrors the local/no-local-detail-row rule; kept here too
     // because a ratchet names the exact remaining file, not just "a file
     // somewhere". P1 (#1101) took the last one — Cognito's — to zero, so this
     // is a hard zero now rather than a ceiling.

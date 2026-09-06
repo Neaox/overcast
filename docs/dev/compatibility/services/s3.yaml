@@ -2,7 +2,7 @@ service: s3
 status: in_progress
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-09-05
+last_updated: 2026-09-06
 protocols: [rest_xml]
 implementation: [internal/services/s3]
 integration_tests: [tests/integration/s3]
@@ -419,6 +419,35 @@ operations:
       - name: read of a missing key in an existing bucket
         status: fixed
         notes: Unaffected by the fix — still NoSuchKey (regression-tested).
+      - name: Range header — which values are a 416 and which are ignored
+        status: reviewed
+        tests:
+          - tests/integration/s3/s3_object_read_headers_test.go::TestGetObject_rangeOutcomes
+        notes: >-
+          Measured against real S3 on 2026-09-06 with user approval, using the
+          anonymously readable 136-byte object
+          s3://1000genomes/README_phase3_alignments_sequence_20150526. Only a
+          well-formed range overlapping none of the object is a 416: bytes=abc
+          (unparseable), bytes=1-0 and bytes=15-1 (end before start) and
+          items=1-2 (unknown unit) all return 200 with the whole object;
+          bytes=500-600 past the end and bytes=-0 return 416; a suffix longer
+          than the object (bytes=-999999) returns 206 for the whole object.
+          Overcast matches every case. floci and ministack both answer 416 for
+          the four ignored forms, so the sibling emulators are not evidence
+          here — see looks-like-a-bug.md.
+      - name: the 416 response shape
+        status: fixed
+        tests:
+          - tests/integration/s3/s3_object_read_headers_test.go::TestGetObject_unsatisfiableRangeIsAWellFramedInvalidRange
+        notes: >-
+          Same 2026-09-06 transcript. Real S3 sends NO Content-Range header on a
+          416 — contradicting RFC 9110 §15.5.17's SHOULD, and contradicting
+          #1705's acceptance criteria, which required one — and its InvalidRange
+          document carries RangeRequested and ActualObjectSize (plus HostId).
+          #1864 removed the header and added both members via a new optional
+          AWSError.XMLDetails on the shared REST-XML envelope; every other XML
+          error stays byte-identical, pinned by
+          internal/protocol/errors_test.go::TestWriteXMLError_detailsAreOptionalAndOrdered.
   HeadObject:
     status: fixed
     aws_docs:
@@ -710,6 +739,7 @@ findings:
     - CloudFormation AWS::S3::Bucket uses the S3 handlers for lifecycle, versioning, notifications, encryption, tags, CORS, and website configuration.
     - GetObject, GetObjectTagging and CopyObject's source lookup now answer NoSuchBucket for a bucket that does not exist, instead of NoSuchKey (#1635); HeadObject is wire-identical either way per AWS's own documented HEAD limitation.
   remaining_gaps:
+    - S3 error documents omit HostId, which real AWS sends on every error. Not specific to InvalidRange; belongs in a change against the whole REST-XML envelope rather than one operation (noted while fixing #1864).
     - Bucket policies are stored and returned but never evaluated, so a policy authorises and denies nothing.
     - PublicAccessBlock, RequesterPays and OwnershipControls return 501, so the CDK bootstrap template's public-access block is accepted by CloudFormation and unavailable over the S3 API.
     - ListObjects (v1) omits the per-object Owner element AWS always returns, and per-object ChecksumAlgorithm/ChecksumType are absent from both listings.

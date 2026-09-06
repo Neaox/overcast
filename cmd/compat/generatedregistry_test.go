@@ -11,22 +11,43 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// The G0 acceptance gate: the generated registry changes nothing
+// The G0 acceptance gate: hand-written results and candidate-vs-gated state
 // ---------------------------------------------------------------------------
 
-// TestCheckedInGeneratedRegistryLeavesGatesUnchanged is the G0 acceptance
-// gate, asserted directly against the file that is actually checked in.
+// TestCheckedInGeneratedRegistryGatesByState is the G0 acceptance gate,
+// asserted directly against the file that is actually checked in.
 //
-// It shipped empty through G0 and asserted emptiness; from G2 it carries the
-// pilot groups, every one of them `candidate` (#1113 phase G2). What the gate
-// was always about survives that unchanged: every gate must produce
-// byte-for-byte the same verdict as it did before the file existed. If this
-// test fails, either the harness started treating "the file is there" as a
-// signal in itself, or a group was promoted to `gated` — which is a real
-// change to what the gates cover, and belongs in the PR that promotes it.
-func TestCheckedInGeneratedRegistryLeavesGatesUnchanged(t *testing.T) {
-	// Given: a run with one pass and one fail, and the generated registry as
-	// checked in.
+// It used to pin a temporal fact — every checked-in generated group is
+// `candidate` — which held from G0 through G2 and broke the moment the first
+// nightly promotion did its job (#1871 flips all nine pilot groups to
+// `gated`). That was the point of writing it that way: the test was supposed
+// to force this file to be revisited exactly once, at the first promotion.
+// From here on the fact is not temporal, so the test pins the invariant
+// instead, in two parts:
+//
+//  1. A hand-written result's gate verdict never depends on the generated
+//     registry, whatever state its groups are in — concatenating the sibling
+//     must be able to change nothing for a suite/group/test the sibling does
+//     not name.
+//  2. A generated group's own gate verdict depends only on its state: a
+//     `candidate` gates nothing, a `gated` one gates exactly like a
+//     hand-written group.
+//
+// Neither half is allowed to pass vacuously. Part 2 sources one group of each
+// state from the checked-in file when both are present, and falls back to a
+// fixture group for whichever state the file currently lacks (today: every
+// checked-in group is `gated`, so `candidate` is synthesized) — never by
+// skipping. It never asserts which specific groups are gated: that is
+// `compatgen -check`'s job, since registry.generated.json is regenerated
+// wholly from compat/model/promotions.json.
+func TestCheckedInGeneratedRegistryGatesByState(t *testing.T) {
+	gen, err := readGeneratedRegistry(repoPath(t, "compat", "suites", "registry.generated.json"))
+	if err != nil {
+		t.Fatalf("readGeneratedRegistry: %v", err)
+	}
+
+	// Part 1: a hand-written result is unaffected by the generated registry,
+	// whatever it contains.
 	report := reportWithResults(
 		resultSpec{suite: "go-sdk", service: "s3", group: "s3-crud", test: "CreateBucket", status: compat.StatusPass},
 		resultSpec{suite: "go-sdk", service: "s3", group: "s3-crud", test: "DeleteBucket", status: compat.StatusFail},
@@ -36,19 +57,6 @@ func TestCheckedInGeneratedRegistryLeavesGatesUnchanged(t *testing.T) {
 		{Suite: "go-sdk", Service: "s3", Group: "s3-crud", Test: "DeleteBucket", Status: compat.StatusPass},
 	}}
 
-	gen, err := readGeneratedRegistry(repoPath(t, "compat", "suites", "registry.generated.json"))
-	if err != nil {
-		t.Fatalf("readGeneratedRegistry: %v", err)
-	}
-	for _, g := range gen.Groups {
-		if g.State != generatedStateCandidate {
-			t.Fatalf("checked-in generated group %s is %q, not %q — promoting a group changes what the gates cover, so this gate has to be revisited alongside it",
-				g.Name, g.State, generatedStateCandidate)
-		}
-	}
-
-	// When: each gate is asked with the checked-in registry and with no
-	// registry at all.
 	candidates := gen.candidateGroups()
 	none := candidateSet{}
 
@@ -76,24 +84,136 @@ func TestCheckedInGeneratedRegistryLeavesGatesUnchanged(t *testing.T) {
 		t.Errorf("--update-baseline differs with the checked-in generated registry: %d vs %d entries",
 			len(updWith.Entries), len(updWithout.Entries))
 	}
+
+	// Part 2: a candidate group gates nothing; a gated group gates exactly
+	// like a hand-written one.
+	cand, gated, combined := pickOneOfEachState(gen)
+	combinedCandidates := combined.candidateGroups()
+
+	genReport := reportWithResults(
+		resultSpec{suite: cand.suite, service: cand.service, group: cand.group, test: cand.test, status: compat.StatusFail},
+		resultSpec{suite: gated.suite, service: gated.service, group: gated.group, test: gated.test, status: compat.StatusFail},
+	)
+	genBaseline := &compatBaseline{Version: baselineVersion, Entries: []baselineEntry{
+		{Suite: cand.suite, Service: cand.service, Group: cand.group, Test: cand.test, Status: compat.StatusPass},
+		{Suite: gated.suite, Service: gated.service, Group: gated.group, Test: gated.test, Status: compat.StatusPass},
+	}}
+	candKey := cand.suite + "/" + cand.group + "/" + cand.test
+	gatedKey := gated.suite + "/" + gated.group + "/" + gated.test
+
+	failures := failuresOverLimit(genReport, flakySet{}, combinedCandidates, 0)
+	if len(failures) != 1 || !strings.Contains(failures[0], gatedKey) {
+		t.Errorf("failures = %#v, want only the gated group's failure (%s)", failures, gatedKey)
+	}
+	for _, f := range failures {
+		if strings.Contains(f, candKey) {
+			t.Errorf("failures = %#v, candidate group %s must not be counted", failures, candKey)
+		}
+	}
+
+	regressions := compareBaselineWith(genBaseline, genReport, flakySet{}, combinedCandidates)
+	if len(regressions) != 1 || !strings.Contains(regressions[0], gatedKey) {
+		t.Errorf("regressions = %#v, want only the gated group's regression (%s)", regressions, gatedKey)
+	}
+	for _, r := range regressions {
+		if strings.Contains(r, candKey) {
+			t.Errorf("regressions = %#v, candidate group %s must not be reported", regressions, candKey)
+		}
+	}
+
+	updated := updateBaselineWith(&compatBaseline{Version: baselineVersion}, genReport, flakySet{}, combinedCandidates)
+	entries := baselineEntryMap(updated.Entries)
+	if _, ok := entries[candKey]; ok {
+		t.Errorf("candidate group %s was recorded in the baseline: %#v", candKey, updated.Entries)
+	}
+	if _, ok := entries[gatedKey]; !ok {
+		t.Errorf("gated group %s is missing from the baseline: %#v", gatedKey, updated.Entries)
+	}
+}
+
+// generatedGroupSample names one test belonging to one generated group, in
+// enough detail to build report and baseline rows for it.
+type generatedGroupSample struct {
+	service, group, suite, test string
+}
+
+func sampleGroup(g generatedGroup) generatedGroupSample {
+	return generatedGroupSample{
+		service: g.Service,
+		group:   g.Name,
+		suite:   g.Suites[0],
+		test:    g.Tests[0].Name,
+	}
+}
+
+// pickOneOfEachState returns a sample of one candidate group and one gated
+// group, plus the registry they were sourced from. It prefers groups already
+// in the checked-in file; whichever state the file currently has none of is
+// filled by a fixture group appended to a copy of the registry, so the case
+// this feeds never passes vacuously for lack of a state to compare against.
+//
+// The fixture names are distinctive on purpose (they cannot collide with a
+// `*-gen-*` name cmd/compatgen would produce) and are never asserted on by
+// name — only by the state they were constructed to hold.
+func pickOneOfEachState(gen *generatedRegistry) (cand, gated generatedGroupSample, combined *generatedRegistry) {
+	out := &generatedRegistry{Version: gen.Version, Comment: gen.Comment, Groups: append([]generatedGroup(nil), gen.Groups...)}
+
+	var candIdx, gatedIdx = -1, -1
+	for i, g := range out.Groups {
+		switch g.State {
+		case generatedStateCandidate:
+			if candIdx == -1 {
+				candIdx = i
+			}
+		case generatedStateGated:
+			if gatedIdx == -1 {
+				gatedIdx = i
+			}
+		}
+	}
+	if candIdx == -1 {
+		out.Groups = append(out.Groups, generatedGroup{
+			Service: "sqs", Name: "fixture-candidate-for-gate-test", Generated: true,
+			State: generatedStateCandidate, Suites: []string{"python-sdk"},
+			Tests: []generatedTest{{Name: "SendMessage"}},
+		})
+		candIdx = len(out.Groups) - 1
+	}
+	if gatedIdx == -1 {
+		out.Groups = append(out.Groups, generatedGroup{
+			Service: "sqs", Name: "fixture-gated-for-gate-test", Generated: true,
+			State: generatedStateGated, Suites: []string{"python-sdk"},
+			Tests: []generatedTest{{Name: "ReceiveMessage"}},
+		})
+		gatedIdx = len(out.Groups) - 1
+	}
+	return sampleGroup(out.Groups[candIdx]), sampleGroup(out.Groups[gatedIdx]), out
 }
 
 // TestCheckedInGeneratedRegistryLeavesParityUnchanged is the parity half of
 // the same gate: concatenating the sibling must leave the checker's verdict
 // identical, including the reverse (unregistered-result) direction. It held
 // trivially while the file was empty; it holds now because `suites` scopes a
-// generated group to the backends that can run it, and rust-sdk is not one —
-// which is the property worth pinning, and the one TestGeneratedSuiteScoping-
-// AddsNoParityDebt proves on a fixture.
+// generated group to the backends that can run it, so a suite none of them
+// names sees no change — which is the property worth pinning, and the one
+// TestGeneratedSuiteScopingAddsNoParityDebt proves on a fixture.
+//
+// The suite is chosen from the file rather than named here, because which
+// suites have a scenario backend moves as the backends land
+// (cmd/compatgen/registry.go's scenarioBackends). Pinning one by name made this
+// case fail the day rust-sdk got an emitter, which is a change in the
+// generator's coverage and not in the property under test.
 func TestCheckedInGeneratedRegistryLeavesParityUnchanged(t *testing.T) {
+	suite := suiteWithNoGeneratedGroups(t)
+
 	// Given: the hand-written registry and a run against it.
 	report := reportWithResults(
-		resultSpec{suite: "rust-sdk", service: "s3", group: "s3-crud", test: "CreateBucket", status: compat.StatusPass},
+		resultSpec{suite: suite, service: "s3", group: "s3-crud", test: "CreateBucket", status: compat.StatusPass},
 	)
-	addSkip(report, "rust-sdk", "s3", "s3-crud", "DeleteBucket", notImplementedSentinel("rust-sdk"))
+	addSkip(report, suite, "s3", "s3-crud", "DeleteBucket", notImplementedSentinel(suite))
 
 	hand := testRegistry()
-	handOnly := computeParity(hand, report, []string{"rust-sdk"})
+	handOnly := computeParity(hand, report, []string{suite})
 
 	// When: the checked-in sibling is concatenated in.
 	concat, err := readParityRegistries(
@@ -102,7 +222,7 @@ func TestCheckedInGeneratedRegistryLeavesParityUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readParityRegistries: %v", err)
 	}
-	withSibling := computeParity(concat, report, []string{"rust-sdk"})
+	withSibling := computeParity(concat, report, []string{suite})
 
 	// Then: nothing moves.
 	if withSibling.Expected != handOnly.Expected || withSibling.Implemented != handOnly.Implemented {
@@ -115,6 +235,35 @@ func TestCheckedInGeneratedRegistryLeavesParityUnchanged(t *testing.T) {
 	if len(withSibling.Unregistered) != 0 {
 		t.Errorf("unregistered = %#v, want none", withSibling.Unregistered)
 	}
+}
+
+// suiteWithNoGeneratedGroups names a suite the checked-in generated registry
+// scopes no group to. It is what the case above needs: a suite for which
+// concatenating the sibling can change nothing at all.
+//
+// The candidates are every suite the repository has a baseline shard for, minus
+// whichever of them the file names. A checkout where every suite has a scenario
+// backend has no such suite, and the case says so rather than passing on a
+// vacuous choice.
+func suiteWithNoGeneratedGroups(t *testing.T) string {
+	t.Helper()
+	gen, err := readGeneratedRegistry(repoPath(t, "compat", "suites", "registry.generated.json"))
+	if err != nil {
+		t.Fatalf("readGeneratedRegistry: %v", err)
+	}
+	scoped := map[string]bool{}
+	for _, g := range gen.Groups {
+		for _, suite := range g.Suites {
+			scoped[suite] = true
+		}
+	}
+	for _, suite := range []string{"cdk", "java-sdk", "dotnet-sdk", "rust-sdk", "cli", "go-sdk", "node-js-sdk", "python-sdk"} {
+		if !scoped[suite] {
+			return suite
+		}
+	}
+	t.Fatal("every suite has a scenario backend; this case needs one the generated registry scopes nothing to")
+	return ""
 }
 
 // TestReadGeneratedRegistryTolueratesMissingFile pins the "missing = empty"

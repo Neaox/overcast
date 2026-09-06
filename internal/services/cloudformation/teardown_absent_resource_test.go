@@ -60,9 +60,14 @@ func TestResourceDelete_absentResourceIsASuccessfulTeardown(t *testing.T) {
 
 	cases := []absentCase{
 		// EC2 — HTTP 400, absence carried only in the Query-XML Code.
-		{"AWS::EC2::VPC", "vpc-absent", gone(400, ec2NotFound("InvalidId.NotFound"))},
-		{"AWS::EC2::Subnet", "subnet-absent", gone(400, ec2NotFound("InvalidId.NotFound"))},
-		{"AWS::EC2::SecurityGroup", "sg-absent", gone(400, ec2NotFound("InvalidId.NotFound"))},
+		// #1847: these three answered a generic InvalidId.NotFound until EC2's
+		// store started reporting a miss with the resource's own AWS code. The
+		// classifier reduces every one of them to "notfound", so teardown is
+		// unchanged — which is the point of recording them: the codes moved
+		// and nothing here had to.
+		{"AWS::EC2::VPC", "vpc-absent", gone(400, ec2NotFound("InvalidVpcID.NotFound"))},
+		{"AWS::EC2::Subnet", "subnet-absent", gone(400, ec2NotFound("InvalidSubnetID.NotFound"))},
+		{"AWS::EC2::SecurityGroup", "sg-absent", gone(400, ec2NotFound("InvalidGroup.NotFound"))},
 		{"AWS::EC2::InternetGateway", "igw-absent", gone(400, ec2NotFound("InvalidInternetGatewayID.NotFound"))},
 		{"AWS::EC2::VPNGateway", "vgw-absent", gone(400, ec2NotFound("InvalidVpnGatewayID.NotFound"))},
 		{"AWS::EC2::VPCGatewayAttachment", "vpc-absent|igw-absent", gone(400, ec2NotFound("InvalidInternetGatewayID.NotFound"))},

@@ -22,18 +22,17 @@ import (
 
 // scenarioBackends lists the suites that can execute scenario IR, sorted.
 // Add a suite here in the PR that lands its interpreter or source emitter.
-var scenarioBackends = []string{"cli", "go-sdk", "java-sdk", "node-js-sdk", "python-sdk"}
+var scenarioBackends = []string{"cli", "dotnet-sdk", "go-sdk", "java-sdk", "node-js-sdk", "python-sdk", "rust-sdk"}
 
-// goSDKSuite is the suite the Go source emitter (emit_go.go) writes for. It is
-// named rather than spelled inline because two things key on it: whether the
-// emitted files are produced at all, and which groups the emitter could not
-// express.
-const goSDKSuite = "go-sdk"
-
-// javaSDKSuite is the suite the Java source emitter (emit_java.go) writes for,
-// named for the same two reasons goSDKSuite is: whether the emitted files are
-// produced at all, and which groups the emitter could not express.
-const javaSDKSuite = "java-sdk"
+// The suites the typed source emitters write for. Each is named rather than
+// spelled inline because two things key on it: whether that backend's emitted
+// files are produced at all, and which groups the emitter could not express.
+const (
+	goSDKSuite     = "go-sdk"     // emit_go.go
+	javaSDKSuite   = "java-sdk"   // emit_java.go
+	dotnetSDKSuite = "dotnet-sdk" // emit_dotnet.go
+	rustSDKSuite   = "rust-sdk"   // emit_rust.go
+)
 
 // hasBackend reports whether a suite can execute scenario IR.
 func hasBackend(suite string) bool { return slices.Contains(scenarioBackends, suite) }

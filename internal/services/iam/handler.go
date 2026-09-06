@@ -400,6 +400,17 @@ func toUserXMLWithTags(u *User) userXML {
 	return x
 }
 
+// toUserXMLForList renders a user for ListUsers, whose subset excludes
+// PermissionsBoundary as well as Tags (IAM API Reference, API_ListUsers.html).
+//
+// GetGroup's Users are not trimmed: it carries no subset note and its members
+// are the same full User shape GetUser returns.
+func toUserXMLForList(u *User) userXML {
+	x := toUserXML(u)
+	x.PermissionsBoundary = nil
+	return x
+}
+
 func toAccessKeyXML(ak *AccessKey) accessKeyXML {
 	return accessKeyXML{
 		AccessKeyId:     ak.AccessKeyId,
@@ -437,6 +448,20 @@ func toRoleXMLWithTags(r *Role) roleXML {
 	return x
 }
 
+// toRoleXMLForList renders a role for ListRoles, whose subset excludes
+// PermissionsBoundary and RoleLastUsed as well as Tags (IAM API Reference,
+// API_ListRoles.html). RoleLastUsed is not modelled at all, so the boundary is
+// the only member to drop here.
+//
+// A role embedded in an instance profile is not trimmed: AWS's own
+// GetAccountAuthorizationDetails sample shows those members carrying
+// RoleLastUsed, so they are whole Role objects rather than a listing subset.
+func toRoleXMLForList(r *Role) roleXML {
+	x := toRoleXML(r)
+	x.PermissionsBoundary = nil
+	return x
+}
+
 // toPolicyXML renders a managed policy. usage carries the two counters, which
 // are derived from the entities that refer to the policy rather than stored on
 // it — see policyUsageFrom.
@@ -464,6 +489,20 @@ func toPolicyXML(p *Policy, usage policyUsage) policyXML {
 func toPolicyXMLWithTags(p *Policy, usage policyUsage) policyXML {
 	x := toPolicyXML(p, usage)
 	x.Tags = tagsXML(p.Tags)
+	return x
+}
+
+// toPolicyXMLForList renders a policy for ListPolicies, which drops Description
+// as well as Tags. ListPolicies' own note names only tags, but the exclusion is
+// on the member: "This element is included in the response to the GetPolicy
+// operation. It is not included in the response to the ListPolicies operation."
+// (IAM API Reference, API_Policy.html, Description).
+//
+// GetAccountAuthorizationDetails keeps it: its policies are
+// ManagedPolicyDetail, which documents Description with no such exclusion.
+func toPolicyXMLForList(p *Policy, usage policyUsage) policyXML {
+	x := toPolicyXML(p, usage)
+	x.Description = ""
 	return x
 }
 

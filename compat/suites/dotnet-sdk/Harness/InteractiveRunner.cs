@@ -28,12 +28,7 @@ public static class InteractiveRunner
         var totalTests = allGroups.Sum(g => g.Tests.Count);
         Emit(new { @event = "ready", suite, total_tests = totalTests });
 
-        var slots = 8;
-        if (int.TryParse(Environment.GetEnvironmentVariable("OVERCAST_COMPAT_PARALLEL_SLOTS"), out var configured) && configured > 0)
-        {
-            slots = configured;
-        }
-
+        var slots = Runner.ParallelSlots();
         var semaphore = new SemaphoreSlim(slots, slots);
         var cancellationFlags = new System.Collections.Concurrent.ConcurrentDictionary<string, CancellationTokenSource>();
         var runningTest = new System.Collections.Concurrent.ConcurrentDictionary<string, string>();

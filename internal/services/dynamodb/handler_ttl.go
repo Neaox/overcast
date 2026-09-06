@@ -116,6 +116,9 @@ func (h *Handler) updateTimeToLiveTyped(ctx context.Context, req *updateTimeToLi
 		return nil, aerr
 	}
 
+	region := h.store.region(ctx)
+	defer h.ttlLocks.Lock(ttlLockKey(region, req.TableName))()
+
 	table, aerr := h.store.getTable(ctx, req.TableName)
 	if aerr != nil {
 		return nil, aerr
@@ -140,7 +143,7 @@ func (h *Handler) updateTimeToLiveTyped(ctx context.Context, req *updateTimeToLi
 	if aerr := h.store.putTable(ctx, table); aerr != nil {
 		return nil, aerr
 	}
-	h.scheduleTTLTransition(h.store.region(ctx), table.TableName, ttlTransitionDuration)
+	h.scheduleTTLTransition(region, table.TableName, ttlTransitionDuration, table.TTLTransitionAt)
 
 	log.Info("table TTL update accepted",
 		zap.String("table", req.TableName),
@@ -229,11 +232,13 @@ func ttlValidationError(message string) *protocol.AWSError {
 // The scheduler is region-scoped because table records are (dynamoStore
 // .tableKey), so a same-named table in another region neither cancels this
 // transition nor is settled by it.
-func (h *Handler) scheduleTTLTransition(region, tableName string, delay time.Duration) {
+func (h *Handler) scheduleTTLTransition(region, tableName string, delay time.Duration, deadline int64) {
 	h.ttlSched.AfterScoped(region, tableName, ttlTransitionKey, delay, func(ctx context.Context) {
-		h.settleTTLTransition(ctx, tableName)
+		h.settleTTLTransition(ctx, tableName, deadline)
 	})
 }
+
+func ttlLockKey(region, tableName string) string { return region + "/" + tableName }
 
 // settleTTLTransition normalises a table record once its transition window has
 // closed: the pending deadline is dropped, and a completed disable drops the
@@ -243,13 +248,21 @@ func (h *Handler) scheduleTTLTransition(region, tableName string, delay time.Dur
 // The status a client reads never depends on this having run (Table.ttlStatus
 // derives it from the deadline), so this is convergence, not the transition
 // itself: it is safe to run late, twice, or never.
-func (h *Handler) settleTTLTransition(ctx context.Context, tableName string) {
+//
+// It settles only the transition it was armed for. The window closes at the
+// instant a new UpdateTimeToLive becomes acceptable, so this and the new
+// update can run at the same moment; without the lock and the deadline check
+// a settle that had already read the table wrote the old specification back
+// over the update, deadline cleared (#1868).
+func (h *Handler) settleTTLTransition(ctx context.Context, tableName string, deadline int64) {
+	defer h.ttlLocks.Lock(ttlLockKey(h.store.region(ctx), tableName))()
+
 	table, aerr := h.store.getTable(ctx, tableName)
 	if aerr != nil {
 		// Deleted mid-transition, or unreadable — there is nothing to settle.
 		return
 	}
-	if table.TTLTransitionAt == 0 || table.ttlTransitionPending(h.clk.Now()) {
+	if table.TTLTransitionAt != deadline || table.ttlTransitionPending(h.clk.Now()) {
 		return
 	}
 	table.TTLTransitionAt = 0
@@ -290,10 +303,10 @@ func (h *Handler) rearmTTLTransitions(ctx context.Context) {
 		}
 		remaining := time.Unix(0, table.TTLTransitionAt).Sub(now)
 		if remaining <= 0 {
-			h.settleTTLTransition(middleware.ContextWithRegion(ctx, region), table.TableName)
+			h.settleTTLTransition(middleware.ContextWithRegion(ctx, region), table.TableName, table.TTLTransitionAt)
 			continue
 		}
-		h.scheduleTTLTransition(region, table.TableName, remaining)
+		h.scheduleTTLTransition(region, table.TableName, remaining, table.TTLTransitionAt)
 	}
 }
 

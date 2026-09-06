@@ -11,10 +11,12 @@
       "state": "gated",
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
-        "python-sdk"
+        "python-sdk",
+        "rust-sdk"
       ],
       "tests": [
         {
@@ -30,10 +32,12 @@
       "state": "gated",
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
-        "python-sdk"
+        "python-sdk",
+        "rust-sdk"
       ],
       "tests": [
         {
@@ -91,10 +95,12 @@
       "state": "gated",
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
-        "python-sdk"
+        "python-sdk",
+        "rust-sdk"
       ],
       "tests": [
         {
@@ -153,10 +159,12 @@
       "parallel": true,
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
-        "python-sdk"
+        "python-sdk",
+        "rust-sdk"
       ],
       "tests": [
         {
@@ -235,10 +243,12 @@
       "state": "gated",
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
-        "python-sdk"
+        "python-sdk",
+        "rust-sdk"
       ],
       "tests": [
         {
@@ -254,10 +264,12 @@
       "state": "gated",
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
-        "python-sdk"
+        "python-sdk",
+        "rust-sdk"
       ],
       "tests": [
         {
@@ -292,10 +304,12 @@
       "state": "gated",
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
-        "python-sdk"
+        "python-sdk",
+        "rust-sdk"
       ],
       "tests": [
         {
@@ -331,10 +345,12 @@
       "parallel": true,
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
-        "python-sdk"
+        "python-sdk",
+        "rust-sdk"
       ],
       "tests": [
         {
@@ -350,10 +366,12 @@
       "state": "gated",
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
-        "python-sdk"
+        "python-sdk",
+        "rust-sdk"
       ],
       "tests": [
         {

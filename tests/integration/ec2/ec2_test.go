@@ -364,13 +364,22 @@ func TestVpnGatewayLifecycle_success(t *testing.T) {
 	defer deleteResp.Body.Close()
 	helpers.AssertStatus(t, deleteResp, http.StatusOK)
 
+	// Naming the deleted gateway is an assertion that it still exists, so the
+	// answer is AWS's error rather than an empty list (#1847): a Terraform
+	// refresh or a waiter reads InvalidVpnGatewayID.NotFound as "gone", and an
+	// empty 200 as "still fine".
 	describeDeletedResp := ec2Query(t, srv, "DescribeVpnGateways", url.Values{
 		"VpnGatewayId.1": []string{created.Gateway.VpnGatewayID},
 	})
 	defer describeDeletedResp.Body.Close()
-	helpers.AssertStatus(t, describeDeletedResp, http.StatusOK)
+	assertEC2QueryError(t, describeDeletedResp, http.StatusBadRequest, "InvalidVpnGatewayID.NotFound")
+
+	// Unselected, the region simply no longer holds it.
+	describeAllResp := ec2Query(t, srv, "DescribeVpnGateways", nil)
+	defer describeAllResp.Body.Close()
+	helpers.AssertStatus(t, describeAllResp, http.StatusOK)
 	var describedDeleted describeVpnGatewaysLifecycleResponse
-	if err := xml.Unmarshal(readBody(t, describeDeletedResp), &describedDeleted); err != nil {
+	if err := xml.Unmarshal(readBody(t, describeAllResp), &describedDeleted); err != nil {
 		t.Fatalf("unmarshal DescribeVpnGatewaysResponse after delete: %v", err)
 	}
 	if len(describedDeleted.Gateways) != 0 {

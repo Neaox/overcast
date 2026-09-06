@@ -717,72 +717,16 @@ func (h *Handler) UpdateAlias(w http.ResponseWriter, r *http.Request) {
 
 // ReEncrypt decrypts ciphertext from one key and re-encrypts with another.
 func (h *Handler) ReEncrypt(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		CiphertextBlob                 []byte `json:"CiphertextBlob"`
-		DestinationKeyId               string `json:"DestinationKeyId"`
-		SourceKeyId                    string `json:"SourceKeyId"`
-		SourceEncryptionAlgorithm      string `json:"SourceEncryptionAlgorithm"`
-		DestinationEncryptionAlgorithm string `json:"DestinationEncryptionAlgorithm"`
-	}
+	var req reEncryptRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	ctx := r.Context()
-
-	keyID, nonce, ct, err := parseEnvelope(req.CiphertextBlob)
-	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "InvalidCiphertextException", Message: "The ciphertext is not valid.",
-			HTTPStatus: http.StatusBadRequest,
-		})
+	out, aerr := h.reEncryptTyped(r.Context(), &req)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	srcKey, err := h.store.GetKey(ctx, keyID)
-	if err != nil || srcKey == nil {
-		if srcKey == nil {
-			protocol.WriteJSONError(w, r, errNotFound(keyID))
-			return
-		}
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	if !srcKey.Enabled {
-		protocol.WriteJSONError(w, r, errDisabled(srcKey.KeyID))
-		return
-	}
-	plaintext, decErr := aesGCMDecryptRaw(srcKey.AESKey, nonce, ct)
-	if decErr != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "InvalidCiphertextException", Message: "The ciphertext is not valid.",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-	dstKey, err := h.resolveKey(ctx, req.DestinationKeyId)
-	if err != nil || dstKey == nil {
-		if dstKey == nil {
-			protocol.WriteJSONError(w, r, errNotFound(req.DestinationKeyId))
-			return
-		}
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	if !dstKey.Enabled {
-		protocol.WriteJSONError(w, r, errDisabled(dstKey.KeyID))
-		return
-	}
-	newCiphertext, encErr := aesGCMEncrypt(dstKey.AESKey, plaintext, dstKey.KeyID)
-	if encErr != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
-		"CiphertextBlob":                 newCiphertext,
-		"KeyId":                          dstKey.ARN,
-		"SourceKeyId":                    srcKey.ARN,
-		"SourceEncryptionAlgorithm":      "SYMMETRIC_DEFAULT",
-		"DestinationEncryptionAlgorithm": "SYMMETRIC_DEFAULT",
-	}, "application/x-amz-json-1.1")
+	protocol.WriteAWSJSON(w, r, http.StatusOK, out, "application/x-amz-json-1.1")
 }
 
 // ── GenerateDataKeyPair ─────────────────────────────────────────────────────

@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 pub type TestFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
 pub type TestFn = Arc<dyn Fn(TestContext) -> TestFuture + Send + Sync>;
@@ -75,6 +75,17 @@ pub struct TestGroup {
     pub suite: String,
     pub service: String,
     pub name: String,
+    /// The group's tests may run concurrently with one another, taking their
+    /// slots from the same semaphore concurrent groups take theirs from — so
+    /// the bound on a whole run is that slot count, not the square of it.
+    ///
+    /// Only a generated probe group sets it (`parallel` in
+    /// `registry.generated.json`): a probe has no setup, no teardown and no
+    /// exports, so no test can create, consume or observe anything another one
+    /// touches. Results are still emitted in the group's own test order,
+    /// whatever order the calls finished in — the dashboard, the baseline and
+    /// the flake detector all read that stream.
+    pub parallel: bool,
     pub tests: Vec<TestCase>,
     pub setup: Option<TestFn>,
     pub teardown: Option<TestFn>,
@@ -125,16 +136,15 @@ pub async fn run_suite(suite: &str, endpoint: &str, region: &str, groups: Vec<Te
         total_tests: groups.iter().map(|group| group.tests.len()).sum(),
     });
 
-    let slots = std::env::var("OVERCAST_COMPAT_PARALLEL_SLOTS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(8);
-    let semaphore = Arc::new(Semaphore::new(slots));
+    // One semaphore for the whole run. A group holds a slot while it runs, and
+    // a parallel group hands its own back while its tests take one each (see
+    // run_group), so what this bounds is the work in flight rather than the
+    // groups in flight.
+    let slots = Arc::new(Semaphore::new(parallel_slots()));
 
     let mut handles = Vec::new();
     for group in groups {
-        let permit = semaphore
+        let permit = slots
             .clone()
             .acquire_owned()
             .await
@@ -142,9 +152,9 @@ pub async fn run_suite(suite: &str, endpoint: &str, region: &str, groups: Vec<Te
         let endpoint = endpoint.to_string();
         let region = region.to_string();
         let suite = suite.to_string();
+        let slots = slots.clone();
         handles.push(tokio::spawn(async move {
-            let _permit = permit;
-            run_group(&suite, &endpoint, &region, group).await
+            run_group(&suite, &endpoint, &region, group, slots, permit).await
         }));
     }
 
@@ -173,12 +183,19 @@ pub async fn run_suite(suite: &str, endpoint: &str, region: &str, groups: Vec<Te
     });
 }
 
+/// Runs one group, holding the run-wide slot `run_suite` acquired for it.
+///
+/// The permit is passed in rather than held by the caller because a parallel
+/// group has to give it back for the duration of its fan-out — see below.
 async fn run_group(
     suite: &str,
     endpoint: &str,
     region: &str,
     group: TestGroup,
+    slots: Arc<Semaphore>,
+    permit: OwnedSemaphorePermit,
 ) -> (usize, usize, usize, usize) {
+    let mut permit = Some(permit);
     let run_id = std::env::var("OVERCAST_COMPAT_RUN_ID").unwrap_or_else(|_| "local".to_string());
     let context = TestContext::new(endpoint.to_string(), region.to_string(), run_id);
     let mut passed = 0;
@@ -188,7 +205,7 @@ async fn run_group(
 
     if let Some(setup) = group.setup.clone() {
         if let Err(err) = setup(context.clone()).await {
-            let reason = format!("setup failed: {err}");
+            let reason = format!("setup failed: {}", strip_tag(&err));
             for test in &group.tests {
                 emit(&TestResultEvent {
                     event: "test_result",
@@ -205,6 +222,24 @@ async fn run_group(
             run_teardown(&group, context).await;
             return (passed, failed, skipped, unimplemented);
         }
+    }
+
+    if group.parallel && group.tests.iter().all(|test| test.depends.is_empty()) {
+        // Hand this group's own slot back before fanning out. The tests take
+        // theirs from the same semaphore, so keeping it would put the real
+        // bound at slots squared — and, once every slot were held by a group
+        // waiting on its own tests, no test could ever acquire one.
+        drop(permit.take());
+        let (p, f, s, u) = run_tests_concurrently(suite, &group, &context, &slots).await;
+        passed += p;
+        failed += f;
+        skipped += s;
+        unimplemented += u;
+        // Teardown is this group's work again, so it runs holding a slot.
+        permit = slots.acquire_owned().await.ok();
+        run_teardown(&group, context).await;
+        drop(permit);
+        return (passed, failed, skipped, unimplemented);
     }
 
     let mut blocked = std::collections::HashSet::new();
@@ -263,11 +298,7 @@ async fn run_group(
                 passed += 1;
             }
             Err(err) => {
-                let status = if is_unimplemented(&err) {
-                    "unimplemented"
-                } else {
-                    "fail"
-                };
+                let (status, message) = classify(&err);
                 emit(&TestResultEvent {
                     event: "test_result",
                     suite,
@@ -276,7 +307,7 @@ async fn run_group(
                     test: &test.name,
                     status,
                     duration_ms: started.elapsed().as_millis(),
-                    error: Some(err.clone()),
+                    error: Some(message),
                 });
                 if status == "unimplemented" {
                     unimplemented += 1;
@@ -289,15 +320,121 @@ async fn run_group(
     }
 
     run_teardown(&group, context).await;
+    drop(permit);
+    (passed, failed, skipped, unimplemented)
+}
+
+/// Runs a parallel group's tests concurrently and emits their results in the
+/// group's own test order.
+///
+/// The order is what makes the flag safe: it is the wall clock that changes,
+/// never the result stream. A group whose tests declare a dependency is run in
+/// order regardless — the IR never produces that combination, and honouring the
+/// flag over an edge would be running a dependency after its dependent.
+///
+/// `slots` is the run's own semaphore, not one of this function's making: the
+/// tests of a parallel group and the groups of a run draw on one budget, which
+/// is what makes `TestGroup::parallel`'s "the same slot count" true.
+async fn run_tests_concurrently(
+    suite: &str,
+    group: &TestGroup,
+    context: &TestContext,
+    slots: &Arc<Semaphore>,
+) -> (usize, usize, usize, usize) {
+    let mut handles = Vec::with_capacity(group.tests.len());
+    for test in &group.tests {
+        if test.skip.is_some() {
+            handles.push(None);
+            continue;
+        }
+        let permit = slots
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("semaphore closed");
+        let run = test.fn_.clone();
+        let context = context.clone();
+        handles.push(Some(tokio::spawn(async move {
+            let _permit = permit;
+            let started = Instant::now();
+            let outcome = run(context).await;
+            (outcome, started.elapsed().as_millis())
+        })));
+    }
+
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut skipped = 0;
+    let mut unimplemented = 0;
+    for (test, handle) in group.tests.iter().zip(handles) {
+        let Some(handle) = handle else {
+            emit(&TestResultEvent {
+                event: "test_result",
+                suite,
+                service: &group.service,
+                group: &group.name,
+                test: &test.name,
+                status: "skip",
+                duration_ms: 0,
+                error: test.skip.clone(),
+            });
+            skipped += 1;
+            continue;
+        };
+        let (outcome, duration_ms) = match handle.await {
+            Ok(joined) => joined,
+            Err(err) => (Err(format!("test task did not finish: {err}")), 0),
+        };
+        let (status, error) = match outcome {
+            Ok(()) => ("pass", None),
+            Err(err) => {
+                let (status, message) = classify(&err);
+                (status, Some(message))
+            }
+        };
+        emit(&TestResultEvent {
+            event: "test_result",
+            suite,
+            service: &group.service,
+            group: &group.name,
+            test: &test.name,
+            status,
+            duration_ms,
+            error,
+        });
+        match status {
+            "pass" => passed += 1,
+            "unimplemented" => unimplemented += 1,
+            _ => failed += 1,
+        }
+    }
     (passed, failed, skipped, unimplemented)
 }
 
 async fn run_teardown(group: &TestGroup, context: TestContext) {
     if let Some(teardown) = group.teardown.clone() {
         if let Err(err) = teardown(context).await {
-            eprintln!("[rust-sdk] teardown failed for {}: {}", group.name, err);
+            eprintln!(
+                "[rust-sdk] teardown failed for {}: {}",
+                group.name,
+                strip_tag(&err)
+            );
         }
     }
+}
+
+/// How many things this suite may do at once.
+///
+/// It bounds work, not groups: [`run_suite`] takes one slot per group from a
+/// single semaphore, and a parallel group hands its own back while its tests
+/// take one each, so the total in flight never exceeds this whichever shape the
+/// run has. The interactive loop bounds its own concurrent runs the same way.
+pub fn parallel_slots() -> usize {
+    std::env::var("OVERCAST_COMPAT_PARALLEL_SLOTS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(8)
 }
 
 pub fn is_unimplemented(err: &str) -> bool {
@@ -307,6 +444,53 @@ pub fn is_unimplemented(err: &str) -> bool {
         || err.contains("unknownoperationexception")
         || err.contains("unknown action")
         || err.contains("not implemented")
+}
+
+/// A failure that states its own classification, rather than being guessed at.
+///
+/// `is_unimplemented` reads the whole message, which is right for a
+/// hand-written group — its error strings are prose a person wrote about one
+/// call. It is wrong for a generated group's, which embeds the exact params
+/// JSON sent (compat/model/README.md § Failure messages): a run id, a port
+/// number or a queue URL can put "501" in a message about something else
+/// entirely, and the result would be filed as `unimplemented` — a pass, in
+/// effect — instead of the failure it is.
+///
+/// So `crate::scenario` states the classification instead, as a tag in front of
+/// the message. The tag is a control character no AWS error text or params JSON
+/// contains, [`classify`] strips it before the message is emitted, and it is
+/// the only way a message escapes the heuristic.
+pub const UNIMPLEMENTED_TAG: &str = "\u{1}unimplemented\u{1}";
+
+/// The same, for a failure that is a plain failure whatever its text contains.
+pub const FAIL_TAG: &str = "\u{1}fail\u{1}";
+
+/// The status a failed test reports, and the message to emit with it.
+///
+/// A tagged message says which it is; an untagged one — every hand-written
+/// group's — falls back to the substring heuristic, which is what it has always
+/// been classified by.
+pub fn classify(err: &str) -> (&'static str, String) {
+    if let Some(rest) = err.strip_prefix(UNIMPLEMENTED_TAG) {
+        return ("unimplemented", rest.to_string());
+    }
+    if let Some(rest) = err.strip_prefix(FAIL_TAG) {
+        return ("fail", rest.to_string());
+    }
+    if is_unimplemented(err) {
+        ("unimplemented", err.to_string())
+    } else {
+        ("fail", err.to_string())
+    }
+}
+
+/// The message without its classification tag, for the places that report a
+/// failure as something other than a test result — a setup failure folded into
+/// every test's skip reason, and a teardown skip logged to stderr.
+pub fn strip_tag(err: &str) -> &str {
+    err.strip_prefix(UNIMPLEMENTED_TAG)
+        .or_else(|| err.strip_prefix(FAIL_TAG))
+        .unwrap_or(err)
 }
 
 fn emit<T: Serialize>(value: &T) {
@@ -410,12 +594,7 @@ pub async fn run_interactive(
         total_tests,
     });
 
-    let slots = std::env::var("OVERCAST_COMPAT_PARALLEL_SLOTS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|v| *v > 0)
-        .unwrap_or(8);
-    let semaphore = Arc::new(Semaphore::new(slots));
+    let semaphore = Arc::new(Semaphore::new(parallel_slots()));
 
     let cancellation_flags: CancellationMap = Arc::new(Mutex::new(HashMap::new()));
 
@@ -638,7 +817,7 @@ async fn run_group_interactive(
     let mut setup_ok = true;
     if let Some(setup) = group.setup.clone() {
         if let Err(err) = setup(context.clone()).await {
-            let reason = format!("setup failed: {err}");
+            let reason = format!("setup failed: {}", strip_tag(&err));
             for test in &group.tests {
                 emit(&TestResultEvent {
                     event: "test_result",
@@ -656,6 +835,10 @@ async fn run_group_interactive(
         }
     }
 
+    // The interactive loop runs a parallel group's tests in order. An
+    // interpreter that ignores the flag is still correct (compat/model/README.md
+    // § The scenario file) — only the wall clock changes — and this path carries
+    // per-test cancellation, which a concurrent one would have to answer for.
     if setup_ok {
         let mut blocked = std::collections::HashSet::new();
         for test in &group.tests {
@@ -778,11 +961,7 @@ async fn run_group_interactive(
                         });
                         cancelled += 1;
                     } else {
-                        let status = if is_unimplemented(&err) {
-                            "unimplemented"
-                        } else {
-                            "fail"
-                        };
+                        let (status, message) = classify(&err);
                         emit(&TestResultEvent {
                             event: "test_result",
                             suite,
@@ -791,7 +970,7 @@ async fn run_group_interactive(
                             test: &test.name,
                             status,
                             duration_ms: started.elapsed().as_millis(),
-                            error: Some(err.clone()),
+                            error: Some(message),
                         });
                         if status == "unimplemented" {
                             unimplemented += 1;
@@ -815,4 +994,80 @@ async fn run_group_interactive(
     }
 
     (passed, failed, skipped, unimplemented, cancelled)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use std::time::Duration;
+
+    /// A test case that records how many of its kind are running at once.
+    fn gauge_case(name: &str, live: Arc<AtomicUsize>, peak: Arc<AtomicUsize>) -> TestCase {
+        let fn_: TestFn = Arc::new(move |_context| {
+            let live = live.clone();
+            let peak = peak.clone();
+            Box::pin(async move {
+                let now = live.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                live.fetch_sub(1, Ordering::SeqCst);
+                Ok(())
+            })
+        });
+        TestCase {
+            name: name.to_string(),
+            op: None,
+            skip: None,
+            depends: Vec::new(),
+            fn_,
+        }
+    }
+
+    /// The tests of a parallel group draw on the run's own semaphore, so two
+    /// groups fanning out at once are still bounded by the slot count rather
+    /// than by slots × slots.
+    ///
+    /// The bound is the claim `TestGroup::parallel` makes, and getting it wrong
+    /// is invisible: nothing fails, the emulator just gets `slots²` calls at
+    /// once.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_parallel_groups_tests_share_the_runs_slots() {
+        const SLOTS: usize = 3;
+        let live = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let slots = Arc::new(Semaphore::new(SLOTS));
+        let context = TestContext::new(
+            "http://127.0.0.1:4566".to_string(),
+            "us-east-1".to_string(),
+            "run".to_string(),
+        );
+        let group = TestGroup {
+            suite: "rust-sdk".to_string(),
+            service: "widgets".to_string(),
+            name: "widgets-gen-probe".to_string(),
+            parallel: true,
+            tests: (0..8)
+                .map(|i| gauge_case(&format!("t{i}"), live.clone(), peak.clone()))
+                .collect(),
+            setup: None,
+            teardown: None,
+        };
+
+        let (left, right) = tokio::join!(
+            run_tests_concurrently("rust-sdk", &group, &context, &slots),
+            run_tests_concurrently("rust-sdk", &group, &context, &slots),
+        );
+        assert_eq!(left.0 + right.0, 16, "every test must have run and passed");
+
+        let peak = peak.load(Ordering::SeqCst);
+        assert!(
+            peak <= SLOTS,
+            "{peak} tests ran at once with {SLOTS} slots: the fan-out is not sharing the run's semaphore"
+        );
+        assert!(
+            peak > 1,
+            "nothing ran concurrently, so this case would pass against a serial harness too"
+        );
+    }
 }

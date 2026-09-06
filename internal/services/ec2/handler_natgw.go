@@ -156,6 +156,9 @@ func (h *Handler) describeNatGateways(ctx context.Context, q describeQuery) (*xm
 	if aerr != nil {
 		return nil, aerr
 	}
+	if aerr := resolveIDs(natGatewayIDScope, requested, all, func(ngw *NatGateway) string { return ngw.NatGatewayID }); aerr != nil {
+		return nil, aerr
+	}
 
 	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {

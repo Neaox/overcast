@@ -7,9 +7,11 @@ scenario IR (`compat/model/scenarios/`), the refusal report
 (`compat/suites/registry.generated.json`) and — for the suites whose SDK has
 no dynamic-dispatch API — the source they compile
 (`compat/suites/go-sdk/internal/groups/scenarios_*_gen.go`,
-`compat/suites/java-sdk/src/main/java/io/overcast/compat/groups/Scenarios*Gen.java`). It is a
-build-time tool whose output is committed data; nothing under `compat/`
-imports it or any other emulator Go code.
+`compat/suites/java-sdk/src/main/java/io/overcast/compat/groups/Scenarios*Gen.java`,
+`compat/suites/dotnet-sdk/Groups/Scenarios*Gen.cs`,
+`compat/suites/rust-sdk/src/groups/scenarios_*_gen.rs`). It is a build-time
+tool whose output is committed data; nothing under `compat/` imports it or any
+other emulator Go code.
 
 The IR, the recipe format and the refusal vocabulary are documented in
 [compat/model/README.md](../../compat/model/README.md). The design is
@@ -141,7 +143,7 @@ entries and the gap report.
   and the empty-file gate kept holding; the scenario files and `gaps.json`
   are fully generated regardless.
 - List a suite against a group its backend cannot execute. `suites` is
-  derived from backend availability, so a group the Go emitter refused is
+  derived from backend availability, so a group a source emitter refused is
   scoped to the other backends instead — and a group no backend can run is
   left out of the registry altogether. Listing it anyway would turn the
   refusal into a hard failure in that suite, whose loader treats a generated
@@ -156,16 +158,17 @@ into their marshaller layers to fake one, because the reason for running eight
 suites is that each exercises its own real typed serialization path. So
 `emit_go.go` writes Go instead — one function per scenario test, each building
 a real `*sqs.CreateQueueInput` and calling a real client method — which the
-`go-sdk` suite's ordinary build compiles, and `emit_java.go` writes Java the
-same way: one method per test, each building a real `CreateQueueRequest` and
-calling a real client method, compiled by the `java-sdk` suite's
-`mvn package`.
+`go-sdk` suite's ordinary build compiles; `emit_java.go` writes Java the same
+way, one method per test building a real `CreateQueueRequest`, compiled by the
+`java-sdk` suite's `mvn package`; and `emit_rust.go` writes Rust the same way,
+one fluent builder chain per test, compiled by `cargo build`.
 
 What is emitted is the *data* plus the typed calls. The semantics — the
 context bag, `$name`/`$ref`, the closed check set, error matching,
-`eventually`, the six-field failure message — are written once by hand in
-`compat/suites/go-sdk/internal/scenario` and
-`compat/suites/java-sdk/.../io/overcast/compat/scenario`, and never re-emitted.
+`eventually`, the six-field failure message — are written once by hand in each
+suite (`compat/suites/go-sdk/internal/scenario`,
+`compat/suites/java-sdk/.../io/overcast/compat/scenario`,
+`compat/suites/rust-sdk/src/scenario`) and never re-emitted.
 
 ### Where the types come from
 
@@ -284,12 +287,107 @@ the model cannot; spelling enums as their wire values takes the *other* pin
 hazard — a value the pinned SDK does not know — out of the emitter entirely.
 
 The emitted bytes go through `go/format` before they are written, and
-generation fails if they will not parse. A golden file under
-`testdata/golden/` holds the emitted source for the fixture service, so what
-the emitter writes is reviewed as a diff rather than inferred from the
-generator's code. The Java emitter has its own golden
-(`ScenariosWidgetsGen.java.golden`) on the same terms; there is no formatter to
-run over it, so the emitter produces the file's final layout directly.
+generation fails if they will not parse. Every source emitter has a golden file
+under `testdata/golden/` holding what it writes for the fixture service, so its
+output is reviewed as a diff rather than inferred from the generator's code.
+Only Go has a formatter this program can run; the others produce their file's
+final layout directly.
+
+### The .NET emitter, and why it reads the model instead
+
+`emit_dotnet.go` writes the `dotnet-sdk` suite's
+`Groups/Scenarios<Service>Gen.cs` on the same split — data plus typed calls,
+with the semantics written once by hand in that suite's `Scenario/` namespace.
+What differs is where the member's type comes from: the .NET emitter never
+loads the SDK. Three measured facts make that safe, and the emitter's own
+header records how each was measured:
+
+| fact | consequence |
+| --- | --- |
+| AWSSDK v4 made every value-typed member nullable (`int?`) | a zero really is sent, so the value-typed-zero refusal go-sdk needs has nothing to refuse |
+| C# target-typing spells the composites | `["All"]`, `new() { ["k"] = "v" }` and `[new() { Id = "1" }]` name no SDK type at all |
+| an enum is a `ConstantClass` with an implicit conversion from `string` | a bare string literal, and a `Bind<string>` result, both assign |
+
+So the whole spelling table is driven by the member's *modeled* kind, and the
+emitted file names exactly one SDK type per call: `<Op>Request`. The cost is
+stated rather than hidden — this backend cannot refuse an operation the
+vendored SDK does not declare, or a member it renamed, because it never asks;
+both become a compile error in the suite's own build, which is loud but
+suite-wide rather than scoped to one group. `OvercastCompat.csproj` pins the
+package versions that keep them from arising, and says so.
+
+Three refusals remain, all read off the model, and all three scope the group
+away from `dotnet-sdk` in the registry:
+
+| refusal | what it means |
+| --- | --- |
+| the modeled kind has no C# literal | a timestamp, blob, document, union, bigInteger or bigDecimal |
+| a value expression on a composite member | `$ref`/`$name` resolve into one scalar slot, never a list |
+| an integer literal outside the C# type's range | C# range-checks an integral literal at compile time, and a compile error here is suite-wide |
+
+`-explain -lang dotnet` renders through the same `dotnetInputLines`, so the
+pseudo-code a reader reproduces a failure with is the source the emitter wrote;
+`TestExplainDotnetRendersTheEmittedCall` asserts it.
+
+There is no formatter for the emitted C# — the .NET SDK ships none this suite
+runs — so the layout `emit_dotnet.go` writes is the layout committed, and
+`testdata/golden/ScenariosWidgetsGen.cs.golden` is where it is reviewed. The
+proof that it *compiles* is the dotnet-sdk suite's own Docker build.
+
+### The Rust emitter reads the model instead
+
+`emit_rust.go` needs no SDK lookup, and the reason is the fluent builder: a
+setter takes the value itself — `.queue_name(impl Into<String>)`,
+`.max_number_of_messages(i32)` — never an `Option`. A member's optionality
+never reaches the call site, so the question that forces the Go emitter to load
+the vendored SDK does not arise, and neither does its consequence: a value set
+to its type's zero is sent exactly as any other value is, so Rust has no
+zero-value refusal. Everything the spelling does need — string, enum, integer
+width, list, map, structure — is the modeled kind, which the pinned snapshot
+carries.
+
+| modeled kind | value | emitted |
+| --- | --- | --- |
+| string | `"blue"` | `.description("blue")` |
+| enum | `"SCP"` | `.r#type(aws_sdk_organizations::types::PolicyType::from("SCP"))` |
+| integer | `30` | `.visibility_timeout(30)` |
+| map | `{"a":"b"}` | `.attributes(K::from("a"), "b")`, one call per entry |
+| list of strings | `["compat"]` | `.tag_keys("compat")`, one call per element |
+| list of structures | `[{"Key":"k"}]` | `.tags(types::Tag::builder().key("k").build()…)` |
+| any of them, `{"$ref":"q"}` | | `.queue_url(b.string("QueueUrl")?)` |
+
+The last row is the only thing left to run time, and it is not the expression:
+the runtime evaluates a call's whole params tree before anything is sent — that
+evaluation is failure-message field 3 — and the typed call reads one leaf of it
+back **by path**. So an expression is spelled once, as data, and the value the
+SDK is handed is the value the failure message quotes.
+
+Two of the model's answers are derived rather than read, and both are stated
+here because getting either wrong is a compile error in the suite:
+
+- **A builder is fallible exactly where the structure has a required member.**
+  That is smithy-rs's rule, and it follows from the model, so `.build()` is
+  written bare for `Account` and with a `map_err(…)?` for `Tag`.
+- **A member whose `snake_case` name is a Rust keyword is a raw identifier.**
+  Organizations models a member called `Type`; the setter is `r#type`.
+
+What the model cannot answer is whether the vendored crate has the operation at
+all. A crate older than the pinned snapshot is a **compile failure of the
+suite** rather than a generation-time refusal, because `cmd/compatgen` has no
+Rust toolchain to ask; the rust-sdk Dockerfile builds before it runs, so it is
+loud, and the fix is a pin in `compat/suites/rust-sdk/Cargo.toml`.
+
+Two things produce `rust-emit-unsupported:<Member>`: a member whose modeled
+kind has no IR literal (a timestamp, blob, document or union), and an
+expression bound to a composite member, which has no scalar slot to land in.
+Neither is reached by the current corpus.
+
+There is no formatter to run over the emitted Rust — this is a Go program, and
+CI's docs job carries no Rust toolchain — so the layout `emit_rust.go` writes
+is the output's layout, and the generated files are deliberately left out of
+`cargo fmt`. `testdata/golden/scenarios_widgets_gen.rs.golden` is reviewed as a
+diff exactly as the Go golden is; the proof that the result *compiles* is the
+rust-sdk suite's own Docker build.
 
 ## Determinism
 
@@ -305,15 +403,17 @@ check from the command line. CI runs both.
 `go test -tags dev ./cmd/compatgen` runs unit tests over a fixture service
 under `testdata/` (shapes, recipe and values). The emitted Go is proved to
 parse and to be gofmt-clean here, while the proof that it *compiles* is the
-`go-sdk` suite's own build.
+`go-sdk` suite's own build. The emitted Java, C# and Rust are proved
+deterministic and golden-identical here, and the proof that each compiles is
+its own suite's Docker build.
 
-**Which tests read which SDK.** Only the Go emitter reads one — the Java
-emitter resolves against the fixture model the rest of the generator's tests
-already load, which is what makes its tests hermetic without a second module.
-The Go emitter needs real Go types, so
+**Which tests read which SDK.** Only the Go emitter reads one — the Java, .NET
+and Rust emitters resolve against the fixture model the rest of the generator's
+tests already load, which is what makes their tests hermetic without a second
+module. The Go emitter needs real Go types, so
 `testdata/awssdk` is a checked-in stand-in for the AWS SDK for Go v2: a module
 of its own, under the SDK's own module path, declaring the fixture service's
-input structs and nothing else. Every test of the emitter — the golden file,
+input structs and nothing else. Every test of that emitter — the golden file,
 the spelling table, each refusal, the `-explain` agreement — resolves against
 it, so it type-checks real Go with no module cache and no network.
 
@@ -326,9 +426,10 @@ also the only place a real fetch can happen — the first run in a fresh
 environment downloads what type-checking the two pilot services needs, and the
 module cache serves every run after it.
 
-`OVERCAST_UPDATE_GOLDEN=1 go test -tags dev -run 'TestEmitGo|TestEmitJava' ./cmd/compatgen`
-rewrites `testdata/golden/scenarios_widgets_gen.go.golden` and
-`testdata/golden/ScenariosWidgetsGen.java.golden`. Read the diff
+`OVERCAST_UPDATE_GOLDEN=1 go test -tags dev -run TestEmit ./cmd/compatgen`
+rewrites `testdata/golden/scenarios_widgets_gen.go.golden`,
+`testdata/golden/ScenariosWidgetsGen.java.golden` and
+`testdata/golden/ScenariosWidgetsGen.cs.golden`. Read the diff
 before committing it — the golden file is the review artifact for what the
 emitter writes, and one regenerated without being read proves nothing. Its five resources between
 them carry every recipe role — a full lifecycle, a pre-existing resource, a

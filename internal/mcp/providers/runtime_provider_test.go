@@ -11,6 +11,7 @@ import (
 
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/iampolicy"
 	"github.com/overcast-sh/overcast/internal/mcp"
 	"github.com/overcast-sh/overcast/internal/services/acm"
 	"github.com/overcast-sh/overcast/internal/services/dynamodb"
@@ -1583,7 +1584,7 @@ func TestRuntimeProvider_IAMMutationTools(t *testing.T) {
 		t.Fatalf("unexpected created user: %#v", createdUserObj)
 	}
 
-	createRoleParams, _ := json.Marshal(map[string]any{"name": "unit-role", "assume_role_policy_document": `{"Version":"2012-10-17","Statement":[]}`})
+	createRoleParams, _ := json.Marshal(map[string]any{"name": "unit-role", "assume_role_policy_document": `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}`})
 	createdRole, err := provider.toolIAMCreateRole(ctx, createRoleParams)
 	if err != nil {
 		t.Fatalf("toolIAMCreateRole() error = %v", err)
@@ -1597,7 +1598,7 @@ func TestRuntimeProvider_IAMMutationTools(t *testing.T) {
 		t.Fatalf("unexpected created role: %#v", createdRoleObj)
 	}
 
-	createPolicyParams, _ := json.Marshal(map[string]any{"name": "unit-policy", "document": `{"Version":"2012-10-17","Statement":[]}`})
+	createPolicyParams, _ := json.Marshal(map[string]any{"name": "unit-policy", "document": `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]}`})
 	createdPolicy, err := provider.toolIAMCreatePolicy(ctx, createPolicyParams)
 	if err != nil {
 		t.Fatalf("toolIAMCreatePolicy() error = %v", err)
@@ -2278,4 +2279,72 @@ func TestRuntimeProvider_ListAndReadECSResources(t *testing.T) {
 		{uri: "oc://ecs/task-definitions", contains: []string{"my-task"}},
 		{uri: "oc://ecs/task-definitions/us-east-1/my-task:1", contains: []string{"my-task", "ACTIVE"}},
 	})
+}
+
+// TestRuntimeProvider_IAMCreateRoleTrustPolicy pins the two things the IAM
+// create tools owe the policy grammar (#1850). The provider writes to the store
+// rather than through the IAM handler, so nothing else stands between an MCP
+// client and a document the IAM API itself would refuse with
+// MalformedPolicyDocument.
+func TestRuntimeProvider_IAMCreateRoleTrustPolicy(t *testing.T) {
+	ctx := context.Background()
+	provider := NewRuntimeProvider(&config.Config{Region: "us-east-1", AccountID: "000000000000"}, state.NewMemoryStore())
+
+	// An unsupplied trust policy defaults to one a role can actually be
+	// assumed with: AWS's own CreateRole examples are a single sts:AssumeRole
+	// statement, and an empty Statement list is not a document IAM accepts.
+	created, err := provider.toolIAMCreateRole(ctx, mustJSON(t, map[string]any{"name": "defaulted-role"}))
+	if err != nil {
+		t.Fatalf("toolIAMCreateRole() error = %v", err)
+	}
+	role := created.(map[string]any)["role"].(iam.Role)
+	if err := iampolicy.ValidateDocument(role.AssumeRolePolicyDocument); err != nil {
+		t.Errorf("default AssumeRolePolicyDocument is one IAM would refuse: %v (%s)", err, role.AssumeRolePolicyDocument)
+	}
+	if !strings.Contains(role.AssumeRolePolicyDocument, "sts:AssumeRole") {
+		t.Errorf("default AssumeRolePolicyDocument = %s, want an sts:AssumeRole statement", role.AssumeRolePolicyDocument)
+	}
+
+	// A supplied document is checked, not stored unread.
+	for _, tc := range []struct {
+		name     string
+		document string
+	}{
+		{"not json", "{not json"},
+		{"empty statement list", `{"Version":"2012-10-17","Statement":[]}`},
+		{"lowercase effect", `{"Version":"2012-10-17","Statement":[{"Effect":"allow","Action":"sts:AssumeRole"}]}`},
+	} {
+		t.Run("create role rejects "+tc.name, func(t *testing.T) {
+			_, err := provider.toolIAMCreateRole(ctx, mustJSON(t, map[string]any{
+				"name": "role-" + strings.ReplaceAll(tc.name, " ", "-"), "assume_role_policy_document": tc.document,
+			}))
+			if err == nil {
+				t.Fatalf("toolIAMCreateRole() accepted a malformed trust policy %q", tc.document)
+			}
+		})
+		t.Run("create policy rejects "+tc.name, func(t *testing.T) {
+			_, err := provider.toolIAMCreatePolicy(ctx, mustJSON(t, map[string]any{
+				"name": "policy-" + strings.ReplaceAll(tc.name, " ", "-"), "document": tc.document,
+			}))
+			if err == nil {
+				t.Fatalf("toolIAMCreatePolicy() accepted a malformed document %q", tc.document)
+			}
+		})
+	}
+
+	// A refused document leaves nothing behind.
+	if _, found, err := provider.store.Get(ctx, iamRolesStoreNamespace, "role-not-json"); err != nil {
+		t.Fatalf("read back refused role: %v", err)
+	} else if found {
+		t.Error("a refused CreateRole still wrote the role to the store")
+	}
+}
+
+func mustJSON(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	return raw
 }

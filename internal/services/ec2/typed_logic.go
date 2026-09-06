@@ -306,6 +306,7 @@ type releaseAddressReq struct {
 
 type describeAddressesReq struct {
 	AllocationIDs []string    `json:"AllocationId"`
+	PublicIPs     []string    `json:"PublicIp"`
 	Filters       []ec2Filter `json:"Filter"`
 }
 
@@ -2115,7 +2116,7 @@ func (h *Handler) releaseAddressTyped(ctx context.Context, req *releaseAddressRe
 }
 
 func (h *Handler) describeAddressesTyped(ctx context.Context, req *describeAddressesReq) (*xmlDescribeAddressesResponse, *protocol.AWSError) {
-	return h.describeAddresses(ctx, typedQuery(req.AllocationIDs, req.Filters))
+	return h.describeAddresses(ctx, typedQuery(req.AllocationIDs, req.Filters), selectedIDs(req.PublicIPs))
 }
 
 func (h *Handler) associateAddressTyped(ctx context.Context, req *associateAddressReq) (*associateAddressResp, *protocol.AWSError) {

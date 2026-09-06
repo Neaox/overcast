@@ -59,10 +59,21 @@ func TestDescribe_unknownExplicitIDIsNotFound(t *testing.T) {
 		{"DescribeInternetGateways", "InternetGatewayId", "igw-00000000", "InvalidInternetGatewayID.NotFound"},
 		{"DescribeNetworkInterfaces", "NetworkInterfaceId", "eni-00000000", "InvalidNetworkInterfaceID.NotFound"},
 		{"DescribeInstances", "InstanceId", "i-00000000000000000", "InvalidInstanceID.NotFound"},
+
+		// #1847's five. DescribeAddresses appears twice because it selects on
+		// two things, and AWS answers them with different codes: an allocation
+		// ID with InvalidAllocationID.NotFound, a public address with
+		// InvalidAddress.NotFound.
+		{"DescribeAddresses", "AllocationId", "eipalloc-00000000", "InvalidAllocationID.NotFound"},
+		{"DescribeAddresses", "PublicIp", "192.0.2.55", "InvalidAddress.NotFound"},
+		{"DescribeNatGateways", "NatGatewayId", "nat-00000000", "NatGatewayNotFound"},
+		{"DescribeVpnGateways", "VpnGatewayId", "vgw-00000000", "InvalidVpnGatewayID.NotFound"},
+		{"DescribeVpcEndpoints", "VpcEndpointId", "vpce-00000000", "InvalidVpcEndpointId.NotFound"},
+		{"DescribeVpcPeeringConnections", "VpcPeeringConnectionId", "pcx-00000000", "InvalidVpcPeeringConnectionID.NotFound"},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.action, func(t *testing.T) {
+		t.Run(tc.action+"/"+tc.param, func(t *testing.T) {
 			srv := helpers.NewTestServer(t)
 
 			resp := ec2Query(t, srv, tc.action, url.Values{tc.param + ".1": []string{tc.id}})
@@ -84,26 +95,116 @@ func TestDescribe_malformedExplicitIDIsMalformed(t *testing.T) {
 	cases := []struct {
 		action string
 		param  string
+		value  string
 		code   string
 	}{
-		{"DescribeVpcs", "VpcId", "InvalidVpcID.Malformed"},
-		{"DescribeSubnets", "SubnetId", "InvalidSubnetID.Malformed"},
-		{"DescribeSecurityGroups", "GroupId", "InvalidGroupId.Malformed"},
-		{"DescribeRouteTables", "RouteTableId", "InvalidRouteTableId.Malformed"},
-		{"DescribeInternetGateways", "InternetGatewayId", "InvalidInternetGatewayId.Malformed"},
-		{"DescribeNetworkInterfaces", "NetworkInterfaceId", "InvalidNetworkInterfaceId.Malformed"},
-		{"DescribeInstances", "InstanceId", "InvalidInstanceID.Malformed"},
+		{"DescribeVpcs", "VpcId", "not-an-id", "InvalidVpcID.Malformed"},
+		{"DescribeSubnets", "SubnetId", "not-an-id", "InvalidSubnetID.Malformed"},
+		{"DescribeSecurityGroups", "GroupId", "not-an-id", "InvalidGroupId.Malformed"},
+		{"DescribeRouteTables", "RouteTableId", "not-an-id", "InvalidRouteTableId.Malformed"},
+		{"DescribeInternetGateways", "InternetGatewayId", "not-an-id", "InvalidInternetGatewayId.Malformed"},
+		{"DescribeNetworkInterfaces", "NetworkInterfaceId", "not-an-id", "InvalidNetworkInterfaceId.Malformed"},
+		{"DescribeInstances", "InstanceId", "not-an-id", "InvalidInstanceID.Malformed"},
+
+		// #1847's three that have a documented Malformed code. The public
+		// address is the one selector in EC2 that is not a `<prefix>-<hex>`
+		// ID, so what "malformed" means for it is "not an IPv4 address".
+		{"DescribeNatGateways", "NatGatewayId", "not-an-id", "NatGatewayMalformed"},
+		{"DescribeVpcEndpoints", "VpcEndpointId", "not-an-id", "InvalidVpcEndpointId.Malformed"},
+		{"DescribeVpcPeeringConnections", "VpcPeeringConnectionId", "not-an-id", "InvalidVpcPeeringConnectionId.Malformed"},
+		{"DescribeAddresses", "PublicIp", "not-an-ip", "InvalidAddress.Malformed"},
+		{"DescribeAddresses", "PublicIp", "203.0.113.999", "InvalidAddress.Malformed"},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.action, func(t *testing.T) {
+		t.Run(tc.action+"/"+tc.param+"="+tc.value, func(t *testing.T) {
+			srv := helpers.NewTestServer(t)
+
+			resp := ec2Query(t, srv, tc.action, url.Values{tc.param + ".1": []string{tc.value}})
+			defer resp.Body.Close()
+
+			assertEC2QueryError(t, resp, http.StatusBadRequest, tc.code)
+		})
+	}
+}
+
+// The two selectors the EC2 API reference lists no `.Malformed` code for:
+// allocation IDs (`InvalidAllocationID.NotFound` has no Malformed sibling —
+// `InvalidAddress.Malformed` is about the *address*, not the allocation) and
+// virtual private gateways. Rather than invent a code AWS does not document,
+// shape checking is left to the NotFound path, so an ID of the wrong shape is
+// reported as one the region does not hold.
+func TestDescribe_selectorsWithNoMalformedCodeAnswerNotFound(t *testing.T) {
+	cases := []struct {
+		action string
+		param  string
+		code   string
+	}{
+		{"DescribeAddresses", "AllocationId", "InvalidAllocationID.NotFound"},
+		{"DescribeVpnGateways", "VpnGatewayId", "InvalidVpnGatewayID.NotFound"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.action+"/"+tc.param, func(t *testing.T) {
 			srv := helpers.NewTestServer(t)
 
 			resp := ec2Query(t, srv, tc.action, url.Values{tc.param + ".1": []string{"not-an-id"}})
 			defer resp.Body.Close()
 
-			assertEC2QueryError(t, resp, http.StatusBadRequest, tc.code)
+			result := assertEC2QueryError(t, resp, http.StatusBadRequest, tc.code)
+			if !strings.Contains(result.Errors[0].Message, "not-an-id") {
+				t.Errorf("message %q does not name the ID", result.Errors[0].Message)
+			}
 		})
+	}
+}
+
+// DescribeAddresses is the only describe with two ID selectors, so it is the
+// only place the "shape before existence" rule has to hold across parameters
+// as well as within one. AWS raises `.Malformed` out of request parsing, which
+// sees the whole request, so a malformed address wins over an allocation that
+// is merely absent — whichever order they arrive in.
+func TestDescribeAddresses_malformedAddressBeatsAnUnknownAllocation(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := ec2Query(t, srv, "DescribeAddresses", url.Values{
+		"AllocationId.1": []string{"eipalloc-00000000"},
+		"PublicIp.1":     []string{"not-an-ip"},
+	})
+	defer resp.Body.Close()
+
+	assertEC2QueryError(t, resp, http.StatusBadRequest, "InvalidAddress.Malformed")
+}
+
+// An allocation ID and a public address that both resolve select the address
+// they name, and a describe naming only one of the two still resolves the
+// other's list as empty — the selectors are independent.
+func TestDescribeAddresses_bothSelectorsResolveTheirOwnList(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := ec2Query(t, srv, "AllocateAddress", nil)
+	body := readBody(t, resp)
+	resp.Body.Close()
+	var allocated struct {
+		AllocationID string `xml:"allocationId"`
+		PublicIP     string `xml:"publicIp"`
+	}
+	if err := xml.Unmarshal(body, &allocated); err != nil {
+		t.Fatalf("unmarshal AllocateAddressResponse: %v\nbody: %s", err, body)
+	}
+
+	for _, params := range []url.Values{
+		{"AllocationId.1": []string{allocated.AllocationID}},
+		{"PublicIp.1": []string{allocated.PublicIP}},
+		{"AllocationId.1": []string{allocated.AllocationID}, "PublicIp.1": []string{allocated.PublicIP}},
+	} {
+		resp := ec2Query(t, srv, "DescribeAddresses", params)
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		got := string(readBody(t, resp))
+		resp.Body.Close()
+		if !strings.Contains(got, allocated.AllocationID) {
+			t.Errorf("DescribeAddresses %v did not return %s: %s", params, allocated.AllocationID, got)
+		}
 	}
 }
 
@@ -174,6 +275,11 @@ func TestDescribe_filterMatchingNothingIsStillAnEmpty200(t *testing.T) {
 		{"DescribeInternetGateways", "internet-gateway-id", "igw-99999999"},
 		{"DescribeNetworkInterfaces", "network-interface-id", "eni-99999999"},
 		{"DescribeInstances", "instance-id", "i-99999999"},
+		{"DescribeAddresses", "public-ip", "203.0.113.199"},
+		{"DescribeNatGateways", "nat-gateway-id", "nat-99999999"},
+		{"DescribeVpnGateways", "vpn-gateway-id", "vgw-99999999"},
+		{"DescribeVpcEndpoints", "vpc-endpoint-id", "vpce-99999999"},
+		{"DescribeVpcPeeringConnections", "vpc-peering-connection-id", "pcx-99999999"},
 	}
 
 	for _, tc := range cases {

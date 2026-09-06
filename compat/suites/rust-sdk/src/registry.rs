@@ -28,6 +28,10 @@ struct RegistryGroup {
     /// means every suite. See [`in_scope`].
     #[serde(default)]
     suites: Vec<String>,
+    /// The group's tests may run concurrently with one another. Only a
+    /// generated probe group carries it — see [`crate::harness::TestGroup`].
+    #[serde(default)]
+    parallel: bool,
     tests: Vec<RegistryTest>,
     /// Set only for groups read from [`GENERATED_REGISTRY_FILE`]; the
     /// hand-written registry declares none of those fields, so serde never
@@ -38,10 +42,10 @@ struct RegistryGroup {
 
 /// The metadata a generated group carries beyond the shared group shape.
 ///
-/// Nothing in the loader branches on it. It is parsed so that a scenario
-/// backend reads the same values `cmd/compatgen` wrote, and so that a group
-/// missing a required one fails the load instead of running as something it is
-/// not.
+/// Its presence is what makes a group generated, which is the loader's one
+/// branch on it ([`build_test_case`]); its two values are read by
+/// [`missing_scenario_backend`], the message a reader gets when a group this
+/// suite is scoped to resolves to nothing.
 struct GeneratedMeta {
     /// `candidate` or `gated`, verbatim. The gate semantics are `cmd/compat`'s,
     /// not a suite's, so no value is rejected here.
@@ -82,6 +86,8 @@ struct GeneratedGroup {
     state: String,
     suites: Vec<String>,
     #[serde(default)]
+    parallel: bool,
+    #[serde(default)]
     scenario: Option<String>,
 }
 
@@ -98,6 +104,7 @@ impl GeneratedGroup {
             service: self.service,
             name: self.name,
             suites: self.suites,
+            parallel: self.parallel,
             tests: self.tests,
             generated: Some(GeneratedMeta {
                 state: self.state,
@@ -115,21 +122,14 @@ impl GeneratedGroup {
 /// group/test names (G6, docs/plans/compat-coverage-modelgen.md § 3.11) — not
 /// only a generated group's.
 ///
-/// Nothing in this suite implements [`ScenarioBackend`] yet, so nothing reads
-/// these fields — the G2 interpreters are what will.
-#[allow(dead_code)]
+/// Group and test are the whole of it, because they are the whole of what a
+/// resolution needs: [`crate::scenario::Backend`] looks the pair up in the map
+/// the emitted source registered. A backend that needs more than the pair gets
+/// it added then, with the reader that wants it — a field nothing reads is not
+/// an extension point, it is dead weight behind an `#[allow(dead_code)]`.
 pub struct ScenarioRequest<'a> {
     pub group: &'a str,
-    pub service: &'a str,
     pub test: &'a str,
-    /// The group's `scenario` path: `Some` for a generated group that
-    /// declares one; `None` for a generated group that omits it, or for a
-    /// hand-written group, which carries no `scenario` field at all.
-    pub scenario: Option<&'a str>,
-    /// The group's `state`, verbatim: `candidate` or `gated`, for a generated
-    /// group. `None` for a hand-written group — it carries no `state`, so
-    /// there is no value to invent for one.
-    pub state: Option<&'a str>,
 }
 
 /// Resolves a test to an implementation when no static impl claims it.
@@ -144,10 +144,11 @@ pub struct ScenarioRequest<'a> {
 /// It is the last one tried: the registry `skip`, the capability gate and the
 /// registered impls all still win over it.
 ///
-/// **Nothing implements this in rust-sdk yet** (#1393; the G2 interpreters land
-/// the first backends). Until one does, a generated group scoped to this suite
-/// fails loudly — see [`missing_scenario_backend`] — and a hand-written group
-/// with no impl keeps today's plain `not yet implemented` skip.
+/// [`crate::scenario::Backend`] implements it, over the typed calls
+/// `cmd/compatgen` emits into `src/groups/scenarios_*_gen.rs`. Where no backend
+/// is passed at all, or one resolves nothing, a generated group scoped to this
+/// suite fails loudly — see [`missing_scenario_backend`] — and a hand-written
+/// group with no impl keeps today's plain `not yet implemented` skip.
 pub trait ScenarioBackend {
     fn resolve(&self, request: &ScenarioRequest<'_>) -> Option<TestFn>;
 }
@@ -155,7 +156,6 @@ pub trait ScenarioBackend {
 /// Everything about the owning group that a test's resolution depends on.
 struct GroupContext<'a> {
     name: &'a str,
-    service: &'a str,
     generated: Option<&'a GeneratedMeta>,
 }
 
@@ -205,11 +205,11 @@ fn assemble(
                 name,
                 tests,
                 generated,
+                parallel,
                 ..
             } = group;
             let context = GroupContext {
                 name: &name,
-                service: &service,
                 generated: generated.as_ref(),
             };
             let tests: Vec<TestCase> = topo_sort(tests)
@@ -232,6 +232,7 @@ fn assemble(
                 teardown: teardowns.get(&name).cloned(),
                 service,
                 name,
+                parallel,
                 tests,
             }
         })
@@ -339,10 +340,7 @@ fn build_test_case(
     let resolved = backend.and_then(|backend| {
         backend.resolve(&ScenarioRequest {
             group: group.name,
-            service: group.service,
             test: &test.name,
-            scenario: group.generated.and_then(|meta| meta.scenario.as_deref()),
-            state: group.generated.map(|meta| meta.state.as_str()),
         })
     });
 
@@ -357,12 +355,12 @@ fn build_test_case(
     }
 
     match group.generated {
-        Some(_) => TestCase {
+        Some(meta) => TestCase {
             name: test.name,
             op: test.op,
             skip: None,
             depends: test.depends,
-            fn_: missing_scenario_backend(group.name, suite),
+            fn_: missing_scenario_backend(group.name, meta, suite),
         },
         None => TestCase {
             name: test.name,
@@ -387,9 +385,14 @@ fn build_test_case(
 /// result, so no new result kind is needed. Because `candidate` groups are
 /// excluded from the gates by `cmd/compat` (#1367) this cannot red a build until
 /// a group is `gated`, at which point it is a real regression and should.
-fn missing_scenario_backend(group: &str, suite: &str) -> TestFn {
+fn missing_scenario_backend(group: &str, meta: &GeneratedMeta, suite: &str) -> TestFn {
+    // The state and the scenario path are what a reader needs next: whether the
+    // group counts against a gate, and which file to look in.
     let message = format!(
-        "generated group \"{group}\" is scoped to {suite} but {suite} has no scenario backend"
+        "generated group \"{group}\" ({state}, from {scenario}) is scoped to {suite} \
+         but {suite} has no scenario backend",
+        state = meta.state,
+        scenario = meta.scenario.as_deref().unwrap_or("an unnamed scenario"),
     );
     std::sync::Arc::new(move |_| {
         let message = message.clone();
@@ -714,6 +717,7 @@ mod tests {
             service: service.to_string(),
             name: name.to_string(),
             suites: Vec::new(),
+            parallel: false,
             tests,
             generated: None,
         }
@@ -874,6 +878,7 @@ mod tests {
                 suite: "rust-sdk".to_string(),
                 service: group.service.clone(),
                 name: group.name.clone(),
+                parallel: group.parallel,
                 tests: group
                     .tests
                     .iter()
@@ -882,7 +887,6 @@ mod tests {
                             "rust-sdk",
                             &GroupContext {
                                 name: &group.name,
-                                service: &group.service,
                                 generated: group.generated.as_ref(),
                             },
                             test.clone(),
@@ -989,6 +993,43 @@ mod tests {
         Ok(registry)
     }
 
+    /// `parallel` is carried from the generated file onto the group the harness
+    /// runs. Only a probe group sets it, and it is the one field of a generated
+    /// group that changes how a run is *scheduled* rather than what it reports —
+    /// so a loader that dropped it would slow a run down silently.
+    #[test]
+    fn the_parallel_flag_reaches_the_group_the_harness_runs() {
+        let body = format!(
+            r#"{{"version":1,"groups":[{},{}]}}"#,
+            r#"{"service":"sqs","name":"sqs-gen-probe","generated":true,"state":"candidate","parallel":true,"suites":["rust-sdk"],"tests":[{"name":"ListMessageMoveTasks"}]}"#,
+            r#"{"service":"sqs","name":"sqs-gen-queue","generated":true,"state":"candidate","suites":["rust-sdk"],"tests":[{"name":"CreateQueue"}]}"#,
+        );
+        let registry = concatenated(&body).expect("generated registry loads");
+        let groups = assemble(
+            "rust-sdk",
+            registry,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashSet::new(),
+            None,
+        )
+        .expect("groups assemble");
+
+        let parallel: Vec<(&str, bool)> = groups
+            .iter()
+            .map(|group| (group.name.as_str(), group.parallel))
+            .collect();
+        assert!(
+            parallel.contains(&("sqs-gen-probe", true)),
+            "the probe group is not marked parallel: {parallel:?}"
+        );
+        assert!(
+            parallel.contains(&("sqs-gen-queue", false)),
+            "a lifecycle group was marked parallel: {parallel:?}"
+        );
+    }
+
     #[test]
     fn resolves_the_generated_registry_beside_registry_json() {
         // Whatever path the loader was pointed at — the default relative one,
@@ -1065,6 +1106,7 @@ mod tests {
             service: "cdk".to_string(),
             name: "cdk-lifecycle".to_string(),
             suites: vec!["cdk".to_string()],
+            parallel: false,
             tests: vec![test_entry("Deploy")],
             generated: None,
         });
@@ -1132,7 +1174,8 @@ mod tests {
         .expect_err("a group with no backend must fail");
         assert_eq!(
             err,
-            "generated group \"sqs-scenario\" is scoped to rust-sdk but rust-sdk has no scenario backend"
+            "generated group \"sqs-scenario\" (candidate, from compat/scenarios/sqs-scenario.yaml) \
+             is scoped to rust-sdk but rust-sdk has no scenario backend"
         );
         // The harness classifies an Err by its text; this one must land as
         // `fail`, not be swallowed as an emulator gap.
@@ -1185,20 +1228,13 @@ mod tests {
         }
     }
 
-    /// A stand-in for the interpreter that will implement [`ScenarioBackend`]
-    /// in G2. It exists only to prove the extension point is reachable and is
-    /// handed the group's `scenario` path; rust-sdk ships no backend.
+    /// A stand-in backend that answers every request, so a case can show the
+    /// extension point is reached and with which group and test.
     struct RecordingBackend;
 
     impl ScenarioBackend for RecordingBackend {
         fn resolve(&self, request: &ScenarioRequest<'_>) -> Option<TestFn> {
-            let described = format!(
-                "{}/{}/{} from {}",
-                request.service,
-                request.group,
-                request.test,
-                request.scenario.unwrap_or("<none>")
-            );
+            let described = format!("{}/{}", request.group, request.test);
             let implementation: TestFn = std::sync::Arc::new(move |_| {
                 let described = described.clone();
                 Box::pin(async move { Err(described) })
@@ -1234,10 +1270,7 @@ mod tests {
         ))
         .await
         .expect_err("the stand-in reports what it was given");
-        assert_eq!(
-            resolved,
-            "sqs/sqs-scenario/SendMessage from compat/scenarios/sqs-scenario.yaml"
-        );
+        assert_eq!(resolved, "sqs-scenario/SendMessage");
     }
 
     /// G6 (docs/plans/compat-coverage-modelgen.md § 3.11) ports hand-written
@@ -1277,7 +1310,7 @@ mod tests {
         ))
         .await
         .expect_err("the stand-in reports what it was given");
-        assert_eq!(resolved, "iam/iam-users/CreateUser from <none>");
+        assert_eq!(resolved, "iam-users/CreateUser");
     }
 
     /// `scenario` is optional in the schema, and a group omitting it still

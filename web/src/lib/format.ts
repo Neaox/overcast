@@ -10,7 +10,7 @@ export function formatBytes(bytes: number, decimals = 1): string {
  * A count for display, grouped by thousands: 20000 reads as 20,000.
  *
  * Here rather than inline at each call site so every count in the UI groups
- * the same way — which is also what `classnames/prefer-shared-formatter`
+ * the same way — which is also what `local/prefer-shared-formatter`
  * asks for when it flags a bare `toLocaleString`.
  */
 export function formatCount(value: number): string {

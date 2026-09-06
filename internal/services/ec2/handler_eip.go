@@ -118,12 +118,20 @@ type xmlAddress struct {
 }
 
 // DescribeAddresses lists Elastic IP addresses.
+//
+// It is the one describe with two id selectors: AllocationId.N names the
+// allocation, PublicIp.N names the address itself. Both are resolved rather
+// than filtered with, and AWS answers them with different codes — see
+// allocationIDScope and publicIPScope in describe_ids.go. PublicIp.N arrives
+// as an argument beside the describeQuery for the reason describe.go gives:
+// the shared seam carries one `<Resource>Id.N` list, and an operation with a
+// selector beyond that takes it alongside.
 func (h *Handler) DescribeAddresses(w http.ResponseWriter, r *http.Request) {
-	resp, aerr := h.describeAddresses(r.Context(), requestQuery(r, "AllocationId"))
+	resp, aerr := h.describeAddresses(r.Context(), requestQuery(r, "AllocationId"), requestedIDs(r, "PublicIp"))
 	writeDescribe(w, r, resp, aerr)
 }
 
-func (h *Handler) describeAddresses(ctx context.Context, q describeQuery) (*xmlDescribeAddressesResponse, *protocol.AWSError) {
+func (h *Handler) describeAddresses(ctx context.Context, q describeQuery, publicIPs idSelection) (*xmlDescribeAddressesResponse, *protocol.AWSError) {
 	filters, aerr := addressFilters.parse(q.filters)
 	if aerr != nil {
 		return nil, aerr
@@ -135,6 +143,21 @@ func (h *Handler) describeAddresses(ctx context.Context, q describeQuery) (*xmlD
 		return nil, aerr
 	}
 
+	// Every selector's shape, then every selector's existence: AWS refuses a
+	// malformed address before it looks any allocation up.
+	if aerr := resolveIDShapes(allocationIDScope, requested); aerr != nil {
+		return nil, aerr
+	}
+	if aerr := resolveIDShapes(publicIPScope, publicIPs); aerr != nil {
+		return nil, aerr
+	}
+	if aerr := resolveIDs(allocationIDScope, requested, all, func(a *ElasticIP) string { return a.AllocationID }); aerr != nil {
+		return nil, aerr
+	}
+	if aerr := resolveIDs(publicIPScope, publicIPs, all, func(a *ElasticIP) string { return a.PublicIP }); aerr != nil {
+		return nil, aerr
+	}
+
 	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {
 		return nil, aerr
@@ -142,7 +165,11 @@ func (h *Handler) describeAddresses(ctx context.Context, q describeQuery) (*xmlD
 
 	items := make([]xmlAddress, 0, len(all))
 	for _, a := range all {
-		if !requested.has(a.AllocationID) || !filters.matches(a) {
+		// The two selections are AND-ed with each other and with the filters,
+		// the rule an `<Resource>Id.N` list already follows here; each is empty
+		// unless the caller sent it, and an empty selection asks for all of
+		// them.
+		if !requested.has(a.AllocationID) || !publicIPs.has(a.PublicIP) || !filters.matches(a) {
 			continue
 		}
 		tags, ok := tagsView.keep(a.AllocationID)

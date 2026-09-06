@@ -70,6 +70,18 @@ type AWSError struct {
 	// field at all, so this is a no-op for every service that never sets
 	// it — the same shape as QueryErrorCode above.
 	Reason string
+	// XMLDetails, when set, are extra members rendered into the REST-XML
+	// error body between Message and RequestId, in the order given. AWS's
+	// error documents are not one fixed shape: some errors carry members
+	// naming what the caller asked for and what the resource actually is,
+	// which is the whole diagnostic value of the error. S3's InvalidRange
+	// is the first Overcast caller — it names RangeRequested and
+	// ActualObjectSize, the two fields a ranged-download client compares to
+	// find its own off-by-one. Left nil (the default, and the only value an
+	// error without such members ever sets) nothing extra is rendered, so
+	// this is a no-op for every error that never sets it — the same shape
+	// as QueryErrorCode and Reason above.
+	XMLDetails []XMLDetail
 	// cause is the underlying error that triggered this AWSError.
 	// It is not sent to clients — it is for internal logging and error chain
 	// inspection only. Equivalent to JavaScript's Error.cause.
@@ -321,12 +333,28 @@ func remapStorePressure(aerr *AWSError, throttle *AWSError) *AWSError {
 
 // ---- XML error format (S3 and other REST-XML services) ---------------------
 
-// xmlErrorResponse is the wire envelope S3 uses for errors.
+// XMLDetail is one operation-specific member of a REST-XML error document.
+// See AWSError.XMLDetails for when an error carries any.
+type XMLDetail struct {
+	Name  string
+	Value string
+}
+
+// xmlErrorResponse is the wire envelope S3 uses for errors. Field order is
+// element order, so Details sits where AWS puts an error's own members:
+// after Message, before RequestId.
 type xmlErrorResponse struct {
 	XMLName   xml.Name `xml:"Error"`
 	Code      string   `xml:"Code"`
 	Message   string   `xml:"Message"`
-	RequestID string   `xml:"RequestId"`
+	Details   []xmlErrorDetail
+	RequestID string `xml:"RequestId"`
+}
+
+// xmlErrorDetail renders one XMLDetail under its own element name.
+type xmlErrorDetail struct {
+	XMLName xml.Name
+	Value   string `xml:",chardata"`
 }
 
 // WriteXMLError writes an AWS REST-XML error response (S3 format).
@@ -337,9 +365,14 @@ func WriteXMLError(w http.ResponseWriter, r *http.Request, aerr *AWSError) {
 	recordAWSError(w, aerr)
 	reqID := RequestIDFromContext(r.Context())
 
+	var details []xmlErrorDetail
+	for _, d := range aerr.XMLDetails {
+		details = append(details, xmlErrorDetail{XMLName: xml.Name{Local: d.Name}, Value: d.Value})
+	}
 	body, _ := xml.Marshal(&xmlErrorResponse{
 		Code:      aerr.Code,
 		Message:   aerr.Message,
+		Details:   details,
 		RequestID: reqID,
 	})
 

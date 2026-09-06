@@ -152,6 +152,16 @@ comments) so users aren't caught off guard. Never silently return a `200` with w
 behaviour — a `501` that says "not implemented" is always preferable to a response that
 looks right but acts wrong.
 
+**When AWS's answer is the surprising one, record it.** Sometimes matching AWS means
+shipping something that reads as a defect: a header a standard says to send that AWS
+omits, an input AWS accepts that it plainly should reject, an answer every other emulator
+disagrees with. Left unexplained, that gets "fixed" — by a linter, by a review comment, or
+by the next contributor working from the spec instead of from AWS. Add it to
+[docs/dev/compatibility/looks-like-a-bug.md](./docs/dev/compatibility/looks-like-a-bug.md)
+with the command you ran and the date, and cite the page from a comment at the code site.
+Checking real AWS needs the user's explicit approval first; that page's Methodology section
+covers the cheapest way to get an answer worth recording.
+
 ---
 
 ## Service implementation tiers
@@ -1621,8 +1631,10 @@ entry point). **There is no ESLint in this repository.**
 
 - **[`web/.oxlintrc.json`](./web/.oxlintrc.json) owns the rule set** — every rule,
   its severity, and the reasoning. It also loads
-  `web/eslint-plugin-classnames` and `@tanstack/eslint-plugin-query` as oxlint JS
-  plugins, aliased so rule names stay `classnames/…` and `@tanstack/query/…`.
+  `web/eslint-plugin-local` and `@tanstack/eslint-plugin-query` as oxlint JS
+  plugins. `@tanstack/query/…` keeps its upstream spelling; this repo's own
+  rules are `local/…`, named for where they come from rather than what they
+  lint — the namespace was `classnames/…` until the plugin outgrew it.
   Type-aware rules run through `oxlint-tsgolint`, which embeds its own
   typescript-go, so they do not depend on the `typescript` devDependency.
 - **New rules go in `.oxlintrc.json`.** There is nowhere else to put one.
@@ -1703,7 +1715,7 @@ at all (the IAM policy simulator's result grid, the debug page), and one whose s
 genuinely does not fit (`log-search-results`' virtualized stream). When you do, say why
 in a comment at the call site — "ResourceTable didn't fit because …" — so the next
 reader can tell a decision from an oversight, and disable
-`classnames/prefer-resource-table` on the import with the same reason. That rule flags
+`local/prefer-resource-table` on the import with the same reason. That rule flags
 any import of the table primitives under `features/**`, so an exception is recorded
 twice on purpose: once for the reader, at the call site, and once for the linter, at the
 import it needs. Fifty-five bespoke tables accumulated before that rule existed; their

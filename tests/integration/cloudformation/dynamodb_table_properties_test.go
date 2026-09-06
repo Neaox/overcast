@@ -205,8 +205,9 @@ func TestCreateStack_DynamoDBTableTimeToLive(t *testing.T) {
 	// inside the window is refused.
 	assertDynamoDBTTL(t, srv, tableName, "ENABLING", "expiresAt")
 
-	// And: it settles to ENABLED on its own
-	srv.Clock.Add(ttlTransitionSettleWindow)
+	// And: it settles to ENABLED on its own (AdvanceClock, not Clock.Add:
+	// tests/AGENTS.md § Mock clocks)
+	srv.AdvanceClock(ttlTransitionSettleWindow)
 	assertDynamoDBTTL(t, srv, tableName, "ENABLED", "expiresAt")
 }
 
@@ -224,7 +225,7 @@ func TestUpdateStack_DynamoDBTableTimeToLive(t *testing.T) {
 	defer createResp.Body.Close()
 	helpers.AssertStatus(t, createResp, http.StatusOK)
 	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
-	srv.Clock.Add(ttlTransitionSettleWindow)
+	srv.AdvanceClock(ttlTransitionSettleWindow)
 	assertDynamoDBTTL(t, srv, tableName, "ENABLED", "expiresAt")
 
 	// When: the TimeToLiveSpecification property is removed
@@ -238,7 +239,7 @@ func TestUpdateStack_DynamoDBTableTimeToLive(t *testing.T) {
 
 	// Then: DynamoDB is disabling TTL, and settles to DISABLED
 	assertDynamoDBTTL(t, srv, tableName, "DISABLING", "expiresAt")
-	srv.Clock.Add(ttlTransitionSettleWindow)
+	srv.AdvanceClock(ttlTransitionSettleWindow)
 	assertDynamoDBTTL(t, srv, tableName, "DISABLED", "")
 }
 
@@ -260,7 +261,7 @@ func TestUpdateStack_DynamoDBTableTimeToLiveAttributeChange(t *testing.T) {
 	defer createResp.Body.Close()
 	helpers.AssertStatus(t, createResp, http.StatusOK)
 	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
-	srv.Clock.Add(ttlTransitionSettleWindow)
+	srv.AdvanceClock(ttlTransitionSettleWindow)
 
 	// When: the template renames the TTL attribute
 	updateResp := cfnQuery(t, srv, "UpdateStack", url.Values{

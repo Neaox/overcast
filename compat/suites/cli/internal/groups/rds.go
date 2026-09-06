@@ -221,6 +221,11 @@ func (g *rdsCliGroup) StartDBInstance(_ context.Context, t *harness.TestContext)
 	if id == "" {
 		return fmt.Errorf("StartDBInstance: no db_id from CreateDBInstance")
 	}
+	// start-db-instance requires a stopped instance, here and on AWS; the stop
+	// before this is still in flight (stopping) for a moment.
+	if err := waitForDBStatus(t, id, "stopped"); err != nil {
+		return fmt.Errorf("StartDBInstance: %w", err)
+	}
 	out, err := awscli.RunOutput(t.Endpoint, t.Region, "rds", "start-db-instance",
 		"--db-instance-identifier", id,
 	)
