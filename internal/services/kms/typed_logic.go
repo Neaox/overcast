@@ -89,10 +89,13 @@ type scheduleKeyDeletionRequest struct {
 }
 
 type scheduleKeyDeletionResponse struct {
-	KeyId        string  `json:"KeyId" cbor:"KeyId"`
-	KeyArn       string  `json:"KeyArn" cbor:"KeyArn"`
-	DeletionDate float64 `json:"DeletionDate" cbor:"DeletionDate"`
-	KeyState     string  `json:"KeyState" cbor:"KeyState"`
+	KeyId  string `json:"KeyId" cbor:"KeyId"`
+	KeyArn string `json:"KeyArn" cbor:"KeyArn"`
+	// DeletionDate is a Timestamp, which this protocol renders as epoch
+	// seconds — the documented example response shows 1.4820192E9.
+	DeletionDate        float64 `json:"DeletionDate" cbor:"DeletionDate"`
+	KeyState            string  `json:"KeyState" cbor:"KeyState"`
+	PendingWindowInDays int     `json:"PendingWindowInDays" cbor:"PendingWindowInDays"`
 }
 
 type cancelKeyDeletionResponse struct {
@@ -362,6 +365,10 @@ func (h *Handler) scheduleKeyDeletionTyped(ctx context.Context, req *scheduleKey
 		KeyArn:       k.ARN,
 		DeletionDate: float64(deletionDate.UnixMilli()) / 1000.0,
 		KeyState:     k.KeyState,
+		// "The waiting period before the KMS key is deleted" — the value that
+		// applied, so a caller reads back what it asked for and discovers the
+		// 30-day default when it asked for nothing.
+		PendingWindowInDays: days,
 	}, nil
 }
 
@@ -807,6 +814,22 @@ func (h *Handler) reEncryptTyped(ctx context.Context, req *reEncryptRequest) (*r
 	srcKey, err := h.store.GetKey(ctx, keyID)
 	if err != nil || srcKey == nil {
 		return nil, errNotFound(keyID)
+	}
+	// SourceKeyId is optional for symmetric ciphertext — "AWS KMS can get this
+	// information from metadata that it adds to the symmetric ciphertext blob"
+	// — but when it is supplied it is authoritative: "Enter a key ID of the KMS
+	// key that was used to encrypt the ciphertext. If you identify a different
+	// KMS key, the ReEncrypt operation throws an IncorrectKeyException."
+	// Checked before the key-state check, as decryptTyped checks Decrypt's
+	// KeyId, so naming the wrong key reports itself either way.
+	if req.SourceKeyId != "" {
+		named, aerr := h.resolveKeyForTyped(ctx, req.SourceKeyId)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if named.KeyID != srcKey.KeyID {
+			return nil, errIncorrectKey()
+		}
 	}
 	if !srcKey.Enabled {
 		return nil, errDisabled(srcKey.KeyID)

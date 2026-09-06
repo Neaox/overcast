@@ -4543,7 +4543,7 @@
           "operation": "ScheduleKeyDeletion",
           "category": "Key lifecycle",
           "status": "✅ Supported",
-          "notes": "`PendingWindowInDays` 7-30, defaulting to 30; response `KeyId` is the key ARN"
+          "notes": "`PendingWindowInDays` 7-30, defaulting to 30 and returned in the response; response `KeyId` is the key ARN"
         },
         {
           "operation": "CancelKeyDeletion",
@@ -4608,7 +4608,7 @@
           "operation": "ReEncrypt",
           "category": "Symmetric crypto",
           "status": "✅ Supported",
-          "notes": "Decrypts and re-encrypts ciphertext with destination key"
+          "notes": "Decrypts and re-encrypts ciphertext with destination key; a `SourceKeyId` naming a different key is an `IncorrectKeyException`"
         },
         {
           "operation": "GenerateDataKeyPair",

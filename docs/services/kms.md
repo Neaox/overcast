@@ -47,7 +47,8 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 The ciphertext envelope carries the key ID, so `Decrypt` resolves the key
 without being told which one to use — as on AWS. Passing `KeyId` anyway is
 still checked against that envelope: naming a key that did not produce the
-ciphertext is an `IncorrectKeyException`, not a successful decrypt.
+ciphertext is an `IncorrectKeyException`, not a successful decrypt. `ReEncrypt`
+checks its optional `SourceKeyId` the same way.
 
 ## Differences from AWS
 
