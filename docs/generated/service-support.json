@@ -3712,7 +3712,8 @@
         {
           "operation": "PutUserPolicy",
           "category": "User inline policies",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Rejects a malformed document with `MalformedPolicyDocument` (400) — see `CreatePolicy` for what that check does and does not cover"
         },
         {
           "operation": "GetUserPolicy",
@@ -3785,7 +3786,7 @@
           "operation": "CreateRole",
           "category": "Roles",
           "status": "✅ Supported",
-          "notes": "Inline `Tags` applied at creation"
+          "notes": "Inline `Tags` applied at creation; the `AssumeRolePolicyDocument` is parsed, and a malformed one rejected with `MalformedPolicyDocument` (400) — see `CreatePolicy` for what that check does and does not cover"
         },
         {
           "operation": "GetRole",
@@ -3812,7 +3813,8 @@
         {
           "operation": "UpdateAssumeRolePolicy",
           "category": "Roles",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Rejects a malformed document with `MalformedPolicyDocument` (400) — see `CreatePolicy` for what that check does and does not cover"
         },
         {
           "operation": "CreateServiceLinkedRole",
@@ -3822,7 +3824,8 @@
         {
           "operation": "PutRolePolicy",
           "category": "Role inline policies",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Rejects a malformed document with `MalformedPolicyDocument` (400) — see `CreatePolicy` for what that check does and does not cover"
         },
         {
           "operation": "GetRolePolicy",
@@ -3939,7 +3942,7 @@
           "operation": "CreatePolicy",
           "category": "Managed policies",
           "status": "✅ Supported",
-          "notes": "Inline `Tags` applied at creation"
+          "notes": "Inline `Tags` applied at creation. The `PolicyDocument` is parsed before it is stored and a malformed one is rejected with `MalformedPolicyDocument` (400): it must be valid JSON, a JSON object, carry a `Statement` that is an object or a non-empty array, and give every statement an `Effect` of exactly `Allow` or `Deny` plus an `Action` or `NotAction` (not both) — with `Resource`/`NotResource` mutually exclusive too, and `Version`, when present, one of `2012-10-17` or `2008-10-17`. Deliberately **not** checked: ARN syntax in `Resource`/`Principal`, whether an action name exists, condition-operator and condition-key names, `Sid` uniqueness and character set, `Principal` appearing in an identity policy or being absent from a trust policy, `Resource` being absent where AWS requires it, the 6,144-character document size limit, and an omitted or empty document, which is left to the operation's own required-parameter handling rather than reported as malformed"
         },
         {
           "operation": "GetPolicy",
@@ -3961,7 +3964,7 @@
           "operation": "CreatePolicyVersion",
           "category": "Managed policies",
           "status": "⚠️ Partial",
-          "notes": "`SetAsDefault=true` replaces the operative document and bumps `DefaultVersionId`; superseded versions are not retained and cannot be read back"
+          "notes": "`SetAsDefault=true` replaces the operative document and bumps `DefaultVersionId`; superseded versions are not retained and cannot be read back. Rejects a malformed document with `MalformedPolicyDocument` (400) — see `CreatePolicy` for what that check does and does not cover"
         },
         {
           "operation": "CreateGroup",
@@ -4003,7 +4006,8 @@
         {
           "operation": "PutGroupPolicy",
           "category": "Group inline policies",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Rejects a malformed document with `MalformedPolicyDocument` (400) — see `CreatePolicy` for what that check does and does not cover"
         },
         {
           "operation": "GetGroupPolicy",

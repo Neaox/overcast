@@ -1129,6 +1129,9 @@ func (h *Handler) listAccessKeysTyped(ctx context.Context, req *listAccessKeysRe
 // --- Inline User Policies ---
 
 func (h *Handler) putUserPolicyTyped(ctx context.Context, req *putUserPolicyReq) (*putUserPolicyResp, *protocol.AWSError) {
+	if aerr := checkPolicyDocument(req.PolicyDocument); aerr != nil {
+		return nil, aerr
+	}
 	u, aerr := h.store.getUser(ctx, req.UserName)
 	if aerr != nil {
 		return nil, aerr
@@ -1172,6 +1175,9 @@ func (h *Handler) deleteUserPolicyTyped(ctx context.Context, req *deleteUserPoli
 // --- Roles ---
 
 func (h *Handler) createRoleTyped(ctx context.Context, req *createRoleReq) (*createRoleResp, *protocol.AWSError) {
+	if aerr := checkPolicyDocument(req.AssumeRolePolicyDocument); aerr != nil {
+		return nil, aerr
+	}
 	path := normPath(req.Path)
 	if _, aerr := h.store.getRole(ctx, req.RoleName); aerr == nil {
 		return nil, errEntityAlreadyExists("role", req.RoleName)
@@ -1254,6 +1260,9 @@ func (h *Handler) deleteRoleTyped(ctx context.Context, req *deleteRoleReq) (*del
 // --- Inline Role Policies ---
 
 func (h *Handler) putRolePolicyTyped(ctx context.Context, req *putRolePolicyReq) (*putRolePolicyResp, *protocol.AWSError) {
+	if aerr := checkPolicyDocument(req.PolicyDocument); aerr != nil {
+		return nil, aerr
+	}
 	role, aerr := h.store.getRole(ctx, req.RoleName)
 	if aerr != nil {
 		return nil, aerr
@@ -1446,6 +1455,9 @@ func (h *Handler) removeRoleFromInstanceProfileTyped(ctx context.Context, req *r
 // --- Managed Policies ---
 
 func (h *Handler) createPolicyTyped(ctx context.Context, req *createPolicyReq) (*createPolicyResp, *protocol.AWSError) {
+	if aerr := checkPolicyDocument(req.PolicyDocument); aerr != nil {
+		return nil, aerr
+	}
 	path := normPath(req.Path)
 	arn := h.store.arnForPolicy(path, req.PolicyName)
 	if _, aerr := h.store.getPolicy(ctx, arn); aerr == nil {
@@ -1626,6 +1638,9 @@ func (h *Handler) listGroupsTyped(ctx context.Context, _ *listGroupsReq) (*listG
 // --- Inline Group Policies ---
 
 func (h *Handler) putGroupPolicyTyped(ctx context.Context, req *putGroupPolicyReq) (*putGroupPolicyResp, *protocol.AWSError) {
+	if aerr := checkPolicyDocument(req.PolicyDocument); aerr != nil {
+		return nil, aerr
+	}
 	g, aerr := h.store.getGroup(ctx, req.GroupName)
 	if aerr != nil {
 		return nil, aerr
@@ -2059,6 +2074,9 @@ func (h *Handler) listInstanceProfilesForRoleTyped(ctx context.Context, req *lis
 // --- Role Mutation ---
 
 func (h *Handler) updateAssumeRolePolicyTyped(ctx context.Context, req *updateAssumeRolePolicyReq) (*updateAssumeRolePolicyResp, *protocol.AWSError) {
+	if aerr := checkPolicyDocument(req.PolicyDocument); aerr != nil {
+		return nil, aerr
+	}
 	role, aerr := h.store.getRole(ctx, req.RoleName)
 	if aerr != nil {
 		return nil, aerr

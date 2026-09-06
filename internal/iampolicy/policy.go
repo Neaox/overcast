@@ -57,6 +57,14 @@ type ParseOptions struct {
 	RequireStatements   bool
 	RequirePrincipal    bool
 	RejectEmptyElements bool
+	// StrictEffect requires Effect to be spelled exactly "Allow" or "Deny".
+	// AWS is explicit that it is case sensitive — "The Effect value is case
+	// sensitive" (IAM User Guide, reference_policies_elements_effect.html) —
+	// but evaluation of an already-stored document stays case-insensitive, so
+	// a document written before this check is still evaluated rather than
+	// silently granting nothing. Set it where AWS would refuse the document at
+	// the API boundary; see [ValidateDocument].
+	StrictEffect bool
 }
 
 // Statement is a compiled policy statement. Wildcard patterns are compiled by
@@ -150,17 +158,17 @@ func ParseDocument(raw string, src SourceRef) ([]Statement, error) {
 func ParseDocumentWithOptions(raw string, src SourceRef, opts ParseOptions) ([]Statement, error) {
 	var wd wireDocument
 	if err := json.Unmarshal([]byte(raw), &wd); err != nil {
-		return nil, fmt.Errorf("policy %s: document is not valid JSON: %w", sourceName(src), err)
+		return nil, fmt.Errorf("%s is not valid JSON: %w", docLabel(src), err)
 	}
 	if len(wd.Statement) == 0 {
-		return nil, fmt.Errorf("policy %s: document has no Statement element", sourceName(src))
+		return nil, fmt.Errorf("%s has no Statement element", docLabel(src))
 	}
 	version := strings.TrimSpace(wd.Version)
 	if opts.RequireVersion && version == "" {
-		return nil, fmt.Errorf("policy %s: document has no Version element", sourceName(src))
+		return nil, fmt.Errorf("%s has no Version element", docLabel(src))
 	}
 	if version != "" && len(opts.AllowedVersions) > 0 && !containsString(opts.AllowedVersions, version) {
-		return nil, fmt.Errorf("policy %s: unsupported Version %q", sourceName(src), wd.Version)
+		return nil, fmt.Errorf("%s has an unsupported Version %q", docLabel(src), wd.Version)
 	}
 
 	var wires []wireStatement
@@ -168,7 +176,7 @@ func ParseDocumentWithOptions(raw string, src SourceRef, opts ParseOptions) ([]S
 	if err := json.Unmarshal(wd.Statement, &wires); err != nil {
 		var single wireStatement
 		if err2 := json.Unmarshal(wd.Statement, &single); err2 != nil {
-			return nil, fmt.Errorf("policy %s: Statement is neither a statement nor a list of statements: %w", sourceName(src), err)
+			return nil, fmt.Errorf("%s has a Statement that is neither a statement nor a list of statements: %w", docLabel(src), err)
 		}
 		wires = []wireStatement{single}
 		rawStmts = []json.RawMessage{wd.Statement}
@@ -179,7 +187,7 @@ func ParseDocumentWithOptions(raw string, src SourceRef, opts ParseOptions) ([]S
 		rawStmts = nil
 	}
 	if opts.RequireStatements && len(wires) == 0 {
-		return nil, fmt.Errorf("policy %s: Statement list is empty", sourceName(src))
+		return nil, fmt.Errorf("%s has an empty Statement list", docLabel(src))
 	}
 
 	var positions []positionPair
@@ -203,10 +211,14 @@ func ParseDocumentWithOptions(raw string, src SourceRef, opts ParseOptions) ([]S
 }
 
 func compileStatement(ws wireStatement, src SourceRef, index int, opts ParseOptions) (Statement, error) {
-	where := fmt.Sprintf("policy %s statement %d", sourceName(src), index+1)
+	where := statementLabel(src, index)
 
 	effect := strings.TrimSpace(ws.Effect)
-	if !strings.EqualFold(effect, "Allow") && !strings.EqualFold(effect, "Deny") {
+	if opts.StrictEffect {
+		if effect != "Allow" && effect != "Deny" {
+			return Statement{}, fmt.Errorf("%s: Effect must be exactly \"Allow\" or \"Deny\", got %q", where, ws.Effect)
+		}
+	} else if !strings.EqualFold(effect, "Allow") && !strings.EqualFold(effect, "Deny") {
 		return Statement{}, fmt.Errorf("%s: Effect must be Allow or Deny, got %q", where, ws.Effect)
 	}
 
@@ -447,9 +459,21 @@ func parseConditionBlock(raw map[string]json.RawMessage, where string) (map[stri
 	return out, nil
 }
 
-func sourceName(src SourceRef) string {
+// docLabel and statementLabel name the offending document in an error. A
+// SourceRef with no ID is the API-boundary check (see [ValidateDocument]),
+// where there is no stored policy to name and the caller wants a message it
+// can hand straight to the client; everything else names its source, which is
+// what the simulator reports back as SourcePolicyId.
+func docLabel(src SourceRef) string {
 	if strings.TrimSpace(src.ID) == "" {
-		return "(unnamed)"
+		return "the policy document"
 	}
-	return src.ID
+	return "policy " + src.ID
+}
+
+func statementLabel(src SourceRef, index int) string {
+	if strings.TrimSpace(src.ID) == "" {
+		return fmt.Sprintf("statement %d", index+1)
+	}
+	return fmt.Sprintf("policy %s statement %d", src.ID, index+1)
 }

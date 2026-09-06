@@ -417,7 +417,7 @@ func TestDeleteStack_iamManagedPolicyBlockedByExternalAttachment(t *testing.T) {
 	// And: a role outside the stack attaches it
 	roleResp := iamQuery(t, srv, "CreateRole", url.Values{
 		"RoleName":                 []string{"outside-the-stack-role"},
-		"AssumeRolePolicyDocument": []string{`{"Version":"2012-10-17","Statement":[]}`},
+		"AssumeRolePolicyDocument": []string{cfnTrustPolicy},
 	})
 	roleResp.Body.Close()
 	helpers.AssertStatus(t, roleResp, http.StatusOK)

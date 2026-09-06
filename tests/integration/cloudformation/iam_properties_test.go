@@ -24,6 +24,12 @@ const (
 	iamReadOnlyPolicyArn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
 	iamAdminPolicyArn    = "arn:aws:iam::aws:policy/AdministratorAccess"
 	iamPowerUserArn      = "arn:aws:iam::aws:policy/PowerUserAccess"
+
+	// cfnTrustPolicy is the trust policy these fixtures give a role. IAM parses
+	// an AssumeRolePolicyDocument since #1717, so the placeholder `{}` these
+	// tests used before — which AWS would have refused with
+	// MalformedPolicyDocument — is no longer accepted here either.
+	cfnTrustPolicy = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}`
 )
 
 func TestCreateStack_IAMRole_reconcilesPoliciesAndCreateProperties(t *testing.T) {
@@ -96,7 +102,7 @@ func TestCreateStack_IAMRole_commaDelimitedListPolicyParameter(t *testing.T) {
       "Type": "AWS::IAM::Role",
       "Properties": {
         "RoleName": "cfn-list-param-role",
-        "AssumeRolePolicyDocument": {"Version":"2012-10-17","Statement":[]},
+        "AssumeRolePolicyDocument": {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]},
         "ManagedPolicyArns": {"Ref": "ExecutionPolicies"}
       }
     }
@@ -303,7 +309,7 @@ func TestDeleteStack_IAMManagedPolicy_preservesOutOfBandPrincipal(t *testing.T) 
 	stackName := "iam-policy-external-role"
 	createIAMStack(t, srv, stackName, iamManagedPolicyTemplate("FirstRole", "FirstUser", "FirstGroup", "s3:GetObject"))
 	policyArn := "arn:aws:iam::000000000000:policy/cfn-owned-policy"
-	assertIAMSuccess(t, srv, "CreateRole", url.Values{"RoleName": {"external-role"}, "AssumeRolePolicyDocument": {"{}"}})
+	assertIAMSuccess(t, srv, "CreateRole", url.Values{"RoleName": {"external-role"}, "AssumeRolePolicyDocument": {cfnTrustPolicy}})
 	assertIAMSuccess(t, srv, "AttachRolePolicy", url.Values{"RoleName": {"external-role"}, "PolicyArn": {policyArn}})
 
 	// When: CloudFormation attempts to delete the policy.
@@ -363,7 +369,7 @@ func iamRoleResetTemplate() string {
       "Properties": {
         "RoleName": "cfn-policy-role",
         "Path": "/application/",
-        "AssumeRolePolicyDocument": {"Version":"2012-10-17","Statement":[]},
+        "AssumeRolePolicyDocument": {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]},
         "ManagedPolicyArns": ["` + iamAdminPolicyArn + `"],
         "Policies": [{"PolicyName":"new-inline","PolicyDocument":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"sqs:SendMessage","Resource":"*"}]}}]
       }
@@ -407,8 +413,8 @@ func iamUserTemplate(groupLogicalID, managedPolicyArn, policyName, action, tagVa
 func iamManagedPolicyTemplate(roleLogicalID, userLogicalID, groupLogicalID, action string) string {
 	return `{
   "Resources": {
-    "FirstRole": {"Type":"AWS::IAM::Role","Properties":{"RoleName":"cfn-first-role","AssumeRolePolicyDocument":{}}},
-    "SecondRole": {"Type":"AWS::IAM::Role","Properties":{"RoleName":"cfn-second-role","AssumeRolePolicyDocument":{}}},
+    "FirstRole": {"Type":"AWS::IAM::Role","Properties":{"RoleName":"cfn-first-role","AssumeRolePolicyDocument":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}}},
+    "SecondRole": {"Type":"AWS::IAM::Role","Properties":{"RoleName":"cfn-second-role","AssumeRolePolicyDocument":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}}},
     "FirstUser": {"Type":"AWS::IAM::User","Properties":{"UserName":"cfn-first-user"}},
     "SecondUser": {"Type":"AWS::IAM::User","Properties":{"UserName":"cfn-second-user"}},
     "FirstGroup": {"Type":"AWS::IAM::Group","Properties":{"GroupName":"cfn-first-group"}},
