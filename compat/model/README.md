@@ -488,10 +488,10 @@ already disagree about three members the pilot sends. So the emitter loads
 has no field for is refused rather than emitted.
 
 **java-sdk resolves its spellings from the pinned model instead**, and that is
-the other side of the same decision: the AWS SDK for Java v2 boxes every
-scalar, so a builder setter takes the value whatever the member's optionality
-and a boxed `0` really is serialized — nothing about a member's Java type
-follows from the SDK rather than from the model. Two of its naming rules are worth stating
+the other side of the same decision: the AWS SDK for Java v2 boxes every scalar,
+so a builder setter takes the value whatever the member's optionality and a
+boxed `0` really is serialized — nothing about a member's Java type follows from
+the SDK rather than from the model. Two of its naming rules are worth stating
 because they disagree, and an emitter that derived either from the other would
 not compile. A **class** — the client, an operation's `<Op>Request`, every enum
 and structure — is the name run through the SDK code generator's `pascalCase`,

@@ -366,9 +366,10 @@ parse and to be gofmt-clean here, while the proof that it *compiles* is the
 golden-identical here, and the proof that it compiles is the rust-sdk suite's
 Docker build.
 
-**Which tests read which SDK.** Only the Go emitter reads one — the Java
-emitter resolves against the fixture model the rest of the generator's tests
-already load, which is what makes its tests hermetic without a second module.
+**Which tests read which SDK.** Only the Go emitter reads one — the Java and
+Rust emitters resolve against the fixture model the rest of the generator's
+tests already load, which is what makes their tests hermetic without a second
+module.
 The Go emitter needs real Go types, so
 `testdata/awssdk` is a checked-in stand-in for the AWS SDK for Go v2: a module
 of its own, under the SDK's own module path, declaring the fixture service's

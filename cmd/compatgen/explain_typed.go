@@ -173,10 +173,9 @@ func renderDotnet(_ renderEnv, s *scenario, g *group, t *test) string {
 // than reproducing it drifts from it silently.
 //
 // A nil model is a snapshot that could not be read, and modelErr says why. That
-// must never happen to generation, but it can happen to `-explain`: a recipe
-// that overrides its model service names a snapshot this command looks for
-// under the scenario's own key. Saying so beats printing a spelling that would
-// be a guess.
+// must never happen to generation, but it can happen to `-explain`, which is a
+// reader's tool run on any checkout. Saying so beats printing a spelling that
+// would be a guess.
 func rustStyle(model *serviceModel, crate string, modelErr error) style {
 	st := typedStyle()
 	st.name = func(suffix string) string { return fmt.Sprintf("format!(\"{run_id}-{group}-%s\")", suffix) }
