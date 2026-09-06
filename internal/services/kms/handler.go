@@ -366,35 +366,16 @@ func (h *Handler) ScheduleKeyDeletion(w http.ResponseWriter, r *http.Request) {
 
 // CancelKeyDeletion cancels pending deletion.
 func (h *Handler) CancelKeyDeletion(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		KeyId string `json:"KeyId"`
-	}
+	var req keyIDRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	ctx := r.Context()
-	k, err := h.resolveKey(ctx, req.KeyId)
-	if err != nil || k == nil {
-		if k == nil {
-			protocol.WriteJSONError(w, r, errNotFound(req.KeyId))
-			return
-		}
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	out, aerr := h.cancelKeyDeletionTyped(r.Context(), &req)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	k.Enabled = false
-	k.KeyState = "Disabled"
-	k.DeletionDate = nil
-	if err := h.store.PutKey(ctx, k); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	h.publish(r, events.KMSKeyStateChanged, events.ResourcePayload{Name: k.KeyID})
-	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
-		"KeyId":    k.KeyID,
-		"KeyArn":   k.ARN,
-		"KeyState": k.KeyState,
-	}, "application/x-amz-json-1.1")
+	protocol.WriteAWSJSON(w, r, http.StatusOK, out, "application/x-amz-json-1.1")
 }
 
 // ── Alias handlers ────────────────────────────────────────────────────────────
