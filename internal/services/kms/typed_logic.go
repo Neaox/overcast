@@ -82,8 +82,10 @@ type listKeysResponse struct {
 }
 
 type scheduleKeyDeletionRequest struct {
-	KeyId               string `json:"KeyId" cbor:"KeyId"`
-	PendingWindowInDays int    `json:"PendingWindowInDays" cbor:"PendingWindowInDays"`
+	KeyId string `json:"KeyId" cbor:"KeyId"`
+	// A pointer so an omitted window (AWS default: 30 days) is told apart from
+	// an explicit out-of-range value, which AWS rejects.
+	PendingWindowInDays *int `json:"PendingWindowInDays" cbor:"PendingWindowInDays"`
 }
 
 type scheduleKeyDeletionResponse struct {
@@ -143,8 +145,20 @@ type decryptResponse struct {
 }
 
 type generateDataKeyRequest struct {
-	KeyId   string `json:"KeyId" cbor:"KeyId"`
-	KeySpec string `json:"KeySpec" cbor:"KeySpec"`
+	KeyId string `json:"KeyId" cbor:"KeyId"`
+	// KeySpec and NumberOfBytes are mutually exclusive and one is required;
+	// NumberOfBytes is a pointer so an explicit 0 is told apart from "absent"
+	// and reported as the range violation AWS reports.
+	KeySpec       string `json:"KeySpec" cbor:"KeySpec"`
+	NumberOfBytes *int   `json:"NumberOfBytes" cbor:"NumberOfBytes"`
+}
+
+type generateRandomRequest struct {
+	NumberOfBytes *int `json:"NumberOfBytes" cbor:"NumberOfBytes"`
+}
+
+type generateRandomResponse struct {
+	Plaintext []byte `json:"Plaintext" cbor:"Plaintext"`
 }
 
 type generateDataKeyResponse struct {
@@ -324,14 +338,15 @@ func (h *Handler) updateKeyDescriptionTyped(ctx context.Context, req *updateKeyD
 }
 
 func (h *Handler) scheduleKeyDeletionTyped(ctx context.Context, req *scheduleKeyDeletionRequest) (*scheduleKeyDeletionResponse, *protocol.AWSError) {
-	if req.PendingWindowInDays <= 0 {
-		req.PendingWindowInDays = 30
+	days, aerr := pendingWindowInDays(req.PendingWindowInDays)
+	if aerr != nil {
+		return nil, aerr
 	}
 	k, aerr := h.resolveKeyForTyped(ctx, req.KeyId)
 	if aerr != nil {
 		return nil, aerr
 	}
-	deletionDate := h.clk.Now().Add(time.Duration(req.PendingWindowInDays) * 24 * time.Hour)
+	deletionDate := h.clk.Now().Add(time.Duration(days) * 24 * time.Hour)
 	k.Enabled = false
 	k.KeyState = "PendingDeletion"
 	k.DeletionDate = &deletionDate
@@ -340,7 +355,10 @@ func (h *Handler) scheduleKeyDeletionTyped(ctx context.Context, req *scheduleKey
 	}
 	h.publishCtx(ctx, events.KMSKeyDeleted, events.ResourcePayload{Name: k.KeyID, ARN: k.ARN})
 	return &scheduleKeyDeletionResponse{
-		KeyId:        k.KeyID,
+		// KeyId is "The Amazon Resource Name (key ARN) of the KMS key whose
+		// deletion is scheduled" — not the bare key id, which does not parse
+		// where a caller feeds the response value into something ARN-shaped.
+		KeyId:        k.ARN,
 		KeyArn:       k.ARN,
 		DeletionDate: float64(deletionDate.UnixMilli()) / 1000.0,
 		KeyState:     k.KeyState,
@@ -366,13 +384,32 @@ func (h *Handler) createAliasTyped(ctx context.Context, req *createAliasRequest)
 	if req.AliasName == "" {
 		return nil, protocol.ErrMissingParameter("AliasName")
 	}
+	if aerr := validateAliasName(req.AliasName); aerr != nil {
+		return nil, aerr
+	}
+	// The region comes from the request, not from config alone, so the alias
+	// ARN matches the key ARN CreateKey minted on the same request.
+	aliasARN := fmt.Sprintf("arn:aws:kms:%s:%s:%s",
+		middleware.RegionFromContext(ctx, h.cfg.Region), h.cfg.AccountID, req.AliasName)
+
+	// CreateAlias never re-points an alias: "The alias must be unique in the
+	// account and Region." Changing an alias's target is UpdateAlias's job,
+	// and that distinction is what makes alias-based key rotation safe.
+	existing, err := h.store.GetAlias(ctx, req.AliasName)
+	if err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	if existing != nil {
+		return nil, errAliasExists(aliasARN)
+	}
+
 	k, aerr := h.resolveKeyForTyped(ctx, req.TargetKeyId)
 	if aerr != nil {
 		return nil, aerr
 	}
 	a := &Alias{
 		AliasName:   req.AliasName,
-		AliasARN:    fmt.Sprintf("arn:aws:kms:%s:%s:%s", h.cfg.Region, h.cfg.AccountID, req.AliasName),
+		AliasARN:    aliasARN,
 		TargetKeyID: k.KeyID,
 		CreatedAt:   h.clk.Now(),
 	}
@@ -417,6 +454,9 @@ func (h *Handler) listAliasesTyped(ctx context.Context, req *keyIDRequest) (*lis
 }
 
 func (h *Handler) encryptTyped(ctx context.Context, req *encryptRequest) (*encryptResponse, *protocol.AWSError) {
+	if aerr := validatePlaintextLength(len(req.Plaintext)); aerr != nil {
+		return nil, aerr
+	}
 	k, aerr := h.resolveEnabledKeyForTyped(ctx, req.KeyId)
 	if aerr != nil {
 		return nil, aerr
@@ -440,6 +480,19 @@ func (h *Handler) decryptTyped(ctx context.Context, req *decryptRequest) (*decry
 	k, err := h.store.GetKey(ctx, keyID)
 	if err != nil || k == nil {
 		return nil, errNotFound(keyID)
+	}
+	// KeyId is optional for symmetric ciphertext — the blob records the key
+	// that produced it — but when it is supplied it is authoritative: "If you
+	// identify a different KMS key, the Decrypt operation throws an
+	// IncorrectKeyException."
+	if req.KeyId != "" {
+		named, aerr := h.resolveKeyForTyped(ctx, req.KeyId)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if named.KeyID != k.KeyID {
+			return nil, errIncorrectKey()
+		}
 	}
 	if !k.Enabled {
 		return nil, errDisabled(k.KeyID)
@@ -469,6 +522,26 @@ func (h *Handler) generateDataKeyWithoutPlaintextTyped(ctx context.Context, req 
 		return nil, aerr
 	}
 	return &generateDataKeyWithoutPlaintextResponse{CiphertextBlob: ciphertext, KeyId: k.ARN}, nil
+}
+
+// generateRandomTyped returns NumberOfBytes cryptographically secure random
+// bytes. GenerateRandom uses no KMS key at all, and NumberOfBytes has no
+// default: "You must use the NumberOfBytes parameter to specify the length of
+// the random byte string. There is no default value for string length."
+// https://docs.aws.amazon.com/kms/latest/APIReference/API_GenerateRandom.html
+func (h *Handler) generateRandomTyped(_ context.Context, req *generateRandomRequest) (*generateRandomResponse, *protocol.AWSError) {
+	n := 0
+	if req.NumberOfBytes != nil {
+		n = *req.NumberOfBytes
+	}
+	if aerr := validateNumberOfBytes(n); aerr != nil {
+		return nil, aerr
+	}
+	out := make([]byte, n)
+	if _, err := rand.Read(out); err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	return &generateRandomResponse{Plaintext: out}, nil
 }
 
 func (h *Handler) signTyped(ctx context.Context, req *signRequest) (*signResponse, *protocol.AWSError) {
@@ -594,13 +667,16 @@ func (h *Handler) resolveEnabledKeyForTyped(ctx context.Context, keyID string) (
 }
 
 func (h *Handler) generateDataKeyParts(ctx context.Context, req *generateDataKeyRequest) (*Key, []byte, []byte, *protocol.AWSError) {
-	k, aerr := h.resolveEnabledKeyForTyped(ctx, req.KeyId)
+	// Parameter constraints are checked before the key is resolved: AWS
+	// validates the request shape ahead of looking anything up, so a bad
+	// NumberOfBytes reports itself rather than hiding behind NotFoundException.
+	keyLen, aerr := dataKeyLength(req.KeySpec, req.NumberOfBytes)
 	if aerr != nil {
 		return nil, nil, nil, aerr
 	}
-	keyLen := 32
-	if req.KeySpec == "AES_128" {
-		keyLen = 16
+	k, aerr := h.resolveEnabledKeyForTyped(ctx, req.KeyId)
+	if aerr != nil {
+		return nil, nil, nil, aerr
 	}
 	dataKey := make([]byte, keyLen)
 	if _, err := rand.Read(dataKey); err != nil {

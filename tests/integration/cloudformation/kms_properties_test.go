@@ -64,13 +64,17 @@ func kmsListResourceTags(t *testing.T, srv *helpers.TestServer, keyID string) ma
 	return out2
 }
 
-// A CDK key with `pendingWindow: Duration.days(5)` must actually get a
-// 5-day window on stack deletion. The pre-fix handler hardcoded
+// A CDK key with `pendingWindow: Duration.days(14)` must actually get a
+// 14-day window on stack deletion. The pre-fix handler hardcoded
 // PendingWindowInDays to 7 regardless of what the template asked for.
+// 14 is deliberately neither that 7 nor the 30-day default, and unlike the 5
+// this test first used it is inside the range KMS accepts (7-30, per
+// https://docs.aws.amazon.com/kms/latest/APIReference/API_ScheduleKeyDeletion.html)
+// — real CloudFormation could never have deleted a stack asking for 5.
 func TestDeleteStack_KMSKeyHonoursPendingWindowInDays(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 	stackName := "kms-pending-window"
-	template := kmsPropsKeyTemplate(`"PendingWindowInDays":5`)
+	template := kmsPropsKeyTemplate(`"PendingWindowInDays":14`)
 
 	create := cfnQuery(t, srv, "CreateStack", url.Values{"StackName": {stackName}, "TemplateBody": {template}})
 	defer create.Body.Close()
@@ -87,9 +91,9 @@ func TestDeleteStack_KMSKeyHonoursPendingWindowInDays(t *testing.T) {
 	if keyState != "PendingDeletion" {
 		t.Fatalf("KeyState = %q, want PendingDeletion", keyState)
 	}
-	want := float64(srv.Clock.Now().Add(5*24*time.Hour).UnixMilli()) / 1000.0
+	want := float64(srv.Clock.Now().Add(14*24*time.Hour).UnixMilli()) / 1000.0
 	if deletionDate != want {
-		t.Fatalf("DeletionDate = %v, want %v (5-day PendingWindowInDays honoured, not the hardcoded 7)", deletionDate, want)
+		t.Fatalf("DeletionDate = %v, want %v (14-day PendingWindowInDays honoured, not the hardcoded 7)", deletionDate, want)
 	}
 }
 

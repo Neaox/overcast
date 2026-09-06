@@ -52,6 +52,9 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"GenerateDataKeyWithoutPlaintext": op.NewTyped[generateDataKeyRequest, generateDataKeyWithoutPlaintextResponse](
 			"GenerateDataKeyWithoutPlaintext", h.generateDataKeyWithoutPlaintextTyped,
 		),
+		"GenerateRandom": op.NewTyped[generateRandomRequest, generateRandomResponse](
+			"GenerateRandom", h.generateRandomTyped,
+		),
 		"Sign": op.NewTyped[signRequest, signResponse](
 			"Sign", h.signTyped,
 		),

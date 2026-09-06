@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1485,
+  "total_ops": 1486,
   "services": [
     {
       "service": "s3",
@@ -4490,8 +4490,8 @@
     {
       "service": "kms",
       "display_name": "KMS",
-      "total_ops": 33,
-      "implemented_ops": 33,
+      "total_ops": 34,
+      "implemented_ops": 34,
       "operations": [
         {
           "operation": "CreateKey",
@@ -4531,7 +4531,7 @@
           "operation": "ScheduleKeyDeletion",
           "category": "Key lifecycle",
           "status": "✅ Supported",
-          "notes": "`PendingWindowInDays` honoured; defaults to 30 days"
+          "notes": "`PendingWindowInDays` 7-30, defaulting to 30; response `KeyId` is the key ARN"
         },
         {
           "operation": "CancelKeyDeletion",
@@ -4543,7 +4543,7 @@
           "operation": "CreateAlias",
           "category": "Aliases",
           "status": "✅ Supported",
-          "notes": "`alias/` prefix required"
+          "notes": "`alias/` prefix required; reserved `alias/aws/` and duplicate names rejected"
         },
         {
           "operation": "DeleteAlias",
@@ -4566,25 +4566,31 @@
           "operation": "Encrypt",
           "category": "Symmetric crypto",
           "status": "✅ Supported",
-          "notes": "AES-256-GCM; ciphertext envelope includes key ID"
+          "notes": "AES-256-GCM; `Plaintext` capped at 4096 bytes; ciphertext envelope includes key ID"
         },
         {
           "operation": "Decrypt",
           "category": "Symmetric crypto",
           "status": "✅ Supported",
-          "notes": "Extracts key ID from ciphertext envelope"
+          "notes": "Extracts key ID from ciphertext envelope; a `KeyId` naming a different key is an `IncorrectKeyException`"
         },
         {
           "operation": "GenerateDataKey",
           "category": "Symmetric crypto",
           "status": "✅ Supported",
-          "notes": "`AES_256` and `AES_128` specs; returns plaintext + encrypted"
+          "notes": "Exactly one of `KeySpec` (`AES_256`/`AES_128`) or `NumberOfBytes` (1-1024); returns plaintext + encrypted"
         },
         {
           "operation": "GenerateDataKeyWithoutPlaintext",
           "category": "Symmetric crypto",
           "status": "✅ Supported",
-          "notes": "Returns encrypted data key only"
+          "notes": "Same `KeySpec`/`NumberOfBytes` rules as `GenerateDataKey`; returns encrypted data key only"
+        },
+        {
+          "operation": "GenerateRandom",
+          "category": "Symmetric crypto",
+          "status": "⚠️ Partial",
+          "notes": "`NumberOfBytes` (1-1024) required; `CustomKeyStoreId` and `Recipient` are ignored (not emulated)"
         },
         {
           "operation": "ReEncrypt",
