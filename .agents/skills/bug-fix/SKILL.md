@@ -51,6 +51,18 @@ When you need to confirm how AWS behaves, escalate through these sources in orde
 | **3. Other emulators**                       | LocalStack, Floci (Java), Moto (Python), MinStack, Flick (Go) | Free, minutes          | When docs are ambiguous or missing edge cases                            | These projects have already done the research. Their test fixtures and handler logic encode real AWS behaviour. Cross-reference, don't blindly copy.                                                                                                          |
 | **4. Real AWS** _(requires user permission)_ | Spin up a real resource, test with `aws --debug`              | ~$0.01–$1.00, 2–10 min | Last resort — when all cheaper tiers are exhausted and the user consents | Definitive wire-level truth. **Annotate the code with a comment linking to the evidence so future agents can skip re-researching (see below).**                                                                                                               |
 
+**Tier 4 is not always expensive.** Spinning up a resource is the costly form. For a read-only
+question about S3, an anonymously readable [Open Data](https://registry.opendata.aws/) bucket
+answers definitively for free — no account, no credentials, no writes. It still needs the user's
+permission, but that is a much easier permission to ask for than one that bills them.
+
+**When tier 4 contradicts tiers 1–3, that is worth writing down.** Record it in
+[docs/dev/compatibility/looks-like-a-bug.md](../../../docs/dev/compatibility/looks-like-a-bug.md)
+with the command and the date, and cite the page from a comment at the code site — otherwise the
+next reader restores the plausible answer. On 2026-09-06 an S3 `Range` sweep found floci and
+ministack agreeing with each other, with the RFC, and with the issue's own acceptance criteria —
+and all of them disagreeing with real S3. Two emulators concurring is not corroboration.
+
 **Decision rule:** If tier N gives a clear, unambiguous answer from an authoritative source, stop — don't escalate further. Only escalate when:
 
 - Docs are silent or contradictory on the specific edge case

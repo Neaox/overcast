@@ -687,3 +687,51 @@ func TestAsAWSError_returnsNilForNonAWSError(t *testing.T) {
 		t.Errorf("expected nil for non-AWSError chain, got %v", got)
 	}
 }
+
+// TestWriteXMLError_detailsAreOptionalAndOrdered pins both halves of the
+// XMLDetails contract added in #1864: an error that names no extra members
+// renders exactly the envelope it always did — byte for byte, because this
+// field sits in the document every REST-XML service shares — and one that does
+// renders them between Message and RequestId, which is where AWS puts them.
+func TestWriteXMLError_detailsAreOptionalAndOrdered(t *testing.T) {
+	write := func(aerr *protocol.AWSError) string {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req = req.WithContext(protocol.ContextWithRequestID(req.Context(), "rid"))
+		w := httptest.NewRecorder()
+		protocol.WriteXMLError(w, req, aerr)
+		body, _ := io.ReadAll(w.Result().Body)
+		return string(body)
+	}
+
+	// Given: an error with no details — the shape every other service sends
+	plain := write(&protocol.AWSError{
+		Code:       "NoSuchBucket",
+		Message:    "The bucket does not exist",
+		HTTPStatus: http.StatusNotFound,
+	})
+
+	// Then: it is unchanged by the field's existence
+	want := xml.Header + "<Error><Code>NoSuchBucket</Code>" +
+		"<Message>The bucket does not exist</Message><RequestId>rid</RequestId></Error>"
+	if plain != want {
+		t.Errorf("an error with no XMLDetails must be byte-identical to the old envelope\n got: %s\nwant: %s", plain, want)
+	}
+
+	// And: one that names details renders them in order, after Message
+	detailed := write(&protocol.AWSError{
+		Code:       "InvalidRange",
+		Message:    "The requested range is not satisfiable",
+		HTTPStatus: http.StatusRequestedRangeNotSatisfiable,
+		XMLDetails: []protocol.XMLDetail{
+			{Name: "RangeRequested", Value: "bytes=500-600"},
+			{Name: "ActualObjectSize", Value: "136"},
+		},
+	})
+	wantDetailed := xml.Header + "<Error><Code>InvalidRange</Code>" +
+		"<Message>The requested range is not satisfiable</Message>" +
+		"<RangeRequested>bytes=500-600</RangeRequested>" +
+		"<ActualObjectSize>136</ActualObjectSize><RequestId>rid</RequestId></Error>"
+	if detailed != wantDetailed {
+		t.Errorf("details must render in order between Message and RequestId\n got: %s\nwant: %s", detailed, wantDetailed)
+	}
+}

@@ -445,9 +445,12 @@ const (
 // SDK can raise a modelled error from, and the Content-Length follows from the
 // bytes actually written rather than announcing the object's length and then
 // sending nothing — a mismatch that leaves the connection desynchronised for
-// whatever request reuses it next. The Content-Range: bytes */<size> that RFC
-// 9110 §15.5.17 requires on a 416 is set first, so it survives onto the error
-// response.
+// whatever request reuses it next.
+//
+// No Content-Range accompanies the 416. RFC 9110 §15.5.17 says a 416 SHOULD
+// carry one, and real S3 does not send it (#1864) — the object's size reaches
+// the caller as the error document's ActualObjectSize instead. AWS wins over
+// the RFC here; docs/dev/compatibility/looks-like-a-bug.md holds the transcript.
 func applyObjectRange(w http.ResponseWriter, r *http.Request, obj *Object) (objectRange, bool) {
 	header := r.Header.Get("Range")
 	if header == "" {
@@ -459,8 +462,7 @@ func applyObjectRange(w http.ResponseWriter, r *http.Request, obj *Object) (obje
 		return objectRange{}, true
 	}
 	if outcome == rangeUnsatisfiable {
-		w.Header().Set("Content-Range", "bytes */"+strconv.FormatInt(obj.ContentLength, 10))
-		protocol.WriteXMLError(w, r, errInvalidRange())
+		protocol.WriteXMLError(w, r, errInvalidRange(header, obj.ContentLength))
 		return objectRange{}, false
 	}
 

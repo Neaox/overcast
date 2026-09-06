@@ -141,8 +141,11 @@ func TestGetObject_unsatisfiableRangeIsAWellFramedInvalidRange(t *testing.T) {
 	// matches the bytes actually written
 	helpers.AssertStatus(t, resp, http.StatusRequestedRangeNotSatisfiable)
 	helpers.AssertRequestID(t, resp)
-	if cr := resp.Header.Get("Content-Range"); cr != "bytes */10" {
-		t.Errorf("expected Content-Range %q, got %q", "bytes */10", cr)
+	// No Content-Range: real S3 sends none on a 416, though RFC 9110
+	// §15.5.17 says it SHOULD (#1864). The size travels in the document
+	// instead, as ActualObjectSize.
+	if cr := resp.Header.Get("Content-Range"); cr != "" {
+		t.Errorf("expected no Content-Range on the 416, got %q", cr)
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -151,15 +154,23 @@ func TestGetObject_unsatisfiableRangeIsAWellFramedInvalidRange(t *testing.T) {
 	assertContentLengthMatchesBody(t, resp, body)
 
 	var errResp struct {
-		XMLName xml.Name `xml:"Error"`
-		Code    string   `xml:"Code"`
-		Message string   `xml:"Message"`
+		XMLName          xml.Name `xml:"Error"`
+		Code             string   `xml:"Code"`
+		Message          string   `xml:"Message"`
+		RangeRequested   string   `xml:"RangeRequested"`
+		ActualObjectSize string   `xml:"ActualObjectSize"`
 	}
 	if err := xml.Unmarshal(body, &errResp); err != nil {
 		t.Fatalf("416 body is not an <Error> document: %v (body: %q)", err, body)
 	}
 	if errResp.Code != "InvalidRange" {
 		t.Errorf("expected error code %q, got %q", "InvalidRange", errResp.Code)
+	}
+	if errResp.RangeRequested != "bytes=500-600" {
+		t.Errorf("expected RangeRequested %q, got %q", "bytes=500-600", errResp.RangeRequested)
+	}
+	if errResp.ActualObjectSize != "10" {
+		t.Errorf("expected ActualObjectSize %q, got %q", "10", errResp.ActualObjectSize)
 	}
 }
 
@@ -238,8 +249,8 @@ func TestHeadObject_unsatisfiableRangeSendsNoBody(t *testing.T) {
 	// Then: the same 416 answer as GET, with no body at all
 	helpers.AssertStatus(t, resp, http.StatusRequestedRangeNotSatisfiable)
 	helpers.AssertRequestID(t, resp)
-	if cr := resp.Header.Get("Content-Range"); cr != "bytes */10" {
-		t.Errorf("expected Content-Range %q, got %q", "bytes */10", cr)
+	if cr := resp.Header.Get("Content-Range"); cr != "" {
+		t.Errorf("expected no Content-Range on the HEAD 416, got %q", cr)
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
