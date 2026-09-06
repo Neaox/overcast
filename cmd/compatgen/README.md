@@ -7,7 +7,8 @@ scenario IR (`compat/model/scenarios/`), the refusal report
 (`compat/suites/registry.generated.json`) and — for the suites whose SDK has
 no dynamic-dispatch API — the source they compile
 (`compat/suites/go-sdk/internal/groups/scenarios_*_gen.go`,
-`compat/suites/java-sdk/src/main/java/io/overcast/compat/groups/Scenarios*Gen.java`). It is a
+`compat/suites/java-sdk/src/main/java/io/overcast/compat/groups/Scenarios*Gen.java`,
+`compat/suites/rust-sdk/src/groups/scenarios_*_gen.rs`). It is a
 build-time tool whose output is committed data; nothing under `compat/`
 imports it or any other emulator Go code.
 
@@ -156,16 +157,17 @@ into their marshaller layers to fake one, because the reason for running eight
 suites is that each exercises its own real typed serialization path. So
 `emit_go.go` writes Go instead — one function per scenario test, each building
 a real `*sqs.CreateQueueInput` and calling a real client method — which the
-`go-sdk` suite's ordinary build compiles, and `emit_java.go` writes Java the
-same way: one method per test, each building a real `CreateQueueRequest` and
-calling a real client method, compiled by the `java-sdk` suite's
-`mvn package`.
+`go-sdk` suite's ordinary build compiles; `emit_java.go` writes Java the same
+way, one method per test building a real `CreateQueueRequest`, compiled by the
+`java-sdk` suite's `mvn package`; and `emit_rust.go` writes Rust the same way,
+one fluent builder chain per test, compiled by `cargo build`.
 
 What is emitted is the *data* plus the typed calls. The semantics — the
 context bag, `$name`/`$ref`, the closed check set, error matching,
-`eventually`, the six-field failure message — are written once by hand in
-`compat/suites/go-sdk/internal/scenario` and
-`compat/suites/java-sdk/.../io/overcast/compat/scenario`, and never re-emitted.
+`eventually`, the six-field failure message — are written once by hand in each
+suite (`compat/suites/go-sdk/internal/scenario`,
+`compat/suites/java-sdk/.../io/overcast/compat/scenario`,
+`compat/suites/rust-sdk/src/scenario`) and never re-emitted.
 
 ### Where the types come from
 
@@ -291,6 +293,61 @@ generator's code. The Java emitter has its own golden
 (`ScenariosWidgetsGen.java.golden`) on the same terms; there is no formatter to
 run over it, so the emitter produces the file's final layout directly.
 
+### The Rust emitter reads the model instead
+
+`emit_rust.go` needs no SDK lookup, and the reason is the fluent builder: a
+setter takes the value itself — `.queue_name(impl Into<String>)`,
+`.max_number_of_messages(i32)` — never an `Option`. A member's optionality
+never reaches the call site, so the question that forces the Go emitter to load
+the vendored SDK does not arise, and neither does its consequence: a value set
+to its type's zero is sent exactly as any other value is, so Rust has no
+zero-value refusal. Everything the spelling does need — string, enum, integer
+width, list, map, structure — is the modeled kind, which the pinned snapshot
+carries.
+
+| modeled kind | value | emitted |
+| --- | --- | --- |
+| string | `"blue"` | `.description("blue")` |
+| enum | `"SCP"` | `.r#type(aws_sdk_organizations::types::PolicyType::from("SCP"))` |
+| integer | `30` | `.visibility_timeout(30)` |
+| map | `{"a":"b"}` | `.attributes(K::from("a"), "b")`, one call per entry |
+| list of strings | `["compat"]` | `.tag_keys("compat")`, one call per element |
+| list of structures | `[{"Key":"k"}]` | `.tags(types::Tag::builder().key("k").build()…)` |
+| any of them, `{"$ref":"q"}` | | `.queue_url(b.string("QueueUrl")?)` |
+
+The last row is the only thing left to run time, and it is not the expression:
+the runtime evaluates a call's whole params tree before anything is sent — that
+evaluation is failure-message field 3 — and the typed call reads one leaf of it
+back **by path**. So an expression is spelled once, as data, and the value the
+SDK is handed is the value the failure message quotes.
+
+Two of the model's answers are derived rather than read, and both are stated
+here because getting either wrong is a compile error in the suite:
+
+- **A builder is fallible exactly where the structure has a required member.**
+  That is smithy-rs's rule, and it follows from the model, so `.build()` is
+  written bare for `Account` and with a `map_err(…)?` for `Tag`.
+- **A member whose `snake_case` name is a Rust keyword is a raw identifier.**
+  Organizations models a member called `Type`; the setter is `r#type`.
+
+What the model cannot answer is whether the vendored crate has the operation at
+all. A crate older than the pinned snapshot is a **compile failure of the
+suite** rather than a generation-time refusal, because `cmd/compatgen` has no
+Rust toolchain to ask; the rust-sdk Dockerfile builds before it runs, so it is
+loud, and the fix is a pin in `compat/suites/rust-sdk/Cargo.toml`.
+
+Two things produce `rust-emit-unsupported:<Member>`: a member whose modeled
+kind has no IR literal (a timestamp, blob, document or union), and an
+expression bound to a composite member, which has no scalar slot to land in.
+Neither is reached by the current corpus.
+
+There is no formatter to run over the emitted Rust — this is a Go program, and
+CI's docs job carries no Rust toolchain — so the layout `emit_rust.go` writes
+is the output's layout, and the generated files are deliberately left out of
+`cargo fmt`. `testdata/golden/scenarios_widgets_gen.rs.golden` is reviewed as a
+diff exactly as the Go golden is; the proof that the result *compiles* is the
+rust-sdk suite's own Docker build.
+
 ## Determinism
 
 Regeneration is byte-identical: sorted keys, struct fields in declaration
@@ -305,11 +362,14 @@ check from the command line. CI runs both.
 `go test -tags dev ./cmd/compatgen` runs unit tests over a fixture service
 under `testdata/` (shapes, recipe and values). The emitted Go is proved to
 parse and to be gofmt-clean here, while the proof that it *compiles* is the
-`go-sdk` suite's own build.
+`go-sdk` suite's own build; the emitted Rust is proved deterministic and
+golden-identical here, and the proof that it compiles is the rust-sdk suite's
+Docker build.
 
-**Which tests read which SDK.** Only the Go emitter reads one — the Java
-emitter resolves against the fixture model the rest of the generator's tests
-already load, which is what makes its tests hermetic without a second module.
+**Which tests read which SDK.** Only the Go emitter reads one — the Java and
+Rust emitters resolve against the fixture model the rest of the generator's
+tests already load, which is what makes their tests hermetic without a second
+module.
 The Go emitter needs real Go types, so
 `testdata/awssdk` is a checked-in stand-in for the AWS SDK for Go v2: a module
 of its own, under the SDK's own module path, declaring the fixture service's

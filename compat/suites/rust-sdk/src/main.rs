@@ -2,6 +2,7 @@ mod clients;
 mod groups;
 mod harness;
 mod registry;
+mod scenario;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -25,7 +26,7 @@ async fn main() {
     let skip_docker = std::env::var("OVERCAST_COMPAT_SKIP_DOCKER").ok().as_deref() == Some("1");
 
     let clients = Arc::new(AwsClients::new(endpoint.clone(), region.clone()).await);
-    let service_groups = all_service_groups(clients);
+    let service_groups = all_service_groups(clients.clone());
 
     let mut setups = HashMap::new();
     let mut teardowns = HashMap::new();
@@ -34,6 +35,22 @@ async fn main() {
         setups.extend(group.setups());
         teardowns.extend(group.teardowns());
     }
+
+    // The generated groups (cmd/compatgen; docs/plans/compat-coverage-modelgen.md
+    // §3.6). Their setup and teardown hooks join the same maps the hand-written
+    // ones use, because the loader looks a hook up by group name and there is
+    // one namespace for that. Their tests resolve through the ScenarioBackend
+    // hook instead of merge_impls, which keeps the two impl namespaces apart:
+    // a generated group can neither shadow nor be shadowed by a hand-written
+    // registration.
+    let generated = groups::scenarios_gen::scenario_groups(&clients);
+    let mut generated_impls = HashMap::new();
+    for group in &generated {
+        setups.extend(group.setups());
+        teardowns.extend(group.teardowns());
+        generated_impls.extend(group.impls());
+    }
+    let backend = scenario::Backend::new(generated_impls);
 
     // The impls go through merge_impls rather than extend: a key two service
     // files both register would otherwise lose one implementation with nothing
@@ -56,11 +73,17 @@ async fn main() {
         capabilities.insert(String::from("docker"));
     }
 
-    // No scenario backend yet: rust-sdk has no interpreter for the generated
-    // registry's scenario groups, so a generated group scoped to this suite
-    // reports a loud failure rather than a skip. See registry::ScenarioBackend.
-    let mut all_groups = match build_groups(suite, &impls, &setups, &teardowns, &capabilities, None)
-    {
+    // The generated groups resolve through the backend above; a generated group
+    // scoped to this suite that it cannot resolve still reports a loud failure
+    // rather than a skip. See registry::ScenarioBackend.
+    let mut all_groups = match build_groups(
+        suite,
+        &impls,
+        &setups,
+        &teardowns,
+        &capabilities,
+        Some(&backend),
+    ) {
         Ok(groups) => groups,
         Err(err) => {
             // Covers both a registry that will not load and unusable impl
@@ -209,5 +232,80 @@ mod registration_tests {
         // registrations resolving, the same `None` main passes.
         build_groups("rust-sdk", &impls, &setups, &teardowns, &capabilities, None)
             .expect("real impl registrations must resolve against the real registry");
+    }
+
+    /// The same shape of check for the *generated* registrations: every test of
+    /// every generated group this suite is scoped to must be registered under
+    /// its group-qualified key, and every such group must carry both hooks.
+    ///
+    /// It is the check that keeps a silently dropped test loud. The loader's
+    /// fallback for a generated group with no resolution is a hard failure
+    /// naming the group, which is loud but only at run time, against a live
+    /// emulator; this fails the build instead.
+    #[tokio::test]
+    async fn generated_groups_are_registered_for_every_test_the_registry_declares() {
+        let clients = Arc::new(
+            AwsClients::new("http://localhost:4566".to_string(), "us-east-1".to_string()).await,
+        );
+        let generated = groups::scenarios_gen::scenario_groups(&clients);
+
+        let mut setups = HashMap::new();
+        let mut teardowns = HashMap::new();
+        let mut impls: HashMap<String, harness::TestFn> = HashMap::new();
+        for group in &generated {
+            setups.extend(group.setups());
+            teardowns.extend(group.teardowns());
+            impls.extend(group.impls());
+        }
+
+        let backend = scenario::Backend::new(impls.clone());
+        let mut capabilities = HashSet::new();
+        capabilities.insert("docker".to_string());
+        let all_groups = build_groups(
+            "rust-sdk",
+            &HashMap::new(),
+            &setups,
+            &teardowns,
+            &capabilities,
+            Some(&backend),
+        )
+        .expect("the registry must load with only the generated registrations");
+
+        let mut generated_groups = 0;
+        for group in &all_groups {
+            // The generated groups are the ones the scenario corpus names; a
+            // hand-written group with no impl here is the ordinary
+            // not-yet-implemented skip and is not what this case is about.
+            if !group.name.contains("-gen-") {
+                continue;
+            }
+            generated_groups += 1;
+            assert!(
+                setups.contains_key(&group.name),
+                "generated group {} registers no setup hook; an empty phase is a no-op, not a missing one",
+                group.name
+            );
+            assert!(
+                teardowns.contains_key(&group.name),
+                "generated group {} registers no teardown hook",
+                group.name
+            );
+            for test in &group.tests {
+                let key = format!("{}:{}", group.name, test.name);
+                assert!(
+                    impls.contains_key(&key),
+                    "no generated implementation registered under {key:?}"
+                );
+                assert!(
+                    test.skip.is_none(),
+                    "generated test {key:?} resolved to a skip: {:?}",
+                    test.skip
+                );
+            }
+        }
+        assert!(
+            generated_groups > 0,
+            "no generated groups in the registry: registry.generated.json is missing or empty, and this case would pass without checking anything"
+        );
     }
 }

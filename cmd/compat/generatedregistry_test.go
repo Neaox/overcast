@@ -82,18 +82,26 @@ func TestCheckedInGeneratedRegistryLeavesGatesUnchanged(t *testing.T) {
 // the same gate: concatenating the sibling must leave the checker's verdict
 // identical, including the reverse (unregistered-result) direction. It held
 // trivially while the file was empty; it holds now because `suites` scopes a
-// generated group to the backends that can run it, and rust-sdk is not one —
-// which is the property worth pinning, and the one TestGeneratedSuiteScoping-
-// AddsNoParityDebt proves on a fixture.
+// generated group to the backends that can run it, so a suite none of them
+// names sees no change — which is the property worth pinning, and the one
+// TestGeneratedSuiteScopingAddsNoParityDebt proves on a fixture.
+//
+// The suite is chosen from the file rather than named here, because which
+// suites have a scenario backend moves as the backends land
+// (cmd/compatgen/registry.go's scenarioBackends). Pinning one by name made this
+// case fail the day rust-sdk got an emitter, which is a change in the
+// generator's coverage and not in the property under test.
 func TestCheckedInGeneratedRegistryLeavesParityUnchanged(t *testing.T) {
+	suite := suiteWithNoGeneratedGroups(t)
+
 	// Given: the hand-written registry and a run against it.
 	report := reportWithResults(
-		resultSpec{suite: "rust-sdk", service: "s3", group: "s3-crud", test: "CreateBucket", status: compat.StatusPass},
+		resultSpec{suite: suite, service: "s3", group: "s3-crud", test: "CreateBucket", status: compat.StatusPass},
 	)
-	addSkip(report, "rust-sdk", "s3", "s3-crud", "DeleteBucket", notImplementedSentinel("rust-sdk"))
+	addSkip(report, suite, "s3", "s3-crud", "DeleteBucket", notImplementedSentinel(suite))
 
 	hand := testRegistry()
-	handOnly := computeParity(hand, report, []string{"rust-sdk"})
+	handOnly := computeParity(hand, report, []string{suite})
 
 	// When: the checked-in sibling is concatenated in.
 	concat, err := readParityRegistries(
@@ -102,7 +110,7 @@ func TestCheckedInGeneratedRegistryLeavesParityUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readParityRegistries: %v", err)
 	}
-	withSibling := computeParity(concat, report, []string{"rust-sdk"})
+	withSibling := computeParity(concat, report, []string{suite})
 
 	// Then: nothing moves.
 	if withSibling.Expected != handOnly.Expected || withSibling.Implemented != handOnly.Implemented {
@@ -115,6 +123,35 @@ func TestCheckedInGeneratedRegistryLeavesParityUnchanged(t *testing.T) {
 	if len(withSibling.Unregistered) != 0 {
 		t.Errorf("unregistered = %#v, want none", withSibling.Unregistered)
 	}
+}
+
+// suiteWithNoGeneratedGroups names a suite the checked-in generated registry
+// scopes no group to. It is what the case above needs: a suite for which
+// concatenating the sibling can change nothing at all.
+//
+// The candidates are every suite the repository has a baseline shard for, minus
+// whichever of them the file names. A checkout where every suite has a scenario
+// backend has no such suite, and the case says so rather than passing on a
+// vacuous choice.
+func suiteWithNoGeneratedGroups(t *testing.T) string {
+	t.Helper()
+	gen, err := readGeneratedRegistry(repoPath(t, "compat", "suites", "registry.generated.json"))
+	if err != nil {
+		t.Fatalf("readGeneratedRegistry: %v", err)
+	}
+	scoped := map[string]bool{}
+	for _, g := range gen.Groups {
+		for _, suite := range g.Suites {
+			scoped[suite] = true
+		}
+	}
+	for _, suite := range []string{"cdk", "java-sdk", "dotnet-sdk", "rust-sdk", "cli", "go-sdk", "node-js-sdk", "python-sdk"} {
+		if !scoped[suite] {
+			return suite
+		}
+	}
+	t.Fatal("every suite has a scenario backend; this case needs one the generated registry scopes nothing to")
+	return ""
 }
 
 // TestReadGeneratedRegistryTolueratesMissingFile pins the "missing = empty"

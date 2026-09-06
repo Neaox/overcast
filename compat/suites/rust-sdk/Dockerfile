@@ -17,6 +17,10 @@ COPY rust-sdk/src/ ./src/
 # so the build stage needs that file one directory above WORKDIR too — the
 # same file the final stage below already ships to the image root.
 COPY registry.json /registry.json
+# And its machine-written sibling, which the loader resolves beside it: without
+# it the build stage's registration test would see no generated groups at all
+# and pass vacuously, which is the one thing a registration test must not do.
+COPY registry.generated.json /registry.generated.json
 # `cargo test` beside the build, for the same reason java-sdk's Dockerfile runs
 # `mvn package`: src/registry.rs carries the unit tests that pin impl-key
 # resolution, and a regression there changes what a compat run *reports*

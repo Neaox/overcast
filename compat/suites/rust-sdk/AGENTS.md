@@ -34,6 +34,11 @@ EventBridge. It runs in the compat CI matrix
 (`.github/workflows/compat.yml`), where a dedicated `rust-sdk-image` job
 builds and publishes its image.
 
+It is also a **source-emitting** backend for the generated groups: `cmd/compatgen`
+writes one Rust function per scenario test into `src/groups/scenarios_*_gen.rs`,
+and `src/scenario/` is the hand-written runtime they call into. See
+[Generated groups](#generated-groups-and-the-scenariobackend-hook).
+
 Widening coverage means adding a group struct and its `aws-sdk-*` crate — not
 building the suite from scratch. Start from the code that is here.
 
@@ -53,6 +58,17 @@ building the suite from scratch. Start from the code that is here.
 > `Cargo.toml` is the source of truth for every pinned version; do not restate
 > one here. `Cargo.lock` is not checked in — the exact `=` pins stand in for it.
 
+**The service crates and the smithy runtime crates are pinned from different
+releases, on purpose.** `aws-sdk-organizations` has to be new enough to declare
+every operation the pinned AWS model does — the generated `organizations-gen-probe`
+group calls five that a crate of the other services' vintage does not have — and
+that crate's own requirements pull `aws-smithy-*`, `aws-runtime` and
+`aws-credential-types` forward with it. Cargo unifies them to one version each,
+which is what a user's build would do too. Moving the service crates is a
+separate change with a separate blast radius (every hand-written group's
+results); moving the runtime crates is what keeps the generated groups
+compilable.
+
 ---
 
 ## File layout
@@ -68,7 +84,7 @@ compat/suites/rust-sdk/
   BUILD_NOTES.md   ← the BuildKit cache-mount notes behind the Dockerfile
 
   src/
-    main.rs        ← entry point and the registration test
+    main.rs        ← entry point and the registration tests
     clients.rs     ← AwsClients: one constructor per service over a shared SdkConfig
     harness.rs     ← TestContext, TestCase, TestGroup, run_suite, sdk_error, NDJSON
     registry.rs    ← registry loading, impl-key merge/validate, group building,
@@ -77,6 +93,18 @@ compat/suites/rust-sdk/
       mod.rs       ← the ServiceGroup trait and the module list
       s3.rs  sqs.rs  dynamodb.rs  sns.rs  lambda.rs
       sts.rs  kms.rs  secretsmanager.rs  ssm.rs  eventbridge.rs
+      scenarios_gen.rs               ← GENERATED: the index, and the module
+                                       declarations for the files below
+      scenarios_<service>_gen.rs     ← GENERATED: one per scenario service
+    scenario/      ← the hand-written runtime the generated groups call into
+      mod.rs       ← Call/Test/Clause/Check, the constructors, the backend
+      value.rs     ← the IR's value expressions, the context bag, the Binder
+      json.rs      ← paths, canonical rendering, JSON equality
+      errors.rs    ← the error surfaces this SDK has, and the matcher
+      capture.rs   ← the interceptor that keeps the raw response body
+      exec.rs      ← running a group, and the closed assertion set
+      failure.rs   ← the six-field failure message
+      tests.rs errorfixtures.rs      ← its unit tests
 ```
 
 **One module per AWS service.** Never split a service across modules, and
@@ -278,17 +306,56 @@ return Err(format!(
 validates this suite's impl keys against the result, and builds the groups the
 harness runs.
 
-A **generated** group is meant to be executed by an interpreter reading the
-group's scenario IR rather than by a registered impl. `ScenarioBackend` is the
-extension point for that interpreter, consulted after the qualified and bare
-impl-key lookups and before the not-implemented sentinel.
+A **generated** group is a registry group `cmd/compatgen` produced from the
+scenario IR. This suite executes one as **emitted source**, not as an
+interpreted document: the AWS SDK for Rust takes typed request builders, so
+`cmd/compatgen`'s `emit_rust.go` writes one function per scenario test —
+`src/groups/scenarios_<service>_gen.rs` — and `cargo build` compiles it. The
+semantics those functions call into live once, by hand, in `src/scenario/`.
 
-**Nothing implements it in this suite yet** — `main` passes `None` — and
-`registry.generated.json` currently declares no groups, so this has no
-observable effect today. Once the generator emits a group scoped to
-`rust-sdk`, a generated test with no backend reports as a hard **failure**
-naming the group, not a skip. Do not add a backend speculatively; wait until
-there is a real interpreter to wire in.
+The wiring has two halves, because the loader's two extension points are
+different shapes:
+
+- **Setup and teardown** join the same `setups`/`teardowns` maps the
+  hand-written groups use. A hook is keyed by group name and there is one
+  namespace for that.
+- **Tests** resolve through `ScenarioBackend`, which `main` passes as
+  `scenario::Backend` over the generated impl map. That keeps the two impl
+  namespaces apart: a generated group can neither shadow nor be shadowed by a
+  hand-written registration, and `merge_impls` stays a statement about the
+  hand-written files.
+
+A generated test the backend cannot resolve still reports as a hard **failure**
+naming the group, not a skip — which is what
+`registration_tests::generated_groups_are_registered_for_every_test_the_registry_declares`
+in `src/main.rs` exists to catch a build earlier.
+
+### The generated files are output, not source
+
+`scenarios_gen.rs` and every `scenarios_*_gen.rs` are rewritten wholly by
+`make generate-compat-model`. Two rules follow:
+
+- **Never hand-edit one**, and never reformat one. There is no formatter in the
+  emitter's path — `cmd/compatgen` is a Go program and CI's docs job carries no
+  Rust toolchain — so the layout it writes is the committed layout, and running
+  `cargo fmt` over the crate would make `go run -tags dev ./cmd/compatgen -check`
+  fail. Format `src/scenario/` and the hand-written groups file by file instead.
+- **A crate older than the pinned AWS model is a compile failure here**, not a
+  generation-time refusal: the emitter derives every spelling from the model and
+  has no way to ask whether the vendored crate has the operation. The Dockerfile
+  builds before it runs, so it is loud, and the fix is a pin in `Cargo.toml`.
+
+### The response document is the wire, not the SDK's output struct
+
+`src/scenario/capture.rs` keeps the raw response body with an interceptor and
+the assertions walk that. `aws-sdk-*` output types carry no `serde` derive at
+the pinned versions and Rust has no reflection, so the alternative would be a
+generated converter per modeled output shape — written from accessor signatures
+a Go program cannot read. The two AWS JSON protocols in scope serialize modeled
+member names verbatim, so a path resolves against exactly the names the scenario
+file spells. The SDK still deserializes on its own path, so a response it cannot
+parse still fails the call. A REST protocol, which binds members to headers and
+to the status line, would need more than this.
 
 ---
 
@@ -306,9 +373,17 @@ dependency ordering and `registry.generated.json` handling on synthetic
 registries — which cannot see a collision introduced in an actual service
 file, hence the pair.
 
-The Dockerfile runs `cargo test` in its build stage, so both sets run on every
-image build and a broken registration fails it rather than quietly changing
-what a run reports. Building the image is therefore the way to run them
+`generated_groups_are_registered_for_every_test_the_registry_declares` is the
+same check for the generated half: every test of every generated group scoped to
+this suite must be registered under its group-qualified key, and every such
+group must carry both hooks. The Dockerfile copies `registry.generated.json`
+into the build stage for it — without that file the case would see no generated
+groups and pass vacuously, which is the one thing a registration test must not
+do.
+
+The Dockerfile runs `cargo test` in its build stage, so all three sets run on
+every image build and a broken registration fails it rather than quietly
+changing what a run reports. Building the image is therefore the way to run them
 without a host Rust toolchain:
 
 ```bash
@@ -316,6 +391,18 @@ without a host Rust toolchain:
 docker build -f compat/suites/rust-sdk/Dockerfile \
   -t "oc-rust-sdk-compat:$(sh scripts/image-tag.sh)" compat/suites
 ```
+
+One case cannot run there. `src/scenario/errorfixtures.rs` reads the shared
+error-matching fixtures under `compat/model/testdata/errors`, which sit outside
+the `compat/suites` build context, so in the image build it says so on stderr
+and returns. It runs for real in `test.yml`'s `compat-suite-unit-tests` job,
+from a full checkout, beside the other suites' unit tests — which is also where
+to run `cargo test` by hand when you have a host toolchain.
+
+Where it does run, it asserts the exact set of skips it takes (`EXPECTED_SKIPS`)
+and a floor on the number of expectations it answers (`MINIMUM_CHECKED`). Adding
+a fixture whose carriers this suite cannot read therefore fails here until the
+skip is named with its reason, rather than passing quietly.
 
 ---
 
@@ -358,3 +445,11 @@ docker build -f compat/suites/rust-sdk/Dockerfile \
 - Never add `anyhow` (or another error crate) to `Cargo.toml` for test code —
   the harness's error type is `String`, and `sdk_error` is how an SDK error
   becomes one.
+- Never hand-edit `src/groups/scenarios_gen.rs` or `src/groups/scenarios_*_gen.rs`,
+  and never run `cargo fmt` over the whole crate — see
+  [The generated files are output](#the-generated-files-are-output-not-source).
+- Never classify a generated failure with `harness::is_unimplemented`. A
+  generated failure message embeds the exact params JSON sent, where a run id or
+  a port number can put a "501" that means nothing; `crate::scenario` states the
+  classification with `harness::UNIMPLEMENTED_TAG` instead, and `harness::classify`
+  strips it before the message is emitted.

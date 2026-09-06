@@ -149,7 +149,7 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 	// The typed backends compile source rather than interpreting the IR, so
 	// their files are outputs of this run too. unable collects the groups an
 	// emitter refused, which decides each group's `suites` below.
-	var goServices, javaServices []string
+	var goServices, javaServices, rustServices []string
 	unable := unableSuites{}
 	// The Go emitter spells each member as the vendored SDK declares it, so it
 	// reads that SDK's own types out of the go-sdk suite's module — the one the
@@ -218,6 +218,16 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 			javaServices = append(javaServices, r.Service)
 			markUnable(unable, javaSDKSuite, emission.Refused)
 		}
+		if hasBackend(rustSDKSuite) {
+			emission, err := emitRust(gen)
+			if err != nil {
+				return nil, nil, fmt.Errorf("%s: %w", r.Service, err)
+			}
+			outputs[emission.Path] = emission.Contents
+			gaps.Gaps = append(gaps.Gaps, emission.Gaps...)
+			rustServices = append(rustServices, r.Service)
+			markUnable(unable, rustSDKSuite, emission.Refused)
+		}
 	}
 	// The index is emitted whether or not the backend is enabled: the go-sdk
 	// groups package calls it unconditionally, so it has to exist — empty —
@@ -228,6 +238,14 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 	}
 	outputs[goIndexPath] = goIndex
 	outputs[javaIndexPath] = emitJavaIndex(javaServices)
+	// Same for the Rust index: src/groups/mod.rs declares the module
+	// unconditionally, so it has to exist — empty — for a checkout where
+	// scenarioBackends does not name rust-sdk.
+	rustIndex, err := emitRustIndex(rustServices)
+	if err != nil {
+		return nil, nil, err
+	}
+	outputs[rustIndexPath] = rustIndex
 	sortGaps(gaps.Gaps)
 	contents, err := encodeDocument(gaps)
 	if err != nil {
@@ -270,11 +288,13 @@ func validateOutput(c *corpus, rel string, contents []byte) error {
 		// gofmt-clean, which emitGo proves by running go/format over the bytes
 		// it is about to return and failing generation if it will not parse.
 		return nil
-	case strings.HasPrefix(rel, javaSuiteDir+"/"):
-		// Emitted Java has no JSON schema either, and no formatter the generator
-		// can run to prove it parses. Its contract is the suite's own `mvn
-		// package`, which compiles every file in the package — the same evidence
-		// the go-sdk suite's build gives, arriving one step later.
+	case strings.HasPrefix(rel, javaSuiteDir+"/"), strings.HasPrefix(rel, rustSuiteDir+"/"):
+		// Emitted Java and Rust have no JSON schema either, and no formatter the
+		// generator can run to prove they parse: cmd/compatgen is a Go program,
+		// and CI's docs job carries neither a JDK nor a Rust toolchain. Their
+		// contract is each suite's own build — `mvn package`, `cargo build` —
+		// which compiles every emitted file, the same evidence the go-sdk suite's
+		// build gives, arriving one step later.
 		return nil
 	}
 	return fmt.Errorf("internal: no schema is checked for generated file %s", rel)
@@ -303,6 +323,9 @@ func runGenerate(opts options, stdout io.Writer) error {
 		return err
 	}
 	if err := checkStaleEmittedJava(opts.root, outputs, opts.check); err != nil {
+		return err
+	}
+	if err := checkStaleEmittedRust(opts.root, outputs, opts.check); err != nil {
 		return err
 	}
 	if opts.check {
@@ -371,6 +394,14 @@ func checkStaleEmittedGo(root string, outputs outputSet, check bool) error {
 func checkStaleEmittedJava(root string, outputs outputSet, check bool) error {
 	return checkStaleEmitted(root, outputs, check, javaSuiteDir, "Java", func(name string) bool {
 		return strings.HasPrefix(name, "Scenarios") && strings.HasSuffix(name, "Gen.java")
+	})
+}
+
+// checkStaleEmittedRust is the same rule for the rust-sdk suite, whose emitted
+// modules sit beside the hand-written group modules in src/groups.
+func checkStaleEmittedRust(root string, outputs outputSet, check bool) error {
+	return checkStaleEmitted(root, outputs, check, rustSuiteDir, "Rust", func(name string) bool {
+		return strings.HasPrefix(name, "scenarios_") && strings.HasSuffix(name, "_gen.rs")
 	})
 }
 

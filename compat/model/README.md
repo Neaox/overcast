@@ -399,7 +399,11 @@ must observe the result a poll long enough to cover it.
 The go-sdk emitter enforces this rather than trusting it: it knows which
 members the vendored SDK made value-typed, so a zero written into one is
 refused at generation time as `go-emit-unsupported:<Member>` instead of
-becoming a request that quietly omits it.
+becoming a request that quietly omits it. The rule is about a typed SDK's
+inability to tell "unset" from "set to the default", so it does not bind every
+typed SDK equally: rust-sdk's fluent setters take the value and record that it
+was set, so a zero there is sent. A scenario still may not depend on the
+default, because the backends have to agree with each other.
 
 `$name` is the only way a generated test names a resource, which is what
 makes the name-hygiene convention (`{runId}-<group-token>-…`) hold by
@@ -465,15 +469,15 @@ SDK-specific. Each backend derives what it needs:
 | go-sdk | `github.com/aws/aws-sdk-go-v2/service/<lower(sdkId, spaces removed)>` | `client.<Op>(ctx, &<Op>Input{…})` |
 | java-sdk | `<pascalCase(sdkId)>Client` | `client.<unCapitalize(op)>(<pascalCase(op)>Request.builder()…)` |
 | dotnet-sdk | `Amazon<PascalCase(sdkId)>Client` | `client.<Op>Async(new <Op>Request {…})` |
-| rust-sdk | `aws_sdk_<snake(sdkId)>` | `client.<snake(op)>()…send()` |
+| rust-sdk | `aws_sdk_<lower(sdkId), non-alphanumerics removed>` | `client.<snake(op)>()…send()`, member setters `.<snake(member)>(…)` |
 
-**go-sdk and java-sdk are source emitters, not interpreters**, so their rows
-are the naming tables `cmd/compatgen/emit_go.go` and `emit_java.go` render
-through, and `-explain <group>/<test> -lang go|java` prints the statements each
-emitter writes. Where the two differ is where a member's type comes from, and
-between them they are both halves of the plan's typed-backend binding decision.
-For go, **the member's type is read from the vendored SDK at generation time,
-never derived from the model's nullability.**
+**go-sdk, java-sdk and rust-sdk are source emitters, not interpreters**, so
+their rows are the naming tables `cmd/compatgen/emit_go.go`, `emit_java.go` and
+`emit_rust.go` render through, and `-explain <group>/<test> -lang go|java|rust`
+prints the statements each emitter writes. Where the three differ is where a
+member's type comes from, and between them they are the plan's typed-backend
+binding decision in full. For go, **the member's type is read from the vendored
+SDK at generation time, never derived from the model's nullability.**
 Whether smithy-go made a member a pointer or a value does not follow from the
 pinned snapshot — the snapshot and the vendored SDK are generated from
 different revisions of the same AWS model, and for SQS's `ReceiveMessage` they
@@ -484,7 +488,7 @@ already disagree about three members the pilot sends. So the emitter loads
 has no field for is refused rather than emitted.
 
 **java-sdk resolves its spellings from the pinned model instead**, and that is
-the other half of the same decision: the AWS SDK for Java v2 boxes every scalar,
+the other side of the same decision: the AWS SDK for Java v2 boxes every scalar,
 so a builder setter takes the value whatever the member's optionality and a
 boxed `0` really is serialized — nothing about a member's Java type follows from
 the SDK rather than from the model. Two of its naming rules are worth stating
@@ -514,6 +518,33 @@ revision of the AWS model than any released SDK. That axis is answered by the
 suite's own `mvn package`, which fails naming the missing class, and the fix is
 the version pin in `compat/suites/java-sdk/pom.xml`.
 
+**rust-sdk reads the model too**, and needs no lookup either; the fluent
+builder is why. A setter takes the value itself (`.queue_name(impl Into<String>)`,
+`.max_number_of_messages(i32)`), never an `Option`, so a member's optionality
+never reaches the call site — and a value set to its type's zero is sent like
+any other value, so the § Values rule below costs that emitter no refusal.
+Everything else it needs is the modeled kind. Two facts it derives are worth
+naming, because getting either wrong is a compile error in the suite: a builder
+is fallible exactly where the structure has a required member
+(`Tag::builder()…build()?` but `Account::builder()…build()`), and a member whose
+`snake_case` name is a Rust keyword becomes a raw identifier (Organizations'
+`Type` is `r#type`). What the model cannot answer is whether the vendored crate
+has the operation at all: a crate older than the pinned snapshot is a compile
+failure of the suite rather than a generation-time refusal, because
+`cmd/compatgen` has no Rust toolchain to ask.
+
+One further difference is on the response side, and it is why rust-sdk's runtime
+reads the **response body off the wire** rather than the SDK's output struct.
+Every rule the IR states about a response is stated over JSON; the interpreters
+hold the parsed response and the Go emitter reflects over the struct, but
+`aws-sdk-*` output types carry no `serde` derive at the pinned versions and Rust
+has no reflection, so the only alternative would be a generated converter per
+output shape — from accessor signatures a Go program cannot read. The two AWS
+JSON protocols in scope serialize modeled member names verbatim, so the document
+a path is walked over is spelled exactly as the scenario file spells it, and the
+SDK still deserializes on its own path, so a body it cannot parse still fails
+the call.
+
 Where a derivation is known to break, the interpreter needs a small override
 table of its own, and the plan asks for those to be recorded as follow-ups
 rather than smuggled into the IR. Nothing breaks for `sqs` or `organizations`,
@@ -525,6 +556,7 @@ so nothing is implemented yet:
 | python-sdk | botocore's service name differs from the endpoint prefix for the same four | not yet implemented — same reason |
 | go-sdk | the package for `Cost Explorer` is `costexplorer` (derivable), but `SFN` is `sfn` and `ELB` is `elasticloadbalancing`, neither of which follows from the SDK id | not yet implemented |
 | java-sdk | the SDK's `customization.config` may rename a service or a shape outright, which no rule over the SDK id or the shape name reproduces | not yet implemented — nothing in scope is renamed, and the suite's `mvn package` is what would say so |
+| rust-sdk | the crate is the SDK id's letters, not its word boundaries — `DynamoDB` is `aws_sdk_dynamodb` and `Cost Explorer` is `aws_sdk_costexplorer`, both derivable — but `SFN` and `ELB` break exactly as they do for go-sdk | not yet implemented — no scenario names one |
 
 Each table is added with the first scenario that needs it, in the interpreter
 that needs it, and never by adding a per-SDK name to the IR: carrying `sdkId`,
@@ -727,6 +759,7 @@ service and operation, with a stable reason:
 | `unsupported-tag-shape:<Shape>` | the tag member is neither a string map nor a list of `{Key, Value}`. `<Shape>` is the bare shape name; the qualified Smithy id is in the detail |
 | `go-emit-unsupported:<Member>` | the go-sdk emitter cannot write that member as typed Go: its modeled kind has no IR literal (a timestamp, blob, document or union), or the vendored SDK has no `<Op>Input`, no field for the member, or a field of a type no literal builds, or the member is value-typed and the scenario sets it to its zero value (see § Values). It is the one reason here that does **not** mean "no test": the operation is generated and the interpreters run it, and the group is scoped away from `go-sdk` in the generated registry instead, because a suite listed against a group it cannot compile would report as a hard failure |
 | `java-emit-unsupported:<Member>` | the java-sdk emitter cannot write that member as typed Java: its modeled kind has no IR literal (a timestamp, blob, document or union), the model gives the operation no such member, the literal is of the wrong JSON type for the member's kind, a value expression is bound to a composite member, or the value is an explicit `null` — which the AWS SDK for Java v2 spells as "unset" and so cannot send. It is scoped away from `java-sdk` on the same terms as the row above. Unlike the Go emitter it needs no SDK lookup and refuses no zero: every Java scalar is boxed, so a builder setter takes the value whatever the member's optionality and a boxed `0` is serialized (measured by the suite's own `JavaSdkWireFactsTest`). What the model cannot answer — whether the *pinned* SDK has the operation at all — is answered by the suite's `mvn package`, as a compile error rather than a wrong request |
+| `rust-emit-unsupported:<Member>` | the rust-sdk emitter cannot write that member as typed Rust: its modeled kind has no IR literal (a timestamp, blob, document or union), or a value expression is bound to a composite member, which has no scalar slot to land in. Its list is shorter than go-sdk's because a fluent setter takes the value rather than an `Option`, so there is no pointer-vs-value question and no zero-value case. It scopes the group away from `rust-sdk` on the same terms as the row above |
 
 Refusals are a feature. Fixing one is a line in a recipe or in
 `values.json`; guessing is never an option.

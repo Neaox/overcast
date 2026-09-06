@@ -26,6 +26,22 @@ impl AwsClients {
         }
     }
 
+    /// The shared SDK config, for a generated group that builds its own client.
+    ///
+    /// A generated group covers whatever service its recipe names, so giving
+    /// every one of them an accessor here would mean editing this file each
+    /// time the generator learns a service. It builds its client from the same
+    /// config and the same endpoint the accessors below use, and nothing else
+    /// about it differs.
+    pub fn config(&self) -> &aws_config::SdkConfig {
+        &self.shared_config
+    }
+
+    /// The endpoint every client in this suite is pointed at.
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
     pub fn dynamodb(&self) -> aws_sdk_dynamodb::Client {
         let config = aws_sdk_dynamodb::config::Builder::from(&self.shared_config)
             .endpoint_url(&self.endpoint)
