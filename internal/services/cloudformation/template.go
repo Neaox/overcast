@@ -295,8 +295,14 @@ type resolveContext struct {
 // generated name to fit the service that will hold it; exceeding these is a
 // validation error from the service, not from CloudFormation.
 const (
-	maxNameLenLambda    = 64  // function names
-	maxNameLenIAM       = 64  // role, policy and instance-profile names
+	maxNameLenLambda      = 64  // function names
+	maxNameLenLambdaLayer = 140 // layer names, which Lambda limits separately from function names
+	// IAM sets two limits rather than one: 64 for roles and users, 128 for
+	// groups, policies, managed policies and instance profiles. One constant
+	// used to carry 64 while its comment claimed it covered policies and
+	// instance profiles too, so those were truncated to half what IAM takes.
+	maxNameLenIAM       = 64  // role and user names
+	maxNameLenIAMPolicy = 128 // group, policy, managed-policy and instance-profile names
 	maxNameLenS3        = 63  // bucket names
 	maxNameLenSQS       = 80  // queue names (the ".fifo" suffix counts against this)
 	maxNameLenSNS       = 256 // topic names
@@ -318,10 +324,28 @@ const (
 	maxNameLenAthena      = 128 // Athena work group names
 	maxNameLenCloudTrail  = 128 // CloudTrail trail names
 	maxNameLenCognito     = 128 // Cognito user pool and user pool client names
+	maxNameLenKinesis     = 128 // Kinesis data stream names
 	maxNameLenShield      = 128 // Shield protection names
 	maxNameLenWAFv2       = 128 // WAFv2 web ACL names
 	maxNameLenAppRegistry = 256 // Service Catalog AppRegistry application names
 
+	// The remaining handlers on maxNameLenDefault fall into two groups.
+	//
+	// Correct on the default, because the service's own limit is at least as
+	// large: DynamoDB tables (1024), CloudWatch alarms (255), log groups and
+	// log streams (512), SSM parameters (2048), Secrets Manager secrets (512),
+	// EventBridge buses (256), Auto Scaling groups and launch configurations
+	// (255), and EC2 security groups (255, stated in the model's own
+	// documentation rather than a length trait).
+	//
+	// Unverified against real AWS, and so left alone: EKS node groups and
+	// Fargate profiles, MSK configurations, the four API Gateway names (REST
+	// API, authorizer, model, request validator) and ELBv2 listeners. The
+	// pinned models carry no length trait for any of them, and the models are
+	// the authority the caps above are drawn from — AWS's web documentation
+	// puts EKS names at 63 and MSK configurations at 64, which would make
+	// three more overruns, but a constant minted from a doc page nobody
+	// checked is how the IAM comment came to claim 64 covered policies.
 	maxNameLenDefault = 255
 )
 

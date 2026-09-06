@@ -786,7 +786,7 @@ func (h *kinesisStreamHandler) Create(ctx context.Context, router http.Handler, 
 		// down instead of colliding with it under the same name. Mirrors
 		// every other unnamed-resource handler (SNS topics, SQS queues,
 		// Lambda functions, ...).
-		name = rCtx.generatedName()
+		name = rCtx.generatedNameWithin(maxNameLenKinesis)
 	}
 
 	body := map[string]any{

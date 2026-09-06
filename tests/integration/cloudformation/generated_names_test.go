@@ -887,6 +887,30 @@ func arnResourceName(arn string) string {
 	return arn
 }
 
+// physicalIDIsName is the physicalName extractor for a handler whose physical
+// ID is already the service-visible name, with nothing to unwrap.
+func physicalIDIsName(physicalID string) string { return physicalID }
+
+// iamARNName returns the entity name from an IAM ARN, whose resource part is
+// "{type}/{name}" — a slash, not the colon arnResourceName splits on.
+func iamARNName(arn string) string {
+	if i := strings.LastIndex(arn, "/"); i >= 0 {
+		return arn[i+1:]
+	}
+	return arn
+}
+
+// lambdaLayerARNName returns the layer name from a layer VERSION ARN, whose
+// last colon-separated segment is the version number and not the name:
+// arn:aws:lambda:{region}:{account}:layer:{name}:{version}.
+func lambdaLayerARNName(arn string) string {
+	parts := strings.Split(arn, ":")
+	if len(parts) < 2 {
+		return arn
+	}
+	return parts[len(parts)-2]
+}
+
 // TestCreateStack_generatedNameOverflow_capsAtServiceLimit pins #1691: a
 // generated name ("{StackName}-{LogicalID}-{RANDOM}") is only ever capped at
 // generatedName's 255-character default unless a handler explicitly asks for
@@ -910,6 +934,10 @@ func TestCreateStack_generatedNameOverflow_capsAtServiceLimit(t *testing.T) {
 		maxLen     int
 		lowercase  bool
 		fifo       bool
+		// stackQualified marks a handler whose physical ID is
+		// "{StackName}-{name}" rather than the name itself, so the name under
+		// test has to be recovered before it is measured.
+		stackQualified bool
 		// physicalName extracts the service-visible name from the
 		// PhysicalResourceId DescribeStackResources reports.
 		physicalName func(physicalID string) string
@@ -921,7 +949,7 @@ func TestCreateStack_generatedNameOverflow_capsAtServiceLimit(t *testing.T) {
 			properties:   `{"Type": "AWS::S3::Bucket", "Properties": {}}`,
 			maxLen:       63,
 			lowercase:    true,
-			physicalName: func(physicalID string) string { return physicalID },
+			physicalName: physicalIDIsName,
 		},
 		{
 			name:         "AWS::SQS::Queue",
@@ -962,7 +990,7 @@ func TestCreateStack_generatedNameOverflow_capsAtServiceLimit(t *testing.T) {
         }
       }`,
 			maxLen:       64,
-			physicalName: func(physicalID string) string { return physicalID },
+			physicalName: physicalIDIsName,
 		},
 		{
 			name:      "AWS::IAM::Role",
@@ -978,7 +1006,74 @@ func TestCreateStack_generatedNameOverflow_capsAtServiceLimit(t *testing.T) {
         }
       }`,
 			maxLen:       64,
-			physicalName: func(physicalID string) string { return physicalID },
+			physicalName: physicalIDIsName,
+		},
+		{
+			name:         "AWS::Kinesis::Stream",
+			slug:         "kinesis-stream",
+			logicalID:    longLogical,
+			properties:   `{"Type": "AWS::Kinesis::Stream", "Properties": {"ShardCount": 1}}`,
+			maxLen:       128,
+			physicalName: physicalIDIsName,
+		},
+		{
+			name:      "AWS::IAM::Policy",
+			slug:      "iam-policy",
+			logicalID: longLogical,
+			properties: `{
+        "Type": "AWS::IAM::Policy",
+        "Properties": {
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [{"Effect": "Allow", "Action": "s3:GetObject", "Resource": "*"}]
+          }
+        }
+      }`,
+			maxLen: 128,
+			// The handler mints "{StackName}-{PolicyName}" as the physical ID;
+			// IAM only ever sees the second half.
+			stackQualified: true,
+			physicalName:   physicalIDIsName,
+		},
+		{
+			name:      "AWS::IAM::ManagedPolicy",
+			slug:      "iam-managed-policy",
+			logicalID: longLogical,
+			properties: `{
+        "Type": "AWS::IAM::ManagedPolicy",
+        "Properties": {
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [{"Effect": "Allow", "Action": "s3:GetObject", "Resource": "*"}]
+          }
+        }
+      }`,
+			maxLen:       128,
+			physicalName: iamARNName,
+		},
+		{
+			name:         "AWS::IAM::InstanceProfile",
+			slug:         "iam-instance-profile",
+			logicalID:    longLogical,
+			properties:   `{"Type": "AWS::IAM::InstanceProfile", "Properties": {}}`,
+			maxLen:       128,
+			physicalName: iamARNName,
+		},
+		{
+			name:         "AWS::IAM::Group",
+			slug:         "iam-group",
+			logicalID:    longLogical,
+			properties:   `{"Type": "AWS::IAM::Group", "Properties": {}}`,
+			maxLen:       128,
+			physicalName: physicalIDIsName,
+		},
+		{
+			name:         "AWS::Lambda::LayerVersion",
+			slug:         "lambda-layer-version",
+			logicalID:    longLogical,
+			properties:   `{"Type": "AWS::Lambda::LayerVersion", "Properties": {"Content": {"ZipFile": "dGVzdA=="}}}`,
+			maxLen:       140,
+			physicalName: lambdaLayerARNName,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1004,12 +1099,38 @@ func TestCreateStack_generatedNameOverflow_capsAtServiceLimit(t *testing.T) {
 			if physID == "" {
 				t.Fatal("resource has no physical ID")
 			}
+			// A stack-qualified physical ID is CloudFormation's bookkeeping, not
+			// the name the service received — measure the name, not the prefix.
+			if tc.stackQualified {
+				physID = strings.TrimPrefix(physID, stackName+"-")
+			}
 			got := tc.physicalName(physID)
 
 			// Then: the generated name respects the service's own limit, not
 			// just generatedName's 255-character default.
 			if len(got) > tc.maxLen {
 				t.Errorf("generated name %q is %d characters, want at most %d (service limit)", got, len(got), tc.maxLen)
+			}
+			// And not materially shorter than the limit either. Without this,
+			// a handler wired to another service's smaller constant still
+			// satisfies the bound above while truncating names the service
+			// would have accepted: that is how the IAM group handler was
+			// found sharing the 64-character role constant when IAM allows a
+			// group 128.
+			//
+			// Only meaningful where the name is actually truncated. The
+			// untruncated form is the stack name, the logical ID and
+			// CloudFormation's random suffix joined by hyphens; SNS's 256 is
+			// roomy enough that these fixtures fit inside it untouched, so
+			// there the cap never engages. Where it does engage the result
+			// lands exactly on the limit, bar one character when the cut
+			// falls on a hyphen and generatedNameWithin trims it — the base
+			// never holds two in a row, so it can never lose more.
+			const randomSuffixLen = 12
+			untruncated := len(stackName) + 1 + len(tc.logicalID) + 1 + randomSuffixLen
+			if untruncated > tc.maxLen && len(got) < tc.maxLen-1 {
+				t.Errorf("generated name %q is %d characters, want %d (the service limit) — truncated more than the service requires",
+					got, len(got), tc.maxLen)
 			}
 			if tc.lowercase && got != strings.ToLower(got) {
 				t.Errorf("generated name %q is not lowercase", got)

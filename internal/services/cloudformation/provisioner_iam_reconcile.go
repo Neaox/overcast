@@ -530,7 +530,7 @@ func (h *iamGroupHandler) Create(ctx context.Context, router http.Handler, _ *co
 	}
 	name, _ := props["GroupName"].(string)
 	if name == "" {
-		name = rCtx.generatedNameWithin(maxNameLenIAM)
+		name = rCtx.generatedNameWithin(maxNameLenIAMPolicy)
 	}
 	params := map[string]string{"GroupName": name}
 	if path, _ := props["Path"].(string); path != "" {
