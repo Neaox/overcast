@@ -105,7 +105,7 @@ func TestDeleteStack_ec2SecurityGroupBlockedByExternalInstance(t *testing.T) {
 	term := ec2Query(t, srv, "TerminateInstances", url.Values{"InstanceId.1": []string{instanceID}})
 	term.Body.Close()
 	helpers.AssertStatus(t, term, http.StatusOK)
-	srv.Clock.Add(1 * time.Second) // shutting-down → terminated
+	srv.AdvanceClock(1 * time.Second) // shutting-down → terminated
 
 	retry := cfnQuery(t, srv, "DeleteStack", url.Values{"StackName": []string{"ec2-sg-teardown-stack"}})
 	defer retry.Body.Close()

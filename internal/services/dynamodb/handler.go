@@ -35,6 +35,10 @@ type Handler struct {
 	// UpdateTimeToLive starts — see handler_ttl.go.
 	ttlSched *lifecycle.Scheduler
 
+	// ttlLocks keeps UpdateTimeToLive and settleTTLTransition from
+	// interleaving on one table's record (#1868).
+	ttlLocks serviceutil.RecordLocks
+
 	// metrics is nil until Service.InitMetrics is called (or when automatic
 	// collection is disabled — see config.ServiceMetricsMode). Every call
 	// site in metrics_dynamodb.go is nil-safe, matching Lambda's
