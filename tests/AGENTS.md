@@ -481,6 +481,13 @@ due. `scheduler.Settle()` is the real-clock counterpart: it waits for what is
 pending without cancelling it. Elsewhere, wait on something the callback itself
 signals. Never on a sleep, and never by polling until the state shows up.
 
+**An integration test has the clock but not the Scheduler**, since the services
+build their own inside `router.New`. Use `srv.AdvanceClock(d)` in place of
+`srv.Clock.Add(d)` — it settles every Scheduler that clock drives, and a zero
+`d` settles what is already due without moving time. `TestStopDBInstance_success`
+lost a CI run to the bare `Add`, failing in 0.11 s with the instance still
+`stopping`, which reads convincingly as the stop being broken.
+
 **A mock clock also serialises callbacks**, firing due timers one at a time with
 that millisecond between them. That makes it the wrong tool for reproducing a
 race *between* two transitions — on an idle machine each callback finishes

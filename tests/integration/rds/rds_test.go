@@ -785,7 +785,7 @@ func TestStopDBInstance_success(t *testing.T) {
 	resp1.Body.Close()
 
 	// Advance time to transition creating → available
-	srv.Clock.Add(1 * time.Second)
+	srv.AdvanceClock(1 * time.Second)
 
 	// When: StopDBInstance is called
 	resp := rdsQuery(t, srv, "StopDBInstance", url.Values{
@@ -811,7 +811,7 @@ func TestStopDBInstance_success(t *testing.T) {
 	assert.Equal(t, "stopping", result.Result.DBInstance.DBInstanceStatus)
 
 	// Advance time for stopping → stopped transition
-	srv.Clock.Add(1 * time.Second)
+	srv.AdvanceClock(1 * time.Second)
 
 	// Verify final state is "stopped"
 	descResp := rdsQuery(t, srv, "DescribeDBInstances", url.Values{
@@ -871,7 +871,7 @@ func TestStartDBInstance_success(t *testing.T) {
 	resp1.Body.Close()
 
 	// creating → available
-	srv.Clock.Add(1 * time.Second)
+	srv.AdvanceClock(1 * time.Second)
 
 	// Stop the instance
 	resp2 := rdsQuery(t, srv, "StopDBInstance", url.Values{
@@ -880,7 +880,7 @@ func TestStartDBInstance_success(t *testing.T) {
 	resp2.Body.Close()
 
 	// stopping → stopped
-	srv.Clock.Add(1 * time.Second)
+	srv.AdvanceClock(1 * time.Second)
 
 	// When: StartDBInstance is called
 	resp := rdsQuery(t, srv, "StartDBInstance", url.Values{
@@ -906,7 +906,7 @@ func TestStartDBInstance_success(t *testing.T) {
 	assert.Equal(t, "starting", result.Result.DBInstance.DBInstanceStatus)
 
 	// Advance time for starting → available transition
-	srv.Clock.Add(1 * time.Second)
+	srv.AdvanceClock(1 * time.Second)
 
 	// Verify final state is "available"
 	descResp := rdsQuery(t, srv, "DescribeDBInstances", url.Values{
@@ -939,7 +939,7 @@ func TestStartDBInstance_notStopped(t *testing.T) {
 		"MasterUserPassword":   []string{"Password1!"},
 	})
 	resp1.Body.Close()
-	srv.Clock.Add(1 * time.Second)
+	srv.AdvanceClock(1 * time.Second)
 
 	// When: StartDBInstance is called on an available instance
 	resp := rdsQuery(t, srv, "StartDBInstance", url.Values{
@@ -966,7 +966,7 @@ func TestModifyDBInstance_success(t *testing.T) {
 		"AllocatedStorage":     []string{"20"},
 	})
 	resp1.Body.Close()
-	srv.Clock.Add(1 * time.Second)
+	srv.AdvanceClock(1 * time.Second)
 
 	// When: ModifyDBInstance is called with new class and storage
 	resp := rdsQuery(t, srv, "ModifyDBInstance", url.Values{
@@ -1005,7 +1005,7 @@ func TestModifyDBInstance_success(t *testing.T) {
 	assert.True(t, inst.MultiAZ)
 
 	// Advance time for modifying → available transition
-	srv.Clock.Add(1 * time.Second)
+	srv.AdvanceClock(1 * time.Second)
 
 	// Verify final state is "available"
 	descResp := rdsQuery(t, srv, "DescribeDBInstances", url.Values{
@@ -1069,7 +1069,7 @@ func TestPubliclyAccessible_defaultsAndRoundTripsOverTheWire(t *testing.T) {
 	assert.False(t, created.Result.DBInstance.PubliclyAccessible,
 		"an instance in a named DB subnet group defaulted to public")
 
-	srv.Clock.Add(1 * time.Second)
+	srv.AdvanceClock(1 * time.Second)
 
 	// And the escape hatch: turn it back on, and it stays on.
 	modResp := rdsQuery(t, srv, "ModifyDBInstance", url.Values{
@@ -1091,7 +1091,7 @@ func TestPubliclyAccessible_defaultsAndRoundTripsOverTheWire(t *testing.T) {
 	assert.True(t, modified.Result.DBInstance.PubliclyAccessible,
 		"ModifyDBInstance did not report the instance as publicly accessible")
 
-	srv.Clock.Add(1 * time.Second)
+	srv.AdvanceClock(1 * time.Second)
 
 	descResp := rdsQuery(t, srv, "DescribeDBInstances", url.Values{
 		"DBInstanceIdentifier": []string{"pa-private"},
@@ -1989,13 +1989,13 @@ func TestDescribeEvents_categoryFilterOnTheWire(t *testing.T) {
 		"MasterUserPassword":   []string{"Password1!"},
 	})
 	resp1.Body.Close()
-	srv.Clock.Add(1 * time.Second) // creating → available
+	srv.AdvanceClock(1 * time.Second) // creating → available
 
 	resp2 := rdsQuery(t, srv, "StopDBInstance", url.Values{
 		"DBInstanceIdentifier": []string{"events-filter-db"},
 	})
 	resp2.Body.Close()
-	srv.Clock.Add(time.Nanosecond) // stopping → stopped after the engine has stopped
+	srv.AdvanceClock(time.Nanosecond) // stopping → stopped after the engine has stopped
 
 	resp := rdsQuery(t, srv, "DescribeEvents", url.Values{
 		"EventCategories.EventCategory.1": []string{"notification"},

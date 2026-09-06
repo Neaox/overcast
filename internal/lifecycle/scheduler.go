@@ -60,12 +60,20 @@ type Scheduler struct {
 
 // NewScheduler creates a Scheduler using the given clock.
 // Production: clock.New(). Tests: clock.NewMock() for instant time skips.
+//
+// A Scheduler built on a mock clock records itself against that clock, so a
+// test that holds only the clock can settle it — see mockclock.go. One built
+// on a real clock records nothing.
 func NewScheduler(clk clock.Clock) *Scheduler {
-	return &Scheduler{
+	s := &Scheduler{
 		clk:      clk,
 		pending:  make(map[string]*cancelEntry),
 		inflight: make(map[chan struct{}]struct{}),
 	}
+	if mock, ok := clk.(*clock.Mock); ok {
+		registerMockScheduler(mock, s)
+	}
+	return s
 }
 
 // claimLocked takes ownership of finishing entry, and reports whether this
