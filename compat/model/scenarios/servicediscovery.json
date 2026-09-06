@@ -1,0 +1,1245 @@
+{
+  "version": 1,
+  "service": "servicediscovery",
+  "client": {
+    "sdkId": "ServiceDiscovery",
+    "endpointPrefix": "servicediscovery",
+    "signingName": "servicediscovery",
+    "protocol": "awsJson1_1",
+    "apiVersion": "2017-03-14",
+    "targetPrefix": "Route53AutoNaming_v20170314",
+    "awsQueryCompatible": false
+  },
+  "groups": [
+    {
+      "name": "servicediscovery-gen-namespace",
+      "kind": "lifecycle",
+      "setup": [],
+      "tests": [
+        {
+          "name": "CreateHttpNamespace",
+          "op": "CreateHttpNamespace",
+          "call": {
+            "op": "CreateHttpNamespace",
+            "params": {
+              "Description": "compat scenario namespace",
+              "Name": {
+                "$name": "ns"
+              }
+            },
+            "export": {
+              "namespace.operationId": "$.OperationId"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.OperationId": {
+                  "nonEmpty": true
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "GetOperation",
+                  "params": {
+                    "OperationId": {
+                      "$ref": "namespace.operationId"
+                    }
+                  },
+                  "export": {
+                    "namespace.id": "$.Operation.Targets.NAMESPACE"
+                  }
+                },
+                "checks": {
+                  "$.Operation.Targets.NAMESPACE": {
+                    "nonEmpty": true
+                  }
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "GetNamespace",
+                  "params": {
+                    "Id": {
+                      "$ref": "namespace.id"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.Namespace.Id": {
+                    "equals": {
+                      "$ref": "namespace.id"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "listContains",
+                "call": {
+                  "op": "ListNamespaces",
+                  "params": {}
+                },
+                "itemsPath": "$.Namespaces",
+                "where": {
+                  "$.Id": {
+                    "$ref": "namespace.id"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "GetNamespace",
+          "op": "GetNamespace",
+          "call": {
+            "op": "GetNamespace",
+            "params": {
+              "Id": {
+                "$ref": "namespace.id"
+              }
+            },
+            "export": {
+              "namespace.arn": "$.Namespace.Arn"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Namespace.Id": {
+                  "equals": {
+                    "$ref": "namespace.id"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateHttpNamespace"
+          ]
+        },
+        {
+          "name": "UpdateHttpNamespace",
+          "op": "UpdateHttpNamespace",
+          "call": {
+            "op": "UpdateHttpNamespace",
+            "params": {
+              "Id": {
+                "$ref": "namespace.id"
+              },
+              "Namespace": {
+                "Description": "compat scenario namespace, updated"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "GetNamespace",
+                  "params": {
+                    "Id": {
+                      "$ref": "namespace.id"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.Namespace.Description": {
+                    "equals": "compat scenario namespace, updated"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateHttpNamespace"
+          ]
+        },
+        {
+          "name": "TagResource",
+          "op": "TagResource",
+          "call": {
+            "op": "TagResource",
+            "params": {
+              "ResourceARN": {
+                "$ref": "namespace.arn"
+              },
+              "Tags": [
+                {
+                  "Key": "compat",
+                  "Value": "scenario"
+                }
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "listContains",
+                "call": {
+                  "op": "ListTagsForResource",
+                  "params": {
+                    "ResourceARN": {
+                      "$ref": "namespace.arn"
+                    }
+                  }
+                },
+                "itemsPath": "$.Tags",
+                "where": {
+                  "$.Key": "compat",
+                  "$.Value": "scenario"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "GetNamespace"
+          ]
+        },
+        {
+          "name": "ListTagsForResource",
+          "op": "ListTagsForResource",
+          "call": {
+            "op": "ListTagsForResource",
+            "params": {
+              "ResourceARN": {
+                "$ref": "namespace.arn"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.Tags",
+              "where": {
+                "$.Key": "compat",
+                "$.Value": "scenario"
+              }
+            }
+          ],
+          "depends": [
+            "GetNamespace"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "op": "UntagResource",
+          "call": {
+            "op": "UntagResource",
+            "params": {
+              "ResourceARN": {
+                "$ref": "namespace.arn"
+              },
+              "TagKeys": [
+                "compat"
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "absent",
+                "call": {
+                  "op": "ListTagsForResource",
+                  "params": {
+                    "ResourceARN": {
+                      "$ref": "namespace.arn"
+                    }
+                  }
+                },
+                "itemsPath": "$.Tags",
+                "where": {
+                  "$.Key": "compat"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "GetNamespace"
+          ]
+        },
+        {
+          "name": "ListNamespaces",
+          "op": "ListNamespaces",
+          "call": {
+            "op": "ListNamespaces",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.Namespaces",
+              "where": {
+                "$.Id": {
+                  "$ref": "namespace.id"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateHttpNamespace"
+          ]
+        },
+        {
+          "name": "DeleteNamespace",
+          "op": "DeleteNamespace",
+          "call": {
+            "op": "DeleteNamespace",
+            "params": {
+              "Id": {
+                "$ref": "namespace.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "absent",
+                "call": {
+                  "op": "GetNamespace",
+                  "params": {
+                    "Id": {
+                      "$ref": "namespace.id"
+                    }
+                  }
+                },
+                "error": {
+                  "shape": "NamespaceNotFound",
+                  "code": "NamespaceNotFound"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateHttpNamespace"
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeleteNamespace",
+          "params": {
+            "Id": {
+              "$ref": "namespace.id"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "servicediscovery-gen-service",
+      "kind": "lifecycle",
+      "setup": [
+        {
+          "op": "CreateHttpNamespace",
+          "params": {
+            "Description": "compat scenario namespace",
+            "Name": {
+              "$name": "ns"
+            }
+          },
+          "export": {
+            "namespace.operationId": "$.OperationId"
+          }
+        },
+        {
+          "op": "GetOperation",
+          "params": {
+            "OperationId": {
+              "$ref": "namespace.operationId"
+            }
+          },
+          "export": {
+            "namespace.id": "$.Operation.Targets.NAMESPACE"
+          }
+        }
+      ],
+      "tests": [
+        {
+          "name": "CreateService",
+          "op": "CreateService",
+          "call": {
+            "op": "CreateService",
+            "params": {
+              "Description": "compat scenario service",
+              "Name": {
+                "$name": "svc"
+              },
+              "NamespaceId": {
+                "$ref": "namespace.id"
+              },
+              "Type": "HTTP"
+            },
+            "export": {
+              "service.arn": "$.Service.Arn",
+              "service.id": "$.Service.Id"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Service.Arn": {
+                  "nonEmpty": true
+                },
+                "$.Service.Id": {
+                  "nonEmpty": true
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 15,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "GetService",
+                  "params": {
+                    "Id": {
+                      "$ref": "service.id"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.Service.Id": {
+                    "equals": {
+                      "$ref": "service.id"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 15,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "listContains",
+                "call": {
+                  "op": "ListServices",
+                  "params": {}
+                },
+                "itemsPath": "$.Services",
+                "where": {
+                  "$.Id": {
+                    "$ref": "service.id"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "GetService",
+          "op": "GetService",
+          "call": {
+            "op": "GetService",
+            "params": {
+              "Id": {
+                "$ref": "service.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Service.Id": {
+                  "equals": {
+                    "$ref": "service.id"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "UpdateService",
+          "op": "UpdateService",
+          "call": {
+            "op": "UpdateService",
+            "params": {
+              "Id": {
+                "$ref": "service.id"
+              },
+              "Service": {
+                "Description": "compat scenario service, updated"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 15,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "GetService",
+                  "params": {
+                    "Id": {
+                      "$ref": "service.id"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.Service.Description": {
+                    "equals": "compat scenario service, updated"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "TagResource",
+          "op": "TagResource",
+          "call": {
+            "op": "TagResource",
+            "params": {
+              "ResourceARN": {
+                "$ref": "service.arn"
+              },
+              "Tags": [
+                {
+                  "Key": "compat",
+                  "Value": "scenario"
+                }
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 15,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "listContains",
+                "call": {
+                  "op": "ListTagsForResource",
+                  "params": {
+                    "ResourceARN": {
+                      "$ref": "service.arn"
+                    }
+                  }
+                },
+                "itemsPath": "$.Tags",
+                "where": {
+                  "$.Key": "compat",
+                  "$.Value": "scenario"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "ListTagsForResource",
+          "op": "ListTagsForResource",
+          "call": {
+            "op": "ListTagsForResource",
+            "params": {
+              "ResourceARN": {
+                "$ref": "service.arn"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.Tags",
+              "where": {
+                "$.Key": "compat",
+                "$.Value": "scenario"
+              }
+            }
+          ],
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "op": "UntagResource",
+          "call": {
+            "op": "UntagResource",
+            "params": {
+              "ResourceARN": {
+                "$ref": "service.arn"
+              },
+              "TagKeys": [
+                "compat"
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 15,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "absent",
+                "call": {
+                  "op": "ListTagsForResource",
+                  "params": {
+                    "ResourceARN": {
+                      "$ref": "service.arn"
+                    }
+                  }
+                },
+                "itemsPath": "$.Tags",
+                "where": {
+                  "$.Key": "compat"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "UpdateServiceAttributes",
+          "op": "UpdateServiceAttributes",
+          "call": {
+            "op": "UpdateServiceAttributes",
+            "params": {
+              "Attributes": {
+                "compat": "scenario"
+              },
+              "ServiceId": {
+                "$ref": "service.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 15,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "GetServiceAttributes",
+                  "params": {
+                    "ServiceId": {
+                      "$ref": "service.id"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.ServiceAttributes.Attributes.compat": {
+                    "equals": "scenario"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "GetServiceAttributes",
+          "op": "GetServiceAttributes",
+          "call": {
+            "op": "GetServiceAttributes",
+            "params": {
+              "ServiceId": {
+                "$ref": "service.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.ServiceAttributes.ServiceArn": {
+                  "equals": {
+                    "$ref": "service.arn"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "DeleteServiceAttributes",
+          "op": "DeleteServiceAttributes",
+          "call": {
+            "op": "DeleteServiceAttributes",
+            "params": {
+              "Attributes": [
+                "compat"
+              ],
+              "ServiceId": {
+                "$ref": "service.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 15,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "GetServiceAttributes",
+                  "params": {
+                    "ServiceId": {
+                      "$ref": "service.id"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.ServiceAttributes.Attributes.compat": {
+                    "missing": true
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "ListInstances",
+          "op": "ListInstances",
+          "call": {
+            "op": "ListInstances",
+            "params": {
+              "ServiceId": {
+                "$ref": "service.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Instances": {
+                  "isList": true
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "DiscoverInstances",
+          "op": "DiscoverInstances",
+          "call": {
+            "op": "DiscoverInstances",
+            "params": {
+              "NamespaceName": {
+                "$name": "ns"
+              },
+              "ServiceName": {
+                "$name": "svc"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Instances": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListOperations",
+          "op": "ListOperations",
+          "call": {
+            "op": "ListOperations",
+            "params": {
+              "Filters": [
+                {
+                  "Condition": "EQ",
+                  "Name": "SERVICE_ID",
+                  "Values": [
+                    {
+                      "$ref": "service.id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Operations": {
+                  "isList": true
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "ListServices",
+          "op": "ListServices",
+          "call": {
+            "op": "ListServices",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.Services",
+              "where": {
+                "$.Id": {
+                  "$ref": "service.id"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateService"
+          ]
+        },
+        {
+          "name": "DeleteService",
+          "op": "DeleteService",
+          "call": {
+            "op": "DeleteService",
+            "params": {
+              "Id": {
+                "$ref": "service.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 15,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "absent",
+                "call": {
+                  "op": "GetService",
+                  "params": {
+                    "Id": {
+                      "$ref": "service.id"
+                    }
+                  }
+                },
+                "error": {
+                  "shape": "ServiceNotFound",
+                  "code": "ServiceNotFound"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateService"
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeleteService",
+          "params": {
+            "Id": {
+              "$ref": "service.id"
+            }
+          }
+        },
+        {
+          "op": "DeleteNamespace",
+          "params": {
+            "Id": {
+              "$ref": "namespace.id"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "servicediscovery-gen-instance",
+      "kind": "lifecycle",
+      "setup": [
+        {
+          "op": "CreateHttpNamespace",
+          "params": {
+            "Description": "compat scenario namespace",
+            "Name": {
+              "$name": "ns"
+            }
+          },
+          "export": {
+            "namespace.operationId": "$.OperationId"
+          }
+        },
+        {
+          "op": "GetOperation",
+          "params": {
+            "OperationId": {
+              "$ref": "namespace.operationId"
+            }
+          },
+          "export": {
+            "namespace.id": "$.Operation.Targets.NAMESPACE"
+          }
+        },
+        {
+          "op": "CreateService",
+          "params": {
+            "Description": "compat scenario service",
+            "Name": {
+              "$name": "svc"
+            },
+            "NamespaceId": {
+              "$ref": "namespace.id"
+            },
+            "Type": "HTTP"
+          },
+          "export": {
+            "service.arn": "$.Service.Arn",
+            "service.id": "$.Service.Id"
+          }
+        }
+      ],
+      "tests": [
+        {
+          "name": "RegisterInstance",
+          "op": "RegisterInstance",
+          "call": {
+            "op": "RegisterInstance",
+            "params": {
+              "Attributes": {
+                "AWS_INSTANCE_IPV4": "203.0.113.10"
+              },
+              "InstanceId": {
+                "$name": "i"
+              },
+              "ServiceId": {
+                "$ref": "service.id"
+              }
+            },
+            "export": {
+              "instance.operationId": "$.OperationId"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.OperationId": {
+                  "nonEmpty": true
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "GetInstance",
+                  "params": {
+                    "InstanceId": {
+                      "$name": "i"
+                    },
+                    "ServiceId": {
+                      "$ref": "service.id"
+                    }
+                  },
+                  "export": {
+                    "instance.id": "$.Instance.Id"
+                  }
+                },
+                "checks": {
+                  "$.Instance.Id": {
+                    "nonEmpty": true
+                  }
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "GetInstance",
+                  "params": {
+                    "InstanceId": {
+                      "$ref": "instance.id"
+                    },
+                    "ServiceId": {
+                      "$ref": "service.id"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.Instance.Id": {
+                    "equals": {
+                      "$ref": "instance.id"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "listContains",
+                "call": {
+                  "op": "ListInstances",
+                  "params": {
+                    "ServiceId": {
+                      "$ref": "service.id"
+                    }
+                  }
+                },
+                "itemsPath": "$.Instances",
+                "where": {
+                  "$.Id": {
+                    "$ref": "instance.id"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "GetInstance",
+          "op": "GetInstance",
+          "call": {
+            "op": "GetInstance",
+            "params": {
+              "InstanceId": {
+                "$ref": "instance.id"
+              },
+              "ServiceId": {
+                "$ref": "service.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Instance.Id": {
+                  "equals": {
+                    "$ref": "instance.id"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "RegisterInstance"
+          ]
+        },
+        {
+          "name": "ListInstances",
+          "op": "ListInstances",
+          "call": {
+            "op": "ListInstances",
+            "params": {
+              "ServiceId": {
+                "$ref": "service.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.Instances",
+              "where": {
+                "$.Id": {
+                  "$ref": "instance.id"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "RegisterInstance"
+          ]
+        },
+        {
+          "name": "DeregisterInstance",
+          "op": "DeregisterInstance",
+          "call": {
+            "op": "DeregisterInstance",
+            "params": {
+              "InstanceId": {
+                "$ref": "instance.id"
+              },
+              "ServiceId": {
+                "$ref": "service.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "absent",
+                "call": {
+                  "op": "GetInstance",
+                  "params": {
+                    "InstanceId": {
+                      "$ref": "instance.id"
+                    },
+                    "ServiceId": {
+                      "$ref": "service.id"
+                    }
+                  }
+                },
+                "error": {
+                  "shape": "InstanceNotFound",
+                  "code": "InstanceNotFound"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "RegisterInstance"
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeregisterInstance",
+          "params": {
+            "InstanceId": {
+              "$ref": "instance.id"
+            },
+            "ServiceId": {
+              "$ref": "service.id"
+            }
+          }
+        },
+        {
+          "op": "DeleteService",
+          "params": {
+            "Id": {
+              "$ref": "service.id"
+            }
+          }
+        },
+        {
+          "op": "DeleteNamespace",
+          "params": {
+            "Id": {
+              "$ref": "namespace.id"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "servicediscovery-gen-probe",
+      "kind": "probe",
+      "parallel": true,
+      "setup": [],
+      "tests": [
+        {
+          "name": "GetInstancesHealthStatus",
+          "op": "GetInstancesHealthStatus",
+          "call": {
+            "op": "GetInstancesHealthStatus",
+            "params": {
+              "ServiceId": "srv-compatscenario00"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Status": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "GetOperation",
+          "op": "GetOperation",
+          "call": {
+            "op": "GetOperation",
+            "params": {
+              "OperationId": "compatscenariooperationnotfound0-00000000"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Operation": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "teardown": []
+    }
+  ]
+}

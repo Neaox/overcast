@@ -21,6 +21,13 @@
         "DescribeTags": { "LoadBalancerNames": ["compat-scenario-nonexistent"] }
       }
     },
+    "servicediscovery": {
+      "$comment": "Two identifiers of Cloud Map resources that do not exist, both shaped the way Cloud Map shapes its own. A service id is `srv-` followed by sixteen lowercase alphanumerics, and an operation id is a thirty-two character token, a hyphen and eight more — the shape matters because a value of the wrong shape is answered with InvalidInput rather than the not-found a probe is written for. GetInstancesHealthStatus needs an entry rather than a binding because the service resource exports the id of a service the run owns, and a probe may not draw on that.",
+      "operations": {
+        "GetInstancesHealthStatus": { "ServiceId": "srv-compatscenario00" },
+        "GetOperation": { "OperationId": "compatscenariooperationnotfound0-00000000" }
+      }
+    },
     "sqs": {
       "$comment": "TaskHandle is base64 on AWS — StartMessageMoveTask hands back an opaque encoded handle — so the placeholder is base64 too: an unencoded string is answered with a validation error rather than the not-found the probe is written for. This one decodes to {\"taskId\":\"compat-scenario\"}. QueueUrl and SourceArn name a queue in an account that is not the caller's, so a probe of AddPermission, RemovePermission, CancelMessageMoveTask or ListMessageMoveTasks cannot reach the queue the run created.",
       "operations": {

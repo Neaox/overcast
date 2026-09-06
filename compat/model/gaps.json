@@ -387,6 +387,55 @@
       "detail": "Mutates an in-flight responsibility transfer — a billing-ownership change already under way."
     },
     {
+      "service": "servicediscovery",
+      "operation": "CreatePrivateDnsNamespace",
+      "group": "servicediscovery-gen-probe",
+      "reason": "never-probe",
+      "detail": "Creates a namespace and, with it, a Route 53 private hosted zone attached to a VPC in the caller's account. The hosted zone is billed and outlives the run."
+    },
+    {
+      "service": "servicediscovery",
+      "operation": "CreatePublicDnsNamespace",
+      "group": "servicediscovery-gen-probe",
+      "reason": "never-probe",
+      "detail": "Creates a namespace and a Route 53 **public** hosted zone, which is billed monthly and answers queries from the internet until somebody deletes it."
+    },
+    {
+      "service": "servicediscovery",
+      "operation": "DiscoverInstancesRevision",
+      "group": "servicediscovery-gen-probe",
+      "reason": "never-probe",
+      "detail": "Not refused for danger — it reads and changes nothing — but for what it could assert. Its whole response is one revision counter, and a counter read for a namespace that does not exist says nothing true about the service. It is covered instead by DiscoverInstances on the service the run owns."
+    },
+    {
+      "service": "servicediscovery",
+      "operation": "ListOperations",
+      "group": "servicediscovery-gen-service",
+      "reason": "rust-emit-unsupported:Filters",
+      "detail": "ListOperations.Filters cannot be spelled as Rust: no Rust literal for a list member"
+    },
+    {
+      "service": "servicediscovery",
+      "operation": "UpdateInstanceCustomHealthStatus",
+      "group": "servicediscovery-gen-probe",
+      "reason": "never-probe",
+      "detail": "Marks a live instance healthy or unhealthy, which is what decides whether clients are given it at all."
+    },
+    {
+      "service": "servicediscovery",
+      "operation": "UpdatePrivateDnsNamespace",
+      "group": "servicediscovery-gen-probe",
+      "reason": "never-probe",
+      "detail": "Rewrites the SOA record of the private hosted zone behind a live namespace, changing how long every negative answer under it is cached."
+    },
+    {
+      "service": "servicediscovery",
+      "operation": "UpdatePublicDnsNamespace",
+      "group": "servicediscovery-gen-probe",
+      "reason": "never-probe",
+      "detail": "The same rewrite against a public hosted zone, where the cached answers are the internet's."
+    },
+    {
       "service": "sqs",
       "operation": "AddPermission",
       "group": "sqs-gen-probe",
