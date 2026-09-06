@@ -26,6 +26,7 @@ public final class ScenariosGen {
                 new ScenariosOrganizationsGen(clients),
                 new ScenariosSecretsmanagerGen(clients),
                 new ScenariosServicediscoveryGen(clients),
+                new ScenariosSnsGen(clients),
                 new ScenariosSqsGen(clients));
     }
 }
