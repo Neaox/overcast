@@ -461,19 +461,33 @@ func TestClampCapacity(t *testing.T) {
 	}
 }
 
+// TestNextPlacement_roundRobins pins that a launch is told where to go exactly
+// one way. A group with subnets is placed by subnet alone, leaving EC2 to
+// derive the zone from it; a group without them is placed by zone. Sending
+// both is what let the two disagree (#1840).
 func TestNextPlacement_roundRobins(t *testing.T) {
-	g := &AutoScalingGroup{
+	withSubnets := &AutoScalingGroup{
 		AvailabilityZones: []string{"us-east-1a", "us-east-1b"},
 		VPCZoneIdentifier: "subnet-1, subnet-2 ,subnet-3",
 	}
-	if got := nextAvailabilityZone(g, 3); got != "us-east-1b" {
-		t.Errorf("AZ for index 3 = %q, want us-east-1b", got)
+	subnet, az := nextPlacement(withSubnets, 4)
+	if subnet != "subnet-2" {
+		t.Errorf("subnet for index 4 = %q, want subnet-2", subnet)
 	}
-	if got := nextSubnet(g, 4); got != "subnet-2" {
-		t.Errorf("subnet for index 4 = %q, want subnet-2", got)
+	if az != "" {
+		t.Errorf("zone for index 4 = %q, want none: the subnet already names one", az)
 	}
-	empty := &AutoScalingGroup{}
-	if nextAvailabilityZone(empty, 0) != "" || nextSubnet(empty, 0) != "" {
-		t.Error("an unconfigured group should place nowhere in particular")
+
+	zonesOnly := &AutoScalingGroup{AvailabilityZones: []string{"us-east-1a", "us-east-1b"}}
+	subnet, az = nextPlacement(zonesOnly, 3)
+	if az != "us-east-1b" {
+		t.Errorf("zone for index 3 = %q, want us-east-1b", az)
+	}
+	if subnet != "" {
+		t.Errorf("subnet for index 3 = %q, want none: the group has no VPCZoneIdentifier", subnet)
+	}
+
+	if subnet, az = nextPlacement(&AutoScalingGroup{}, 0); subnet != "" || az != "" {
+		t.Errorf("an unconfigured group placed at %q/%q, want nowhere in particular", subnet, az)
 	}
 }

@@ -413,9 +413,7 @@ func (s *Service) launchInstance(ctx context.Context, g *AutoScalingGroup, cause
 	s.mu.Lock()
 	existing, _ := s.st.listInstances(ctx, g.AutoScalingGroupName)
 	s.mu.Unlock()
-	az := nextAvailabilityZone(g, len(existing))
-	subnet := nextSubnet(g, len(existing))
-
+	subnet, az := nextPlacement(g, len(existing))
 	if subnet != "" {
 		params.Set("SubnetId", subnet)
 	}
@@ -763,6 +761,27 @@ func causePolicy(now time.Time, policy, alarm string, from, to int) string {
 
 // ─── Placement ────────────────────────────────────────────────────────────────
 
+// nextPlacement chooses where a group's next launch goes, and gives
+// RunInstances exactly one of the two ways of saying it.
+//
+// A group with subnets round-robins across those and sends the subnet alone.
+// EC2 places the instance in that subnet's own zone (launchAvailabilityZone in
+// internal/services/ec2), so the zone and the subnet cannot contradict each
+// other, because only one of the two is ever sent. Deriving the zone here as
+// well and sending both would put a second copy of that rule on this side of
+// the call, and getting it wrong by one index is exactly what #1840 was: the
+// zones and the subnets were round-robinned independently, and nothing checked
+// that subnet i was in zone i.
+//
+// A group with no VPCZoneIdentifier has only its zones to go on and
+// round-robins those, so a multi-AZ group without subnets still spreads.
+func nextPlacement(g *AutoScalingGroup, n int) (subnet, az string) {
+	if subnets := subnetIDs(g.VPCZoneIdentifier); len(subnets) > 0 {
+		return subnets[n%len(subnets)], ""
+	}
+	return "", nextAvailabilityZone(g, n)
+}
+
 // nextAvailabilityZone round-robins across the group's zones so a multi-AZ
 // group spreads, as real Auto Scaling does.
 func nextAvailabilityZone(g *AutoScalingGroup, n int) string {
@@ -772,22 +791,22 @@ func nextAvailabilityZone(g *AutoScalingGroup, n int) string {
 	return g.AvailabilityZones[n%len(g.AvailabilityZones)]
 }
 
-// nextSubnet round-robins across VPCZoneIdentifier's subnets.
-func nextSubnet(g *AutoScalingGroup, n int) string {
-	if g.VPCZoneIdentifier == "" {
-		return ""
+// subnetIDs splits a VPCZoneIdentifier into the subnets it names. AWS
+// documents the field as "a comma-separated list of subnet IDs"; the trimming
+// is for the spacing hand-written templates and CLI invocations put around the
+// commas.
+func subnetIDs(vpcZoneIdentifier string) []string {
+	if vpcZoneIdentifier == "" {
+		return nil
 	}
-	subnets := strings.Split(g.VPCZoneIdentifier, ",")
-	cleaned := subnets[:0]
-	for _, sn := range subnets {
-		if sn = strings.TrimSpace(sn); sn != "" {
-			cleaned = append(cleaned, sn)
+	parts := strings.Split(vpcZoneIdentifier, ",")
+	ids := parts[:0]
+	for _, id := range parts {
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
 		}
 	}
-	if len(cleaned) == 0 {
-		return ""
-	}
-	return cleaned[n%len(cleaned)]
+	return ids
 }
 
 // ─── EventBridge notifications ────────────────────────────────────────────────
