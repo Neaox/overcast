@@ -169,7 +169,13 @@ type ExecuteResult struct {
 
 // GraphQLError represents a single error in the GraphQL response.
 type GraphQLError struct {
-	Message    string           `json:"message"`
+	Message string `json:"message"`
+	// ErrorType classifies the error the way AWS documents it for
+	// authorization failures and mapping-template errors (e.g.
+	// "UnauthorizedException", "MappingTemplate") — see
+	// https://docs.aws.amazon.com/appsync/latest/devguide/troubleshooting-and-common-mistakes.html.
+	// Left empty for resolver/execution errors that AWS does not classify.
+	ErrorType  string           `json:"errorType,omitempty"`
 	Locations  []SourceLocation `json:"locations,omitempty"`
 	Path       []any            `json:"path,omitempty"`
 	Extensions map[string]any   `json:"extensions,omitempty"`

@@ -109,9 +109,11 @@ every check AWS applies:
 | Expiry | `exp` has passed |
 | `appIdClientRegex` | Configured, and the token's `aud` (ID token) or `client_id` (access token) does not match it |
 
-Every failure is AppSync's `UnauthorizedException` with HTTP `401`. The rule
-applies identically to the API's primary authorization mode and to any Cognito
-entry in `additionalAuthenticationProviders`.
+Every failure is AppSync's `UnauthorizedException` with HTTP `401`, carried in
+the GraphQL error envelope (`errors[0].errorType`), not the AWS JSON error
+envelope other Overcast services use. The rule applies identically to the
+API's primary authorization mode and to any Cognito entry in
+`additionalAuthenticationProviders`.
 
 Verification runs in-process against the local Cognito service — no network
 call, and no JWKS to configure. Tokens from real AWS Cognito are refused,

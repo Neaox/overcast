@@ -65,10 +65,12 @@ func (h *Handler) ExecuteGraphQL(w http.ResponseWriter, r *http.Request) {
 		gqlReq.Variables = map[string]any{}
 	}
 
-	// 3. Authenticate.
+	// 3. Authenticate. Authorization failures on this data-plane endpoint use
+	// AppSync's GraphQL error envelope, not the AWS JSON error envelope that
+	// the management-plane /v1/apis operations use — see writeGraphQLAuthError.
 	identity, authErr := h.authenticateRequest(r, api, &gqlReq)
 	if authErr != nil {
-		protocol.WriteJSONError(w, r, authErr)
+		writeGraphQLAuthError(w, r, authErr)
 		return
 	}
 
@@ -2814,6 +2816,36 @@ func writeGraphQLErrors(w http.ResponseWriter, r *http.Request, errs []GraphQLEr
 	writeJSON(w, r, http.StatusOK, map[string]any{
 		"data":   nil,
 		"errors": errs,
+	})
+}
+
+// writeGraphQLAuthError writes an authorization failure on the data-plane
+// GraphQL endpoint as AppSync's GraphQL error envelope —
+// {"errors":[{"errorType":...,"message":...}]} — with Content-Type:
+// application/json and the failure's own HTTP status, instead of the AWS
+// JSON error envelope (protocol.WriteJSONError's {"__type":...}) that the
+// management-plane /v1/apis operations correctly use. A real AppSync 401
+// response for a rejected request carries no "data" key and no
+// locations/path — the request never reaches query parsing/execution, so
+// there is nothing to attach a location or field path to. The shape is the
+// one AWS documents for classified AppSync errors (errorType alongside
+// message) in
+// https://docs.aws.amazon.com/appsync/latest/devguide/troubleshooting-and-common-mistakes.html,
+// applied to the authorization failures described in
+// https://docs.aws.amazon.com/appsync/latest/devguide/security-authz.html;
+// it is what Amplify's client reads (errors[0].errorType) to detect an auth
+// failure, which is how #1732 was found.
+func writeGraphQLAuthError(w http.ResponseWriter, r *http.Request, aerr *protocol.AWSError) {
+	// Preserve the request-tracing behavior protocol.WriteJSONError provided:
+	// record the AWS error on the response writer before writing the body, so
+	// the emulator's debug trace/inbox still shows the classified failure even
+	// though the wire body is now the GraphQL envelope rather than protocol's
+	// own JSON error envelope.
+	if rec, ok := w.(interface{ RecordAWSError(*protocol.AWSError) }); ok {
+		rec.RecordAWSError(aerr)
+	}
+	writeJSON(w, r, aerr.HTTPStatus, map[string]any{
+		"errors": []GraphQLError{{Message: aerr.Message, ErrorType: aerr.Code}},
 	})
 }
 
