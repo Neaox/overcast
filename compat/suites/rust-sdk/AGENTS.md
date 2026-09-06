@@ -399,6 +399,11 @@ and returns. It runs for real in `test.yml`'s `compat-suite-unit-tests` job,
 from a full checkout, beside the other suites' unit tests — which is also where
 to run `cargo test` by hand when you have a host toolchain.
 
+Where it does run, it asserts the exact set of skips it takes (`EXPECTED_SKIPS`)
+and a floor on the number of expectations it answers (`MINIMUM_CHECKED`). Adding
+a fixture whose carriers this suite cannot read therefore fails here until the
+skip is named with its reason, rather than passing quietly.
+
 ---
 
 ## Adding a new group

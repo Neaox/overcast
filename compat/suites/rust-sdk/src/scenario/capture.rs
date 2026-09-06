@@ -173,3 +173,102 @@ fn raw_response<E>(err: &SdkError<E, HttpResponse>) -> Option<&HttpResponse> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use aws_smithy_runtime_api::client::http::{
+        HttpClient, HttpConnector, HttpConnectorFuture, HttpConnectorSettings, SharedHttpConnector,
+    };
+    use aws_smithy_runtime_api::client::orchestrator::HttpRequest;
+    use aws_smithy_types::body::SdkBody;
+
+    /// An HTTP client that answers every request with one canned response, so a
+    /// case can drive a real client through a real failure without a service.
+    #[derive(Clone, Debug)]
+    struct Canned {
+        status: u16,
+        body: &'static str,
+    }
+
+    impl HttpConnector for Canned {
+        fn call(&self, _request: HttpRequest) -> HttpConnectorFuture {
+            let status = self
+                .status
+                .try_into()
+                .expect("the canned status must be a status code");
+            HttpConnectorFuture::ready(Ok(HttpResponse::new(status, SdkBody::from(self.body))))
+        }
+    }
+
+    impl HttpClient for Canned {
+        fn http_connector(
+            &self,
+            _settings: &HttpConnectorSettings,
+            _components: &RuntimeComponents,
+        ) -> SharedHttpConnector {
+            SharedHttpConnector::new(self.clone())
+        }
+    }
+
+    fn canned_client(status: u16, body: &'static str) -> aws_sdk_sqs::Client {
+        let config = aws_sdk_sqs::Config::builder()
+            .behavior_version(aws_sdk_sqs::config::BehaviorVersion::latest())
+            .region(aws_sdk_sqs::config::Region::new("us-east-1"))
+            .credentials_provider(aws_sdk_sqs::config::Credentials::new(
+                "test",
+                "test",
+                None,
+                None,
+                "overcast-compat",
+            ))
+            .endpoint_url("http://127.0.0.1:4566")
+            .http_client(Canned { status, body })
+            .build();
+        aws_sdk_sqs::Client::from_conf(config)
+    }
+
+    /// The interceptor runs on a **failed** call, so the body is there to read
+    /// the error surfaces off.
+    ///
+    /// Nothing else in the suite shows this. The shared fixtures hand
+    /// `errors::surfaces` a document directly, bypassing the interceptor
+    /// altogether, and every live failure this suite has met also states its
+    /// code through `ProvideErrorMetadata::code()` — so a capture that never
+    /// fired on the error path would look exactly like one that did, until a
+    /// service answered with a code only the body carries.
+    #[tokio::test]
+    async fn the_interceptor_keeps_the_body_of_a_failed_call() {
+        let capture = Capture::new();
+        let client = canned_client(
+            400,
+            r#"{"__type":"com.amazonaws.sqs#QueueDoesNotExist","message":"no such queue"}"#,
+        );
+
+        let result = client
+            .get_queue_url()
+            .queue_name("missing")
+            .customize()
+            .interceptor(capture.clone())
+            .send()
+            .await;
+
+        let body = capture
+            .parsed()
+            .expect("the interceptor must have kept the body of a failed call");
+        assert_eq!(body["__type"], "com.amazonaws.sqs#QueueDoesNotExist");
+
+        let outcome = observe(result, &capture);
+        let failure = outcome.error.expect("the call must have failed");
+        assert_eq!(failure.status, Some(400));
+        assert!(
+            failure
+                .codes
+                .iter()
+                .any(|code| code.contains("QueueDoesNotExist")),
+            "the body's code must reach the surfaces: {:?}",
+            failure.codes
+        );
+    }
+}

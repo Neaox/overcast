@@ -43,6 +43,30 @@ const KNOWN_CARRIERS: &[&str] = &[
 /// another suite.
 const OBSERVED_CARRIERS: &[&str] = &["bodyType", "bodyCode", "queryErrorHeader"];
 
+/// Every skip this suite is expected to take, as `<fixture id>` for a whole
+/// fixture and `<fixture id>/<expectation name>` for one expectation.
+///
+/// Asserted as a set rather than printed, because `cargo test` swallows stdout
+/// and stderr on a pass: a fixture that started skipping would otherwise look
+/// exactly like one that started passing. A new entry here needs a reason in
+/// the comment beside it, and an entry that stops being taken fails too — a
+/// carrier this suite has learned to read must not keep its exemption.
+const EXPECTED_SKIPS: &[&str] = &[
+    // Both banner fixtures state their code only on a CLI process's stderr.
+    "cli-banner",
+    "cli-banner-query-compatible",
+    // Rust models a service's errors as one enum per operation, so a modeled
+    // variant's name is reachable only through `Debug` — a rendering, not a
+    // surface.
+    "organizations-json-type/the same clause, matched against the SDK's exception class",
+];
+
+/// The number of expectations this suite answers over the fixture set as it
+/// stands. A floor, not an equality: a fixture added later raises it, and a
+/// change that quietly stopped answering some of them lowers it, which is the
+/// direction that has to fail.
+const MINIMUM_CHECKED: usize = 20;
+
 const WHAT_THIS_SUITE_SEES: &str =
     "the SDK hands this suite a resolved error code, the raw response body its own \
      interceptor kept, and the response headers — never an exception class name \
@@ -131,7 +155,8 @@ fn shared_error_fixtures() {
     let known: BTreeSet<&str> = KNOWN_CARRIERS.iter().copied().collect();
     let observed: BTreeSet<&str> = OBSERVED_CARRIERS.iter().copied().collect();
     let mut checked = 0usize;
-    let mut skipped: Vec<String> = Vec::new();
+    // Keyed by what EXPECTED_SKIPS names, with the reason kept for the report.
+    let mut skipped: Vec<(String, String)> = Vec::new();
 
     for path in &paths {
         let raw = std::fs::read_to_string(path).expect("read fixture");
@@ -157,10 +182,12 @@ fn shared_error_fixtures() {
                 .iter()
                 .any(|carrier| observed.contains(carrier.as_str()));
         if !observes_any {
-            skipped.push(format!(
-                "{}: reads none of this fixture's surfaces ({}): {WHAT_THIS_SUITE_SEES}",
-                fixture.id,
-                fixture.carriers.join(", ")
+            skipped.push((
+                fixture.id.clone(),
+                format!(
+                    "reads none of this fixture's surfaces ({}): {WHAT_THIS_SUITE_SEES}",
+                    fixture.carriers.join(", ")
+                ),
             ));
             continue;
         }
@@ -192,9 +219,9 @@ fn shared_error_fixtures() {
                     )
                 });
                 if !observed.contains(via) {
-                    skipped.push(format!(
-                        "{}/{}: matches through {via:?}, which this suite does not observe",
-                        fixture.id, expectation.name
+                    skipped.push((
+                        format!("{}/{}", fixture.id, expectation.name),
+                        format!("matches through {via:?}, which this suite does not observe"),
                     ));
                     continue;
                 }
@@ -217,12 +244,24 @@ fn shared_error_fixtures() {
         }
     }
 
-    for reason in &skipped {
-        eprintln!("[rust-sdk] skipped fixture {reason}");
+    for (key, reason) in &skipped {
+        eprintln!("[rust-sdk] skipped fixture {key}: {reason}");
     }
+
+    // The two halves that keep a silently ignored fixture from reading as a
+    // passing one: exactly these skips, and at least this much actually
+    // answered.
+    let taken: BTreeSet<&str> = skipped.iter().map(|(key, _)| key.as_str()).collect();
+    let expected: BTreeSet<&str> = EXPECTED_SKIPS.iter().copied().collect();
+    assert_eq!(
+        taken, expected,
+        "the skips this suite takes have changed; add a new one to EXPECTED_SKIPS with its \
+         reason, or delete an entry this suite no longer needs"
+    );
     assert!(
-        checked > 0,
-        "every fixture was skipped: this suite is asserting nothing about error matching"
+        checked >= MINIMUM_CHECKED,
+        "answered {checked} expectation(s), fewer than the {MINIMUM_CHECKED} this suite used to: \
+         something is being skipped without saying so"
     );
 }
 

@@ -226,12 +226,7 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 			outputs[emission.Path] = emission.Contents
 			gaps.Gaps = append(gaps.Gaps, emission.Gaps...)
 			rustServices = append(rustServices, r.Service)
-			for name := range emission.Refused {
-				if unable[name] == nil {
-					unable[name] = map[string]bool{}
-				}
-				unable[name][rustSDKSuite] = true
-			}
+			markUnable(unable, rustSDKSuite, emission.Refused)
 		}
 	}
 	// The index is emitted whether or not the backend is enabled: the go-sdk
@@ -324,7 +319,13 @@ func runGenerate(opts options, stdout io.Writer) error {
 	if err := checkStaleScenarios(opts.root, outputs, opts.check); err != nil {
 		return err
 	}
-	if err := checkStaleEmittedGo(opts.root, outputs, opts.check); err != nil {
+	// The go-sdk package compiles every file in it, so a stale emitted file is a
+	// build failure there; the rust-sdk index declares only the modules this run
+	// emitted, so a stale one is dead weight that would compile again the moment
+	// the index named it. Neither is generator output anybody wrote.
+	if err := checkStaleEmitted(opts.root, outputs, opts.check, goSuiteDir, "Go", func(name string) bool {
+		return strings.HasPrefix(name, "scenarios_") && strings.HasSuffix(name, "_gen.go")
+	}); err != nil {
 		return err
 	}
 	if err := checkStaleEmittedJava(opts.root, outputs, opts.check); err != nil {

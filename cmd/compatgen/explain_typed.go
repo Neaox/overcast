@@ -172,10 +172,11 @@ func renderDotnet(_ renderEnv, s *scenario, g *group, t *test) string {
 // follows, and the same reason: an explanation that describes the call rather
 // than reproducing it drifts from it silently.
 //
-// modelErr is non-nil when the shape snapshot could not be read. That must
-// never happen to generation, but it can happen to `-explain`: a recipe that
-// overrides its model service names a snapshot this command looks for under the
-// scenario's own key. Saying so beats printing a spelling that would be a guess.
+// A nil model is a snapshot that could not be read, and modelErr says why. That
+// must never happen to generation, but it can happen to `-explain`: a recipe
+// that overrides its model service names a snapshot this command looks for
+// under the scenario's own key. Saying so beats printing a spelling that would
+// be a guess.
 func rustStyle(model *serviceModel, crate string, modelErr error) style {
 	st := typedStyle()
 	st.name = func(suffix string) string { return fmt.Sprintf("format!(\"{run_id}-{group}-%s\")", suffix) }
@@ -199,7 +200,7 @@ func rustStyle(model *serviceModel, crate string, modelErr error) style {
 		if model == nil {
 			return []string{fmt.Sprintf("// the shape snapshot could not be read: %v", modelErr)}
 		}
-		lines, err := rustCallLines(model, crate, op, params)
+		lines, _, err := rustCallLines(model, crate, op, params)
 		if err != nil {
 			// Unreachable for a committed scenario: the emitter refuses at
 			// generation time what it cannot render, so a value this cannot

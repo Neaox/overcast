@@ -16,7 +16,7 @@
 //! | Surface | Where it comes from |
 //! | --- | --- |
 //! | `ProvideErrorMetadata::code()` | the code the protocol deserializer resolved out of the body — the AWS JSON protocols' `__type` with its namespace already stripped, or the REST JSON body's `code`. This is the `bodyType` and `bodyCode` carriers |
-//! | the raw response body | the same body, read by this suite's own interceptor before the SDK parsed it. It is the carrier the shared fixtures exercise, and it is what makes `bodyType` observable even where the SDK folds two codes into one |
+//! | the raw response body | the same body, kept by this suite's own interceptor as the SDK deserializes it (`read_after_deserialization`, for the reason [`super::capture`] gives). It is the carrier the shared fixtures exercise, and it is what makes `bodyType` observable even where the SDK folds two codes into one |
 //! | `x-amzn-query-error` | the header an `awsQueryCompatible` service sends, as `<code>;<Sender\|Receiver>`, read off the raw response an `SdkError` carries |
 //!
 //! What this suite does **not** observe is the `exceptionName` carrier. Rust

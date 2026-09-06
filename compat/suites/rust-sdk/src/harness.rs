@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 pub type TestFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
 pub type TestFn = Arc<dyn Fn(TestContext) -> TestFuture + Send + Sync>;
@@ -75,8 +75,9 @@ pub struct TestGroup {
     pub suite: String,
     pub service: String,
     pub name: String,
-    /// The group's tests may run concurrently with one another, bounded by the
-    /// same slot count concurrent groups use.
+    /// The group's tests may run concurrently with one another, taking their
+    /// slots from the same semaphore concurrent groups take theirs from — so
+    /// the bound on a whole run is that slot count, not the square of it.
     ///
     /// Only a generated probe group sets it (`parallel` in
     /// `registry.generated.json`): a probe has no setup, no teardown and no
@@ -135,11 +136,15 @@ pub async fn run_suite(suite: &str, endpoint: &str, region: &str, groups: Vec<Te
         total_tests: groups.iter().map(|group| group.tests.len()).sum(),
     });
 
-    let semaphore = Arc::new(Semaphore::new(parallel_slots()));
+    // One semaphore for the whole run. A group holds a slot while it runs, and
+    // a parallel group hands its own back while its tests take one each (see
+    // run_group), so what this bounds is the work in flight rather than the
+    // groups in flight.
+    let slots = Arc::new(Semaphore::new(parallel_slots()));
 
     let mut handles = Vec::new();
     for group in groups {
-        let permit = semaphore
+        let permit = slots
             .clone()
             .acquire_owned()
             .await
@@ -147,9 +152,9 @@ pub async fn run_suite(suite: &str, endpoint: &str, region: &str, groups: Vec<Te
         let endpoint = endpoint.to_string();
         let region = region.to_string();
         let suite = suite.to_string();
+        let slots = slots.clone();
         handles.push(tokio::spawn(async move {
-            let _permit = permit;
-            run_group(&suite, &endpoint, &region, group).await
+            run_group(&suite, &endpoint, &region, group, slots, permit).await
         }));
     }
 
@@ -178,12 +183,19 @@ pub async fn run_suite(suite: &str, endpoint: &str, region: &str, groups: Vec<Te
     });
 }
 
+/// Runs one group, holding the run-wide slot `run_suite` acquired for it.
+///
+/// The permit is passed in rather than held by the caller because a parallel
+/// group has to give it back for the duration of its fan-out — see below.
 async fn run_group(
     suite: &str,
     endpoint: &str,
     region: &str,
     group: TestGroup,
+    slots: Arc<Semaphore>,
+    permit: OwnedSemaphorePermit,
 ) -> (usize, usize, usize, usize) {
+    let mut permit = Some(permit);
     let run_id = std::env::var("OVERCAST_COMPAT_RUN_ID").unwrap_or_else(|_| "local".to_string());
     let context = TestContext::new(endpoint.to_string(), region.to_string(), run_id);
     let mut passed = 0;
@@ -213,12 +225,20 @@ async fn run_group(
     }
 
     if group.parallel && group.tests.iter().all(|test| test.depends.is_empty()) {
-        let (p, f, s, u) = run_tests_concurrently(suite, &group, &context).await;
+        // Hand this group's own slot back before fanning out. The tests take
+        // theirs from the same semaphore, so keeping it would put the real
+        // bound at slots squared — and, once every slot were held by a group
+        // waiting on its own tests, no test could ever acquire one.
+        drop(permit.take());
+        let (p, f, s, u) = run_tests_concurrently(suite, &group, &context, &slots).await;
         passed += p;
         failed += f;
         skipped += s;
         unimplemented += u;
+        // Teardown is this group's work again, so it runs holding a slot.
+        permit = slots.acquire_owned().await.ok();
         run_teardown(&group, context).await;
+        drop(permit);
         return (passed, failed, skipped, unimplemented);
     }
 
@@ -300,6 +320,7 @@ async fn run_group(
     }
 
     run_teardown(&group, context).await;
+    drop(permit);
     (passed, failed, skipped, unimplemented)
 }
 
@@ -310,19 +331,23 @@ async fn run_group(
 /// never the result stream. A group whose tests declare a dependency is run in
 /// order regardless — the IR never produces that combination, and honouring the
 /// flag over an edge would be running a dependency after its dependent.
+///
+/// `slots` is the run's own semaphore, not one of this function's making: the
+/// tests of a parallel group and the groups of a run draw on one budget, which
+/// is what makes `TestGroup::parallel`'s "the same slot count" true.
 async fn run_tests_concurrently(
     suite: &str,
     group: &TestGroup,
     context: &TestContext,
+    slots: &Arc<Semaphore>,
 ) -> (usize, usize, usize, usize) {
-    let semaphore = Arc::new(Semaphore::new(parallel_slots()));
     let mut handles = Vec::with_capacity(group.tests.len());
     for test in &group.tests {
         if test.skip.is_some() {
             handles.push(None);
             continue;
         }
-        let permit = semaphore
+        let permit = slots
             .clone()
             .acquire_owned()
             .await
@@ -398,8 +423,12 @@ async fn run_teardown(group: &TestGroup, context: TestContext) {
     }
 }
 
-/// How many things this suite may do at once: groups in [`run_suite`] and in
-/// the interactive loop, and the tests of one parallel group.
+/// How many things this suite may do at once.
+///
+/// It bounds work, not groups: [`run_suite`] takes one slot per group from a
+/// single semaphore, and a parallel group hands its own back while its tests
+/// take one each, so the total in flight never exceeds this whichever shape the
+/// run has. The interactive loop bounds its own concurrent runs the same way.
 pub fn parallel_slots() -> usize {
     std::env::var("OVERCAST_COMPAT_PARALLEL_SLOTS")
         .ok()
@@ -965,4 +994,80 @@ async fn run_group_interactive(
     }
 
     (passed, failed, skipped, unimplemented, cancelled)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use std::time::Duration;
+
+    /// A test case that records how many of its kind are running at once.
+    fn gauge_case(name: &str, live: Arc<AtomicUsize>, peak: Arc<AtomicUsize>) -> TestCase {
+        let fn_: TestFn = Arc::new(move |_context| {
+            let live = live.clone();
+            let peak = peak.clone();
+            Box::pin(async move {
+                let now = live.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                live.fetch_sub(1, Ordering::SeqCst);
+                Ok(())
+            })
+        });
+        TestCase {
+            name: name.to_string(),
+            op: None,
+            skip: None,
+            depends: Vec::new(),
+            fn_,
+        }
+    }
+
+    /// The tests of a parallel group draw on the run's own semaphore, so two
+    /// groups fanning out at once are still bounded by the slot count rather
+    /// than by slots × slots.
+    ///
+    /// The bound is the claim `TestGroup::parallel` makes, and getting it wrong
+    /// is invisible: nothing fails, the emulator just gets `slots²` calls at
+    /// once.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_parallel_groups_tests_share_the_runs_slots() {
+        const SLOTS: usize = 3;
+        let live = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let slots = Arc::new(Semaphore::new(SLOTS));
+        let context = TestContext::new(
+            "http://127.0.0.1:4566".to_string(),
+            "us-east-1".to_string(),
+            "run".to_string(),
+        );
+        let group = TestGroup {
+            suite: "rust-sdk".to_string(),
+            service: "widgets".to_string(),
+            name: "widgets-gen-probe".to_string(),
+            parallel: true,
+            tests: (0..8)
+                .map(|i| gauge_case(&format!("t{i}"), live.clone(), peak.clone()))
+                .collect(),
+            setup: None,
+            teardown: None,
+        };
+
+        let (left, right) = tokio::join!(
+            run_tests_concurrently("rust-sdk", &group, &context, &slots),
+            run_tests_concurrently("rust-sdk", &group, &context, &slots),
+        );
+        assert_eq!(left.0 + right.0, 16, "every test must have run and passed");
+
+        let peak = peak.load(Ordering::SeqCst);
+        assert!(
+            peak <= SLOTS,
+            "{peak} tests ran at once with {SLOTS} slots: the fan-out is not sharing the run's semaphore"
+        );
+        assert!(
+            peak > 1,
+            "nothing ran concurrently, so this case would pass against a serial harness too"
+        );
+    }
 }

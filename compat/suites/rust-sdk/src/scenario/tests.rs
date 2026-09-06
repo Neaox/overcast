@@ -209,6 +209,56 @@ fn the_binder_hands_back_the_evaluated_member() {
     assert!(b.i32("Count").is_err());
 }
 
+/// A number reaches the SDK as the scenario wrote it, or not at all.
+///
+/// 2^53 + 1 is the smallest integer an `f64` cannot hold. A binder that read
+/// integers through one would round it, find the rounded copy whole and in
+/// range, and hand the SDK a different number than the scenario file states —
+/// with both of its guards satisfied and nothing said. Same shape at the other
+/// end: `as f32` saturates, so a value past `f32::MAX` would be sent as `inf`.
+#[test]
+fn a_number_binds_exactly_or_is_refused() {
+    const PAST_F64: i64 = 9_007_199_254_740_993; // 2^53 + 1
+    assert_ne!(
+        PAST_F64 as f64 as i64, PAST_F64,
+        "2^53+1 must be a value f64 cannot hold, or this case proves nothing"
+    );
+
+    let b = Binder::new(json!({
+        "Big": PAST_F64,
+        "PastI32": 2_147_483_648_i64,
+        "Huge": 1e300,
+        "Fraction": 1.5,
+    }));
+    assert_eq!(b.i64("Big").ok().unwrap(), PAST_F64);
+
+    // The range check is on the exact value too, not on a rounded copy.
+    let past = b.i32("PastI32").expect_err("out of range for i32");
+    assert_eq!(past.member, "PastI32");
+    assert!(
+        past.message.contains("in range for i32"),
+        "{}",
+        past.message
+    );
+
+    // f64 holds 1e300; f32 does not, and `inf` is not an answer.
+    assert!(b.f64("Huge").is_ok());
+    let huge = b.f32("Huge").expect_err("out of range for f32");
+    assert!(
+        huge.message.contains("in range for f32"),
+        "{}",
+        huge.message
+    );
+
+    // And a fraction is not an integer member's value.
+    let fraction = b.i32("Fraction").expect_err("not a whole number");
+    assert!(
+        fraction.message.contains("whole number"),
+        "{}",
+        fraction.message
+    );
+}
+
 // ── Failure messages ────────────────────────────────────────────────────────
 
 #[tokio::test]

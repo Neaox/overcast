@@ -88,6 +88,12 @@ var rustUnsupportedKinds = map[string]bool{
 	"union":     true,
 }
 
+// rustBindings records whether spelling one call reached the Binder at all.
+// It is threaded down the value-rendering chain so that the single branch that
+// writes a Binder call is also what decides the closure's parameter name — see
+// rustBinderParam.
+type rustBindings struct{ used bool }
+
 // rustEmission is one service's emitted source plus what it could not express.
 type rustEmission struct {
 	// Path is the emitted file, repository-relative.
@@ -318,13 +324,13 @@ func rustWriteCall(w *rustWriter, gen *generation, crate string, c call, indent,
 		}
 		w.linef("%s    ],", indent)
 	}
-	lines, err := rustCallLines(gen.model, crate, c.Op, c.Params)
+	lines, bound, err := rustCallLines(gen.model, crate, c.Op, c.Params)
 	if err != nil {
 		return err
 	}
 	w.linef("%s    invoke: {", indent)
 	w.linef("%s        let client = client.clone();", indent)
-	w.linef("%s        scenario::invoker(move |%s| {", indent, rustBinderParam(lines))
+	w.linef("%s        scenario::invoker(move |%s| {", indent, rustBinderParam(bound))
 	w.linef("%s            let client = client.clone();", indent)
 	w.linef("%s            Box::pin(async move {", indent)
 	w.linef("%s                let capture = scenario::Capture::new();", indent)
@@ -343,11 +349,15 @@ func rustWriteCall(w *rustWriter, gen *generation, crate string, c call, indent,
 // call whose every member is a literal never asks the Binder for anything, and
 // an unused binding is a warning the suite's build would carry for every such
 // call — which is most of a probe group.
-func rustBinderParam(lines []string) string {
-	for _, line := range lines {
-		if strings.Contains(line, "b.") {
-			return "b"
-		}
+//
+// The answer comes from the spelling itself (rustBindings, threaded down to the
+// one branch that writes a Binder call) rather than from reading the rendered
+// lines back: a string literal that happens to contain "b." would otherwise
+// name the parameter `b` and leave it unused, which is the warning this exists
+// to avoid.
+func rustBinderParam(bound bool) string {
+	if bound {
+		return "b"
 	}
 	return "_b"
 }
@@ -465,18 +475,19 @@ func rustCheck(path string, c check, indent string) (string, error) {
 //
 // The last line is the call itself, which is what the assignment prefix goes in
 // front of in `-explain` and what the emitter wraps in scenario::observe.
-func rustCallLines(model *serviceModel, crate, op string, params map[string]any) ([]string, error) {
+func rustCallLines(model *serviceModel, crate, op string, params map[string]any) ([]string, bool, error) {
 	input := model.InputShape(op)
-	setters, err := rustMemberLines(model, crate, input, params, "")
+	bind := &rustBindings{}
+	setters, err := rustMemberLines(model, crate, input, params, "", bind)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", op, err)
+		return nil, false, fmt.Errorf("%s: %w", op, err)
 	}
 	lines := []string{"let request = client"}
 	lines = append(lines, "    ."+rustNameOperation(op)+"()")
 	lines = append(lines, setters...)
 	lines = append(lines, "    .customize()")
 	lines = append(lines, "    .interceptor(capture.clone());")
-	return append(lines, "request.send().await"), nil
+	return append(lines, "request.send().await"), bind.used, nil
 }
 
 // rustMemberLines renders one params object as fluent-builder setter lines, in
@@ -486,7 +497,7 @@ func rustCallLines(model *serviceModel, crate, op string, params map[string]any)
 //
 // prefix is the member's path inside the params document, which is the name the
 // Binder is asked for and the name a binding failure reports.
-func rustMemberLines(model *serviceModel, crate, structure string, params map[string]any, prefix string) ([]string, error) {
+func rustMemberLines(model *serviceModel, crate, structure string, params map[string]any, prefix string, bind *rustBindings) ([]string, error) {
 	var lines []string
 	for _, member := range sortedValueKeys(params) {
 		target, ok := model.MemberTarget(structure, member)
@@ -497,7 +508,7 @@ func rustMemberLines(model *serviceModel, crate, structure string, params map[st
 		if prefix != "" {
 			path = prefix + "." + member
 		}
-		calls, err := rustSetterCalls(model, crate, rustNameMember(member), target, params[member], path)
+		calls, err := rustSetterCalls(model, crate, rustNameMember(member), target, params[member], path, bind)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", member, err)
 		}
@@ -507,7 +518,7 @@ func rustMemberLines(model *serviceModel, crate, structure string, params map[st
 }
 
 // rustSetterCalls renders every setter call one member needs.
-func rustSetterCalls(model *serviceModel, crate, setter, target string, value any, path string) ([]string, error) {
+func rustSetterCalls(model *serviceModel, crate, setter, target string, value any, path string, bind *rustBindings) ([]string, error) {
 	kind := model.Kind(target)
 	// A deferred expression fills one slot, whatever the member's kind, so it
 	// goes straight to rustValueOfKind — which is where the refusal for a
@@ -515,7 +526,7 @@ func rustSetterCalls(model *serviceModel, crate, setter, target string, value an
 	// expression would report "the scenario gives it a map", which describes
 	// the JSON rather than the reason.
 	if _, _, isExpr := exprOf(value); isExpr {
-		rendered, err := rustValueOfKind(model, crate, target, value, path)
+		rendered, err := rustValueOfKind(model, crate, target, value, path, bind)
 		if err != nil {
 			return nil, err
 		}
@@ -530,7 +541,7 @@ func rustSetterCalls(model *serviceModel, crate, setter, target string, value an
 		element := model.Shapes[target].Member
 		var lines []string
 		for i, item := range items {
-			rendered, err := rustScalarOrComposite(model, crate, element, item, fmt.Sprintf("%s[%d]", path, i), "    ")
+			rendered, err := rustScalarOrComposite(model, crate, element, item, fmt.Sprintf("%s[%d]", path, i), "    ", bind)
 			if err != nil {
 				return nil, err
 			}
@@ -549,7 +560,7 @@ func rustSetterCalls(model *serviceModel, crate, setter, target string, value an
 			if err != nil {
 				return nil, err
 			}
-			renderedValue, err := rustScalarOrComposite(model, crate, shape.Value, entries[key], path+"."+key, "    ")
+			renderedValue, err := rustScalarOrComposite(model, crate, shape.Value, entries[key], path+"."+key, "    ", bind)
 			if err != nil {
 				return nil, err
 			}
@@ -557,7 +568,7 @@ func rustSetterCalls(model *serviceModel, crate, setter, target string, value an
 		}
 		return lines, nil
 	default:
-		rendered, err := rustScalarOrComposite(model, crate, target, value, path, "    ")
+		rendered, err := rustScalarOrComposite(model, crate, target, value, path, "    ", bind)
 		if err != nil {
 			return nil, err
 		}
@@ -578,9 +589,9 @@ func rustSetterLine(setter, argument string) []string {
 
 // rustScalarOrComposite renders one value of one modeled shape: a scalar, or a
 // structure built through the SDK's own builder.
-func rustScalarOrComposite(model *serviceModel, crate, target string, value any, path, indent string) (string, error) {
+func rustScalarOrComposite(model *serviceModel, crate, target string, value any, path, indent string, bind *rustBindings) (string, error) {
 	if model.Kind(target) != "structure" {
-		return rustValueOfKind(model, crate, target, value, path)
+		return rustValueOfKind(model, crate, target, value, path, bind)
 	}
 	members, ok := value.(map[string]any)
 	if !ok {
@@ -593,22 +604,40 @@ func rustScalarOrComposite(model *serviceModel, crate, target string, value any,
 		if !ok {
 			return "", fmt.Errorf("%s has no member %s in the model", target, member)
 		}
-		rendered, err := rustValueOfKind(model, crate, memberTarget, members[member], path+"."+member)
+		rendered, err := rustValueOfKind(model, crate, memberTarget, members[member], path+"."+member, bind)
 		if err != nil {
 			return "", err
 		}
 		fmt.Fprintf(&b, "\n%s        .%s(%s)", indent, rustNameMember(member), rendered)
 	}
-	// A builder for a structure with required members is fallible; one without
-	// is not. That is smithy-rs's rule and it follows from the model, so the
-	// two spellings are chosen here rather than looked up.
-	if len(model.RequiredMembers(target)) == 0 {
-		fmt.Fprintf(&b, "\n%s        .build()", indent)
-	} else {
-		fmt.Fprintf(&b, "\n%s        .build()", indent)
+	fmt.Fprintf(&b, "\n%s        .build()", indent)
+	if rustBuilderIsFallible(model, target) {
 		fmt.Fprintf(&b, "\n%s        .map_err(|err| scenario::build_error(%s, err))?", indent, rustString(path))
 	}
 	return b.String(), nil
+}
+
+// rustBuilderIsFallible reports whether smithy-rs gives a structure's `build()`
+// a Result, which is exactly where some member is required and has no
+// `@default`.
+//
+// The `@default` half is what a reading of "required" alone gets wrong. A member
+// that is both required and defaulted has a value whatever the caller says, so
+// the generated builder fills it in with `unwrap_or_default` and `build()` stays
+// infallible — Elastic Load Balancing's `Listener.LoadBalancerPort` and
+// `AccessLog.Enabled` are two of the six such members in the pinned snapshot.
+// Writing `?` after one of those `build()` calls does not compile.
+//
+// It is a predicate of its own rather than a change to RequiredMembers, because
+// that method's other callers ask a different question — which members a caller
+// must *send* — and a defaulted member is still one of those.
+func rustBuilderIsFallible(model *serviceModel, target string) bool {
+	for _, name := range model.RequiredMembers(target) {
+		if !hasTrait(model.Shapes[target].Members[name].Traits, "smithy.api#default") {
+			return true
+		}
+	}
+	return false
 }
 
 // rustValueOfKind renders one scalar value: a literal where the scenario writes
@@ -619,7 +648,7 @@ func rustScalarOrComposite(model *serviceModel, crate, target string, value any,
 // tree by then — that evaluation is failure-message field 3 — so reading the
 // leaf back by path is what keeps the typed call and the reported params the
 // same values rather than two evaluations of one expression.
-func rustValueOfKind(model *serviceModel, crate, target string, value any, path string) (string, error) {
+func rustValueOfKind(model *serviceModel, crate, target string, value any, path string, bind *rustBindings) (string, error) {
 	kind := model.Kind(target)
 	if rustUnsupportedKinds[kind] {
 		return "", fmt.Errorf("the rust-sdk emitter has no Rust value expression for a %s member (%s)", kind, path)
@@ -627,6 +656,7 @@ func rustValueOfKind(model *serviceModel, crate, target string, value any, path 
 	if _, _, isExpr := exprOf(value); !isExpr {
 		return rustLiteralOfKind(model, crate, target, value)
 	}
+	bind.used = true
 	switch kind {
 	case "string":
 		return fmt.Sprintf("b.string(%s)?", rustString(path)), nil
@@ -675,11 +705,17 @@ func rustLiteralOfKind(model *serviceModel, crate, target string, value any) (st
 		}
 		return strconv.Itoa(n), nil
 	case "float":
-		f, err := floatOf(value)
-		if err != nil {
-			return "", err
+		n, ok := numberOf(value)
+		if !ok {
+			return "", fmt.Errorf("wanted a number, got %s", valueKind(value))
 		}
-		return rustFloatLiteral(f), nil
+		// A literal a float64 cannot carry would compile to ±Inf rather than to
+		// the number the scenario asked for, so it is refused rather than emitted
+		// — the same rule emit_go.go and emit_java.go apply.
+		if !n.Representable {
+			return "", fmt.Errorf("%s is out of range for an %s member", n.Text, rustFloatWidth(model, target))
+		}
+		return rustFloatLiteral(n.Float), nil
 	case "boolean":
 		b, ok := value.(bool)
 		if !ok {
@@ -731,16 +767,6 @@ func rustShapeType(model *serviceModel, target string) string {
 		return "double"
 	}
 	return model.Shapes[target].Type
-}
-
-func floatOf(v any) (float64, error) {
-	switch n := v.(type) {
-	case float64:
-		return n, nil
-	case json.Number:
-		return n.Float64()
-	}
-	return 0, fmt.Errorf("wanted a number, got %T", v)
 }
 
 // rustFloatLiteral keeps a whole number a float: Rust reads `1` as an integer,
@@ -1112,7 +1138,7 @@ func rustRefusals(gen *generation, g group) []gap {
 			if !ok {
 				return fmt.Errorf("%s has no member %s in the model", input, member)
 			}
-			if _, err := rustSetterCalls(gen.model, crate, rustNameMember(member), target, v, member); err != nil {
+			if _, err := rustSetterCalls(gen.model, crate, rustNameMember(member), target, v, member, &rustBindings{}); err != nil {
 				return fmt.Errorf("%s.%s cannot be spelled as Rust: %v", op, member, err)
 			}
 			return nil

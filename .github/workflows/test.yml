@@ -898,19 +898,17 @@ jobs:
         working-directory: compat/suites/java-sdk
         run: mvn -B test --no-transfer-progress
 
-      # ubuntu-latest ships a stable Rust toolchain, so nothing is installed;
-      # what is cached is the registry and the target directory, because
-      # compiling a dozen aws-sdk crates from scratch is most of this step.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # ubuntu-latest ships a stable Rust toolchain, so nothing is installed.
+      # rust-cache rather than actions/cache: it keys on the resolved
+      # dependency set and the compiler version, keeps only the parts of the
+      # target directory worth restoring, and skips the save on a hit. Caching
+      # this suite's whole `target` would be gigabytes against the repository's
+      # 10 GB LRU budget, and would evict the Go and npm caches the steps above
+      # depend on.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: needs.changes.outputs.code == 'true'
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            compat/suites/rust-sdk/target
-          key: cargo-${{ runner.os }}-compat-${{ hashFiles('compat/suites/rust-sdk/Cargo.toml') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-compat-
+          workspaces: compat/suites/rust-sdk
 
       # Here for the same reason java-sdk is: the shared error-matching
       # fixtures are reachable only from the whole checkout (see the note above

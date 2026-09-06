@@ -279,9 +279,18 @@ impl Binder {
     }
 
     /// The value at a member path, as an `f32`.
+    ///
+    /// A number an `f32` cannot hold is an error rather than an infinity: `as`
+    /// saturates, so binding 1e300 to a float member would otherwise send
+    /// `inf` and report nothing.
     #[allow(dead_code)]
     pub fn f32(&self, member: &str) -> Result<f32, BindError> {
-        self.float(member, "f32").map(|n| n as f32)
+        let number = self.float(member, "f32")?;
+        let narrowed = number as f32;
+        if !narrowed.is_finite() {
+            return Err(self.wrong(member, "a number in range for f32", self.at(member)?));
+        }
+        Ok(narrowed)
     }
 
     /// The value at a member path, as an `f64`.
@@ -290,19 +299,33 @@ impl Binder {
         self.float(member, "f64")
     }
 
+    /// Reads one integer member exactly.
+    ///
+    /// `as_i64`, never `as_f64`: an `i64` past 2^53 has no exact `f64`, so a
+    /// round trip through one would round the value silently and then range-check
+    /// the rounded copy — both guards pass and the SDK is handed a different
+    /// number than the scenario wrote. serde_json keeps an integer literal as an
+    /// integer, so the exact value is there to be read.
     #[allow(dead_code)]
     fn integer(&self, member: &str, min: i64, max: i64, kind: &str) -> Result<i64, BindError> {
         let value = self.at(member)?;
-        let Some(number) = value.as_f64() else {
+        let Some(number) = value.as_i64() else {
+            // A fractional number, and one past `i64`, are both numbers that
+            // are not this member's value; say which it is rather than "not a
+            // number", which is what a non-number gets.
+            if value.is_number() {
+                return Err(self.wrong(
+                    member,
+                    &format!("a whole number in range for {kind}"),
+                    value,
+                ));
+            }
             return Err(self.wrong(member, "a number", value));
         };
-        if number.trunc() != number {
-            return Err(self.wrong(member, "a whole number", value));
-        }
-        if number < min as f64 || number > max as f64 {
+        if number < min || number > max {
             return Err(self.wrong(member, &format!("a number in range for {kind}"), value));
         }
-        Ok(number as i64)
+        Ok(number)
     }
 
     #[allow(dead_code)]

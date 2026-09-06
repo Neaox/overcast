@@ -19,10 +19,7 @@ func TestExplain_rendersEveryLanguage(t *testing.T) {
 			// All three source-emitting backends render through their own
 			// emitter, so every one of their inputs is supplied: the vendored
 			// SDK's types for Go, the shape snapshot for Java and Rust.
-			env := renderEnv{
-				goTypes: fixtureGoTypes(),
-				model:   func(string) (*serviceModel, error) { return f.model, nil },
-			}
+			env := renderEnv{goTypes: fixtureGoTypes(), model: staticModel(f.model)}
 			out := renderers[lang](env, gen.scenario, g, tc)
 			// Operation names are spelled per language (get_widget, getWidget,
 			// GetWidget), so compare with case and separators folded.
@@ -81,4 +78,10 @@ func TestReport_listsCoverageRefusalsAndSamples(t *testing.T) {
 	if again.String() != report {
 		t.Fatal("the report is not deterministic")
 	}
+}
+
+// staticModel is the renderEnv loader for a test that already holds the model
+// it wants every lookup to answer with.
+func staticModel(model *serviceModel) func(string) (*serviceModel, error) {
+	return func(string) (*serviceModel, error) { return model, nil }
 }

@@ -263,7 +263,7 @@ func TestRustCallLines_spellsEveryShapeOfMember(t *testing.T) {
 			if err := decodeStrict([]byte(tc.params), &params); err != nil {
 				t.Fatal(err)
 			}
-			lines, err := rustCallLines(gen.model, crate, tc.op, params)
+			lines, _, err := rustCallLines(gen.model, crate, tc.op, params)
 			if err != nil {
 				t.Fatalf("rustCallLines(%s): %v", tc.op, err)
 			}
@@ -291,19 +291,31 @@ func TestRustSetterCalls_buildsAFallibleBuilderOnlyWhereTheModelRequiresAMember(
 	required := map[string]awsmodel.SnapshotMember{
 		"Id": {Target: "smithy.api#String", Traits: map[string]json.RawMessage{"smithy.api#required": json.RawMessage("{}")}},
 	}
+	// Required *and* defaulted, which is Elastic Load Balancing's
+	// Listener.LoadBalancerPort and five other members in the pinned
+	// snapshot: the builder fills such a member in with unwrap_or_default,
+	// so build() has no Result and a `?` after it does not compile.
+	defaulted := map[string]awsmodel.SnapshotMember{
+		"Id": {Target: "smithy.api#String", Traits: map[string]json.RawMessage{
+			"smithy.api#required": json.RawMessage("{}"),
+			"smithy.api#default":  json.RawMessage(`""`),
+		}},
+	}
 	model := &serviceModel{Snapshot: awsmodel.Snapshot{
 		Service: "widgets",
 		Shapes: map[string]awsmodel.SnapshotShape{
 			"EntryList":     {Type: "list", Member: "Entry"},
 			"Entry":         {Type: "structure", Members: required},
 			"LooseList":     {Type: "list", Member: "Loose"},
+			"DefaultedList": {Type: "list", Member: "Defaulted"},
+			"Defaulted":     {Type: "structure", Members: defaulted},
 			"Loose":         {Type: "structure", Members: map[string]awsmodel.SnapshotMember{"Id": {Target: "smithy.api#String"}}},
 			"smithy.api#St": {Type: "string"},
 		},
 	}}
 	value := []any{map[string]any{"Id": "1"}}
 
-	fallible, err := rustSetterCalls(model, "aws_sdk_widgets", "entries", "EntryList", value, "Entries")
+	fallible, err := rustSetterCalls(model, "aws_sdk_widgets", "entries", "EntryList", value, "Entries", &rustBindings{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,12 +323,20 @@ func TestRustSetterCalls_buildsAFallibleBuilderOnlyWhereTheModelRequiresAMember(
 		t.Errorf("a builder for a structure with a required member is not fallible:\n%s", strings.Join(fallible, "\n"))
 	}
 
-	infallible, err := rustSetterCalls(model, "aws_sdk_widgets", "loose", "LooseList", value, "Loose")
+	infallible, err := rustSetterCalls(model, "aws_sdk_widgets", "loose", "LooseList", value, "Loose", &rustBindings{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(strings.Join(infallible, "\n"), "map_err") {
 		t.Errorf("a builder for a structure with no required member was written as fallible:\n%s", strings.Join(infallible, "\n"))
+	}
+
+	defaulted_, err := rustSetterCalls(model, "aws_sdk_widgets", "defaulted", "DefaultedList", value, "Defaulted", &rustBindings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(defaulted_, "\n"), "map_err") {
+		t.Errorf("a builder whose only required member carries @default was written as fallible:\n%s", strings.Join(defaulted_, "\n"))
 	}
 }
 
@@ -518,7 +538,7 @@ func TestExplainRustRendersTheEmittedCall(t *testing.T) {
 	if !ok {
 		t.Fatal("fixture has no CreateWidget")
 	}
-	explained := renderRust(renderEnv{model: func(string) (*serviceModel, error) { return gen.model, nil }}, gen.scenario, g, tc)
+	explained := renderRust(renderEnv{model: staticModel(gen.model)}, gen.scenario, g, tc)
 
 	emission, err := emitRust(gen)
 	if err != nil {
@@ -526,7 +546,7 @@ func TestExplainRustRendersTheEmittedCall(t *testing.T) {
 	}
 	emitted := string(emission.Contents)
 
-	lines, err := rustCallLines(gen.model, rustNameCrate(gen.scenario.Client.SDKID), tc.Call.Op, tc.Call.Params)
+	lines, _, err := rustCallLines(gen.model, rustNameCrate(gen.scenario.Client.SDKID), tc.Call.Op, tc.Call.Params)
 	if err != nil {
 		t.Fatal(err)
 	}
