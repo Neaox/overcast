@@ -98,6 +98,54 @@ type xmlStateChangeItem struct {
 
 // ── RunInstances ─────────────────────────────────────────────────────────────
 
+// launchAvailabilityZone resolves the zone a RunInstances launch lands in: the
+// zone the named subnet sits in, else an explicit Placement.AvailabilityZone,
+// else the region's first zone — and an error when the request names both and
+// they disagree. It is called from both dispatch bodies — the legacy one below
+// and the typed one in typed_logic.go — so the rule lives in one place rather
+// than in two copies that can drift apart (#1722 was exactly that drift: the
+// typed body stopped honouring the parameter Auto Scaling's zone-spreading
+// reconciler sends on every launch).
+//
+// Per the RunInstances reference SubnetId is "The ID of the subnet to launch
+// the instance into", and Placement.AvailabilityZone is optional — "If you
+// specify neither one, Amazon EC2 automatically selects an Availability Zone
+// for you" (API_Placement.html). A subnet belongs to exactly one zone, so
+// naming a subnet is naming a zone, and an instance whose placement
+// contradicts its own subnetId is not a shape real EC2 can produce (#1743).
+//
+// The conflict is not in the API reference — neither RunInstances nor the EC2
+// error-code list documents an error for it — so the wire shape below is taken
+// from a reported real-AWS response (hashicorp/terraform-provider-aws#13999,
+// launching an instance whose availability_zone disagreed with its subnet):
+//
+//	InvalidParameterValue: Value (us-east-1c) for parameter availabilityZone is
+//	invalid. Subnet 'subnet-aff9fe92' is in the availability zone us-east-1b
+//	status code: 400
+//
+// The generic code matches the error list's description of InvalidParameterValue
+// ("A value specified in a parameter is not valid ... The returned message
+// provides an explanation of the error value"), and the message names both
+// zones so a caller can see which half to change.
+//
+// subnet is nil when the request named none, or named one this store does not
+// hold: an unknown subnet keeps the previous, permissive fallback rather than
+// becoming a new failure mode.
+func launchAvailabilityZone(region, requested string, subnet *Subnet) (string, *protocol.AWSError) {
+	if subnet == nil || subnet.AvailabilityZone == "" {
+		if requested != "" {
+			return requested, nil
+		}
+		return region + "a", nil
+	}
+	if requested != "" && requested != subnet.AvailabilityZone {
+		return "", ec2err("InvalidParameterValue", fmt.Sprintf(
+			"Value (%s) for parameter availabilityZone is invalid. Subnet '%s' is in the availability zone %s",
+			requested, subnet.SubnetID, subnet.AvailabilityZone), http.StatusBadRequest)
+	}
+	return subnet.AvailabilityZone, nil
+}
+
 // RunInstances launches one or more new EC2 instances.
 func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 	// A launch template supplies whatever the request leaves out. Resolving it
@@ -148,22 +196,13 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := h.clk.Now().UTC().Format(time.RFC3339)
-	// Real EC2 places the instance in the requested zone; without this the
-	// first zone in the region was hardcoded, so a caller spreading capacity
-	// across zones (Auto Scaling does) got every instance in one of them and
-	// no way to tell.
-	az := r.FormValue("Placement.AvailabilityZone")
-	if az == "" {
-		az = h.cfg.Region + "a"
-	}
-	// #1722 gap, shared with the typed body (typed_logic.go): real EC2
-	// derives the instance's zone from SubnetId when Placement.AvailabilityZone
-	// is absent (the subnet pins the zone). Neither body does that here — both
-	// simply fall back to region+"a" regardless of which subnet's zone that
-	// contradicts — so they still agree with each other, just not with AWS.
+	// The subnet is read once and used twice: it carries the VPC whose network
+	// status gates the launch, and it pins the zone the instance lands in.
+	var subnet *Subnet
 	resolvedVpcID := ""
 	if subnetID != "" {
 		if sub, aerr := h.store.getSubnet(r.Context(), subnetID); aerr == nil {
+			subnet = sub
 			resolvedVpcID = sub.VpcID
 			if vpc, aerr := h.store.getVPC(r.Context(), sub.VpcID); aerr == nil {
 				ns := vpc.NetworkStatus
@@ -180,6 +219,11 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+	az, aerr := launchAvailabilityZone(h.cfg.Region, r.FormValue("Placement.AvailabilityZone"), subnet)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
 	}
 
 	instances := make([]xmlInstance, 0, maxCount)

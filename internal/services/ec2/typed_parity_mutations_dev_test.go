@@ -247,7 +247,14 @@ func seedVPC(t *testing.T, h *Handler, id string) *VPC {
 
 func seedSubnet(t *testing.T, h *Handler, id, vpcID string) *Subnet {
 	t.Helper()
-	sub := &Subnet{SubnetID: id, VpcID: vpcID, CidrBlock: "10.0.1.0/24", AvailabilityZone: "us-east-1a", State: "available"}
+	return seedSubnetInZone(t, h, id, vpcID, "us-east-1a")
+}
+
+// seedSubnetInZone is seedSubnet with the zone named, for a case whose whole
+// point is a subnet that is *not* in the region's first zone.
+func seedSubnetInZone(t *testing.T, h *Handler, id, vpcID, zone string) *Subnet {
+	t.Helper()
+	sub := &Subnet{SubnetID: id, VpcID: vpcID, CidrBlock: "10.0.1.0/24", AvailabilityZone: zone, State: "available"}
 	if aerr := h.store.putSubnet(context.Background(), sub); aerr != nil {
 		t.Fatalf("putSubnet: %s", aerr.Message)
 	}
@@ -676,6 +683,31 @@ func mutationCases() map[string][]mutationCase {
 				// launched it correctly.
 				name:   "availability-zone-honoured",
 				params: url.Values{"ImageId": {"ami-12345678"}, "MinCount": {"1"}, "MaxCount": {"1"}, "Placement.AvailabilityZone": {"us-east-1c"}},
+			},
+			{
+				// #1743: the zone a subnet pins is derived by a helper both
+				// bodies call rather than by two copies of the same lookup,
+				// and this is what keeps it that way — a body that grows its
+				// own derivation, or drops the call, reports a different
+				// placement here than the other one does.
+				name: "availability-zone-derived-from-subnet",
+				seed: func(t *testing.T, h *Handler) {
+					seedVPC(t, h, "vpc-mut-run-zone")
+					seedSubnetInZone(t, h, "subnet-mut-run-zone", "vpc-mut-run-zone", "us-east-1b")
+				},
+				params: url.Values{"ImageId": {"ami-12345678"}, "MinCount": {"1"}, "MaxCount": {"1"}, "SubnetId": {"subnet-mut-run-zone"}},
+			},
+			{
+				// #1743: a request naming both a subnet and a zone that
+				// disagree is refused, and the message names the subnet and
+				// both zones — so this row compares the error text, not just
+				// the code, between the two bodies.
+				name: "availability-zone-conflicts-with-subnet",
+				seed: func(t *testing.T, h *Handler) {
+					seedVPC(t, h, "vpc-mut-run-zone")
+					seedSubnetInZone(t, h, "subnet-mut-run-zone", "vpc-mut-run-zone", "us-east-1b")
+				},
+				params: url.Values{"ImageId": {"ami-12345678"}, "MinCount": {"1"}, "MaxCount": {"1"}, "SubnetId": {"subnet-mut-run-zone"}, "Placement.AvailabilityZone": {"us-east-1c"}},
 			},
 		},
 		"TerminateInstances": {

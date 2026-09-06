@@ -754,6 +754,158 @@ func TestRunInstances_honoursPlacementAvailabilityZone(t *testing.T) {
 	}
 }
 
+// runInstancesZoneSubnet creates a VPC and a subnet pinned to the named zone,
+// returning the subnet's ID — the fixture the two zone-from-subnet cases
+// below launch into.
+func runInstancesZoneSubnet(t *testing.T, srv *helpers.TestServer, zone string) string {
+	t.Helper()
+	vpcResp := ec2Query(t, srv, "CreateVpc", url.Values{"CidrBlock": []string{"10.0.0.0/16"}})
+	defer vpcResp.Body.Close()
+	helpers.AssertStatus(t, vpcResp, http.StatusOK)
+	var vpc struct {
+		Vpc struct {
+			VpcID string `xml:"vpcId"`
+		} `xml:"vpc"`
+	}
+	vb := readBody(t, vpcResp)
+	if err := xml.Unmarshal(vb, &vpc); err != nil {
+		t.Fatalf("unmarshal CreateVpcResponse: %v\nbody: %s", err, vb)
+	}
+
+	subResp := ec2Query(t, srv, "CreateSubnet", url.Values{
+		"VpcId":            []string{vpc.Vpc.VpcID},
+		"CidrBlock":        []string{"10.0.1.0/24"},
+		"AvailabilityZone": []string{zone},
+	})
+	defer subResp.Body.Close()
+	helpers.AssertStatus(t, subResp, http.StatusOK)
+	var sub struct {
+		Subnet struct {
+			SubnetID         string `xml:"subnetId"`
+			AvailabilityZone string `xml:"availabilityZone"`
+		} `xml:"subnet"`
+	}
+	sb := readBody(t, subResp)
+	if err := xml.Unmarshal(sb, &sub); err != nil {
+		t.Fatalf("unmarshal CreateSubnetResponse: %v\nbody: %s", err, sb)
+	}
+	if sub.Subnet.AvailabilityZone != zone {
+		t.Fatalf("CreateSubnet availabilityZone = %q, want %q", sub.Subnet.AvailabilityZone, zone)
+	}
+	return sub.Subnet.SubnetID
+}
+
+// TestRunInstances_derivesAvailabilityZoneFromSubnet is the reproducer for
+// #1743: on EC2 the subnet pins the zone, so a launch into a subnet in
+// us-east-1b lands in us-east-1b even though the request carries no
+// Placement. Both bodies used to fall back to region+"a" regardless of which
+// subnet's zone that contradicted, so an instance reported a zone its own
+// subnetId disagreed with.
+func TestRunInstances_derivesAvailabilityZoneFromSubnet(t *testing.T) {
+	// Given: a subnet in us-east-1b, which is not the region's default zone
+	srv := helpers.NewTestServer(t)
+	subnetID := runInstancesZoneSubnet(t, srv, "us-east-1b")
+
+	// When: RunInstances launches into it without asking for a zone
+	resp := ec2Query(t, srv, "RunInstances", url.Values{
+		"ImageId":  []string{"ami-12345678"},
+		"MinCount": []string{"1"},
+		"MaxCount": []string{"1"},
+		"SubnetId": []string{subnetID},
+	})
+	defer resp.Body.Close()
+
+	// Then: the RunInstances response reports the subnet's zone
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		Instances []struct {
+			InstanceID string `xml:"instanceId"`
+			SubnetID   string `xml:"subnetId"`
+			Placement  struct {
+				AvailabilityZone string `xml:"availabilityZone"`
+			} `xml:"placement"`
+		} `xml:"instancesSet>item"`
+	}
+	b := readBody(t, resp)
+	if err := xml.Unmarshal(b, &result); err != nil {
+		t.Fatalf("unmarshal RunInstancesResponse: %v\nbody: %s", err, b)
+	}
+	if len(result.Instances) != 1 {
+		t.Fatalf("expected 1 instance, got %d; body: %s", len(result.Instances), b)
+	}
+	inst := result.Instances[0]
+	if inst.SubnetID != subnetID {
+		t.Errorf("RunInstances subnetId = %q, want %q", inst.SubnetID, subnetID)
+	}
+	if inst.Placement.AvailabilityZone != "us-east-1b" {
+		t.Errorf("RunInstances placement.availabilityZone = %q, want us-east-1b", inst.Placement.AvailabilityZone)
+	}
+
+	// And: DescribeInstances reports the same zone for the launched instance
+	descResp := ec2Query(t, srv, "DescribeInstances", url.Values{
+		"InstanceId.1": []string{inst.InstanceID},
+	})
+	defer descResp.Body.Close()
+	helpers.AssertStatus(t, descResp, http.StatusOK)
+	var descResult struct {
+		Reservations []struct {
+			Instances []struct {
+				Placement struct {
+					AvailabilityZone string `xml:"availabilityZone"`
+				} `xml:"placement"`
+			} `xml:"instancesSet>item"`
+		} `xml:"reservationSet>item"`
+	}
+	db := readBody(t, descResp)
+	if err := xml.Unmarshal(db, &descResult); err != nil {
+		t.Fatalf("unmarshal DescribeInstancesResponse: %v\nbody: %s", err, db)
+	}
+	if len(descResult.Reservations) != 1 || len(descResult.Reservations[0].Instances) != 1 {
+		t.Fatalf("expected 1 reservation with 1 instance, got: %s", db)
+	}
+	descAZ := descResult.Reservations[0].Instances[0].Placement.AvailabilityZone
+	if descAZ != "us-east-1b" {
+		t.Errorf("DescribeInstances placement.availabilityZone = %q, want us-east-1b", descAZ)
+	}
+}
+
+// TestRunInstances_rejectsPlacementZoneConflictingWithSubnet covers the other
+// half of #1743: when the request names both a subnet and a zone, and they
+// disagree, EC2 refuses the launch rather than silently preferring one. The
+// message names the rejected value, the subnet, and the zone that subnet is
+// actually in.
+func TestRunInstances_rejectsPlacementZoneConflictingWithSubnet(t *testing.T) {
+	// Given: a subnet in us-east-1b
+	srv := helpers.NewTestServer(t)
+	subnetID := runInstancesZoneSubnet(t, srv, "us-east-1b")
+
+	// When: RunInstances asks for us-east-1c while launching into it
+	resp := ec2Query(t, srv, "RunInstances", url.Values{
+		"ImageId":                    []string{"ami-12345678"},
+		"MinCount":                   []string{"1"},
+		"MaxCount":                   []string{"1"},
+		"SubnetId":                   []string{subnetID},
+		"Placement.AvailabilityZone": []string{"us-east-1c"},
+	})
+	defer resp.Body.Close()
+
+	// Then: 400 InvalidParameterValue naming both zones and the subnet
+	result := assertEC2QueryError(t, resp, http.StatusBadRequest, "InvalidParameterValue")
+	want := "Value (us-east-1c) for parameter availabilityZone is invalid. Subnet '" +
+		subnetID + "' is in the availability zone us-east-1b"
+	if result.Errors[0].Message != want {
+		t.Errorf("error message = %q, want %q", result.Errors[0].Message, want)
+	}
+
+	// And: nothing was launched
+	descResp := ec2Query(t, srv, "DescribeInstances", nil)
+	defer descResp.Body.Close()
+	helpers.AssertStatus(t, descResp, http.StatusOK)
+	if body := string(readBody(t, descResp)); strings.Contains(body, "<instanceId>") {
+		t.Errorf("expected no instances after a rejected launch, got: %s", body)
+	}
+}
+
 // ─── DescribeInstances (with instances) ───────────────────────────────────────
 
 func TestDescribeInstances_withInstances(t *testing.T) {
