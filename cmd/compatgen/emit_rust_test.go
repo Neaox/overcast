@@ -224,6 +224,69 @@ func TestRustCallLines_spellsEveryShapeOfMember(t *testing.T) {
 			},
 		},
 		{
+			// A structure inside a structure is another builder chain, and
+			// the nested build() obeys rustBuilderIsFallible on its own shape:
+			// RetentionPolicy.Days is required without @default, so it is
+			// fallible where the WidgetSettings around it is not.
+			"a structure inside a structure", "UpdateWidget",
+			`{"Settings":{"Retention":{"Days":7,"Enabled":true}}}`,
+			[]string{
+				"    .settings(",
+				"        aws_sdk_widgets::types::WidgetSettings::builder()",
+				"            .retention(",
+				"                aws_sdk_widgets::types::RetentionPolicy::builder()",
+				"                    .days(7)",
+				"                    .enabled(true)",
+				"                    .build()",
+				`                    .map_err(|err| scenario::build_error("Settings.Retention", err))?`,
+				"            )",
+				"            .build()",
+				"    )",
+			},
+		},
+		{
+			// A list member of a structure builder is the same repeated
+			// setter it is at the top level — smithy-rs appends one element
+			// per call at every depth.
+			"a list of strings inside a structure", "UpdateWidget",
+			`{"Settings":{"Cogs":["c-00000001","c-00000002"]}}`,
+			[]string{
+				"        aws_sdk_widgets::types::WidgetSettings::builder()",
+				`            .cogs("c-00000001")`,
+				`            .cogs("c-00000002")`,
+				"            .build()",
+			},
+		},
+		{
+			"a list of structures inside a structure", "UpdateWidget",
+			`{"Settings":{"Tags":[{"Key":"k","Value":"v"}]}}`,
+			[]string{
+				"        aws_sdk_widgets::types::WidgetSettings::builder()",
+				"            .tags(",
+				"                aws_sdk_widgets::types::SprocketTag::builder()",
+				`                    .key("k")`,
+				`                    .value("v")`,
+				"                    .build()",
+				"            )",
+				"            .build()",
+			},
+		},
+		{
+			"a map inside a structure", "UpdateWidget",
+			`{"Settings":{"Labels":{"compat":"scenario","team":"platform"}}}`,
+			[]string{
+				`            .labels("compat", "scenario")`,
+				`            .labels("team", "platform")`,
+			},
+		},
+		{
+			// The Binder is asked for the leaf's own path, however deep the
+			// composite around it is.
+			"an expression nested two composites deep", "UpdateWidget",
+			`{"Settings":{"Tags":[{"Key":{"$ref":"t"}}]}}`,
+			[]string{`                    .key(b.string("Settings.Tags[0].Key")?)`},
+		},
+		{
 			"an expression into a string", "GetWidget",
 			`{"WidgetId":{"$ref":"widget.id"}}`,
 			[]string{`    .widget_id(b.string("WidgetId")?)`},
@@ -299,7 +362,7 @@ func TestRustSetterCalls_buildsAFallibleBuilderOnlyWhereTheModelRequiresAMember(
 	}}
 	value := []any{map[string]any{"Id": "1"}}
 
-	fallible, err := rustSetterCalls(model, "aws_sdk_widgets", "entries", "EntryList", value, "Entries", &rustBindings{})
+	fallible, err := rustSetterCalls(model, "aws_sdk_widgets", "entries", "EntryList", value, "Entries", rustCallIndent, &rustBindings{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +370,7 @@ func TestRustSetterCalls_buildsAFallibleBuilderOnlyWhereTheModelRequiresAMember(
 		t.Errorf("a builder for a structure with a required member is not fallible:\n%s", strings.Join(fallible, "\n"))
 	}
 
-	infallible, err := rustSetterCalls(model, "aws_sdk_widgets", "loose", "LooseList", value, "Loose", &rustBindings{})
+	infallible, err := rustSetterCalls(model, "aws_sdk_widgets", "loose", "LooseList", value, "Loose", rustCallIndent, &rustBindings{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +378,7 @@ func TestRustSetterCalls_buildsAFallibleBuilderOnlyWhereTheModelRequiresAMember(
 		t.Errorf("a builder for a structure with no required member was written as fallible:\n%s", strings.Join(infallible, "\n"))
 	}
 
-	defaulted_, err := rustSetterCalls(model, "aws_sdk_widgets", "defaulted", "DefaultedList", value, "Defaulted", &rustBindings{})
+	defaulted_, err := rustSetterCalls(model, "aws_sdk_widgets", "defaulted", "DefaultedList", value, "Defaulted", rustCallIndent, &rustBindings{})
 	if err != nil {
 		t.Fatal(err)
 	}

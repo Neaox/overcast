@@ -479,6 +479,12 @@ func rustCallLines(model *serviceModel, crate, op string, params map[string]any)
 	return append(lines, "request.send().await"), bind.used, nil
 }
 
+// rustCallIndent is the indent of an operation builder's own setter lines. It
+// is the top of the ladder rustSetterCalls and rustScalarOrComposite walk down
+// together: the members of a structure literal are indented two steps further
+// in than the setter that takes it, whatever depth that setter is itself at.
+const rustCallIndent = "    "
+
 // rustMemberLines renders one params object as fluent-builder setter lines, in
 // member order. A list or map member is several setter calls, because that is
 // what the SDK's builder takes: `.entries(entry)` appends one element and
@@ -497,7 +503,7 @@ func rustMemberLines(model *serviceModel, crate, structure string, params map[st
 		if prefix != "" {
 			path = prefix + "." + member
 		}
-		calls, err := rustSetterCalls(model, crate, rustNameMember(member), target, params[member], path, bind)
+		calls, err := rustSetterCalls(model, crate, rustNameMember(member), target, params[member], path, rustCallIndent, bind)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", member, err)
 		}
@@ -506,8 +512,13 @@ func rustMemberLines(model *serviceModel, crate, structure string, params map[st
 	return lines, nil
 }
 
-// rustSetterCalls renders every setter call one member needs.
-func rustSetterCalls(model *serviceModel, crate, setter, target string, value any, path string, bind *rustBindings) ([]string, error) {
+// rustSetterCalls renders every setter call one member needs, at indent.
+//
+// indent is the column the setter lines sit in, and it is what makes this one
+// function serve both an operation's own builder and a structure literal nested
+// inside one: a builder chain is a builder chain at every depth, and only the
+// indent differs.
+func rustSetterCalls(model *serviceModel, crate, setter, target string, value any, path, indent string, bind *rustBindings) ([]string, error) {
 	kind := model.Kind(target)
 	// A deferred expression fills one slot, whatever the member's kind, so it
 	// goes straight to rustValueOfKind — which is where the refusal for a
@@ -519,7 +530,7 @@ func rustSetterCalls(model *serviceModel, crate, setter, target string, value an
 		if err != nil {
 			return nil, err
 		}
-		return rustSetterLine(setter, rendered), nil
+		return rustSetterLine(indent, setter, rendered), nil
 	}
 	switch kind {
 	case "list":
@@ -530,11 +541,11 @@ func rustSetterCalls(model *serviceModel, crate, setter, target string, value an
 		element := model.Shapes[target].Member
 		var lines []string
 		for i, item := range items {
-			rendered, err := rustScalarOrComposite(model, crate, element, item, fmt.Sprintf("%s[%d]", path, i), "    ", bind)
+			rendered, err := rustScalarOrComposite(model, crate, element, item, fmt.Sprintf("%s[%d]", path, i), indent, bind)
 			if err != nil {
 				return nil, err
 			}
-			lines = append(lines, rustSetterLine(setter, rendered)...)
+			lines = append(lines, rustSetterLine(indent, setter, rendered)...)
 		}
 		return lines, nil
 	case "map":
@@ -549,35 +560,47 @@ func rustSetterCalls(model *serviceModel, crate, setter, target string, value an
 			if err != nil {
 				return nil, err
 			}
-			renderedValue, err := rustScalarOrComposite(model, crate, shape.Value, entries[key], path+"."+key, "    ", bind)
+			renderedValue, err := rustScalarOrComposite(model, crate, shape.Value, entries[key], path+"."+key, indent, bind)
 			if err != nil {
 				return nil, err
 			}
-			lines = append(lines, rustSetterLine(setter, renderedKey+", "+renderedValue)...)
+			lines = append(lines, rustSetterLine(indent, setter, renderedKey+", "+renderedValue)...)
 		}
 		return lines, nil
 	default:
-		rendered, err := rustScalarOrComposite(model, crate, target, value, path, "    ", bind)
+		rendered, err := rustScalarOrComposite(model, crate, target, value, path, indent, bind)
 		if err != nil {
 			return nil, err
 		}
-		return rustSetterLine(setter, rendered), nil
+		return rustSetterLine(indent, setter, rendered), nil
 	}
 }
 
 // rustSetterLine wraps one setter call, on one line while that is readable and
 // over several when the argument is itself multi-line.
-func rustSetterLine(setter, argument string) []string {
+func rustSetterLine(indent, setter, argument string) []string {
 	if !strings.Contains(argument, "\n") {
-		return []string{fmt.Sprintf("    .%s(%s)", setter, argument)}
+		return []string{fmt.Sprintf("%s.%s(%s)", indent, setter, argument)}
 	}
-	lines := []string{fmt.Sprintf("    .%s(", setter)}
+	lines := []string{fmt.Sprintf("%s.%s(", indent, setter)}
 	lines = append(lines, strings.Split(argument, "\n")...)
-	return append(lines, "    )")
+	return append(lines, indent+")")
 }
 
 // rustScalarOrComposite renders one value of one modeled shape: a scalar, or a
 // structure built through the SDK's own builder.
+//
+// A structure's members go back through rustSetterCalls, which is what makes
+// the nesting total: a member that is itself a structure is another builder
+// chain, a list member is the same repeated setter smithy-rs appends through at
+// the top level, and a map member the same two-argument insert. The only thing
+// that changes with depth is the indent, and every other rule — the pascal-cased
+// type name, the raw identifier, whether build() is fallible — is asked of the
+// nested shape rather than inherited from the shape around it.
+//
+// The recursion terminates on the scenario's value tree rather than on the
+// model, so a shape that refers to itself is only as deep as the params
+// document that fills it in.
 func rustScalarOrComposite(model *serviceModel, crate, target string, value any, path, indent string, bind *rustBindings) (string, error) {
 	if model.Kind(target) != "structure" {
 		return rustValueOfKind(model, crate, target, value, path, bind)
@@ -588,16 +611,19 @@ func rustScalarOrComposite(model *serviceModel, crate, target string, value any,
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s    %s::types::%s::builder()", indent, crate, rustNameType(target))
+	inner := indent + "        "
 	for _, member := range sortedValueKeys(members) {
 		memberTarget, ok := model.MemberTarget(target, member)
 		if !ok {
 			return "", fmt.Errorf("%s has no member %s in the model", target, member)
 		}
-		rendered, err := rustValueOfKind(model, crate, memberTarget, members[member], path+"."+member, bind)
+		calls, err := rustSetterCalls(model, crate, rustNameMember(member), memberTarget, members[member], path+"."+member, inner, bind)
 		if err != nil {
 			return "", err
 		}
-		fmt.Fprintf(&b, "\n%s        .%s(%s)", indent, rustNameMember(member), rendered)
+		for _, line := range calls {
+			b.WriteString("\n" + line)
+		}
 	}
 	fmt.Fprintf(&b, "\n%s        .build()", indent)
 	if rustBuilderIsFallible(model, target) {
@@ -1153,7 +1179,7 @@ func rustRefusals(gen *generation, g group) []gap {
 			if !ok {
 				return fmt.Errorf("%s has no member %s in the model", input, member)
 			}
-			if _, err := rustSetterCalls(gen.model, crate, rustNameMember(member), target, v, member, &rustBindings{}); err != nil {
+			if _, err := rustSetterCalls(gen.model, crate, rustNameMember(member), target, v, member, rustCallIndent, &rustBindings{}); err != nil {
 				return fmt.Errorf("%s.%s cannot be spelled as Rust: %v", op, member, err)
 			}
 			return nil

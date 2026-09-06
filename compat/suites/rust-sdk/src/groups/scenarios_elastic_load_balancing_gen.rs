@@ -15,6 +15,11 @@ use crate::scenario::{self, Call, Group, Test};
 /// The scenario file every group in this file was generated from.
 const SCENARIO_FILE: &str = "compat/model/scenarios/elastic-load-balancing.json";
 
+const GROUP_ELASTIC_LOAD_BALANCING_GEN_LOADBALANCER: Group = Group {
+    name: "elastic-load-balancing-gen-loadbalancer",
+    file: SCENARIO_FILE,
+};
+
 const GROUP_ELASTIC_LOAD_BALANCING_GEN_LOADBALANCERPOLICY: Group = Group {
     name: "elastic-load-balancing-gen-loadbalancerpolicy",
     file: SCENARIO_FILE,
@@ -53,6 +58,146 @@ impl ServiceGroup for ScenariosElasticLoadBalancing {
 
     fn impls(&self) -> HashMap<String, TestFn> {
         let mut impls: HashMap<String, TestFn> = HashMap::new();
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "elastic-load-balancing-gen-loadbalancer:CreateLoadBalancer".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_ELASTIC_LOAD_BALANCING_GEN_LOADBALANCER
+                            .run_test(&ctx, "CreateLoadBalancer", test_elastic_load_balancing_gen_loadbalancer_create_load_balancer(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "elastic-load-balancing-gen-loadbalancer:DescribeLoadBalancers".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_ELASTIC_LOAD_BALANCING_GEN_LOADBALANCER
+                            .run_test(&ctx, "DescribeLoadBalancers", test_elastic_load_balancing_gen_loadbalancer_describe_load_balancers(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "elastic-load-balancing-gen-loadbalancer:ConfigureHealthCheck".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_ELASTIC_LOAD_BALANCING_GEN_LOADBALANCER
+                            .run_test(&ctx, "ConfigureHealthCheck", test_elastic_load_balancing_gen_loadbalancer_configure_health_check(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "elastic-load-balancing-gen-loadbalancer:CreateLoadBalancerListeners".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_ELASTIC_LOAD_BALANCING_GEN_LOADBALANCER
+                            .run_test(&ctx, "CreateLoadBalancerListeners", test_elastic_load_balancing_gen_loadbalancer_create_load_balancer_listeners(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "elastic-load-balancing-gen-loadbalancer:DeleteLoadBalancerListeners".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_ELASTIC_LOAD_BALANCING_GEN_LOADBALANCER
+                            .run_test(&ctx, "DeleteLoadBalancerListeners", test_elastic_load_balancing_gen_loadbalancer_delete_load_balancer_listeners(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "elastic-load-balancing-gen-loadbalancer:ModifyLoadBalancerAttributes".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_ELASTIC_LOAD_BALANCING_GEN_LOADBALANCER
+                            .run_test(&ctx, "ModifyLoadBalancerAttributes", test_elastic_load_balancing_gen_loadbalancer_modify_load_balancer_attributes(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "elastic-load-balancing-gen-loadbalancer:DescribeInstanceHealth".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_ELASTIC_LOAD_BALANCING_GEN_LOADBALANCER
+                            .run_test(&ctx, "DescribeInstanceHealth", test_elastic_load_balancing_gen_loadbalancer_describe_instance_health(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "elastic-load-balancing-gen-loadbalancer:CreateLBCookieStickinessPolicy".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_ELASTIC_LOAD_BALANCING_GEN_LOADBALANCER
+                            .run_test(&ctx, "CreateLBCookieStickinessPolicy", test_elastic_load_balancing_gen_loadbalancer_create_lb_cookie_stickiness_policy(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "elastic-load-balancing-gen-loadbalancer:CreateAppCookieStickinessPolicy".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_ELASTIC_LOAD_BALANCING_GEN_LOADBALANCER
+                            .run_test(&ctx, "CreateAppCookieStickinessPolicy", test_elastic_load_balancing_gen_loadbalancer_create_app_cookie_stickiness_policy(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "elastic-load-balancing-gen-loadbalancer:DeleteLoadBalancer".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_ELASTIC_LOAD_BALANCING_GEN_LOADBALANCER
+                            .run_test(&ctx, "DeleteLoadBalancer", test_elastic_load_balancing_gen_loadbalancer_delete_load_balancer(&client))
+                            .await
+                    })
+                }),
+            );
+        }
         {
             let client = self.client.clone();
             impls.insert(
@@ -159,6 +304,18 @@ impl ServiceGroup for ScenariosElasticLoadBalancing {
         {
             let client = self.client.clone();
             setups.insert(
+                "elastic-load-balancing-gen-loadbalancer".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_ELASTIC_LOAD_BALANCING_GEN_LOADBALANCER.run_setup(&ctx, setup_elastic_load_balancing_gen_loadbalancer(&client)).await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            setups.insert(
                 "elastic-load-balancing-gen-loadbalancerpolicy".to_string(),
                 Arc::new(move |ctx: TestContext| {
                     let client = client.clone();
@@ -188,6 +345,18 @@ impl ServiceGroup for ScenariosElasticLoadBalancing {
         {
             let client = self.client.clone();
             teardowns.insert(
+                "elastic-load-balancing-gen-loadbalancer".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_ELASTIC_LOAD_BALANCING_GEN_LOADBALANCER.run_teardown(&ctx, teardown_elastic_load_balancing_gen_loadbalancer(&client)).await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            teardowns.insert(
                 "elastic-load-balancing-gen-loadbalancerpolicy".to_string(),
                 Arc::new(move |ctx: TestContext| {
                     let client = client.clone();
@@ -210,6 +379,698 @@ impl ServiceGroup for ScenariosElasticLoadBalancing {
             );
         }
         teardowns
+    }
+}
+
+fn setup_elastic_load_balancing_gen_loadbalancer(_client: &aws_sdk_elasticloadbalancing::Client) -> Vec<Call> {
+    // An empty phase is a no-op, not a missing one.
+    Vec::new()
+}
+
+fn teardown_elastic_load_balancing_gen_loadbalancer(client: &aws_sdk_elasticloadbalancing::Client) -> Vec<Call> {
+    vec![
+        Call {
+            op: "DeleteLoadBalancer",
+            params: scenario::map(vec![
+                ("LoadBalancerName", scenario::context("loadbalancer.name")),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .delete_load_balancer()
+                            .load_balancer_name(b.string("LoadBalancerName")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+    ]
+}
+
+fn test_elastic_load_balancing_gen_loadbalancer_create_load_balancer(client: &aws_sdk_elasticloadbalancing::Client) -> Test {
+    Test {
+        call: Call {
+            op: "CreateLoadBalancer",
+            params: scenario::map(vec![
+                ("AvailabilityZones", scenario::lit(::serde_json::json!(["us-east-1a"]))),
+                ("Listeners", scenario::lit(::serde_json::json!([{"InstancePort": 80, "InstanceProtocol": "HTTP", "LoadBalancerPort": 80, "Protocol": "HTTP"}]))),
+                ("LoadBalancerName", scenario::name("lb")),
+            ]),
+            export: vec![
+                ("loadbalancer.dns", "$.DNSName"),
+            ],
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .create_load_balancer()
+                            .availability_zones("us-east-1a")
+                            .listeners(
+                                aws_sdk_elasticloadbalancing::types::Listener::builder()
+                                    .instance_port(80)
+                                    .instance_protocol("HTTP")
+                                    .load_balancer_port(80)
+                                    .protocol("HTTP")
+                                    .build()
+                                    .map_err(|err| scenario::build_error("Listeners[0]", err))?
+                            )
+                            .load_balancer_name(b.string("LoadBalancerName")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::response_field(vec![
+                scenario::non_empty("$.DNSName"),
+            ]),
+            scenario::eventually(30, 2000,
+                scenario::readback(
+                    Call {
+                        op: "DescribeLoadBalancers",
+                        params: scenario::map(vec![
+                            ("LoadBalancerNames", scenario::list(vec![scenario::name("lb")])),
+                        ]),
+                        export: vec![
+                            ("loadbalancer.name", "$.LoadBalancerDescriptions[0].LoadBalancerName"),
+                        ],
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .describe_load_balancers()
+                                        .load_balancer_names(b.string("LoadBalancerNames[0]")?)
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    },
+                    vec![
+                        scenario::non_empty("$.LoadBalancerDescriptions[0].LoadBalancerName"),
+                    ],
+                ),
+            ),
+            scenario::eventually(30, 2000,
+                scenario::readback(
+                    Call {
+                        op: "DescribeLoadBalancers",
+                        params: scenario::map(vec![
+                            ("LoadBalancerNames", scenario::list(vec![
+                                scenario::context("loadbalancer.name"),
+                            ])),
+                        ]),
+                        export: Vec::new(),
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .describe_load_balancers()
+                                        .load_balancer_names(b.string("LoadBalancerNames[0]")?)
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    },
+                    vec![
+                        scenario::equals("$.LoadBalancerDescriptions[0].DNSName", scenario::context("loadbalancer.dns")),
+                    ],
+                ),
+            ),
+            scenario::eventually(30, 2000,
+                scenario::list_contains(
+                    Some(Call {
+                        op: "DescribeLoadBalancers",
+                        params: scenario::lit(::serde_json::json!({})),
+                        export: Vec::new(),
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |_b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .describe_load_balancers()
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    }),
+                    "$.LoadBalancerDescriptions",
+                    vec![
+                        scenario::where_entry("$.DNSName", scenario::context("loadbalancer.dns")),
+                    ],
+                ),
+            ),
+        ],
+    }
+}
+
+fn test_elastic_load_balancing_gen_loadbalancer_describe_load_balancers(client: &aws_sdk_elasticloadbalancing::Client) -> Test {
+    Test {
+        call: Call {
+            op: "DescribeLoadBalancers",
+            params: scenario::map(vec![
+                ("LoadBalancerNames", scenario::list(vec![scenario::context("loadbalancer.name")])),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .describe_load_balancers()
+                            .load_balancer_names(b.string("LoadBalancerNames[0]")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::response_field(vec![
+                scenario::equals("$.LoadBalancerDescriptions[0].DNSName", scenario::context("loadbalancer.dns")),
+            ]),
+        ],
+    }
+}
+
+fn test_elastic_load_balancing_gen_loadbalancer_configure_health_check(client: &aws_sdk_elasticloadbalancing::Client) -> Test {
+    Test {
+        call: Call {
+            op: "ConfigureHealthCheck",
+            params: scenario::map(vec![
+                ("HealthCheck", scenario::lit(::serde_json::json!({"HealthyThreshold": 2, "Interval": 30, "Target": "TCP:80", "Timeout": 5, "UnhealthyThreshold": 2}))),
+                ("LoadBalancerName", scenario::context("loadbalancer.name")),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .configure_health_check()
+                            .health_check(
+                                aws_sdk_elasticloadbalancing::types::HealthCheck::builder()
+                                    .healthy_threshold(2)
+                                    .interval(30)
+                                    .target("TCP:80")
+                                    .timeout(5)
+                                    .unhealthy_threshold(2)
+                                    .build()
+                                    .map_err(|err| scenario::build_error("HealthCheck", err))?
+                            )
+                            .load_balancer_name(b.string("LoadBalancerName")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::eventually(30, 2000,
+                scenario::readback(
+                    Call {
+                        op: "DescribeLoadBalancers",
+                        params: scenario::map(vec![
+                            ("LoadBalancerNames", scenario::list(vec![
+                                scenario::context("loadbalancer.name"),
+                            ])),
+                        ]),
+                        export: Vec::new(),
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .describe_load_balancers()
+                                        .load_balancer_names(b.string("LoadBalancerNames[0]")?)
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    },
+                    vec![
+                        scenario::equals("$.LoadBalancerDescriptions[0].HealthCheck.Interval", scenario::lit(::serde_json::json!(30))),
+                    ],
+                ),
+            ),
+        ],
+    }
+}
+
+fn test_elastic_load_balancing_gen_loadbalancer_create_load_balancer_listeners(client: &aws_sdk_elasticloadbalancing::Client) -> Test {
+    Test {
+        call: Call {
+            op: "CreateLoadBalancerListeners",
+            params: scenario::map(vec![
+                ("Listeners", scenario::lit(::serde_json::json!([{"InstancePort": 8080, "InstanceProtocol": "TCP", "LoadBalancerPort": 8080, "Protocol": "TCP"}]))),
+                ("LoadBalancerName", scenario::context("loadbalancer.name")),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .create_load_balancer_listeners()
+                            .listeners(
+                                aws_sdk_elasticloadbalancing::types::Listener::builder()
+                                    .instance_port(8080)
+                                    .instance_protocol("TCP")
+                                    .load_balancer_port(8080)
+                                    .protocol("TCP")
+                                    .build()
+                                    .map_err(|err| scenario::build_error("Listeners[0]", err))?
+                            )
+                            .load_balancer_name(b.string("LoadBalancerName")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::eventually(30, 2000,
+                scenario::list_contains(
+                    Some(Call {
+                        op: "DescribeLoadBalancers",
+                        params: scenario::map(vec![
+                            ("LoadBalancerNames", scenario::list(vec![
+                                scenario::context("loadbalancer.name"),
+                            ])),
+                        ]),
+                        export: Vec::new(),
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .describe_load_balancers()
+                                        .load_balancer_names(b.string("LoadBalancerNames[0]")?)
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    }),
+                    "$.LoadBalancerDescriptions[0].ListenerDescriptions",
+                    vec![
+                        scenario::where_entry("$.Listener.LoadBalancerPort", scenario::lit(::serde_json::json!(8080))),
+                    ],
+                ),
+            ),
+        ],
+    }
+}
+
+fn test_elastic_load_balancing_gen_loadbalancer_delete_load_balancer_listeners(client: &aws_sdk_elasticloadbalancing::Client) -> Test {
+    Test {
+        call: Call {
+            op: "DeleteLoadBalancerListeners",
+            params: scenario::map(vec![
+                ("LoadBalancerName", scenario::context("loadbalancer.name")),
+                ("LoadBalancerPorts", scenario::lit(::serde_json::json!([8080]))),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .delete_load_balancer_listeners()
+                            .load_balancer_name(b.string("LoadBalancerName")?)
+                            .load_balancer_ports(8080)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::eventually(30, 2000,
+                scenario::absent_from_list(
+                    Some(Call {
+                        op: "DescribeLoadBalancers",
+                        params: scenario::map(vec![
+                            ("LoadBalancerNames", scenario::list(vec![
+                                scenario::context("loadbalancer.name"),
+                            ])),
+                        ]),
+                        export: Vec::new(),
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .describe_load_balancers()
+                                        .load_balancer_names(b.string("LoadBalancerNames[0]")?)
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    }),
+                    "$.LoadBalancerDescriptions[0].ListenerDescriptions",
+                    vec![
+                        scenario::where_entry("$.Listener.LoadBalancerPort", scenario::lit(::serde_json::json!(8080))),
+                    ],
+                ),
+            ),
+        ],
+    }
+}
+
+fn test_elastic_load_balancing_gen_loadbalancer_modify_load_balancer_attributes(client: &aws_sdk_elasticloadbalancing::Client) -> Test {
+    Test {
+        call: Call {
+            op: "ModifyLoadBalancerAttributes",
+            params: scenario::map(vec![
+                ("LoadBalancerAttributes", scenario::lit(::serde_json::json!({"CrossZoneLoadBalancing": {"Enabled": true}}))),
+                ("LoadBalancerName", scenario::context("loadbalancer.name")),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .modify_load_balancer_attributes()
+                            .load_balancer_attributes(
+                                aws_sdk_elasticloadbalancing::types::LoadBalancerAttributes::builder()
+                                    .cross_zone_load_balancing(
+                                        aws_sdk_elasticloadbalancing::types::CrossZoneLoadBalancing::builder()
+                                            .enabled(true)
+                                            .build()
+                                    )
+                                    .build()
+                            )
+                            .load_balancer_name(b.string("LoadBalancerName")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::eventually(30, 2000,
+                scenario::readback(
+                    Call {
+                        op: "DescribeLoadBalancerAttributes",
+                        params: scenario::map(vec![
+                            ("LoadBalancerName", scenario::context("loadbalancer.name")),
+                        ]),
+                        export: Vec::new(),
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .describe_load_balancer_attributes()
+                                        .load_balancer_name(b.string("LoadBalancerName")?)
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    },
+                    vec![
+                        scenario::equals("$.LoadBalancerAttributes.CrossZoneLoadBalancing.Enabled", scenario::lit(::serde_json::json!(true))),
+                    ],
+                ),
+            ),
+        ],
+    }
+}
+
+fn test_elastic_load_balancing_gen_loadbalancer_describe_instance_health(client: &aws_sdk_elasticloadbalancing::Client) -> Test {
+    Test {
+        call: Call {
+            op: "DescribeInstanceHealth",
+            params: scenario::map(vec![
+                ("LoadBalancerName", scenario::context("loadbalancer.name")),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .describe_instance_health()
+                            .load_balancer_name(b.string("LoadBalancerName")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::response_field(vec![
+                scenario::is_list("$.InstanceStates"),
+            ]),
+        ],
+    }
+}
+
+fn test_elastic_load_balancing_gen_loadbalancer_create_lb_cookie_stickiness_policy(client: &aws_sdk_elasticloadbalancing::Client) -> Test {
+    Test {
+        call: Call {
+            op: "CreateLBCookieStickinessPolicy",
+            params: scenario::map(vec![
+                ("CookieExpirationPeriod", scenario::lit(::serde_json::json!(300))),
+                ("LoadBalancerName", scenario::context("loadbalancer.name")),
+                ("PolicyName", scenario::name("lbcookie")),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .create_lb_cookie_stickiness_policy()
+                            .cookie_expiration_period(300)
+                            .load_balancer_name(b.string("LoadBalancerName")?)
+                            .policy_name(b.string("PolicyName")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::eventually(30, 2000,
+                scenario::readback(
+                    Call {
+                        op: "DescribeLoadBalancerPolicies",
+                        params: scenario::map(vec![
+                            ("LoadBalancerName", scenario::context("loadbalancer.name")),
+                            ("PolicyNames", scenario::list(vec![scenario::name("lbcookie")])),
+                        ]),
+                        export: Vec::new(),
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .describe_load_balancer_policies()
+                                        .load_balancer_name(b.string("LoadBalancerName")?)
+                                        .policy_names(b.string("PolicyNames[0]")?)
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    },
+                    vec![
+                        scenario::non_empty("$.PolicyDescriptions[0].PolicyName"),
+                    ],
+                ),
+            ),
+        ],
+    }
+}
+
+fn test_elastic_load_balancing_gen_loadbalancer_create_app_cookie_stickiness_policy(client: &aws_sdk_elasticloadbalancing::Client) -> Test {
+    Test {
+        call: Call {
+            op: "CreateAppCookieStickinessPolicy",
+            params: scenario::map(vec![
+                ("CookieName", scenario::lit(::serde_json::json!("compat-scenario"))),
+                ("LoadBalancerName", scenario::context("loadbalancer.name")),
+                ("PolicyName", scenario::name("appcookie")),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .create_app_cookie_stickiness_policy()
+                            .cookie_name("compat-scenario")
+                            .load_balancer_name(b.string("LoadBalancerName")?)
+                            .policy_name(b.string("PolicyName")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::eventually(30, 2000,
+                scenario::readback(
+                    Call {
+                        op: "DescribeLoadBalancerPolicies",
+                        params: scenario::map(vec![
+                            ("LoadBalancerName", scenario::context("loadbalancer.name")),
+                            ("PolicyNames", scenario::list(vec![
+                                scenario::name("appcookie"),
+                            ])),
+                        ]),
+                        export: Vec::new(),
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .describe_load_balancer_policies()
+                                        .load_balancer_name(b.string("LoadBalancerName")?)
+                                        .policy_names(b.string("PolicyNames[0]")?)
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    },
+                    vec![
+                        scenario::non_empty("$.PolicyDescriptions[0].PolicyName"),
+                    ],
+                ),
+            ),
+        ],
+    }
+}
+
+fn test_elastic_load_balancing_gen_loadbalancer_delete_load_balancer(client: &aws_sdk_elasticloadbalancing::Client) -> Test {
+    Test {
+        call: Call {
+            op: "DeleteLoadBalancer",
+            params: scenario::map(vec![
+                ("LoadBalancerName", scenario::context("loadbalancer.name")),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .delete_load_balancer()
+                            .load_balancer_name(b.string("LoadBalancerName")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::eventually(30, 2000,
+                scenario::absent_by_error(
+                    Call {
+                        op: "DescribeLoadBalancers",
+                        params: scenario::map(vec![
+                            ("LoadBalancerNames", scenario::list(vec![
+                                scenario::context("loadbalancer.name"),
+                            ])),
+                        ]),
+                        export: Vec::new(),
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .describe_load_balancers()
+                                        .load_balancer_names(b.string("LoadBalancerNames[0]")?)
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    },
+                    scenario::error("AccessPointNotFoundException", "LoadBalancerNotFound"),
+                ),
+            ),
+        ],
     }
 }
 

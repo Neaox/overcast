@@ -25,6 +25,11 @@ const GROUP_BATCH_GEN_CONSUMABLERESOURCE: Group = Group {
     file: SCENARIO_FILE,
 };
 
+const GROUP_BATCH_GEN_JOBDEFINITION: Group = Group {
+    name: "batch-gen-jobdefinition",
+    file: SCENARIO_FILE,
+};
+
 const GROUP_BATCH_GEN_COMPUTEENVIRONMENT: Group = Group {
     name: "batch-gen-computeenvironment",
     file: SCENARIO_FILE,
@@ -287,6 +292,90 @@ impl ServiceGroup for ScenariosBatch {
                     Box::pin(async move {
                         GROUP_BATCH_GEN_CONSUMABLERESOURCE
                             .run_test(&ctx, "DeleteConsumableResource", test_batch_gen_consumableresource_delete_consumable_resource(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "batch-gen-jobdefinition:RegisterJobDefinition".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_BATCH_GEN_JOBDEFINITION
+                            .run_test(&ctx, "RegisterJobDefinition", test_batch_gen_jobdefinition_register_job_definition(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "batch-gen-jobdefinition:DescribeJobDefinitions".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_BATCH_GEN_JOBDEFINITION
+                            .run_test(&ctx, "DescribeJobDefinitions", test_batch_gen_jobdefinition_describe_job_definitions(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "batch-gen-jobdefinition:TagResource".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_BATCH_GEN_JOBDEFINITION
+                            .run_test(&ctx, "TagResource", test_batch_gen_jobdefinition_tag_resource(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "batch-gen-jobdefinition:ListTagsForResource".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_BATCH_GEN_JOBDEFINITION
+                            .run_test(&ctx, "ListTagsForResource", test_batch_gen_jobdefinition_list_tags_for_resource(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "batch-gen-jobdefinition:UntagResource".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_BATCH_GEN_JOBDEFINITION
+                            .run_test(&ctx, "UntagResource", test_batch_gen_jobdefinition_untag_resource(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "batch-gen-jobdefinition:DeregisterJobDefinition".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_BATCH_GEN_JOBDEFINITION
+                            .run_test(&ctx, "DeregisterJobDefinition", test_batch_gen_jobdefinition_deregister_job_definition(&client))
                             .await
                     })
                 }),
@@ -646,6 +735,18 @@ impl ServiceGroup for ScenariosBatch {
         {
             let client = self.client.clone();
             setups.insert(
+                "batch-gen-jobdefinition".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_BATCH_GEN_JOBDEFINITION.run_setup(&ctx, setup_batch_gen_jobdefinition(&client)).await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            setups.insert(
                 "batch-gen-computeenvironment".to_string(),
                 Arc::new(move |ctx: TestContext| {
                     let client = client.clone();
@@ -704,6 +805,18 @@ impl ServiceGroup for ScenariosBatch {
                     let client = client.clone();
                     Box::pin(async move {
                         GROUP_BATCH_GEN_CONSUMABLERESOURCE.run_teardown(&ctx, teardown_batch_gen_consumableresource(&client)).await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            teardowns.insert(
+                "batch-gen-jobdefinition".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_BATCH_GEN_JOBDEFINITION.run_teardown(&ctx, teardown_batch_gen_jobdefinition(&client)).await
                     })
                 }),
             );
@@ -1655,6 +1768,394 @@ fn test_batch_gen_consumableresource_delete_consumable_resource(client: &aws_sdk
                 "$.consumableResources",
                 vec![
                     scenario::where_entry("$.consumableResourceArn", scenario::context("consumableresource.arn")),
+                ],
+            ),
+        ],
+    }
+}
+
+fn setup_batch_gen_jobdefinition(_client: &aws_sdk_batch::Client) -> Vec<Call> {
+    // An empty phase is a no-op, not a missing one.
+    Vec::new()
+}
+
+fn teardown_batch_gen_jobdefinition(client: &aws_sdk_batch::Client) -> Vec<Call> {
+    vec![
+        Call {
+            op: "DeregisterJobDefinition",
+            params: scenario::map(vec![
+                ("jobDefinition", scenario::context("jobdefinition.arn")),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .deregister_job_definition()
+                            .job_definition(b.string("jobDefinition")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+    ]
+}
+
+fn test_batch_gen_jobdefinition_register_job_definition(client: &aws_sdk_batch::Client) -> Test {
+    Test {
+        call: Call {
+            op: "RegisterJobDefinition",
+            params: scenario::map(vec![
+                ("containerProperties", scenario::lit(::serde_json::json!({"image": "public.ecr.aws/amazonlinux/amazonlinux:2023", "resourceRequirements": [{"type": "VCPU", "value": "1"}, {"type": "MEMORY", "value": "2048"}]}))),
+                ("jobDefinitionName", scenario::name("jd")),
+                ("platformCapabilities", scenario::lit(::serde_json::json!(["EC2"]))),
+                ("type", scenario::lit(::serde_json::json!("container"))),
+            ]),
+            export: vec![
+                ("jobdefinition.arn", "$.jobDefinitionArn"),
+                ("jobdefinition.name", "$.jobDefinitionName"),
+            ],
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .register_job_definition()
+                            .container_properties(
+                                aws_sdk_batch::types::ContainerProperties::builder()
+                                    .image("public.ecr.aws/amazonlinux/amazonlinux:2023")
+                                    .resource_requirements(
+                                        aws_sdk_batch::types::ResourceRequirement::builder()
+                                            .r#type(aws_sdk_batch::types::ResourceType::from("VCPU"))
+                                            .value("1")
+                                            .build()
+                                    )
+                                    .resource_requirements(
+                                        aws_sdk_batch::types::ResourceRequirement::builder()
+                                            .r#type(aws_sdk_batch::types::ResourceType::from("MEMORY"))
+                                            .value("2048")
+                                            .build()
+                                    )
+                                    .build()
+                            )
+                            .job_definition_name(b.string("jobDefinitionName")?)
+                            .platform_capabilities(aws_sdk_batch::types::PlatformCapability::from("EC2"))
+                            .r#type(aws_sdk_batch::types::JobDefinitionType::from("container"))
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::response_field(vec![
+                scenario::non_empty("$.jobDefinitionArn"),
+                scenario::non_empty("$.jobDefinitionName"),
+            ]),
+            scenario::readback(
+                Call {
+                    op: "DescribeJobDefinitions",
+                    params: scenario::map(vec![
+                        ("jobDefinitions", scenario::list(vec![
+                            scenario::context("jobdefinition.arn"),
+                        ])),
+                    ]),
+                    export: Vec::new(),
+                    invoke: {
+                        let client = client.clone();
+                        scenario::invoker(move |b| {
+                            let client = client.clone();
+                            Box::pin(async move {
+                                let capture = scenario::Capture::new();
+                                let request = client
+                                    .describe_job_definitions()
+                                    .job_definitions(b.string("jobDefinitions[0]")?)
+                                    .customize()
+                                    .interceptor(capture.clone());
+                                Ok(scenario::observe(request.send().await, &capture))
+                            })
+                        })
+                    },
+                },
+                vec![
+                    scenario::equals("$.jobDefinitions[0].jobDefinitionArn", scenario::context("jobdefinition.arn")),
+                ],
+            ),
+            scenario::list_contains(
+                Some(Call {
+                    op: "DescribeJobDefinitions",
+                    params: scenario::map(vec![
+                        ("jobDefinitionName", scenario::name("jd")),
+                        ("status", scenario::lit(::serde_json::json!("ACTIVE"))),
+                    ]),
+                    export: Vec::new(),
+                    invoke: {
+                        let client = client.clone();
+                        scenario::invoker(move |b| {
+                            let client = client.clone();
+                            Box::pin(async move {
+                                let capture = scenario::Capture::new();
+                                let request = client
+                                    .describe_job_definitions()
+                                    .job_definition_name(b.string("jobDefinitionName")?)
+                                    .status("ACTIVE")
+                                    .customize()
+                                    .interceptor(capture.clone());
+                                Ok(scenario::observe(request.send().await, &capture))
+                            })
+                        })
+                    },
+                }),
+                "$.jobDefinitions",
+                vec![
+                    scenario::where_entry("$.jobDefinitionArn", scenario::context("jobdefinition.arn")),
+                ],
+            ),
+        ],
+    }
+}
+
+fn test_batch_gen_jobdefinition_describe_job_definitions(client: &aws_sdk_batch::Client) -> Test {
+    Test {
+        call: Call {
+            op: "DescribeJobDefinitions",
+            params: scenario::map(vec![
+                ("jobDefinitions", scenario::list(vec![scenario::context("jobdefinition.arn")])),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .describe_job_definitions()
+                            .job_definitions(b.string("jobDefinitions[0]")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::response_field(vec![
+                scenario::equals("$.jobDefinitions[0].jobDefinitionArn", scenario::context("jobdefinition.arn")),
+            ]),
+        ],
+    }
+}
+
+fn test_batch_gen_jobdefinition_tag_resource(client: &aws_sdk_batch::Client) -> Test {
+    Test {
+        call: Call {
+            op: "TagResource",
+            params: scenario::map(vec![
+                ("resourceArn", scenario::context("jobdefinition.arn")),
+                ("tags", scenario::lit(::serde_json::json!({"compat": "scenario"}))),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .tag_resource()
+                            .resource_arn(b.string("resourceArn")?)
+                            .tags("compat", "scenario")
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::readback(
+                Call {
+                    op: "ListTagsForResource",
+                    params: scenario::map(vec![
+                        ("resourceArn", scenario::context("jobdefinition.arn")),
+                    ]),
+                    export: Vec::new(),
+                    invoke: {
+                        let client = client.clone();
+                        scenario::invoker(move |b| {
+                            let client = client.clone();
+                            Box::pin(async move {
+                                let capture = scenario::Capture::new();
+                                let request = client
+                                    .list_tags_for_resource()
+                                    .resource_arn(b.string("resourceArn")?)
+                                    .customize()
+                                    .interceptor(capture.clone());
+                                Ok(scenario::observe(request.send().await, &capture))
+                            })
+                        })
+                    },
+                },
+                vec![
+                    scenario::equals("$.tags.compat", scenario::lit(::serde_json::json!("scenario"))),
+                ],
+            ),
+        ],
+    }
+}
+
+fn test_batch_gen_jobdefinition_list_tags_for_resource(client: &aws_sdk_batch::Client) -> Test {
+    Test {
+        call: Call {
+            op: "ListTagsForResource",
+            params: scenario::map(vec![
+                ("resourceArn", scenario::context("jobdefinition.arn")),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .list_tags_for_resource()
+                            .resource_arn(b.string("resourceArn")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::response_field(vec![
+                scenario::equals("$.tags.compat", scenario::lit(::serde_json::json!("scenario"))),
+            ]),
+        ],
+    }
+}
+
+fn test_batch_gen_jobdefinition_untag_resource(client: &aws_sdk_batch::Client) -> Test {
+    Test {
+        call: Call {
+            op: "UntagResource",
+            params: scenario::map(vec![
+                ("resourceArn", scenario::context("jobdefinition.arn")),
+                ("tagKeys", scenario::lit(::serde_json::json!(["compat"]))),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .untag_resource()
+                            .resource_arn(b.string("resourceArn")?)
+                            .tag_keys("compat")
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::readback(
+                Call {
+                    op: "ListTagsForResource",
+                    params: scenario::map(vec![
+                        ("resourceArn", scenario::context("jobdefinition.arn")),
+                    ]),
+                    export: Vec::new(),
+                    invoke: {
+                        let client = client.clone();
+                        scenario::invoker(move |b| {
+                            let client = client.clone();
+                            Box::pin(async move {
+                                let capture = scenario::Capture::new();
+                                let request = client
+                                    .list_tags_for_resource()
+                                    .resource_arn(b.string("resourceArn")?)
+                                    .customize()
+                                    .interceptor(capture.clone());
+                                Ok(scenario::observe(request.send().await, &capture))
+                            })
+                        })
+                    },
+                },
+                vec![
+                    scenario::missing("$.tags.compat"),
+                ],
+            ),
+        ],
+    }
+}
+
+fn test_batch_gen_jobdefinition_deregister_job_definition(client: &aws_sdk_batch::Client) -> Test {
+    Test {
+        call: Call {
+            op: "DeregisterJobDefinition",
+            params: scenario::map(vec![
+                ("jobDefinition", scenario::context("jobdefinition.arn")),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .deregister_job_definition()
+                            .job_definition(b.string("jobDefinition")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::absent_from_list(
+                Some(Call {
+                    op: "DescribeJobDefinitions",
+                    params: scenario::map(vec![
+                        ("jobDefinitionName", scenario::name("jd")),
+                        ("status", scenario::lit(::serde_json::json!("ACTIVE"))),
+                    ]),
+                    export: Vec::new(),
+                    invoke: {
+                        let client = client.clone();
+                        scenario::invoker(move |b| {
+                            let client = client.clone();
+                            Box::pin(async move {
+                                let capture = scenario::Capture::new();
+                                let request = client
+                                    .describe_job_definitions()
+                                    .job_definition_name(b.string("jobDefinitionName")?)
+                                    .status("ACTIVE")
+                                    .customize()
+                                    .interceptor(capture.clone());
+                                Ok(scenario::observe(request.send().await, &capture))
+                            })
+                        })
+                    },
+                }),
+                "$.jobDefinitions",
+                vec![
+                    scenario::where_entry("$.jobDefinitionArn", scenario::context("jobdefinition.arn")),
                 ],
             ),
         ],

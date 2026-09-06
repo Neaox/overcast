@@ -135,7 +135,8 @@
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
-        "python-sdk"
+        "python-sdk",
+        "rust-sdk"
       ],
       "tests": [
         {
@@ -357,7 +358,8 @@
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
-        "python-sdk"
+        "python-sdk",
+        "rust-sdk"
       ],
       "tests": [
         {
@@ -869,7 +871,8 @@
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
-        "python-sdk"
+        "python-sdk",
+        "rust-sdk"
       ],
       "tests": [
         {
