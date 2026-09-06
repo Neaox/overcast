@@ -115,9 +115,10 @@ var (
 	}
 )
 
-// policyTagRules are the tag constraints Organizations models. The codes are
-// the ones its tag operations declare.
-var policyTagRules = serviceutil.TagValidationConfig{
+// tagRules are the tag constraints Organizations models. The codes are
+// the ones its tag operations declare. They are per-service rather than
+// per-resource: one tag store, one set of rules, whatever is being tagged.
+var tagRules = serviceutil.TagValidationConfig{
 	ExceededCode:    "ConstraintViolationException",
 	ExceededMessage: "You have exceeded the number of tags allowed on this resource.",
 	InvalidCode:     "InvalidInputException",
@@ -169,7 +170,10 @@ type policyRecord struct {
 
 // ---- modeled wire shapes ---------------------------------------------------
 
-type policyTag struct {
+// resourceTag mirrors the Tag shape, which Organizations shares across every
+// taggable resource — a policy's Tags member, an organizational unit's, and
+// the generic TagResource/ListTagsForResource pair all carry this one shape.
+type resourceTag struct {
 	Key   string `json:"Key" cbor:"Key"`
 	Value string `json:"Value" cbor:"Value"`
 }
@@ -195,11 +199,11 @@ type policyView struct {
 // because the model makes it @required with @length min 0 — present-and-empty
 // is legal input and absent is not, and only a pointer tells those apart.
 type createPolicyRequest struct {
-	Content     string      `json:"Content" cbor:"Content"`
-	Description *string     `json:"Description" cbor:"Description"`
-	Name        string      `json:"Name" cbor:"Name"`
-	Tags        []policyTag `json:"Tags" cbor:"Tags"`
-	Type        string      `json:"Type" cbor:"Type"`
+	Content     string        `json:"Content" cbor:"Content"`
+	Description *string       `json:"Description" cbor:"Description"`
+	Name        string        `json:"Name" cbor:"Name"`
+	Tags        []resourceTag `json:"Tags" cbor:"Tags"`
+	Type        string        `json:"Type" cbor:"Type"`
 }
 
 type createPolicyResponse struct {
@@ -248,8 +252,8 @@ type listPoliciesResponse struct {
 }
 
 type tagResourceRequest struct {
-	ResourceId string      `json:"ResourceId" cbor:"ResourceId"`
-	Tags       []policyTag `json:"Tags" cbor:"Tags"`
+	ResourceId string        `json:"ResourceId" cbor:"ResourceId"`
+	Tags       []resourceTag `json:"Tags" cbor:"Tags"`
 }
 
 type tagResourceResponse struct{}
@@ -267,8 +271,8 @@ type listTagsForResourceRequest struct {
 }
 
 type listTagsForResourceResponse struct {
-	NextToken string      `json:"NextToken,omitempty" cbor:"NextToken,omitempty"`
-	Tags      []policyTag `json:"Tags" cbor:"Tags"`
+	NextToken string        `json:"NextToken,omitempty" cbor:"NextToken,omitempty"`
+	Tags      []resourceTag `json:"Tags" cbor:"Tags"`
 }
 
 // ---- derivations (§3.5) ----------------------------------------------------
@@ -362,7 +366,7 @@ func (s *Service) createPolicy(ctx context.Context, in *createPolicyRequest) (*c
 	// operations read, so ListTagsForResource can never disagree with what
 	// CreatePolicy accepted (§3.1's Tag class, §7.3).
 	if len(in.Tags) > 0 {
-		if _, aerr := s.tags.Apply(ctx, rec.Arn, tagMap(in.Tags), policyTagRules); aerr != nil {
+		if _, aerr := s.tags.Apply(ctx, rec.Arn, tagMap(in.Tags), tagRules); aerr != nil {
 			return nil, aerr
 		}
 	}
@@ -467,7 +471,7 @@ func (s *Service) tagResource(ctx context.Context, in *tagResourceRequest) (*tag
 	if len(in.Tags) == 0 {
 		return nil, invalidInput("Tags is a required parameter.")
 	}
-	if _, aerr := s.tags.Apply(ctx, arn, tagMap(in.Tags), policyTagRules); aerr != nil {
+	if _, aerr := s.tags.Apply(ctx, arn, tagMap(in.Tags), tagRules); aerr != nil {
 		return nil, aerr
 	}
 	return &tagResourceResponse{}, nil
@@ -496,8 +500,8 @@ func (s *Service) listTagsForResource(ctx context.Context, in *listTagsForResour
 	if aerr != nil {
 		return nil, aerr
 	}
-	items := serviceutil.TagElements(tags, func(k, v string) policyTag {
-		return policyTag{Key: k, Value: v}
+	items := serviceutil.TagElements(tags, func(k, v string) resourceTag {
+		return resourceTag{Key: k, Value: v}
 	})
 	// ListTagsForResource is @paginated with an inputToken/outputToken but no
 	// pageSize member, so there is no caller-supplied limit to honour — only
@@ -532,34 +536,53 @@ func (s *Service) loadPolicy(ctx context.Context, id string) (*policyRecord, *pr
 // is keyed by.
 //
 // Organizations lets a caller tag a root, an OU, an account, a policy or a
-// resource policy. Only policies are Tier 1 here — roots, OUs and accounts
-// are not stored at all, and their operations are still Tier 0 — so any other
-// id is genuinely unknown to this emulator and gets the operation's own
-// modeled TargetNotFoundException rather than a fabricated success. Tagging
-// something that does not exist and being told it worked is the §3.6 failure
-// mode in a different costume.
+// resource policy. Three of those are resources this emulator holds — a
+// policy, an organizational unit, and the organization's single root — and
+// each resolves to its own ARN, so two resource types with overlapping id
+// spaces could never share a tag set.
+//
+// Anything else is genuinely unknown here: accounts and resource policies are
+// Tier 0, and a root- or OU-shaped id this organization does not hold names
+// nothing. Those get the operation's own modeled TargetNotFoundException
+// rather than a fabricated success — tagging something that does not exist
+// and being told it worked is the §3.6 failure mode in a different costume.
 func (s *Service) taggableARN(ctx context.Context, resourceID string) (string, *protocol.AWSError) {
-	if resourceID == "" {
+	switch {
+	case resourceID == "":
 		return "", invalidInput("ResourceId is a required parameter.")
-	}
-	if !strings.HasPrefix(resourceID, "p-") {
+	case resourceID == s.rootID():
+		// The root is derived rather than stored, so there is no record to
+		// look up — but it is a resource ListRoots just returned, and
+		// refusing to tag it would be telling the caller it does not exist.
+		return s.rootARN(), nil
+	case strings.HasPrefix(resourceID, "ou-"):
+		rec, found, err := s.ous.Get(ctx, resourceID)
+		if err != nil {
+			return "", inert.StorageError(err)
+		}
+		if !found {
+			return "", errTargetNotFound
+		}
+		return rec.Arn, nil
+	case strings.HasPrefix(resourceID, "p-"):
+		rec, found, err := s.policies.Get(ctx, resourceID)
+		if err != nil {
+			return "", inert.StorageError(err)
+		}
+		if !found {
+			return "", errTargetNotFound
+		}
+		return rec.Arn, nil
+	default:
 		return "", errTargetNotFound
 	}
-	rec, found, err := s.policies.Get(ctx, resourceID)
-	if err != nil {
-		return "", inert.StorageError(err)
-	}
-	if !found {
-		return "", errTargetNotFound
-	}
-	return rec.Arn, nil
 }
 
 func invalidInput(message string) *protocol.AWSError {
 	return &protocol.AWSError{Code: errInvalidInput.Code, Message: message, HTTPStatus: errInvalidInput.HTTPStatus}
 }
 
-func tagMap(tags []policyTag) map[string]string {
+func tagMap(tags []resourceTag) map[string]string {
 	out := make(map[string]string, len(tags))
 	for _, t := range tags {
 		out[t.Key] = t.Value

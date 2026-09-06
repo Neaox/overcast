@@ -12,10 +12,17 @@
 //     pagination, and nothing else. Attaching a policy to a target does not
 //     happen, and no policy is ever enforced (see
 //     docs/plans/inert-tier-rollout.md §0).
+//   - ListRoots, plus CreateOrganizationalUnit /
+//     DescribeOrganizationalUnit / UpdateOrganizationalUnit /
+//     DeleteOrganizationalUnit / ListOrganizationalUnitsForParent — Tier 1
+//     as well (see inert_ou.go). The organization has one root, derived
+//     rather than stored; units under it are a real tree, with a parent, a
+//     modeled Path and per-parent name uniqueness. Nothing is placed in a
+//     unit: accounts are not emulated, so an OU is a container that stays
+//     empty except of other OUs.
 //
-// Everything else — accounts, organizational units, roots, handshakes,
-// delegated administrators — is still Tier 0 and returns a protocol-correct
-// 501.
+// Everything else — accounts, handshakes, policy attachment, delegated
+// administrators — is still Tier 0 and returns a protocol-correct 501.
 package organizations
 
 import (
@@ -47,6 +54,7 @@ type Service struct {
 	typedOp  map[string]op.Operation
 	bindings []inert.Binding
 	policies *inert.Store[policyRecord]
+	ous      *inert.Store[organizationalUnitRecord]
 	tags     *inert.Tags
 }
 
@@ -67,6 +75,7 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock
 	// inert.Config leaves Region nil and keys are written unscoped (§3.5).
 	inertCfg := inert.Config{Store: st, Clock: clk, Logger: s.log}
 	s.policies = inert.NewStore[policyRecord](inertCfg, nsPolicies)
+	s.ous = inert.NewStore[organizationalUnitRecord](inertCfg, nsOrganizationalUnits)
 	s.tags = inert.NewTags(inertCfg, nsTags)
 	s.typedOp = s.typedOps()
 	s.bindings = s.inertBindings()
