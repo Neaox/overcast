@@ -51,6 +51,9 @@ operations:
       tags_on_create:
         status: fixed
         evidence: Tags supplied on create used to be applied before the record's Put, so a failed Put left orphaned tags for a policy that was never created; tags are now applied only after a successful Put and remain visible to ListTagsForResource immediately.
+      name_and_description_length:
+        status: fixed
+        evidence: PolicyName's modeled @length max (128) and PolicyDescription's (512) were never enforced; both now report InvalidInputException with Reason MAX_LENGTH_EXCEEDED, counting Unicode code points via utf8.RuneCountInString (the same rune-counted rule as OrganizationalUnitName). PolicyContent has no modeled max, so it is unaffected.
   DescribePolicy:
     status: reviewed
     aws_docs:
@@ -76,6 +79,9 @@ operations:
       empty_optional_member:
         status: fixed
         evidence: Name and Content are pointers on this operation, so an explicit "" is a sent value rather than a missing one; it now reports InvalidInputException with Reason MIN_LENGTH_EXCEEDED instead of a generic message with no Reason.
+      name_and_description_length:
+        status: fixed
+        evidence: Same fix as CreatePolicy's — Name (max 128) and Description (max 512) now report MAX_LENGTH_EXCEEDED over their modeled @length maxima, rune-counted.
   DeletePolicy:
     status: reviewed
     aws_docs:
@@ -224,6 +230,7 @@ findings:
     - CreateOrganizationalUnit's (and UpdateOrganizationalUnit's) name-length check counted bytes (len(name)) rather than Unicode code points against OrganizationalUnitName's modeled @length, under-accepting and over-rejecting multi-byte names; fixed to utf8.RuneCountInString.
     - CreatePolicy and CreateOrganizationalUnit applied tags before the record's Put; a failed Put left orphaned tags for a resource that was never created. Tags are now applied only after a successful Put in both.
     - UpdatePolicy and UpdateOrganizationalUnit bumped UpdatedAt and rewrote the record even when nothing on it changed (every optional member omitted, or resent unchanged); a true no-op update no longer writes.
+    - CreatePolicy and UpdatePolicy never enforced PolicyName's modeled @length max (128) or PolicyDescription's (512); over-length values used to be accepted. Both now report InvalidInputException with Reason MAX_LENGTH_EXCEEDED, sharing the same rune-counted helper as OrganizationalUnitName's check.
   remaining_gaps:
     - ParentId/OrganizationalUnitId/PolicyId are matched by prefix and looked up directly rather than validated against their full modeled pattern first, so an id that violates the pattern is reported as not-found rather than InvalidInputException (Reason INVALID_PATTERN) — deliberate, documented in docs/services/organizations.md's Gotchas.
     - Accounts, handshakes, delegated administrators, policy attachment and EnablePolicyType remain Tier 0 (501) — see docs/plans/inert-tier-rollout.md for the phased plan.
