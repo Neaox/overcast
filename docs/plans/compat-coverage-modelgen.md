@@ -1,6 +1,7 @@
 # Model-driven compat coverage — scenario generation across every suite
 
-> Status: **in progress** — G0 and G1 are done, and **G2 is code complete**.
+> Status: **in progress** — G0 and G1 are done, **G2 is code complete**, and
+> **G3 has its first typed backend**: `go-sdk` (#1820).
 > All three interpreters are on `main` (`python-sdk` #1787, `node-js-sdk` #1788,
 > `cli` #1790), and every §4.1 criterion and §4.2's criteria 1–3 are met in all
 > three suites. §4.2 criterion 5, the regeneration demonstration, is met as of
@@ -937,16 +938,20 @@ note). Three findings, because each changes a different decision.
   will not substitute for it at fleet scale, for the same reason — a shard
   distributes whole groups too — so at the 2,000–5,000 generated tests a Tier-1
   fleet implies, probe-group parallelism is what decides `cli`'s CI wall clock.
-- **The two `WaitTimeSeconds: 1` absence polls are the only unconditional waits
-  in the corpus, and they must not be shortened.** Each is the `ReceiveMessage`
-  inside an `absent` clause — `sqs-gen-message/DeleteMessage` and
+- **The `WaitTimeSeconds` absence polls are the only unconditional waits in the
+  corpus, and they must not be shortened.** Each is the `ReceiveMessage` inside
+  an `absent` clause — `sqs-gen-message/DeleteMessage` and
   `sqs-gen-batch/DeleteMessageBatch` — and the clause holds on its first
-  attempt, so each costs one second of long poll and no more. Dropping to
+  attempt, so each costs its long poll and no more. Dropping to
   `WaitTimeSeconds: 0` makes it a short poll, which samples a subset of servers
   and can answer empty while the message is still there: a **false pass**, and
   the one failure mode an absence check may not have. The three other
   `ReceiveMessage` calls carrying a wait expect a message and return as soon as
-  one arrives.
+  one arrives. Both polls were one second when this was measured; the batch one
+  is five since #1820, because the go-sdk emitter cannot send
+  `VisibilityTimeout: 0` — smithy-go omits a value-typed member equal to its
+  modelled default — and the one-second hide the recipe asks for instead needs
+  a poll longer than itself.
 - **`eventually` budgets cost nothing on the happy path.** The corpus carries 15
   of them, several deliberately generous — eight at 30 attempts 2 s apart for
   the queue resource, one at 12 attempts 5 s apart for `PurgeQueue`'s lagging
@@ -1524,7 +1529,7 @@ original scope stays legible.
 | **G0** Foundations | **Done** — #1356, #1357, #1367, #1370, and the loader tail under #1393, all seven suite PRs merged and the issue closed. `suites` scoping was honoured for every group in four suites and for generated groups only in `java-sdk`, `dotnet-sdk` and `rust-sdk` until #1737 aligned the three and re-seeded their baseline shards — see the §2 note | Shard `compat/baseline.json` → `compat/baseline/<suite>.json` (+ size budget); `--shard i/n` and `--generated-registry-file` in `cmd/compat`; `registry.generated.schema.json`; all 8 loaders read the generated sibling and fall back to a scenario resolver hook; `candidate`/`gated` state honoured by both gates; `compat/AGENTS.md` amendment for generated `suites` scoping + the lint that bounds it | M | With an **empty** generated registry, every gate, report and dashboard behaves exactly as today; baseline shards aggregate byte-identically; the scoping lint rejects a hand-written group that adds `suites` |
 | **G1** Model layer | **Done** — `internal/awsmodel` #1359, shape snapshot via inert-tier I1 with `sqs` added in #1684, `cmd/compatgen` and `compat/model/` in #1709. The model-utilisation follow-ups (#1795, closed) then moved three derivations out of the recipes and into the generator — see the §2 note | Extract `internal/awsmodel` AST reader; `cmd/compatgen` skeleton; the pruned shape snapshot `models/aws/shapes/` + `shapes-sha256` (shared deliverable with [inert-tier-rollout.md](./inert-tier-rollout.md) Phase I1 — build once, whichever plan gets there first); IR + recipe JSON schemas; `--scaffold`, `--review-report`, `--explain`; `gaps.json` | M | `make compat-model-check` regenerates byte-identically offline; the sha gate catches a hand edit; the snapshot is within its size budget; scaffolding a service produces a recipe skeleton a human can complete |
 | **G2** Pilot | **Code complete**, tracked as **#1768**. All three interpreters are merged — `python-sdk` #1787, `node-js-sdk` #1788 (+ #1796), `cli` #1790 — and the seven pilot groups run in all three suites with zero failures, identical across three runs, inside the §4.3 budget; the §2 note has the tally. Every §4.1 criterion and §4.2's 1–3 are met. #1813, the §4.2 criterion 5 regeneration demonstration, is met (#1818 then #1813): regeneration changed no byte of the corpus and the generated OU tests started passing on their own, in all three interpreters. Open: the first candidate → gated promotion, whose machinery landed with #1792/#1798 and which needs three agreeing nightly runs. #1801 is a performance follow-up, not a gate | `python-sdk`, `node-js-sdk` and `cli` interpreters; `recipes/sqs.json` + `recipes/organizations.json`; the §4 acceptance criteria | L | Every §4.1 and §4.2 criterion met, including the regeneration demonstration in §4.2.5 |
-| **G3** Typed backends | Not started | Source emitters for `go-sdk`, then `java-sdk`, `dotnet-sdk`, `rust-sdk` (one suite per PR); member→field naming rules per language | L each | Generated source compiles in the suite's normal build; the pilot groups produce **identical** results to the interpreter suites; generated `suites` scoping widens automatically on regeneration |
+| **G3** Typed backends | **In progress**, tracked as **#1820** — `go-sdk` landed: `cmd/compatgen/emit_go.go` emits one function per scenario test into `compat/suites/go-sdk/internal/groups/scenarios_*_gen.go`, against a hand-written `internal/scenario` runtime, and regeneration widened every generated group's `suites` automatically. `java-sdk`, `dotnet-sdk` and `rust-sdk` follow, one PR each | Source emitters for `go-sdk`, then `java-sdk`, `dotnet-sdk`, `rust-sdk` (one suite per PR); member→field naming rules per language | L each | Generated source compiles in the suite's normal build; the pilot groups produce **identical** results to the interpreter suites; generated `suites` scoping widens automatically on regeneration |
 | **G4** Tier-1 fleet rollout | Not started | One service per PR, ordered by [inert-tier-rollout.md](./inert-tier-rollout.md) then [full-emulation-priority.md](./full-emulation-priority.md); capped probe groups for [services-never-emulated.md](./services-never-emulated.md) | L, parallelizable per service | Per service: recipe reviewed, no unexplained refusal in `gaps.json`, soak passed, CI wall-clock within budget, coverage metric moves |
 | **G5** Steady state | Not started | Weekly model-refresh PR regenerates scenarios; coverage becomes the dashboard headline; `--slowest N` latency census | S | A model-refresh PR shows added/removed operations per service and cannot break the gate; coverage per service/tier is published |
 | **G6** Native-group migration (§3.11; overlaps G4/G5, starts any time after G3) | Not started | Port the existing 94 hand-written groups to authored IR scenarios, group by group: same registry names, one parallel soak cycle, results must match, then delete the per-language code. Exceptions file + lint for what stays native (streaming, presigned flows, the idiom suite). | L, parallelizable per group | Per group: soak-parity with the native predecessor, native code deleted, registry names unchanged; fleet-wide: rust/dotnet parity debt reaches zero via backends, the exceptions file is the only remaining native test code and every entry carries a reason |

@@ -131,7 +131,7 @@
         "assert": [
           {
             "kind": "readback",
-            "call": { "op": "ReceiveMessage", "params": { "MaxNumberOfMessages": 1, "WaitTimeSeconds": 5, "VisibilityTimeout": 0 } },
+            "call": { "op": "ReceiveMessage", "params": { "MaxNumberOfMessages": 1, "WaitTimeSeconds": 5, "VisibilityTimeout": 1 } },
             "checks": {
               "$.Messages[0].MessageId": { "equals": { "$ref": "message.id" } },
               "$.Messages[0].Body": { "equals": "compat scenario message" }
@@ -151,7 +151,7 @@
       },
       "list": {
         "op": "ReceiveMessage",
-        "params": { "MaxNumberOfMessages": 10, "WaitTimeSeconds": 1, "VisibilityTimeout": 0 },
+        "params": { "MaxNumberOfMessages": 10, "WaitTimeSeconds": 1, "VisibilityTimeout": 1 },
         "identityPath": "$.MessageId",
         "identity": "id"
       },
@@ -159,15 +159,15 @@
       "async": { "maxAttempts": 5, "delayMs": 1000 },
       "operations": [
         {
-          "$comment": "Timeout 0 makes the in-flight message visible at once; the read-back proves it and takes the fresh receipt handle the delete needs.",
+          "$comment": "The shortest visibility timeout every SDK can send releases the in-flight message; the read-back proves it and takes the fresh receipt handle the delete needs. It is 1 rather than 0 because the AWS SDK for Go v2 makes this member a value-typed int32 and omits it when it equals its modeled default of 0, so a scenario asking for 0 would silently ask for the queue's 30 instead.",
           "op": "ChangeMessageVisibility",
-          "params": { "VisibilityTimeout": 0 },
+          "params": { "VisibilityTimeout": 1 },
           "assert": [
             {
               "kind": "readback",
               "call": {
                 "op": "ReceiveMessage",
-                "params": { "MaxNumberOfMessages": 1, "WaitTimeSeconds": 5, "VisibilityTimeout": 0 },
+                "params": { "MaxNumberOfMessages": 1, "WaitTimeSeconds": 5, "VisibilityTimeout": 1 },
                 "export": { "message.receiptHandle": "$.Messages[0].ReceiptHandle" }
               },
               "checks": { "$.Messages[0].MessageId": { "equals": { "$ref": "message.id" } } }
@@ -197,9 +197,9 @@
       },
       "exports": { "firstId": "$.Successful[0].MessageId", "secondId": "$.Successful[1].MessageId" },
       "list": {
-        "$comment": "This receive runs between the visibility change and the delete, and it hands out a newer receipt handle for the same message; AWS asks a delete to carry the most recent handle, so the list re-exports it and DeleteMessageBatch below uses that one.",
+        "$comment": "This receive runs between the visibility change and the delete, and it hands out a newer receipt handle for the same message; AWS asks a delete to carry the most recent handle, so the list re-exports it and DeleteMessageBatch below uses that one. Its long poll is 5s rather than 1s because the clause before it received the same message with a one-second visibility timeout, and a one-second poll against a one-second hide is a coin toss.",
         "op": "ReceiveMessage",
-        "params": { "MaxNumberOfMessages": 10, "WaitTimeSeconds": 1, "VisibilityTimeout": 0 },
+        "params": { "MaxNumberOfMessages": 10, "WaitTimeSeconds": 5, "VisibilityTimeout": 1 },
         "identityPath": "$.MessageId",
         "identity": "id",
         "exports": { "receiptHandle": "$.Messages[0].ReceiptHandle" }
@@ -212,14 +212,14 @@
       "operations": [
         {
           "op": "ChangeMessageVisibilityBatch",
-          "params": { "Entries": [ { "Id": "1", "ReceiptHandle": { "$ref": "batch.receiptHandle" }, "VisibilityTimeout": 0 } ] },
+          "params": { "Entries": [ { "Id": "1", "ReceiptHandle": { "$ref": "batch.receiptHandle" }, "VisibilityTimeout": 1 } ] },
           "assert": [
             { "kind": "responseField", "checks": { "$.Successful[0].Id": { "equals": "1" } } },
             {
               "kind": "readback",
               "call": {
                 "op": "ReceiveMessage",
-                "params": { "MaxNumberOfMessages": 10, "WaitTimeSeconds": 5, "VisibilityTimeout": 0 },
+                "params": { "MaxNumberOfMessages": 10, "WaitTimeSeconds": 5, "VisibilityTimeout": 1 },
                 "export": { "batch.receiptHandle": "$.Messages[0].ReceiptHandle" }
               },
               "checks": { "$.Messages[0].MessageId": { "equals": { "$ref": "batch.id" } } }

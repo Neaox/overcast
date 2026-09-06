@@ -22,11 +22,15 @@ in [internal/groups/groups.go](internal/groups/groups.go) is the authoritative,
 registration-order list. A registry test this suite has not implemented is
 emitted as a `skip`, so the coverage gap is visible rather than silent.
 
-The suite also loads [compat/suites/registry.generated.json](../registry.generated.json):
-a group marked there for `go-sdk` runs through a `ScenarioBackend` rather than
-a hand-written function. No backend is wired in yet, so a generated group
-scoped to this suite fails loudly, naming the group, instead of skipping
-silently.
+The suite also loads [compat/suites/registry.generated.json](../registry.generated.json)
+and runs the **generated** groups it declares for `go-sdk`. Those come from the
+scenario IR under `compat/model/scenarios/`, but this suite does not interpret
+it: the AWS SDK for Go v2 has no dynamic-dispatch API, so `cmd/compatgen` emits
+Go source — `internal/groups/scenarios_<service>_gen.go` — which the ordinary
+build compiles. Each emitted test builds a real typed input struct and calls a
+real client method; the shared semantics live once in `internal/scenario`.
+Never edit a `scenarios_*_gen.go` by hand: change the recipe or the emitter and
+run `make generate-compat-model` from the repository root.
 
 ---
 
@@ -145,9 +149,13 @@ go-sdk/
                            IsUnimplemented, and the NDJSON emitters
     registry/registry.go ← loads registry.json and registry.generated.json,
                            merges and validates impl keys, builds TestGroups
+    scenario/            ← the runtime the generated groups call into: the
+                           context bag, the checks, error matching, eventually
+                           and the six-field failure message
     groups/              ← one file per AWS service
       groups.go          ← the ServiceGroup type and All(), the registration point
       s3.go  sqs.go  dynamodb.go  …
+      scenarios_gen.go  scenarios_<service>_gen.go   ← generated; do not edit
 ```
 
 The group list is **not** defined here. It comes from the shared cross-suite
