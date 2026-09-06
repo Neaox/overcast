@@ -356,6 +356,47 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Step 2 of the native-group migration, beside the promotion soak because
+      # it reads the same merged runs: does the authored port of a hand-written
+      # group answer exactly as the natives it will replace, per (suite, test)?
+      # docs/plans/compat-coverage-modelgen.md §3.11 says a divergence blocks the
+      # deletion of the native code and never the gate, so this step reports and
+      # does not fail the nightly; the flip PR cites the summary it writes.
+      # `continue-on-error` keeps a divergence — which is a finding, not a broken
+      # build — from reddening a run whose job is promotion.
+      - name: Compare the shadow groups against their natives
+        if: steps.merge.outputs.merged != '0'
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          # No --annotate: the flag exists and emits ::error, which is the right
+          # loudness for a gate and the wrong one here. A divergence is a finding
+          # to triage, not a broken build, and an error annotation on a run whose
+          # job is promotion would read as the promotion having failed.
+          #
+          # The loop writes to a file rather than through a pipe: `... | tee` runs
+          # the loop in a subshell, and the exit status it collects would be lost
+          # with it.
+          : > "$RUNNER_TEMP/shadow.log"
+          status=0
+          for run in soak/*.json; do
+            [ -e "$run" ] || continue
+            echo "--- $run" >> "$RUNNER_TEMP/shadow.log"
+            if ! ./bin/compat --compare-shadow --results-file "$run" >> "$RUNNER_TEMP/shadow.log" 2>&1; then
+              status=1
+            fi
+          done
+          cat "$RUNNER_TEMP/shadow.log"
+          {
+            echo
+            echo "### Shadow-group comparison"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/shadow.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
       # The generator owns compat/suites/registry.generated.json and rewrites it
       # wholly from its inputs, of which the ledger is now one. Regenerating in
       # the same job is what keeps the two files consistent in a single commit;

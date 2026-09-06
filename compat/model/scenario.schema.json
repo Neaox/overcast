@@ -2,11 +2,12 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/overcast-sh/overcast/compat/model/scenario.schema.json",
   "title": "Overcast Compat Scenario IR",
-  "description": "One generated scenario file per service, compat/model/scenarios/<service>.json, written by cmd/compatgen and executed by the suite interpreters. The IR is closed: every construct an interpreter must implement is defined here, and README.md in this directory is the normative description. A test cannot be represented without at least one assertion clause.",
+  "description": "One scenario file: compat/model/scenarios/<service>.json, written by cmd/compatgen from a recipe, or compat/model/authored/<group>.json, written by a human. The suite interpreters execute either; the typed suites compile either. The IR is closed: every construct an interpreter must implement is defined here, and README.md in this directory is the normative description. A test cannot be represented without at least one assertion clause.",
   "type": "object",
   "required": ["version", "service", "client", "groups"],
   "additionalProperties": false,
   "properties": {
+    "$comment": { "type": "string", "description": "Prose, for an authored scenario: what it ports, and why the clauses are what they are. Every consumer ignores it. cmd/compatgen never writes one, so a generated file carries none and byte-identical regeneration is unaffected." },
     "version": { "type": "integer", "const": 1 },
     "service": {
       "type": "string",
@@ -44,7 +45,8 @@
       "required": ["name", "kind", "setup", "tests", "teardown"],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "description": "The registry group name: <service>-gen-<resource> or <service>-gen-probe." },
+        "$comment": { "type": "string", "description": "Prose, for an authored scenario. Ignored by every consumer and never generated." },
+        "name": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "description": "The registry group name: <service>-gen-<resource> or <service>-gen-probe for a generated group, the ported group's own name for an authored one." },
         "kind": { "type": "string", "enum": ["lifecycle", "probe"] },
         "parallel": {
           "type": "boolean",
@@ -92,6 +94,7 @@
       "required": ["name", "op", "call", "assert"],
       "additionalProperties": false,
       "properties": {
+        "$comment": { "type": "string", "description": "Prose, for an authored scenario. Ignored by every consumer and never generated." },
         "name": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]+$", "description": "The registry test name." },
         "op": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]*$", "description": "The operation the test exercises; equals the primary call's op." },
         "call": { "$ref": "#/definitions/Call" },
@@ -117,6 +120,7 @@
           "required": ["kind", "checks"],
           "additionalProperties": false,
           "properties": {
+            "$comment": { "type": "string" },
             "kind": { "const": "responseField" },
             "checks": { "$ref": "#/definitions/Checks" }
           }
@@ -126,6 +130,7 @@
           "required": ["kind", "call", "checks"],
           "additionalProperties": false,
           "properties": {
+            "$comment": { "type": "string" },
             "kind": { "const": "readback" },
             "call": { "$ref": "#/definitions/Call" },
             "checks": { "$ref": "#/definitions/Checks" }
@@ -136,6 +141,7 @@
           "required": ["kind", "itemsPath", "where"],
           "additionalProperties": false,
           "properties": {
+            "$comment": { "type": "string" },
             "kind": { "const": "listContains" },
             "call": { "$ref": "#/definitions/Call" },
             "itemsPath": { "$ref": "#/definitions/Path" },
@@ -147,6 +153,7 @@
           "required": ["kind", "itemsPath", "where"],
           "additionalProperties": false,
           "properties": {
+            "$comment": { "type": "string" },
             "kind": { "const": "absent" },
             "call": { "$ref": "#/definitions/Call" },
             "itemsPath": { "$ref": "#/definitions/Path" },
@@ -158,6 +165,7 @@
           "required": ["kind", "call", "error"],
           "additionalProperties": false,
           "properties": {
+            "$comment": { "type": "string" },
             "kind": { "const": "absent" },
             "call": { "$ref": "#/definitions/Call" },
             "error": { "$ref": "#/definitions/Error" }
@@ -168,6 +176,7 @@
           "required": ["kind", "error"],
           "additionalProperties": false,
           "properties": {
+            "$comment": { "type": "string" },
             "kind": { "const": "errorCode" },
             "error": { "$ref": "#/definitions/Error" }
           }
@@ -177,6 +186,7 @@
           "required": ["kind", "maxAttempts", "assert"],
           "additionalProperties": false,
           "properties": {
+            "$comment": { "type": "string" },
             "kind": { "const": "eventually" },
             "maxAttempts": { "type": "integer", "minimum": 1 },
             "delayMs": { "type": "integer", "minimum": 0 },

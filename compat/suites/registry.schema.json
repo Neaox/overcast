@@ -59,6 +59,10 @@
           "type": "string",
           "description": "Only legal in registry.generated.json — see `generated`. candidate | gated."
         },
+        "shadowOf": {
+          "type": "string",
+          "description": "Only legal in registry.generated.json — see `generated`. The hand-written group this one shadows: an authored scenario running beside the native implementation it will replace, so one nightly can compare the two per (suite, test) before the natives are deleted. Derived from the group name (`<group>-shadow`) by cmd/compatgen, never hand-written."
+        },
         "parallel": {
           "type": "boolean",
           "description": "Only legal in registry.generated.json — see `generated`. The group's tests may run concurrently with one another, bounded by the suite's own parallel-slot count; cmd/compatgen sets it on a probe group and on nothing else. A loader that ignores it runs the group in order, which is always correct."

@@ -1150,6 +1150,73 @@
           ]
         }
       ]
+    },
+    {
+      "service": "sqs",
+      "name": "sqs-queues-shadow",
+      "generated": true,
+      "scenario": "compat/model/authored/sqs-queues.json",
+      "state": "candidate",
+      "shadowOf": "sqs-queues",
+      "suites": [
+        "cli",
+        "dotnet-sdk",
+        "go-sdk",
+        "java-sdk",
+        "node-js-sdk",
+        "python-sdk",
+        "rust-sdk"
+      ],
+      "tests": [
+        {
+          "name": "CreateQueue"
+        },
+        {
+          "name": "GetQueueUrl",
+          "depends": [
+            "CreateQueue"
+          ]
+        },
+        {
+          "name": "ListQueues",
+          "depends": [
+            "CreateQueue"
+          ]
+        },
+        {
+          "name": "SetQueueAttributes",
+          "depends": [
+            "CreateQueue"
+          ]
+        },
+        {
+          "name": "GetQueueAttributes",
+          "depends": [
+            "SetQueueAttributes"
+          ]
+        },
+        {
+          "name": "TagQueue",
+          "depends": [
+            "CreateQueue"
+          ]
+        },
+        {
+          "name": "UntagQueue",
+          "depends": [
+            "TagQueue"
+          ]
+        },
+        {
+          "name": "DeleteQueue",
+          "depends": [
+            "GetQueueUrl",
+            "ListQueues",
+            "GetQueueAttributes",
+            "UntagQueue"
+          ]
+        }
+      ]
     }
   ]
 }

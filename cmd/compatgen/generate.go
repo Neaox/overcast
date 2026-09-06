@@ -32,12 +32,24 @@ const (
 	compatTagValue = "scenario"
 )
 
-// generation is the result of generating one service.
+// generation is the result of generating one service, or of reading one
+// authored scenario.
 type generation struct {
 	scenario *scenario
-	gaps     []gap
-	auto     []autoBinding
-	uses     []valueUse
+	// unit is the emitted-source key: the base name each typed backend builds
+	// its file name and its identifiers from, and the key stale-file detection
+	// recognises. For a recipe it is the service; for an authored scenario it
+	// is authoredUnit(<file base name>), so a ported group's emitted source
+	// sits in its own file rather than inside the service's generated one and
+	// the diff of a migration is readable.
+	unit string
+	// file is the scenario file this generation came from, repository-relative
+	// with '/' separators — what the registry records, what an interpreter
+	// opens, and field 6 of every failure message.
+	file string
+	gaps []gap
+	auto []autoBinding
+	uses []valueUse
 	// covered maps an operation to the group/test names that exercise it as
 	// the primary call.
 	covered map[string][]string
@@ -71,6 +83,8 @@ func generate(model *serviceModel, r recipe, values *valuesTable, caps capabilit
 		binder:  &binder{model: model, service: r.Service, values: values},
 		out: &generation{
 			scenario: &scenario{Version: scenarioVersion, Service: r.Service, Client: client, Groups: []group{}},
+			unit:     r.Service,
+			file:     scenarioPath(r.Service),
 			covered:  make(map[string][]string),
 			caps:     caps,
 			model:    model,

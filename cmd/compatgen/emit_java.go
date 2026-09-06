@@ -76,7 +76,7 @@ const javaEmitReason = "java-emit-unsupported"
 func emitJava(gen *generation) (*sourceEmission, error) {
 	s := gen.scenario
 	e := &sourceEmission{
-		Path:    javaSuiteDir + "/" + javaFileName(s.Service),
+		Path:    javaSuiteDir + "/" + javaFileName(gen.unit),
 		Refused: map[string]bool{},
 	}
 
@@ -90,7 +90,7 @@ func emitJava(gen *generation) (*sourceEmission, error) {
 		groups = append(groups, g)
 	}
 
-	if err := javaMethodNamesAreUnique(s.Service, groups); err != nil {
+	if err := javaMethodNamesAreUnique(gen.unit, groups); err != nil {
 		return nil, err
 	}
 
@@ -99,7 +99,7 @@ func emitJava(gen *generation) (*sourceEmission, error) {
 	// the member types its calls touch, and an unused import is noise in a file
 	// that is reviewed as a diff.
 	sp := newJavaSpeller(gen.model, s.Client.SDKID)
-	class := javaNameClass(s.Service)
+	class := javaNameClass(gen.unit)
 	body := &sourceWriter{}
 	if err := javaWriteBody(body, gen, sp, class, groups); err != nil {
 		return nil, err
@@ -163,10 +163,10 @@ func javaImports(sp *javaSpeller, groups []group) []string {
 
 func javaWriteBody(w *sourceWriter, gen *generation, sp *javaSpeller, class string, groups []group) error {
 	s := gen.scenario
-	file := scenarioPath(s.Service)
+	file := gen.file
 
 	w.linef("/**")
-	w.linef(" * The generated %s groups.", s.Service)
+	w.linef(" * The %s groups.", gen.describe())
 	w.linef(" *")
 	w.linef(" * <p>Generated from %s by cmd/compatgen. The semantics live in", file)
 	w.linef(" * {@code io.overcast.compat.scenario}; this file is the data and the typed SDK")
@@ -188,7 +188,7 @@ func javaWriteBody(w *sourceWriter, gen *generation, sp *javaSpeller, class stri
 	w.linef("")
 	w.linef("    @Override")
 	w.linef("    public String sourceName() {")
-	w.linef("        return %s;", javaQuote("scenarios/"+s.Service))
+	w.linef("        return %s;", javaQuote("scenarios/"+gen.unit))
 	w.linef("    }")
 	w.linef("")
 	w.linef("    @Override")

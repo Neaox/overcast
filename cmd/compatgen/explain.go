@@ -149,17 +149,14 @@ func runExplain(opts options, stdout io.Writer) error {
 	if !ok || groupName == "" || testName == "" {
 		return fmt.Errorf("-explain wants <group>/<test>, got %q", opts.explain)
 	}
-	service, _, ok := strings.Cut(groupName, "-gen-")
-	if !ok {
-		return fmt.Errorf("%q is not a generated group name (<service>-gen-<resource>)", groupName)
-	}
-	s, err := readScenario(filepath.Join(opts.root, filepath.FromSlash(scenarioPath(service))))
+	file := scenarioFileOfGroup(groupName)
+	s, err := readScenario(filepath.Join(opts.root, filepath.FromSlash(file)))
 	if err != nil {
 		return err
 	}
 	g, t, ok := s.findTest(groupName, testName)
 	if !ok {
-		return fmt.Errorf("no test %s in %s", opts.explain, scenarioPath(service))
+		return fmt.Errorf("no test %s in %s", opts.explain, file)
 	}
 	env := renderEnv{
 		goTypes: newGoSDKTypes(filepath.Join(opts.root, filepath.FromSlash(goSDKModuleDir))),
@@ -167,6 +164,24 @@ func runExplain(opts options, stdout io.Writer) error {
 	}
 	_, err = io.WriteString(stdout, render(env, s, g, t))
 	return err
+}
+
+// scenarioFileOfGroup is the scenario file a group lives in, derived from its
+// name alone.
+//
+// A generated group says so outright — `<service>-gen-<resource>` — and an
+// authored one says so too, once you know the rule: an authored file's base
+// name is the registry group it ports, which checkAuthoredAgainstRegistry
+// enforces, so `sqs-queues-shadow` is compat/model/authored/sqs-queues.json.
+// Every interpreter's failure message ends by naming the file and the step
+// index and points the reader at `-explain`, so this has to answer for both
+// layers or the advice is wrong for the layer most likely to be under review.
+func scenarioFileOfGroup(groupName string) string {
+	if service, _, ok := strings.Cut(groupName, "-gen-"); ok {
+		return scenarioPath(service)
+	}
+	native, _ := nativeGroupOf(groupName)
+	return authoredPath(native)
 }
 
 func rendererNames() []string {
@@ -397,7 +412,7 @@ func (e *explainer) assertion(a assertion, index int) {
 }
 
 func (e *explainer) test(s *scenario, g *group, t *test, header func()) string {
-	e.commentf("%s/%s — op %s (scenario %s)", g.Name, t.Name, t.Op, scenarioPath(s.Service))
+	e.commentf("%s/%s — op %s (scenario %s)", g.Name, t.Name, t.Op, scenarioFileOfGroup(g.Name))
 	if len(t.Depends) > 0 {
 		e.commentf("depends on %s", strings.Join(t.Depends, ", "))
 	}

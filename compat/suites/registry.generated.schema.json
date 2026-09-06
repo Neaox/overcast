@@ -41,6 +41,11 @@
               "enum": ["candidate", "gated"],
               "description": "candidate = runs everywhere and reports everywhere, but gates nothing: excluded from both --compare-baseline and --max-failures. The inverse of flaky.json — quarantined by default until it proves itself, rather than gated by default until someone gets a label. gated = has passed the soak and is enforced exactly like a hand-written group."
             },
+            "shadowOf": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "description": "Present only on a shadow group: the hand-written group whose native implementations this authored scenario is being compared against before they are deleted (docs/plans/compat-coverage-modelgen.md §3.11, step 2). `cmd/compat --compare-shadow` joins the two on it; `--promote-generated` skips a group that carries it, because a shadow is collecting evidence of agreement with the native group, not with itself, and is deleted when that evidence is in. A shadow group is therefore always in state \"candidate\"."
+            },
             "parallel": {
               "type": "boolean",
               "description": "The group's tests may run concurrently with one another, bounded by the suite's existing parallel-slot count (OVERCAST_COMPAT_PARALLEL_SLOTS, default 8). Emitted only on a probe group, whose tests have no setup, no teardown and no exports and so cannot order one another; a lifecycle group never carries it. Results are still collected and emitted in registry order, so honouring it changes the wall clock and nothing else. Absent means serial, which is what every loader did before the field existed and what a loader that ignores it still does."

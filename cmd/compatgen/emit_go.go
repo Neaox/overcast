@@ -104,7 +104,7 @@ var goUnsupportedKinds = map[string]bool{
 // module for a real run and from testdata/awssdk for the generator's tests.
 func emitGo(gen *generation, loader *goSDKTypes) (*sourceEmission, error) {
 	e := &sourceEmission{
-		Path:    goSuiteDir + "/" + goFileName(gen.scenario.Service),
+		Path:    goSuiteDir + "/" + goFileName(gen.unit),
 		Refused: map[string]bool{},
 	}
 	s := gen.scenario
@@ -123,7 +123,7 @@ func emitGo(gen *generation, loader *goSDKTypes) (*sourceEmission, error) {
 		groups = append(groups, g)
 	}
 
-	if err := goMethodNamesAreUnique(s.Service, groups); err != nil {
+	if err := goMethodNamesAreUnique(gen.unit, groups); err != nil {
 		return nil, err
 	}
 
@@ -132,13 +132,13 @@ func emitGo(gen *generation, loader *goSDKTypes) (*sourceEmission, error) {
 	// types package depends on the field types its calls touch, and an unused
 	// import does not compile.
 	sp := &goSpeller{svc: svc}
-	recv := goNameReceiver(s.Service)
+	recv := goNameReceiver(gen.unit)
 	body := &sourceWriter{}
-	goWriteHeaderComment(body, s)
-	body.linef("func %s(c *clients.Clients) ServiceGroup {", goNameConstructor(s.Service))
+	goWriteHeaderComment(body, gen)
+	body.linef("func %s(c *clients.Clients) ServiceGroup {", goNameConstructor(gen.unit))
 	body.linef("\tg := &%s{c: c}", recv)
 	body.linef("\treturn ServiceGroup{")
-	body.linef("\t\tName: %q,", "scenarios/"+s.Service)
+	body.linef("\t\tName: %q,", "scenarios/"+gen.unit)
 	body.linef("\t\tImpls: map[string]harness.TestFn{")
 	for _, g := range groups {
 		for _, t := range g.Tests {
@@ -202,7 +202,7 @@ func emitGo(gen *generation, loader *goSDKTypes) (*sourceEmission, error) {
 		// bug, and it must stop generation rather than land a file the suite
 		// cannot build; the offending source is printed so the fault is
 		// diagnosable from the failure alone.
-		return nil, fmt.Errorf("emitted Go for %s does not parse: %w\n%s", s.Service, err, w.String())
+		return nil, fmt.Errorf("emitted Go for %s does not parse: %w\n%s", gen.unit, err, w.String())
 	}
 	e.Contents = contents
 	sortGaps(e.Gaps)
@@ -230,10 +230,10 @@ func goImports(sp *goSpeller) []string {
 	return paths
 }
 
-func goWriteHeaderComment(w *sourceWriter, s *scenario) {
-	w.linef("// %s returns the generated %s groups.", goNameConstructor(s.Service), s.Service)
+func goWriteHeaderComment(w *sourceWriter, gen *generation) {
+	w.linef("// %s returns the %s groups.", goNameConstructor(gen.unit), gen.describe())
 	w.linef("//")
-	w.linef("// Generated from %s by cmd/compatgen.", scenarioPath(s.Service))
+	w.linef("// Generated from %s by cmd/compatgen.", gen.file)
 	w.linef("// The semantics live in internal/scenario; this file is the data and the")
 	w.linef("// typed SDK calls.")
 }
@@ -242,7 +242,7 @@ func goWriteHeaderComment(w *sourceWriter, s *scenario) {
 // registered even when empty, because an empty phase is a no-op and not a
 // missing one — and one function per test.
 func goWriteGroup(w *sourceWriter, gen *generation, sp *goSpeller, recv string, g group) error {
-	file := scenarioPath(gen.scenario.Service)
+	file := gen.file
 	w.linef("")
 	w.linef("var %s = scenario.Group{Name: %q, File: %q}", goNameGroupVar(g.Name), g.Name, file)
 

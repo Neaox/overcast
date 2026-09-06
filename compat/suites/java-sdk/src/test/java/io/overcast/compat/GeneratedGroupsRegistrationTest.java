@@ -61,8 +61,19 @@ class GeneratedGroupsRegistrationTest {
         Set<String> resolved = new TreeSet<>();
         List<String> unresolved = new ArrayList<>();
         for (TestGroup g : groups) {
-            if (!g.name().contains("-gen-")) {
-                continue; // a hand-written group; MainRegistrationTest owns those
+            // A group this emitter registered anything for is one of ours; a
+            // hand-written group with no impl here is MainRegistrationTest's.
+            //
+            // Deliberately not a name test. "-gen-" names a group generated
+            // from a recipe, but an authored scenario ported from a
+            // hand-written group keeps that group's own name (and, while it
+            // soaks, that name plus "-shadow"), so a substring check would skip
+            // exactly the groups a migration is most at risk of dropping. See
+            // compat/model/README.md's "Authored scenarios" section.
+            boolean mine = g.tests().stream()
+                    .anyMatch(tc -> impls.containsKey(Registry.qualifiedKey(g.name(), tc.name())));
+            if (!mine) {
+                continue;
             }
             assertNotNull(g.setup(), "generated group " + g.name() + " has no setup hook");
             assertNotNull(g.teardown(), "generated group " + g.name() + " has no teardown hook");

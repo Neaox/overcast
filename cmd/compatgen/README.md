@@ -34,7 +34,7 @@ is required because the capability table it reads
 | `-check` | regenerate in memory and compare byte-for-byte, writing nothing; also fails on a scenario file whose recipe is gone |
 | `-scaffold <service>` | print a recipe skeleton for a service in the shape snapshot |
 | `-review-report [service]` | print the Markdown review report for a PR body |
-| `-explain <group>/<test> -lang <python\|node\|cli\|go\|java\|dotnet\|rust>` | render one generated test as pseudo-code |
+| `-explain <group>/<test> -lang <python\|node\|cli\|go\|java\|dotnet\|rust>` | render one test as pseudo-code — a generated group or an authored one |
 | `-sample <n>` | scenarios rendered in the review report (default 3, fixed seed) |
 | `-root <dir>` | repository root (default `.`) |
 
@@ -49,6 +49,19 @@ is required because the capability table it reads
   `recipe.schema.json` on load, then against the model: every operation must
   exist, every path must resolve, every literal must be of the member's
   kind and inside its constraints.
+- `compat/model/authored/<group>.json` — an **authored scenario**: the same IR
+  a recipe produces, written by hand to port one hand-written registry group
+  (`docs/plans/compat-coverage-modelgen.md` §3.11). It is an input with no
+  recipe, so nothing rewrites it; it is validated against
+  `scenario.schema.json` and the IR's own rules on load, then against the
+  model, and it reaches the four typed emitters through exactly the generation
+  a recipe produces — under the emit key `authored-<group>`, so its source is
+  `scenarios_authored_<group>_gen.*` rather than being folded into the
+  service's own generated file. Its group and test names must be the registry
+  group's, which is what keeps baseline, flaky and parity-debt history intact
+  across the port. See
+  [compat/model/README.md § Authored scenarios](../../compat/model/README.md#authored-scenarios).
+- `compat/suites/registry.json` — read for that check and nothing else.
 - `compat/model/values.json` — curated literals, validated the same way.
 - `compat/model/promotions.json` — the candidate → gated soak ledger, and
   the one thing that can move a generated group's `state`. It is written only

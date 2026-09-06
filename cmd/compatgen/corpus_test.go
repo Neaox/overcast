@@ -87,14 +87,14 @@ func TestCommittedCorpus_validatesAgainstItsSchemas(t *testing.T) {
 // registered with exactly that suite list.
 func TestRegistryIsEmptyExactlyWhileNoBackendExists(t *testing.T) {
 	_, gen := generateFixture(t)
-	scenarios := []*scenario{gen.scenario}
+	units := []*generation{gen}
 
-	empty := buildRegistry(scenarios, nil, nil, nil)
+	empty := buildRegistry(units, nil, nil, nil)
 	if len(empty.Groups) != 0 {
 		t.Fatalf("with no backend the registry must be empty, got %d groups", len(empty.Groups))
 	}
 
-	full := buildRegistry(scenarios, []string{"python-sdk", "cli"}, nil, nil)
+	full := buildRegistry(units, []string{"python-sdk", "cli"}, nil, nil)
 	if len(full.Groups) != len(gen.scenario.Groups) {
 		t.Fatalf("with a backend every group is registered: got %d, want %d", len(full.Groups), len(gen.scenario.Groups))
 	}
@@ -110,7 +110,7 @@ func TestRegistryIsEmptyExactlyWhileNoBackendExists(t *testing.T) {
 	}
 
 	// The committed table decides the committed file.
-	committed := buildRegistry(scenarios, scenarioBackends, nil, nil)
+	committed := buildRegistry(units, scenarioBackends, nil, nil)
 	if (len(committed.Groups) == 0) != (len(scenarioBackends) == 0) {
 		t.Fatalf("scenarioBackends=%v but the registry has %d groups", scenarioBackends, len(committed.Groups))
 	}

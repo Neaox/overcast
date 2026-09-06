@@ -8,6 +8,9 @@ use std::sync::Arc;
 use crate::clients::AwsClients;
 use crate::groups::ServiceGroup;
 
+#[path = "scenarios_authored_sqs_queues_gen.rs"]
+mod scenarios_authored_sqs_queues_gen;
+
 #[path = "scenarios_batch_gen.rs"]
 mod scenarios_batch_gen;
 
@@ -25,6 +28,7 @@ mod scenarios_sqs_gen;
 
 pub fn scenario_groups(clients: &Arc<AwsClients>) -> Vec<Box<dyn ServiceGroup>> {
     vec![
+        Box::new(scenarios_authored_sqs_queues_gen::ScenariosAuthoredSqsQueues::new(clients)),
         Box::new(scenarios_batch_gen::ScenariosBatch::new(clients)),
         Box::new(scenarios_elastic_load_balancing_gen::ScenariosElasticLoadBalancing::new(clients)),
         Box::new(scenarios_organizations_gen::ScenariosOrganizations::new(clients)),
