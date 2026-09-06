@@ -60,13 +60,55 @@ resource ID.
 | Filter value | A pattern, as on AWS: `*` stands for any run of characters including none, `?` for exactly one, and a backslash escapes either |
 | Two or more filters | AND-ed with each other |
 | Two or more values in one filter | OR-ed |
-| A `<Resource>Id.N` parameter | AND-ed with the filters — all as on AWS |
+| A `<Resource>Id.N` parameter | AND-ed with the filters — all as on AWS. Unlike a filter, an ID here has to resolve — see [Resource IDs](#resource-ids) |
 
 ```bash
 aws ec2 describe-vpcs    --filters 'Name=tag:Name,Values=overcast-*'
 aws ec2 describe-images  --filters 'Name=name,Values=Amazon Linux 2*'
 aws ec2 describe-subnets --filters 'Name=availability-zone,Values=us-east-1?'
 ```
+
+## Resource IDs
+
+A `Describe*` handed an explicit `<Resource>Id.N` list resolves every ID in it
+and fails on the first one it cannot, as AWS does. Naming a resource is an
+assertion that it exists, and the answer comes back as the error rather than as
+the length of the list:
+
+```
+$ aws ec2 describe-vpcs --vpc-ids vpc-00000000000000000
+An error occurred (InvalidVpcID.NotFound): The vpc ID 'vpc-00000000000000000' does not exist
+
+$ aws ec2 describe-vpcs --vpc-ids not-an-id
+An error occurred (InvalidVpcID.Malformed): Invalid id: "not-an-id" (expecting "vpc-...")
+```
+
+A **filter** that matches nothing is the opposite case and still answers `200`
+with an empty list — that is a question about which resources look a certain
+way, and "none of them" is an answer.
+
+An ID is eight or seventeen lowercase hex characters after the prefix, the two
+forms EC2 issues. Anything else is `.Malformed` before the lookup happens, so a
+request naming both a malformed ID and an unknown one reports the malformed one.
+
+| Operation | Unknown ID | Malformed ID |
+| --- | --- | --- |
+| `DescribeVpcs` | `InvalidVpcID.NotFound` | `InvalidVpcID.Malformed` |
+| `DescribeSubnets` | `InvalidSubnetID.NotFound` | `InvalidSubnetID.Malformed` |
+| `DescribeSecurityGroups` | `InvalidGroup.NotFound` | `InvalidGroupId.Malformed` |
+| `DescribeRouteTables` | `InvalidRouteTableID.NotFound` | `InvalidRouteTableId.Malformed` |
+| `DescribeInternetGateways` | `InvalidInternetGatewayID.NotFound` | `InvalidInternetGatewayId.Malformed` |
+| `DescribeNetworkInterfaces` | `InvalidNetworkInterfaceID.NotFound` | `InvalidNetworkInterfaceId.Malformed` |
+| `DescribeInstances` | `InvalidInstanceID.NotFound` | `InvalidInstanceID.Malformed` |
+
+The casing is AWS's own and varies by resource, so match the exact string.
+`ReleaseAddress` on an allocation that is not there answers
+`InvalidAllocationID.NotFound`.
+
+Describes not in that table — `DescribeAddresses`, `DescribeNatGateways`,
+`DescribeVpnGateways`, `DescribeVpcEndpoints`,
+`DescribeVpcPeeringConnections` — still treat an ID list as a filter and answer
+`200` with an empty list.
 
 ## Related
 
