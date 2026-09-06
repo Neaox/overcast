@@ -747,7 +747,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 			// ExtraHosts covers the apex names exactly; Dns covers their
 			// subdomains — virtual-hosted S3, execute-api — which /etc/hosts
 			// cannot express. Dns is empty unless the resolver is listening.
-			ExtraHosts: cr.endpoint.ExtraHosts(),
+			ExtraHosts: cr.extraHosts(),
 			Dns:        cr.endpoint.DNSServers(),
 		},
 	}
@@ -1076,6 +1076,39 @@ func bindMountTaskDir(hostPath string) []string {
 		return nil
 	}
 	return []string{hostPath + ":/var/task:ro"}
+}
+
+// sandboxLocaldomainHost is the /etc/hosts entry that makes
+// `sandbox.localdomain` the execution environment's own loopback, as it is
+// inside a real one.
+//
+// It is the name AWS puts in front of every telemetry destination it
+// documents — the Telemetry API and the Logs API both describe the delivery
+// endpoint as "a local HTTP endpoint (http://sandbox.localdomain:${PORT}/${PATH})"
+// — so an extension ported from AWS subscribes it verbatim. Overcast accepts
+// such a subscription like any other, and before this entry existed the
+// in-container init dialled the name as subscribed and got "lookup
+// sandbox.localdomain … no such host", which the host counted as a failed
+// delivery and eventually a platform.logsDropped (#1837).
+//
+// An /etc/hosts entry rather than a special case in the init: the init is a
+// relay that parses nothing it carries (docs/plans/lambda-in-container-init.md
+// § 3.5), and teaching it this one name would leave every *other* process in
+// the sandbox — the runtime, the function, an extension using the name for
+// something of its own — unable to resolve it.
+const sandboxLocaldomainHost = "sandbox.localdomain:127.0.0.1"
+
+// extraHosts is the /etc/hosts set for a Lambda container: the split-horizon
+// names that point at Overcast, plus the sandbox's own name.
+//
+// The Lambda-only entry is appended here rather than inside
+// containerendpoint.Mapper.ExtraHosts because that method is shared with ECS
+// (internal/services/ecs/task_netns.go) and answers one question: how does a
+// container reach Overcast. This name answers a different one — it is a Lambda
+// execution environment's name for itself, it points at the container rather
+// than at Overcast, and it means nothing in an ECS task.
+func (cr *ContainerRuntime) extraHosts() []string {
+	return append(cr.endpoint.ExtraHosts(), sandboxLocaldomainHost)
 }
 
 // efsMounts resolves the function's FileSystemConfigs to Docker volume

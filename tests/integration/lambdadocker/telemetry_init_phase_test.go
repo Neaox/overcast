@@ -32,6 +32,29 @@ import (
 var initPhaseRecordTypes = []string{"platform.initStart", "platform.initRuntimeDone", "platform.initReport"}
 
 func TestInvoke_extensionSubscribedToTelemetryReceivesTheInitPhaseRecords(t *testing.T) {
+	assertTelemetrySubscriberReceivesTheInitPhase(t, "telemetry-init-fn", "http://127.0.0.1:9999")
+}
+
+// TestInvoke_extensionSubscribedAtSandboxLocaldomainReceivesTheInitPhaseRecords
+// is the same subscription spelled the way AWS's own documentation spells it.
+//
+// Both the Telemetry API and the Logs API describe the destination as "a local
+// HTTP endpoint (`http://sandbox.localdomain:${PORT}/${PATH}`)", and every AWS
+// sample subscribes that name, so an extension ported from AWS arrives with it
+// baked in. The name resolves to loopback inside a real execution environment;
+// inside an Overcast sandbox it only does because the Lambda container is
+// created with an /etc/hosts entry for it. Without that entry the init's POST
+// never leaves the container — it dies in the resolver — and the extension
+// receives nothing, which is #1837.
+func TestInvoke_extensionSubscribedAtSandboxLocaldomainReceivesTheInitPhaseRecords(t *testing.T) {
+	assertTelemetrySubscriberReceivesTheInitPhase(t, "telemetry-sandbox-fn", "http://sandbox.localdomain:9999")
+}
+
+// assertTelemetrySubscriberReceivesTheInitPhase runs the whole case for one
+// destination spelling: build the image, invoke once, and wait for the three
+// INIT-phase records to reach the extension's listener at destination.
+func assertTelemetrySubscriberReceivesTheInitPhase(t *testing.T, functionName, destination string) {
+	t.Helper()
 	helpers.SkipWithoutDocker(t)
 	requireLambdaInit(t)
 
@@ -55,7 +78,7 @@ exports.handler = async () => {
 		// reported ready. Everything it is sent it prints, one line per record,
 		// which is how the test gets to see it — an extension's stdout is an
 		// `extension` record and reaches CloudWatch like any other output.
-		"ext.js": `
+		"ext.js": strings.ReplaceAll(`
 const http = require("http");
 const [host, port] = process.env.AWS_LAMBDA_RUNTIME_API.split(":");
 
@@ -109,7 +132,7 @@ function call(method, path, headers, body) {
       schemaVersion: "2022-12-13",
       types: ["platform"],
       buffering: { timeoutMs: 25, maxBytes: 262144, maxItems: 1000 },
-      destination: { protocol: "HTTP", URI: "http://127.0.0.1:9999" },
+      destination: { protocol: "HTTP", URI: "TELEMETRY_DESTINATION_URI" },
     }),
   );
   console.log("collector subscribed marker-subscribed");
@@ -118,7 +141,7 @@ function call(method, path, headers, body) {
     await call("GET", "/2020-01-01/extension/event/next", { "Lambda-Extension-Identifier": id });
   }
 })().catch(err => console.error("collector failed: " + err));
-`,
+`, "TELEMETRY_DESTINATION_URI", destination),
 	})
 
 	// The emulator's own warnings are the only place a delivery it gave up on
@@ -137,10 +160,10 @@ function call(method, path, headers, body) {
 	})
 
 	srv := helpers.NewTestServer(t, helpers.WithLambdaDocker(), helpers.WithLogger(zap.New(core)))
-	createImageFunction(t, srv, "telemetry-init-fn", image, nil)
-	waitForFunctionActive(t, srv, "telemetry-init-fn")
+	createImageFunction(t, srv, functionName, image, nil)
+	waitForFunctionActive(t, srv, functionName)
 
-	tail := string(invokeForLogTail(t, srv, "telemetry-init-fn", []byte("{}")))
+	tail := string(invokeForLogTail(t, srv, functionName, []byte("{}")))
 	if !strings.Contains(tail, "handler ran marker-handler") {
 		t.Fatalf("the function did not run:\n%s", tail)
 	}
@@ -164,7 +187,7 @@ function call(method, path, headers, body) {
 	// is also what separates late from lost: a record the emulator gave up on
 	// is still missing when the budget runs out, and the dump names what did
 	// arrive.
-	messages := logEventsFor(t, srv, "/aws/lambda/telemetry-init-fn", func(m []string) bool {
+	messages := logEventsFor(t, srv, "/aws/lambda/"+functionName, func(m []string) bool {
 		for _, eventType := range initPhaseRecordTypes {
 			if indexOfLine(m, "TELEMETRY "+eventType+" ") < 0 {
 				return false
@@ -179,7 +202,7 @@ function call(method, path, headers, body) {
 		if record["initializationType"] != "on-demand" || record["phase"] != "init" {
 			t.Errorf("the initStart record the extension received = %#v", record)
 		}
-		if record["functionName"] != "telemetry-init-fn" || record["functionVersion"] != "$LATEST" {
+		if record["functionName"] != functionName || record["functionVersion"] != "$LATEST" {
 			t.Errorf("the initStart record the extension received = %#v", record)
 		}
 	}

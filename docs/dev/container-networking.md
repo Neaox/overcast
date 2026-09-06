@@ -281,6 +281,24 @@ headers where the RIC could not, which is how `X-Overcast-Log-Seq` travels back
 on a forwarded response. The same listener serves the init's log stream
 (`POST /overcast/v1/logs`), identified in exactly the same way.
 
+### 1e. …and one name that points at the container, not at Overcast
+
+`sandbox.localdomain` is the exception to everything above: it is a Lambda
+execution environment's name for **itself**, and it resolves to `127.0.0.1`
+inside a real one. AWS documents every telemetry destination under it — the
+Telemetry API and the Logs API both describe the delivery endpoint as "a local
+HTTP endpoint (`http://sandbox.localdomain:${PORT}/${PATH}`)" — so an extension
+ported from AWS subscribes that name verbatim, and the POST is made from inside
+the sandbox by the in-container init.
+
+The entry is added by `ContainerRuntime.extraHosts`
+(`internal/services/lambda/container_runtime.go`), on top of what
+`containerendpoint.Mapper.ExtraHosts` returns, and deliberately not inside that
+method: the mapper is shared with ECS's namespace container and answers "where
+is Overcast", where this name is Lambda-only and points the other way. Neither
+resolver in the table at the top of this page is involved — a `--add-host`
+entry is read out of `/etc/hosts` before either is asked (#1837).
+
 ## 2. A container calling another container
 
 This is Docker's embedded resolver (`127.0.0.11`), not Overcast's. Every
