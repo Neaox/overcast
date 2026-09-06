@@ -381,7 +381,10 @@ the wrapper with `powershell -ExecutionPolicy Bypass -File
 scripts\docker-go.ps1 <go-subcommand> ...`. For a `make` target that is only a
 Go invocation (for example `docs-lint`), read the target in `Makefile` and run
 its underlying `go` command through the wrapper. Do not hand-edit generated
-files because the host lacks `go` or `make`.
+files because the host lacks `go` or `make`. Both wrappers also pin
+`GOTOOLCHAIN` to go.mod's toolchain line, so a `go run`-launched tool such as
+`make lint-go`'s golangci-lint targets this repo's Go version rather than the
+image's, even when the image lags behind.
 
 Both wrappers cap the container at **half the available CPUs** and set
 `GOMAXPROCS` and `go test -p` to match, so a long run leaves the user's machine
