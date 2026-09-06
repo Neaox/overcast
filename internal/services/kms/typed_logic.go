@@ -82,8 +82,10 @@ type listKeysResponse struct {
 }
 
 type scheduleKeyDeletionRequest struct {
-	KeyId               string `json:"KeyId" cbor:"KeyId"`
-	PendingWindowInDays int    `json:"PendingWindowInDays" cbor:"PendingWindowInDays"`
+	KeyId string `json:"KeyId" cbor:"KeyId"`
+	// A pointer so an omitted window (AWS default: 30 days) is told apart from
+	// an explicit out-of-range value, which AWS rejects.
+	PendingWindowInDays *int `json:"PendingWindowInDays" cbor:"PendingWindowInDays"`
 }
 
 type scheduleKeyDeletionResponse struct {
@@ -336,14 +338,15 @@ func (h *Handler) updateKeyDescriptionTyped(ctx context.Context, req *updateKeyD
 }
 
 func (h *Handler) scheduleKeyDeletionTyped(ctx context.Context, req *scheduleKeyDeletionRequest) (*scheduleKeyDeletionResponse, *protocol.AWSError) {
-	if req.PendingWindowInDays <= 0 {
-		req.PendingWindowInDays = 30
+	days, aerr := pendingWindowInDays(req.PendingWindowInDays)
+	if aerr != nil {
+		return nil, aerr
 	}
 	k, aerr := h.resolveKeyForTyped(ctx, req.KeyId)
 	if aerr != nil {
 		return nil, aerr
 	}
-	deletionDate := h.clk.Now().Add(time.Duration(req.PendingWindowInDays) * 24 * time.Hour)
+	deletionDate := h.clk.Now().Add(time.Duration(days) * 24 * time.Hour)
 	k.Enabled = false
 	k.KeyState = "PendingDeletion"
 	k.DeletionDate = &deletionDate
@@ -429,6 +432,9 @@ func (h *Handler) listAliasesTyped(ctx context.Context, req *keyIDRequest) (*lis
 }
 
 func (h *Handler) encryptTyped(ctx context.Context, req *encryptRequest) (*encryptResponse, *protocol.AWSError) {
+	if aerr := validatePlaintextLength(len(req.Plaintext)); aerr != nil {
+		return nil, aerr
+	}
 	k, aerr := h.resolveEnabledKeyForTyped(ctx, req.KeyId)
 	if aerr != nil {
 		return nil, aerr
@@ -452,6 +458,19 @@ func (h *Handler) decryptTyped(ctx context.Context, req *decryptRequest) (*decry
 	k, err := h.store.GetKey(ctx, keyID)
 	if err != nil || k == nil {
 		return nil, errNotFound(keyID)
+	}
+	// KeyId is optional for symmetric ciphertext — the blob records the key
+	// that produced it — but when it is supplied it is authoritative: "If you
+	// identify a different KMS key, the Decrypt operation throws an
+	// IncorrectKeyException."
+	if req.KeyId != "" {
+		named, aerr := h.resolveKeyForTyped(ctx, req.KeyId)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if named.KeyID != k.KeyID {
+			return nil, errIncorrectKey()
+		}
 	}
 	if !k.Enabled {
 		return nil, errDisabled(k.KeyID)

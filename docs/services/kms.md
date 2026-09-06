@@ -45,7 +45,9 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 | Grants and tags   | Full CRUD, including `ListRetirableGrants`                                                     |
 
 The ciphertext envelope carries the key ID, so `Decrypt` resolves the key
-without being told which one to use — as on AWS.
+without being told which one to use — as on AWS. Passing `KeyId` anyway is
+still checked against that envelope: naming a key that did not produce the
+ciphertext is an `IncorrectKeyException`, not a successful decrypt.
 
 ## Differences from AWS
 

@@ -16,6 +16,19 @@ const (
 	// https://docs.aws.amazon.com/kms/latest/APIReference/API_GenerateRandom.html
 	minNumberOfBytes = 1
 	maxNumberOfBytes = 1024
+
+	// maxPlaintextBytes is Encrypt's Plaintext Length Constraints maximum
+	// ("Minimum length of 1. Maximum length of 4096") — the SYMMETRIC_DEFAULT
+	// limit, the only encryption this emulator performs.
+	// https://docs.aws.amazon.com/kms/latest/APIReference/API_Encrypt.html
+	maxPlaintextBytes = 4096
+
+	// ScheduleKeyDeletion's PendingWindowInDays Valid Range ("Minimum value of
+	// 7. Maximum value of 30"), defaulting to 30 when omitted.
+	// https://docs.aws.amazon.com/kms/latest/APIReference/API_ScheduleKeyDeletion.html
+	minPendingWindowInDays     = 7
+	maxPendingWindowInDays     = 30
+	defaultPendingWindowInDays = 30
 )
 
 // errValidation returns the 400 ValidationException KMS uses for a request
@@ -82,4 +95,43 @@ func validateNumberOfBytes(n int) *protocol.AWSError {
 		return errRange("numberOfBytes", n, minNumberOfBytes, maxNumberOfBytes)
 	}
 	return nil
+}
+
+// validatePlaintextLength enforces Encrypt's 4096-byte Plaintext limit. That
+// limit is the whole reason envelope encryption exists, so an emulator that
+// accepts more lets someone build a design AWS refuses.
+func validatePlaintextLength(n int) *protocol.AWSError {
+	if n > maxPlaintextBytes {
+		return errValidation(fmt.Sprintf(
+			"1 validation error detected: Value at 'plaintext' failed to satisfy constraint: "+
+				"Member must have length less than or equal to %d", maxPlaintextBytes))
+	}
+	return nil
+}
+
+// pendingWindowInDays resolves ScheduleKeyDeletion's waiting period: omitted
+// means 30, a supplied value must be 7-30 inclusive.
+func pendingWindowInDays(days *int) (int, *protocol.AWSError) {
+	if days == nil {
+		return defaultPendingWindowInDays, nil
+	}
+	if *days < minPendingWindowInDays || *days > maxPendingWindowInDays {
+		return 0, errRange("pendingWindowInDays", *days, minPendingWindowInDays, maxPendingWindowInDays)
+	}
+	return *days, nil
+}
+
+// errIncorrectKey reports that Decrypt's KeyId parameter names a key other
+// than the one that produced the ciphertext. Per the API Reference: "When you
+// use the KeyId parameter to specify a KMS key, AWS KMS only uses the KMS key
+// you specify. If the ciphertext was encrypted under a different KMS key, the
+// Decrypt operation fails" with IncorrectKeyException (HTTP 400).
+// https://docs.aws.amazon.com/kms/latest/APIReference/API_Decrypt.html
+func errIncorrectKey() *protocol.AWSError {
+	return &protocol.AWSError{
+		Code: "IncorrectKeyException",
+		Message: "The key ID in your request is not valid for this ciphertext. " +
+			"The KeyId in a Decrypt request must identify the same KMS key that was used to encrypt the ciphertext.",
+		HTTPStatus: http.StatusBadRequest,
+	}
 }

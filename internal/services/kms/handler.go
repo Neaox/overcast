@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -353,41 +352,16 @@ func (h *Handler) UpdateKeyDescription(w http.ResponseWriter, r *http.Request) {
 
 // ScheduleKeyDeletion marks a key as pending deletion.
 func (h *Handler) ScheduleKeyDeletion(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		KeyId               string `json:"KeyId"`
-		PendingWindowInDays int    `json:"PendingWindowInDays"`
-	}
+	var req scheduleKeyDeletionRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.PendingWindowInDays <= 0 {
-		req.PendingWindowInDays = 30
-	}
-	ctx := r.Context()
-	k, err := h.resolveKey(ctx, req.KeyId)
-	if err != nil || k == nil {
-		if k == nil {
-			protocol.WriteJSONError(w, r, errNotFound(req.KeyId))
-			return
-		}
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	out, aerr := h.scheduleKeyDeletionTyped(r.Context(), &req)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	deletionDate := h.clk.Now().Add(time.Duration(req.PendingWindowInDays) * 24 * time.Hour)
-	k.Enabled = false
-	k.KeyState = "PendingDeletion"
-	k.DeletionDate = &deletionDate
-	if err := h.store.PutKey(ctx, k); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	h.publish(r, events.KMSKeyDeleted, events.ResourcePayload{Name: k.KeyID, ARN: k.ARN})
-	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
-		"KeyId":        k.KeyID,
-		"KeyArn":       k.ARN,
-		"DeletionDate": float64(deletionDate.UnixMilli()) / 1000.0,
-		"KeyState":     k.KeyState,
-	}, "application/x-amz-json-1.1")
+	protocol.WriteAWSJSON(w, r, http.StatusOK, out, "application/x-amz-json-1.1")
 }
 
 // CancelKeyDeletion cancels pending deletion.
@@ -524,84 +498,30 @@ func (h *Handler) ListAliases(w http.ResponseWriter, r *http.Request) {
 
 // Encrypt encrypts plaintext using a symmetric key.
 func (h *Handler) Encrypt(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		KeyId     string `json:"KeyId"`
-		Plaintext []byte `json:"Plaintext"`
-	}
+	var req encryptRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	ctx := r.Context()
-	k, err := h.resolveKey(ctx, req.KeyId)
-	if err != nil || k == nil {
-		if k == nil {
-			protocol.WriteJSONError(w, r, errNotFound(req.KeyId))
-			return
-		}
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	out, aerr := h.encryptTyped(r.Context(), &req)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if !k.Enabled {
-		protocol.WriteJSONError(w, r, errDisabled(k.KeyID))
-		return
-	}
-	ciphertext, err := aesGCMEncrypt(k.AESKey, req.Plaintext, k.KeyID)
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
-		"CiphertextBlob":      ciphertext,
-		"KeyId":               k.ARN,
-		"EncryptionAlgorithm": "SYMMETRIC_DEFAULT",
-	}, "application/x-amz-json-1.1")
+	protocol.WriteAWSJSON(w, r, http.StatusOK, out, "application/x-amz-json-1.1")
 }
 
 // Decrypt decrypts a ciphertext blob.
 func (h *Handler) Decrypt(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		KeyId          string `json:"KeyId"`
-		CiphertextBlob []byte `json:"CiphertextBlob"`
-	}
+	var req decryptRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	ctx := r.Context()
-
-	// Parse the ciphertext envelope to get the key ID.
-	keyID, nonce, ct, err := parseEnvelope(req.CiphertextBlob)
-	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "InvalidCiphertextException",
-			Message:    "The ciphertext is not valid.",
-			HTTPStatus: http.StatusBadRequest,
-		})
+	out, aerr := h.decryptTyped(r.Context(), &req)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	k, err := h.store.GetKey(ctx, keyID)
-	if err != nil || k == nil {
-		protocol.WriteJSONError(w, r, errNotFound(keyID))
-		return
-	}
-	if !k.Enabled {
-		protocol.WriteJSONError(w, r, errDisabled(k.KeyID))
-		return
-	}
-	plaintext, err := aesGCMDecryptRaw(k.AESKey, nonce, ct)
-	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "InvalidCiphertextException",
-			Message:    "The ciphertext is not valid.",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
-		"Plaintext":           plaintext,
-		"KeyId":               k.ARN,
-		"EncryptionAlgorithm": "SYMMETRIC_DEFAULT",
-	}, "application/x-amz-json-1.1")
+	protocol.WriteAWSJSON(w, r, http.StatusOK, out, "application/x-amz-json-1.1")
 }
 
 // GenerateDataKey returns a new random data key, both plaintext and encrypted.

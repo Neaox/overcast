@@ -12,7 +12,7 @@ func init() {
 		capabilities.Capability{Service: "kms", Operation: "EnableKey", Category: "Key lifecycle", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "kms", Operation: "DisableKey", Category: "Key lifecycle", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "kms", Operation: "UpdateKeyDescription", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "Also dispatched by CloudFormation when AWS::KMS::Key Description changes"},
-		capabilities.Capability{Service: "kms", Operation: "ScheduleKeyDeletion", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "`PendingWindowInDays` honoured; defaults to 30 days"},
+		capabilities.Capability{Service: "kms", Operation: "ScheduleKeyDeletion", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "`PendingWindowInDays` 7-30, defaulting to 30"},
 		capabilities.Capability{Service: "kms", Operation: "CancelKeyDeletion", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "Restores key to `Disabled` state"},
 
 		capabilities.Capability{Service: "kms", Operation: "CreateAlias", Category: "Aliases", Status: capabilities.StatusSupported, Notes: "`alias/` prefix required"},
@@ -20,8 +20,8 @@ func init() {
 		capabilities.Capability{Service: "kms", Operation: "ListAliases", Category: "Aliases", Status: capabilities.StatusSupported, Notes: "Optional `KeyId` filter (UUID, ARN, alias)"},
 		capabilities.Capability{Service: "kms", Operation: "UpdateAlias", Category: "Aliases", Status: capabilities.StatusSupported, Notes: "Updates target key for an existing alias"},
 
-		capabilities.Capability{Service: "kms", Operation: "Encrypt", Category: "Symmetric crypto", Status: capabilities.StatusSupported, Notes: "AES-256-GCM; ciphertext envelope includes key ID"},
-		capabilities.Capability{Service: "kms", Operation: "Decrypt", Category: "Symmetric crypto", Status: capabilities.StatusSupported, Notes: "Extracts key ID from ciphertext envelope"},
+		capabilities.Capability{Service: "kms", Operation: "Encrypt", Category: "Symmetric crypto", Status: capabilities.StatusSupported, Notes: "AES-256-GCM; `Plaintext` capped at 4096 bytes; ciphertext envelope includes key ID"},
+		capabilities.Capability{Service: "kms", Operation: "Decrypt", Category: "Symmetric crypto", Status: capabilities.StatusSupported, Notes: "Extracts key ID from ciphertext envelope; a `KeyId` naming a different key is an `IncorrectKeyException`"},
 		capabilities.Capability{Service: "kms", Operation: "GenerateDataKey", Category: "Symmetric crypto", Status: capabilities.StatusSupported, Notes: "Exactly one of `KeySpec` (`AES_256`/`AES_128`) or `NumberOfBytes` (1-1024); returns plaintext + encrypted"},
 		capabilities.Capability{Service: "kms", Operation: "GenerateDataKeyWithoutPlaintext", Category: "Symmetric crypto", Status: capabilities.StatusSupported, Notes: "Same `KeySpec`/`NumberOfBytes` rules as `GenerateDataKey`; returns encrypted data key only"},
 		capabilities.Capability{Service: "kms", Operation: "GenerateRandom", Category: "Symmetric crypto", Status: capabilities.StatusPartial, Notes: "`NumberOfBytes` (1-1024) required; `CustomKeyStoreId` and `Recipient` are ignored (not emulated)"},
