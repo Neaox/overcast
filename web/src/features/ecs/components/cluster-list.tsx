@@ -28,7 +28,7 @@ import {
   ResourceName,
   RowAction,
 } from "@/components/ui/resource-list-page"
-import { ResourceTable } from "@/components/ui/resource-table"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
@@ -36,7 +36,13 @@ import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs
 import { DockerBanner } from "@/components/docker-banner"
 import type { EcsCluster } from "@/types"
 
-export function ClusterList() {
+interface ClusterListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function ClusterList({ sort, onSortChange }: ClusterListProps = {}) {
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<EcsCluster>()
@@ -98,10 +104,14 @@ export function ClusterList() {
           <CreateAction onClick={() => setShowCreate(true)}>Create cluster</CreateAction>
         }
         errorTitle="Failed to load clusters"
+        sort={sort}
+        onSortChange={onSortChange}
         rowKey={(c) => c.clusterArn}
         onRowClick={(c) => navigate({ to: "/ecs/$cluster", params: { cluster: c.clusterName } })}
         columns={[
           {
+            // The id is the `?sort=` token; pinning it survives a reworded header.
+            id: "cluster-name",
             header: "Cluster name",
             sortValue: (c) => c.clusterName,
             cell: (c) => <ResourceName icon={Boxes} name={c.clusterName} />,

@@ -33,7 +33,7 @@ import {
   ResourceName,
   RowAction,
 } from "@/components/ui/resource-list-page"
-import { ResourceTable } from "@/components/ui/resource-table"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { useToast } from "@/components/ui/toast"
 import type { LambdaRuntimeInfo } from "@/types"
@@ -49,7 +49,13 @@ import {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function LayerList() {
+interface LayerListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function LayerList({ sort, onSortChange }: LayerListProps = {}) {
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
 
@@ -99,6 +105,8 @@ export function LayerList() {
           <CreateAction onClick={() => setShowCreate(true)}>Publish version</CreateAction>
         }
         errorTitle="Failed to load layers"
+        sort={sort}
+        onSortChange={onSortChange}
         rowKey={(layer) => layer.LayerArn ?? layer.LayerName ?? ""}
         onRowClick={(layer) =>
           navigate({
@@ -108,6 +116,8 @@ export function LayerList() {
         }
         columns={[
           {
+            // The id is the `?sort=` token; pinning it survives a reworded header.
+            id: "name",
             header: "Name",
             sortValue: (layer) => layer.LayerName,
             cell: (layer) => <ResourceName icon={Layers} name={layer.LayerName ?? ""} />,

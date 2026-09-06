@@ -17,14 +17,20 @@ import {
   ResourceName,
   RowAction,
 } from "@/components/ui/resource-list-page"
-import { ResourceTable } from "@/components/ui/resource-table"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { CreateFunctionWizard } from "./create-wizard"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { cn } from "@/lib/utils"
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function FunctionList() {
+interface FunctionListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function FunctionList({ sort, onSortChange }: FunctionListProps = {}) {
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<LambdaFunction>()
@@ -80,12 +86,17 @@ export function FunctionList() {
         }
         emptyExtra={<RegionElsewhereNotice kind="lambda-functions" noun="functions" />}
         errorTitle="Failed to load functions"
+        sort={sort}
+        onSortChange={onSortChange}
         rowKey={(fn) => fn.FunctionArn ?? fn.FunctionName ?? ""}
         onRowClick={(fn) =>
           navigate({ to: "/lambda/$name", params: { name: fn.FunctionName ?? "" } })
         }
         columns={[
           {
+            // Explicit ids on the sortable columns: the id is the `?sort=` token,
+            // and a reworded header must not break a link somebody saved.
+            id: "name",
             header: "Name",
             sortValue: (fn) => fn.FunctionName,
             cell: (fn) => <ResourceName icon={Zap} name={fn.FunctionName ?? ""} />,

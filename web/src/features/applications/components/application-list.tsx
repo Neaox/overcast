@@ -8,10 +8,16 @@ import {
   ResourceName,
   RowAction,
 } from "@/components/ui/resource-list-page"
-import { ResourceTable } from "@/components/ui/resource-table"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 
-export function ApplicationList() {
+interface ApplicationListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function ApplicationList({ sort, onSortChange }: ApplicationListProps = {}) {
   const navigate = useNavigate()
   const {
     data: apps = [],
@@ -46,12 +52,16 @@ export function ApplicationList() {
         emptyTitle="No applications"
         emptyDescription="Applications are created by CloudFormation stacks that use the AWS::ServiceCatalogAppRegistry::Application resource, typically via CDK's Application construct."
         errorTitle="Failed to load applications"
+        sort={sort}
+        onSortChange={onSortChange}
         rowKey={(app) => app.id}
         onRowClick={(app) =>
           navigate({ to: "/applications/$applicationId", params: { applicationId: app.id } })
         }
         columns={[
           {
+            // The id is the `?sort=` token; pinning it survives a reworded header.
+            id: "name",
             header: "Name",
             sortValue: (app) => app.name,
             cell: (app) => <ResourceName icon={Boxes} name={app.name} />,

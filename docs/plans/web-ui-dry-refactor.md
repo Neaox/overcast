@@ -575,6 +575,13 @@ the grid back into the page fails CI rather than only lint-warning.
   once so a reader who closes the panel keeps it closed. `rest-api-detail`'s resource tree
   stays bespoke with its reason rewritten: it wants real sub-rows sharing the parent's columns,
   not a panel. `dynamodb/table-detail`'s Items table is down to row selection + server paging.
+- **2026-09-06 — the last ten lists deep-link their sort** (#1327). The compute and messaging
+  waves left `sort` in local state because their routes had no `validateSearch` and editing route
+  files was outside those waves' fences. `routes/{lambda,lambda/layers,ecs,applications,autoscaling,
+  sqs,sns,kinesis,msk,pipes}/index.tsx` now validate `sort` and pass `useSortSearchParam`'s pair to
+  the list, so every converted index page in the console has the same `?sort=` contract. The five
+  compute lists' identity columns gained explicit ids at the same time — the id is the URL token,
+  and a reworded header must not break a saved link.
   - **Still not built:** `rowTo`, `select?`, `filter?`. Selection is now one feature import
     (`rowSelectionFeature`) away rather than a rewrite, but nothing needs it yet; filtering stays
     at the page level, where `q` already lives.

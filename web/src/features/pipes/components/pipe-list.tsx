@@ -38,7 +38,7 @@ import {
   ResourceListPage,
   ResourceName,
 } from "@/components/ui/resource-list-page"
-import { ResourceTable } from "@/components/ui/resource-table"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { useToast } from "@/components/ui/toast"
@@ -458,7 +458,13 @@ function stateVariant(state: string): "default" | "success" | "warning" | "dange
 
 // ─── PipeList ─────────────────────────────────────────────────────────────────
 
-export function PipeList() {
+interface PipeListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function PipeList({ sort, onSortChange }: PipeListProps = {}) {
   const qc = useQueryClient()
   const { toast } = useToast()
   const location = useLocation()
@@ -560,6 +566,8 @@ export function PipeList() {
         // ListPipes returns the emulator's storage order; A→Z is what a name
         // column implies. Created is sortable for "what did I just make".
         defaultSort={{ id: "name", desc: false }}
+        sort={sort}
+        onSortChange={onSortChange}
         rowKey={(p) => p.Name ?? ""}
         onRowClick={(p) => navigate({ to: "/pipes/$pipeName", params: { pipeName: p.Name ?? "" } })}
         columns={[

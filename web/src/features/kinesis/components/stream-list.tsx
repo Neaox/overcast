@@ -15,7 +15,7 @@ import {
   ResourceName,
   RowAction,
 } from "@/components/ui/resource-list-page"
-import { ResourceTable } from "@/components/ui/resource-table"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { RegionElsewhereNotice } from "@/features/preflight/components/region-elsewhere-notice"
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
@@ -35,7 +35,13 @@ function statusVariant(status: string): "default" | "success" | "danger" | "warn
   }
 }
 
-export function StreamList() {
+interface StreamListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function StreamList({ sort, onSortChange }: StreamListProps = {}) {
   const navigate = useNavigate()
 
   const [showCreate, setShowCreate] = useState(false)
@@ -94,6 +100,8 @@ export function StreamList() {
         // ListStreams returns the emulator's storage order; A→Z is what a name
         // column implies, and `stream-2` sorts before `stream-10`.
         defaultSort={{ id: "name", desc: false }}
+        sort={sort}
+        onSortChange={onSortChange}
         rowKey={(stream) => stream.name}
         onRowClick={(stream) =>
           navigate({ to: "/kinesis/$streamName", params: { streamName: stream.name } })

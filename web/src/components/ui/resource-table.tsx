@@ -387,7 +387,14 @@ interface ResourceTableProps<T extends RowData, TVars> {
    */
   sort?: ResourceTableSort
   onSortChange?: (next: ResourceTableSort | undefined) => void
-  /** Sort applied before the user touches a header. Ignored once `sort`/`onSortChange` take over. */
+  /**
+   * The order before anything else says otherwise. Uncontrolled it seeds the
+   * local sort and a header can still cycle back to "none". Controlled it
+   * stands in whenever `sort` is undefined — which is what keeps a URL with no
+   * `?sort=` in a stable order on a polled list — and the header then cycles
+   * ascending ⇄ descending only: "none" would render as this default anyway, so
+   * offering it would be a click that changes nothing.
+   */
   defaultSort?: ResourceTableSort
   /** Rows per page. Unset means no pagination and no pager. */
   pageSize?: number
@@ -530,7 +537,14 @@ export function ResourceTable<T extends RowData, TVars = string>({
   // there is one code path rather than two option shapes.
   const [internalSort, setInternalSort] = React.useState<ResourceTableSort | undefined>(defaultSort)
   const isSortControlled = onSortChange !== undefined
-  const activeSort = isSortControlled ? sort : internalSort
+  // Controlled, `defaultSort` is the fallback rather than the seed: the route's
+  // `?sort=` is absent far more often than it is set, and a list that declares a
+  // default means it for that case too (see the prop's doc).
+  const activeSort = isSortControlled ? (sort ?? defaultSort) : internalSort
+  // …and with a fallback in place the third state of the cycle is unreachable:
+  // clearing the sort renders the default, so a table that has both drops
+  // "none" from the cycle rather than offering a click that does nothing.
+  const allowSortRemoval = !(isSortControlled && defaultSort !== undefined)
   const sortId = activeSort?.id
   const sortDesc = activeSort?.desc
 
@@ -592,6 +606,7 @@ export function ResourceTable<T extends RowData, TVars = string>({
     columns: columnDefs,
     getRowId: (item, index) => String(rowKeyRef.current(item, index)) || String(index),
     enableMultiSort: false,
+    enableSortingRemoval: allowSortRemoval,
     state: { sorting: sortingState, columnVisibility, pagination: paginationState, expanded },
     onSortingChange: handleSortingChange,
     onColumnVisibilityChange: handleVisibilityChange,
