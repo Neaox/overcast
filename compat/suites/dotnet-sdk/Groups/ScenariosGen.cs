@@ -15,6 +15,7 @@ internal static class ScenarioGroups
 {
     internal static IServiceGroup[] All(AwsClients clients) =>
     [
+        new ScenariosBatch(clients),
         new ScenariosOrganizations(clients),
         new ScenariosSqs(clients),
     ];

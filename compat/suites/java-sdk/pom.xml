@@ -12,7 +12,12 @@
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <aws.sdk.version>2.40.0</aws.sdk.version>
+    <!-- The floor is the pinned shape snapshot: models/aws/shapes/batch.json
+         carries DescribeQuotaShare and ListQuotaShares, and the first BOM to
+         declare either is 2.43.0 (2.42.0 does not). An operation the pinned SDK
+         does not have is a `mvn package` failure naming the class rather than a
+         generation-time refusal - see cmd/compatgen/emit_java.go's header. -->
+    <aws.sdk.version>2.43.0</aws.sdk.version>
     <jackson.version>2.17.2</jackson.version>
     <junit.version>5.11.3</junit.version>
   </properties>
@@ -62,8 +67,9 @@
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>efs</artifactId></dependency>
     <!-- Generated scenario groups (compat/suites/registry.generated.json) need
          the client for every service cmd/compatgen emits a Scenarios*Gen class
-         for. organizations has no hand-written group; it is here because the
-         generated corpus covers it. -->
+         for. Neither organizations nor batch has a hand-written group; both are
+         here because the generated corpus covers them. -->
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>batch</artifactId></dependency>
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>organizations</artifactId></dependency>
     <!-- URL connection client (no Apache HTTP, keeps image small) -->
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>url-connection-client</artifactId></dependency>

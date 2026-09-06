@@ -21,8 +21,12 @@
        than a refusal there. AWSSDK.Organizations is therefore pinned at a
        version that declares every operation models/aws/shapes/organizations.json
        carries - 4.0.0 predates five of them, ResponsibilityTransfer among them
-       - and AWSSDK.Core rises to the version that package requires. -->
+       - and AWSSDK.Core rises to the version that package requires. AWSSDK.Batch
+       is pinned on the same reasoning: models/aws/shapes/batch.json carries the
+       quota-share and service-environment operations, which the 4.0.0 package
+       predates. -->
   <ItemGroup>
+    <PackageReference Include="AWSSDK.Batch" Version="4.0.102.3" />
     <PackageReference Include="AWSSDK.Core" Version="4.0.102.3" />
     <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.0.0" />
     <PackageReference Include="AWSSDK.EventBridge" Version="4.0.0" />

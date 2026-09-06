@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 aws-config = "=1.5.10"
 aws-credential-types = "=1.3.0"
+aws-sdk-batch = "=1.126.0"
 aws-sdk-dynamodb = "=1.56.0"
 aws-sdk-eventbridge = "=1.54.0"
 aws-sdk-kms = "=1.52.0"

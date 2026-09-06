@@ -42,6 +42,32 @@ func RunOutputContext(ctx context.Context, endpoint, region string, args ...stri
 	return decodeJSON(b)
 }
 
+// RunOutputContextSigned is RunOutputContext with SigV4 signing enabled, and it
+// is what the scenario interpreter uses for every generated call.
+//
+// The suite's default of --no-sign-request is a convenience, and for most
+// services it is also the harsher test. It is neither for a REST service whose
+// root segments detectService does not claim: Overcast's REST fallback treats
+// unsigned traffic as S3's (internal/router, addressesNonS3), so an unsigned
+// call to an operation Overcast has not implemented reaches S3's wildcard and
+// comes back 405 MethodNotAllowed with an S3 XML body — a `fail`, reported
+// against the service under test, where a 501 would have been the honest
+// `unimplemented`. internal/groups/eks.go signs by hand for exactly this
+// reason; a generated group has no hand to do it with, and every operation of
+// a Tier 0 service is in that position at once. Measured on `batch`, the
+// corpus's first REST-JSON service: 11 of its 45 generated tests reported
+// `fail` unsigned and `unimplemented` signed, against the same emulator.
+//
+// Signing is also simply what a production client does — the go-sdk suite,
+// which agrees with this one test for test, has never had the option not to.
+func RunOutputContextSigned(ctx context.Context, endpoint, region string, args ...string) (map[string]any, error) {
+	b, _, err := runCLI(ctx, endpoint, region, runOpts{sign: true}, args...)
+	if err != nil {
+		return nil, err
+	}
+	return decodeJSON(b)
+}
+
 // Run runs `aws [args...]` and discards the output. Returns an error on non-zero exit.
 func Run(endpoint, region string, args ...string) error {
 	_, err := runRaw(endpoint, region, args...)

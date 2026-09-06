@@ -8,6 +8,9 @@ use std::sync::Arc;
 use crate::clients::AwsClients;
 use crate::groups::ServiceGroup;
 
+#[path = "scenarios_batch_gen.rs"]
+mod scenarios_batch_gen;
+
 #[path = "scenarios_organizations_gen.rs"]
 mod scenarios_organizations_gen;
 
@@ -16,6 +19,7 @@ mod scenarios_sqs_gen;
 
 pub fn scenario_groups(clients: &Arc<AwsClients>) -> Vec<Box<dyn ServiceGroup>> {
     vec![
+        Box::new(scenarios_batch_gen::ScenariosBatch::new(clients)),
         Box::new(scenarios_organizations_gen::ScenariosOrganizations::new(clients)),
         Box::new(scenarios_sqs_gen::ScenariosSqs::new(clients)),
     ]

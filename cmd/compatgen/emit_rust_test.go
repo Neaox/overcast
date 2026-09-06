@@ -443,6 +443,31 @@ func TestRustNameCrate_isTheSDKIdsLettersNotItsWordBoundaries(t *testing.T) {
 	}
 }
 
+// TestRustNameType_isSmithyRsPascalCaseNotTheShapeNameVerbatim pins the fix for
+// the one thing the pilot corpus could not show: every shape sqs and
+// organizations name is already its own pascal case, so passing the shape name
+// through was indistinguishable from converting it. Batch models CEState,
+// CEType and JQState, and aws-sdk-batch declares CeState, CeType and JqState —
+// verified against the crate's own src/types/_ce_state.rs and _jq_state.rs, and
+// a compile failure of the rust-sdk suite when it is got wrong.
+func TestRustNameType_isSmithyRsPascalCaseNotTheShapeNameVerbatim(t *testing.T) {
+	for target, want := range map[string]string{
+		"CEState":                     "CeState",
+		"CEType":                      "CeType",
+		"JQState":                     "JqState",
+		"com.amazonaws.batch#JQState": "JqState",
+		// Already pascal case: unchanged, which is what keeps the pilot
+		// corpus byte-identical across this rule.
+		"PolicyType":         "PolicyType",
+		"Tag":                "Tag",
+		"QueueAttributeName": "QueueAttributeName",
+	} {
+		if got := rustNameType(target); got != want {
+			t.Errorf("rustNameType(%q) = %q, want %q", target, got, want)
+		}
+	}
+}
+
 // TestRustIdent_escapesAKeywordAsARawIdentifier is the other half of the member
 // naming rule: Organizations models a member called Type and smithy-rs spells
 // its setter r#type.

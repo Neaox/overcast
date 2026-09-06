@@ -370,6 +370,11 @@ here because getting either wrong is a compile error in the suite:
   written bare for `Account` and with a `map_err(…)?` for `Tag`.
 - **A member whose `snake_case` name is a Rust keyword is a raw identifier.**
   Organizations models a member called `Type`; the setter is `r#type`.
+- **A structure or enum type is smithy-rs's pascal case of the shape name, not
+  the shape name.** An acronym run normalises to a single capital, so Batch's
+  `CEState` and `JQState` are `CeState` and `JqState`. Every shape in the pilot
+  corpus was already its own pascal case, which is why the difference did not
+  surface until `batch`.
 
 What the model cannot answer is whether the vendored crate has the operation at
 all. A crate older than the pinned snapshot is a **compile failure of the

@@ -1,0 +1,254 @@
+{
+  "$comment": "AWS Batch — the REST-JSON member of Phase I4's pilot trio (docs/plans/inert-tier-rollout.md §8, G4 wave 1 of docs/plans/compat-coverage-modelgen.md §5). Overcast declares no capability row for batch today, so every operation here is Tier 0: each probe records `unimplemented` and each lifecycle group records `skip` with `setup failed: …` on the 501 its create raises. That is the organizations-gen-ou precedent and the intended state — the recipe lands first and the inert tier flips it later without touching compat/suites. Two facts about this service shape the whole file. Batch models **no not-found error**: every one of its 45 operations declares exactly ClientException and ServerException, so `notFound` is derivable nowhere and cannot honestly be written, and every deletable resource proves its delete through `list` non-membership instead — which is why each resource here carries a `list` even where its read would otherwise have been enough. And Batch marks every one of its 182 @required input members @clientOptional as well — no other snapshot in the corpus carries a single one — which the generator read, until this recipe, as \"the service does not really require it\". It does: the trait constrains a client generator's nullability, not the service's validation, and the AWS SDK for Go v2's own validator refuses the call before it reaches the wire. Every identifier below is still written out in `params` by hand, because a lifecycle call names a resource the group owns and only the recipe knows which; `binds` carries `resourceArn` alone, for the three shared tagging operations, and values.json carries the five deliberately nonexistent identifiers the probes need. Five resources get lifecycles. The three cheap ones — schedulingpolicy, consumableresource, jobdefinition — need no VPC and no other resource. computeenvironment is created UNMANAGED, which is the one compute-environment shape that needs neither subnets nor an instance role. jobqueue requires it, because a job queue is not a thing that can exist without a compute environment to dispatch to. Service environments, quota shares and the two job families (SubmitJob, SubmitServiceJob and their terminate/cancel verbs) are deliberately left to the probe group and to the verb rule: a submitted job is billable work in a real account and nothing in a scenario file can un-run it.",
+  "service": "batch",
+  "neverProbe": {
+    "CancelJob": "Cancels a job that has not started running. Against a real account the identifier could name a caller's own queued work, and a cancelled Batch job cannot be resumed — it has to be submitted again.",
+    "SubmitJob": "Submits real, billable work to a job queue: AWS provisions compute for it and charges for what it consumes. Nothing in a scenario undoes a submission, and a probe group has no teardown.",
+    "SubmitServiceJob": "Submits a SageMaker training service job — the same billable-work objection as SubmitJob, against a service whose training runs are the expensive kind.",
+    "TerminateJob": "Terminates a running job, killing its container mid-execution. On a real account that is someone's in-flight work, and the job cannot be resumed.",
+    "TerminateServiceJob": "Terminates a running SageMaker training service job, discarding whatever the training run had done so far.",
+    "UpdateServiceJob": "Re-prioritises a service job that is already queued or running, which changes the order real work is scheduled in."
+  },
+  "resources": [
+    {
+      "$comment": "The cheapest complete lifecycle Batch has: CreateSchedulingPolicy takes a name and nothing else, and the policy is metadata — no compute, no VPC, no IAM. The mutation is the fair-share decay window, which is the one scalar UpdateSchedulingPolicy can change and read back; `from` seeds it into the create, so the create's own read-back asserts 100 and the update's asserts 300. The fair-share policy carries the decay window alone: AWS models all three members of FairsharePolicy optional, a share distribution is not something the read-back would say anything about, and the rust-sdk emitter cannot spell a list nested inside a structure literal — see the jobdefinition resource below, where that nesting is unavoidable and costs the group its rust-sdk row. No `async` — AWS documents no consistency window for a scheduling policy, and inventing a poll budget would be a guess dressed as a fact.",
+      "id": "schedulingpolicy",
+      "create": {
+        "op": "CreateSchedulingPolicy",
+        "params": { "name": { "$name": "sp" } }
+      },
+      "exports": { "arn": "$.arn", "name": "$.name" },
+      "binds": { "resourceArn": "schedulingpolicy.arn" },
+      "read": {
+        "op": "DescribeSchedulingPolicies",
+        "params": { "arns": [{ "$ref": "schedulingpolicy.arn" }] },
+        "identityPath": "$.schedulingPolicies[0].arn",
+        "identity": "arn"
+      },
+      "list": {
+        "$comment": "ListSchedulingPolicies takes no filter, so membership is checked against the whole account listing; the item is SchedulingPolicyListingDetail, which carries the ARN and nothing else. itemsPath is left to the derivation — @paginated names schedulingPolicies as its items.",
+        "op": "ListSchedulingPolicies",
+        "identityPath": "$.arn",
+        "identity": "arn"
+      },
+      "mutable": [
+        {
+          "op": "UpdateSchedulingPolicy",
+          "params": { "arn": { "$ref": "schedulingpolicy.arn" } },
+          "member": "fairsharePolicy.shareDecaySeconds",
+          "from": 100,
+          "to": 300,
+          "readPath": "$.schedulingPolicies[0].fairsharePolicy.shareDecaySeconds"
+        }
+      ],
+      "tags": {
+        "tag": { "op": "TagResource", "member": "tags" },
+        "untag": { "op": "UntagResource", "member": "tagKeys" },
+        "list": { "op": "ListTagsForResource", "path": "$.tags" }
+      },
+      "delete": {
+        "op": "DeleteSchedulingPolicy",
+        "params": { "arn": { "$ref": "schedulingpolicy.arn" } }
+      }
+    },
+    {
+      "$comment": "A consumable resource is a counter the scheduler decrements as jobs claim it, so its whole observable state is a quantity — which makes it the one Batch resource whose update is a number a read-back can compare exactly. UpdateConsumableResource does not take totalQuantity; it takes an `operation` and a `quantity`, so the mutation carries operation SET and sets `quantity`, and `from` is deliberately absent because `quantity` is not a member CreateConsumableResource has to seed it into. The create's initial 10 and the update's 20 are the two values $.totalQuantity reads back. REPLENISHABLE is the resource type that is returned to the pool when a job finishes, which is the kind a test can create and delete without leaving a claim behind.",
+      "id": "consumableresource",
+      "create": {
+        "op": "CreateConsumableResource",
+        "params": {
+          "consumableResourceName": { "$name": "cr" },
+          "resourceType": "REPLENISHABLE",
+          "totalQuantity": 10
+        }
+      },
+      "exports": { "arn": "$.consumableResourceArn", "name": "$.consumableResourceName" },
+      "binds": { "resourceArn": "consumableresource.arn" },
+      "read": {
+        "op": "DescribeConsumableResource",
+        "params": { "consumableResource": { "$ref": "consumableresource.arn" } },
+        "identityPath": "$.consumableResourceArn",
+        "identity": "arn"
+      },
+      "list": {
+        "op": "ListConsumableResources",
+        "identityPath": "$.consumableResourceArn",
+        "identity": "arn"
+      },
+      "mutable": [
+        {
+          "op": "UpdateConsumableResource",
+          "params": {
+            "consumableResource": { "$ref": "consumableresource.arn" },
+            "operation": "SET"
+          },
+          "member": "quantity",
+          "to": 20,
+          "readPath": "$.totalQuantity"
+        }
+      ],
+      "tags": {
+        "tag": { "op": "TagResource", "member": "tags" },
+        "untag": { "op": "UntagResource", "member": "tagKeys" },
+        "list": { "op": "ListTagsForResource", "path": "$.tags" }
+      },
+      "delete": {
+        "op": "DeleteConsumableResource",
+        "params": { "consumableResource": { "$ref": "consumableresource.arn" } }
+      }
+    },
+    {
+      "$comment": "A job definition is registered rather than created and deregistered rather than deleted, which is why name clustering did not propose it and why the create/delete roles below name Register/Deregister explicitly. It is also immutable: a change registers a new revision, so there is no `mutable` entry and nothing is missing. The container properties are the smallest legal ones — an image and the VCPU/MEMORY resource requirements every container job definition must state — and platformCapabilities EC2 keeps it off Fargate, whose job definitions carry further required members. The absence check is the interesting half: DeregisterJobDefinition does not remove the revision, it marks it INACTIVE, so the `list` filters DescribeJobDefinitions to this name at status ACTIVE. The same filter is what the create asserts membership against and what the deregister asserts absence from, which is exactly the difference the operation makes.",
+      "id": "jobdefinition",
+      "create": {
+        "op": "RegisterJobDefinition",
+        "params": {
+          "jobDefinitionName": { "$name": "jd" },
+          "type": "container",
+          "platformCapabilities": ["EC2"],
+          "containerProperties": {
+            "image": "public.ecr.aws/amazonlinux/amazonlinux:2023",
+            "resourceRequirements": [
+              { "type": "VCPU", "value": "1" },
+              { "type": "MEMORY", "value": "2048" }
+            ]
+          }
+        }
+      },
+      "exports": { "arn": "$.jobDefinitionArn", "name": "$.jobDefinitionName" },
+      "binds": { "resourceArn": "jobdefinition.arn" },
+      "read": {
+        "op": "DescribeJobDefinitions",
+        "params": { "jobDefinitions": [{ "$ref": "jobdefinition.arn" }] },
+        "identityPath": "$.jobDefinitions[0].jobDefinitionArn",
+        "identity": "arn"
+      },
+      "list": {
+        "op": "DescribeJobDefinitions",
+        "params": { "jobDefinitionName": { "$name": "jd" }, "status": "ACTIVE" },
+        "identityPath": "$.jobDefinitionArn",
+        "identity": "arn"
+      },
+      "tags": {
+        "tag": { "op": "TagResource", "member": "tags" },
+        "untag": { "op": "UntagResource", "member": "tagKeys" },
+        "list": { "op": "ListTagsForResource", "path": "$.tags" }
+      },
+      "delete": {
+        "op": "DeregisterJobDefinition",
+        "params": { "jobDefinition": { "$ref": "jobdefinition.arn" } }
+      }
+    },
+    {
+      "$comment": "UNMANAGED is the one compute-environment type a scenario can create unattended: a MANAGED environment needs subnets, a security group and an instance role, none of which a compat run owns, while an UNMANAGED one is metadata plus the ECS cluster AWS creates for it. The state mutation is not decoration — AWS refuses DeleteComputeEnvironment on an environment that is still ENABLED, so the DISABLED update has to run before the delete, and the fixed test order (create, reads, mutations, tags, authored, list, delete) is what puts it there. `async` is the documented status machine: a compute environment is CREATING before it is VALID, UPDATING while the state change settles, and DELETING before it disappears from the listing, so the read-back, the membership check and the absence check each get a minute.",
+      "id": "computeenvironment",
+      "create": {
+        "op": "CreateComputeEnvironment",
+        "params": {
+          "computeEnvironmentName": { "$name": "ce" },
+          "type": "UNMANAGED"
+        }
+      },
+      "exports": { "arn": "$.computeEnvironmentArn", "name": "$.computeEnvironmentName" },
+      "binds": { "resourceArn": "computeenvironment.arn" },
+      "read": {
+        "op": "DescribeComputeEnvironments",
+        "params": { "computeEnvironments": [{ "$ref": "computeenvironment.arn" }] },
+        "identityPath": "$.computeEnvironments[0].computeEnvironmentArn",
+        "identity": "arn"
+      },
+      "list": {
+        "$comment": "The same operation as the read, called without a filter: Batch has no separate list, so membership and absence are checked against the account-wide listing while the read is the filtered describe. The standalone list test therefore folds into the read's, and the clauses that matter — the create's membership and the delete's absence — keep their own unfiltered call.",
+        "op": "DescribeComputeEnvironments",
+        "identityPath": "$.computeEnvironmentArn",
+        "identity": "arn"
+      },
+      "mutable": [
+        {
+          "op": "UpdateComputeEnvironment",
+          "params": { "computeEnvironment": { "$ref": "computeenvironment.arn" } },
+          "member": "state",
+          "from": "ENABLED",
+          "to": "DISABLED",
+          "readPath": "$.computeEnvironments[0].state"
+        }
+      ],
+      "tags": {
+        "tag": { "op": "TagResource", "member": "tags" },
+        "untag": { "op": "UntagResource", "member": "tagKeys" },
+        "list": { "op": "ListTagsForResource", "path": "$.tags" }
+      },
+      "delete": {
+        "op": "DeleteComputeEnvironment",
+        "params": { "computeEnvironment": { "$ref": "computeenvironment.arn" } }
+      },
+      "async": { "maxAttempts": 30, "delayMs": 2000 }
+    },
+    {
+      "$comment": "A job queue exists to dispatch to compute environments, so it requires one: the UNMANAGED environment above is created in setup and deleted in teardown after the queue. One real-AWS caveat is worth stating plainly rather than hiding: AWS requires every environment in computeEnvironmentOrder to have reached the VALID state before CreateJobQueue will accept it, and a setup phase has no `eventually` — nothing in the IR can wait between two setup calls. Against the emulator that is a non-issue (a create is synchronous), and against real AWS an UNMANAGED environment reaches VALID in about a second, but a run that lost that race would report `setup failed: …` rather than a wrong result. The state mutation is required for the same reason as the compute environment's: AWS refuses DeleteJobQueue while the queue is ENABLED. The two authored reads are the operations no lifecycle role reaches — the queue's front-of-queue snapshot and the jobs listing scoped to it — and both assert a page, which is the honest statement about a queue that has had nothing submitted to it.",
+      "id": "jobqueue",
+      "requires": ["computeenvironment"],
+      "create": {
+        "op": "CreateJobQueue",
+        "params": {
+          "jobQueueName": { "$name": "jq" },
+          "priority": 1,
+          "computeEnvironmentOrder": [
+            { "order": 1, "computeEnvironment": { "$ref": "computeenvironment.arn" } }
+          ]
+        }
+      },
+      "exports": { "arn": "$.jobQueueArn", "name": "$.jobQueueName" },
+      "binds": { "resourceArn": "jobqueue.arn" },
+      "read": {
+        "op": "DescribeJobQueues",
+        "params": { "jobQueues": [{ "$ref": "jobqueue.arn" }] },
+        "identityPath": "$.jobQueues[0].jobQueueArn",
+        "identity": "arn"
+      },
+      "list": {
+        "op": "DescribeJobQueues",
+        "identityPath": "$.jobQueueArn",
+        "identity": "arn"
+      },
+      "mutable": [
+        {
+          "op": "UpdateJobQueue",
+          "params": { "jobQueue": { "$ref": "jobqueue.arn" } },
+          "member": "state",
+          "from": "ENABLED",
+          "to": "DISABLED",
+          "readPath": "$.jobQueues[0].state"
+        }
+      ],
+      "tags": {
+        "tag": { "op": "TagResource", "member": "tags" },
+        "untag": { "op": "UntagResource", "member": "tagKeys" },
+        "list": { "op": "ListTagsForResource", "path": "$.tags" }
+      },
+      "delete": {
+        "op": "DeleteJobQueue",
+        "params": { "jobQueue": { "$ref": "jobqueue.arn" } }
+      },
+      "async": { "maxAttempts": 30, "delayMs": 2000 },
+      "operations": [
+        {
+          "$comment": "GetJobQueueSnapshot reports the jobs at the head of the queue. Nothing has been submitted to this one, so the honest assertion is that the service answered with a page rather than that the page holds anything.",
+          "op": "GetJobQueueSnapshot",
+          "params": { "jobQueue": { "$ref": "jobqueue.arn" } },
+          "assert": [
+            { "kind": "responseField", "checks": { "$.frontOfQueue.jobs": { "isList": true } } }
+          ]
+        },
+        {
+          "$comment": "ListJobs scoped to the queue this group owns, which is strictly more than the probe group could say about it: a probe binds no queue at all, and an account-wide job listing says nothing about the resource under test.",
+          "op": "ListJobs",
+          "params": { "jobQueue": { "$ref": "jobqueue.arn" }, "jobStatus": "SUBMITTED" },
+          "assert": [
+            { "kind": "responseField", "checks": { "$.jobSummaryList": { "isList": true } } }
+          ]
+        }
+      ]
+    }
+  ]
+}

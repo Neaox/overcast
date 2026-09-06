@@ -1,0 +1,1708 @@
+{
+  "version": 1,
+  "service": "batch",
+  "client": {
+    "sdkId": "Batch",
+    "endpointPrefix": "batch",
+    "signingName": "batch",
+    "protocol": "restJson1",
+    "apiVersion": "2016-08-10",
+    "awsQueryCompatible": false
+  },
+  "groups": [
+    {
+      "name": "batch-gen-schedulingpolicy",
+      "kind": "lifecycle",
+      "setup": [],
+      "tests": [
+        {
+          "name": "CreateSchedulingPolicy",
+          "op": "CreateSchedulingPolicy",
+          "call": {
+            "op": "CreateSchedulingPolicy",
+            "params": {
+              "fairsharePolicy": {
+                "shareDecaySeconds": 100
+              },
+              "name": {
+                "$name": "sp"
+              }
+            },
+            "export": {
+              "schedulingpolicy.arn": "$.arn",
+              "schedulingpolicy.name": "$.name"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.arn": {
+                  "nonEmpty": true
+                },
+                "$.name": {
+                  "nonEmpty": true
+                }
+              }
+            },
+            {
+              "kind": "readback",
+              "call": {
+                "op": "DescribeSchedulingPolicies",
+                "params": {
+                  "arns": [
+                    {
+                      "$ref": "schedulingpolicy.arn"
+                    }
+                  ]
+                }
+              },
+              "checks": {
+                "$.schedulingPolicies[0].arn": {
+                  "equals": {
+                    "$ref": "schedulingpolicy.arn"
+                  }
+                },
+                "$.schedulingPolicies[0].fairsharePolicy.shareDecaySeconds": {
+                  "equals": 100
+                }
+              }
+            },
+            {
+              "kind": "listContains",
+              "call": {
+                "op": "ListSchedulingPolicies",
+                "params": {}
+              },
+              "itemsPath": "$.schedulingPolicies",
+              "where": {
+                "$.arn": {
+                  "$ref": "schedulingpolicy.arn"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeSchedulingPolicies",
+          "op": "DescribeSchedulingPolicies",
+          "call": {
+            "op": "DescribeSchedulingPolicies",
+            "params": {
+              "arns": [
+                {
+                  "$ref": "schedulingpolicy.arn"
+                }
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.schedulingPolicies[0].arn": {
+                  "equals": {
+                    "$ref": "schedulingpolicy.arn"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateSchedulingPolicy"
+          ]
+        },
+        {
+          "name": "UpdateSchedulingPolicy",
+          "op": "UpdateSchedulingPolicy",
+          "call": {
+            "op": "UpdateSchedulingPolicy",
+            "params": {
+              "arn": {
+                "$ref": "schedulingpolicy.arn"
+              },
+              "fairsharePolicy": {
+                "shareDecaySeconds": 300
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "DescribeSchedulingPolicies",
+                "params": {
+                  "arns": [
+                    {
+                      "$ref": "schedulingpolicy.arn"
+                    }
+                  ]
+                }
+              },
+              "checks": {
+                "$.schedulingPolicies[0].fairsharePolicy.shareDecaySeconds": {
+                  "equals": 300
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateSchedulingPolicy"
+          ]
+        },
+        {
+          "name": "TagResource",
+          "op": "TagResource",
+          "call": {
+            "op": "TagResource",
+            "params": {
+              "resourceArn": {
+                "$ref": "schedulingpolicy.arn"
+              },
+              "tags": {
+                "compat": "scenario"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "ListTagsForResource",
+                "params": {
+                  "resourceArn": {
+                    "$ref": "schedulingpolicy.arn"
+                  }
+                }
+              },
+              "checks": {
+                "$.tags.compat": {
+                  "equals": "scenario"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateSchedulingPolicy"
+          ]
+        },
+        {
+          "name": "ListTagsForResource",
+          "op": "ListTagsForResource",
+          "call": {
+            "op": "ListTagsForResource",
+            "params": {
+              "resourceArn": {
+                "$ref": "schedulingpolicy.arn"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.tags.compat": {
+                  "equals": "scenario"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateSchedulingPolicy"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "op": "UntagResource",
+          "call": {
+            "op": "UntagResource",
+            "params": {
+              "resourceArn": {
+                "$ref": "schedulingpolicy.arn"
+              },
+              "tagKeys": [
+                "compat"
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "ListTagsForResource",
+                "params": {
+                  "resourceArn": {
+                    "$ref": "schedulingpolicy.arn"
+                  }
+                }
+              },
+              "checks": {
+                "$.tags.compat": {
+                  "missing": true
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateSchedulingPolicy"
+          ]
+        },
+        {
+          "name": "ListSchedulingPolicies",
+          "op": "ListSchedulingPolicies",
+          "call": {
+            "op": "ListSchedulingPolicies",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.schedulingPolicies",
+              "where": {
+                "$.arn": {
+                  "$ref": "schedulingpolicy.arn"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateSchedulingPolicy"
+          ]
+        },
+        {
+          "name": "DeleteSchedulingPolicy",
+          "op": "DeleteSchedulingPolicy",
+          "call": {
+            "op": "DeleteSchedulingPolicy",
+            "params": {
+              "arn": {
+                "$ref": "schedulingpolicy.arn"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "absent",
+              "call": {
+                "op": "ListSchedulingPolicies",
+                "params": {}
+              },
+              "itemsPath": "$.schedulingPolicies",
+              "where": {
+                "$.arn": {
+                  "$ref": "schedulingpolicy.arn"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateSchedulingPolicy"
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeleteSchedulingPolicy",
+          "params": {
+            "arn": {
+              "$ref": "schedulingpolicy.arn"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "batch-gen-consumableresource",
+      "kind": "lifecycle",
+      "setup": [],
+      "tests": [
+        {
+          "name": "CreateConsumableResource",
+          "op": "CreateConsumableResource",
+          "call": {
+            "op": "CreateConsumableResource",
+            "params": {
+              "consumableResourceName": {
+                "$name": "cr"
+              },
+              "resourceType": "REPLENISHABLE",
+              "totalQuantity": 10
+            },
+            "export": {
+              "consumableresource.arn": "$.consumableResourceArn",
+              "consumableresource.name": "$.consumableResourceName"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.consumableResourceArn": {
+                  "nonEmpty": true
+                },
+                "$.consumableResourceName": {
+                  "nonEmpty": true
+                }
+              }
+            },
+            {
+              "kind": "readback",
+              "call": {
+                "op": "DescribeConsumableResource",
+                "params": {
+                  "consumableResource": {
+                    "$ref": "consumableresource.arn"
+                  }
+                }
+              },
+              "checks": {
+                "$.consumableResourceArn": {
+                  "equals": {
+                    "$ref": "consumableresource.arn"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "listContains",
+              "call": {
+                "op": "ListConsumableResources",
+                "params": {}
+              },
+              "itemsPath": "$.consumableResources",
+              "where": {
+                "$.consumableResourceArn": {
+                  "$ref": "consumableresource.arn"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeConsumableResource",
+          "op": "DescribeConsumableResource",
+          "call": {
+            "op": "DescribeConsumableResource",
+            "params": {
+              "consumableResource": {
+                "$ref": "consumableresource.arn"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.consumableResourceArn": {
+                  "equals": {
+                    "$ref": "consumableresource.arn"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateConsumableResource"
+          ]
+        },
+        {
+          "name": "UpdateConsumableResource",
+          "op": "UpdateConsumableResource",
+          "call": {
+            "op": "UpdateConsumableResource",
+            "params": {
+              "consumableResource": {
+                "$ref": "consumableresource.arn"
+              },
+              "operation": "SET",
+              "quantity": 20
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "DescribeConsumableResource",
+                "params": {
+                  "consumableResource": {
+                    "$ref": "consumableresource.arn"
+                  }
+                }
+              },
+              "checks": {
+                "$.totalQuantity": {
+                  "equals": 20
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateConsumableResource"
+          ]
+        },
+        {
+          "name": "TagResource",
+          "op": "TagResource",
+          "call": {
+            "op": "TagResource",
+            "params": {
+              "resourceArn": {
+                "$ref": "consumableresource.arn"
+              },
+              "tags": {
+                "compat": "scenario"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "ListTagsForResource",
+                "params": {
+                  "resourceArn": {
+                    "$ref": "consumableresource.arn"
+                  }
+                }
+              },
+              "checks": {
+                "$.tags.compat": {
+                  "equals": "scenario"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateConsumableResource"
+          ]
+        },
+        {
+          "name": "ListTagsForResource",
+          "op": "ListTagsForResource",
+          "call": {
+            "op": "ListTagsForResource",
+            "params": {
+              "resourceArn": {
+                "$ref": "consumableresource.arn"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.tags.compat": {
+                  "equals": "scenario"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateConsumableResource"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "op": "UntagResource",
+          "call": {
+            "op": "UntagResource",
+            "params": {
+              "resourceArn": {
+                "$ref": "consumableresource.arn"
+              },
+              "tagKeys": [
+                "compat"
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "ListTagsForResource",
+                "params": {
+                  "resourceArn": {
+                    "$ref": "consumableresource.arn"
+                  }
+                }
+              },
+              "checks": {
+                "$.tags.compat": {
+                  "missing": true
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateConsumableResource"
+          ]
+        },
+        {
+          "name": "ListConsumableResources",
+          "op": "ListConsumableResources",
+          "call": {
+            "op": "ListConsumableResources",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.consumableResources",
+              "where": {
+                "$.consumableResourceArn": {
+                  "$ref": "consumableresource.arn"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateConsumableResource"
+          ]
+        },
+        {
+          "name": "DeleteConsumableResource",
+          "op": "DeleteConsumableResource",
+          "call": {
+            "op": "DeleteConsumableResource",
+            "params": {
+              "consumableResource": {
+                "$ref": "consumableresource.arn"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "absent",
+              "call": {
+                "op": "ListConsumableResources",
+                "params": {}
+              },
+              "itemsPath": "$.consumableResources",
+              "where": {
+                "$.consumableResourceArn": {
+                  "$ref": "consumableresource.arn"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateConsumableResource"
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeleteConsumableResource",
+          "params": {
+            "consumableResource": {
+              "$ref": "consumableresource.arn"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "batch-gen-jobdefinition",
+      "kind": "lifecycle",
+      "setup": [],
+      "tests": [
+        {
+          "name": "RegisterJobDefinition",
+          "op": "RegisterJobDefinition",
+          "call": {
+            "op": "RegisterJobDefinition",
+            "params": {
+              "containerProperties": {
+                "image": "public.ecr.aws/amazonlinux/amazonlinux:2023",
+                "resourceRequirements": [
+                  {
+                    "type": "VCPU",
+                    "value": "1"
+                  },
+                  {
+                    "type": "MEMORY",
+                    "value": "2048"
+                  }
+                ]
+              },
+              "jobDefinitionName": {
+                "$name": "jd"
+              },
+              "platformCapabilities": [
+                "EC2"
+              ],
+              "type": "container"
+            },
+            "export": {
+              "jobdefinition.arn": "$.jobDefinitionArn",
+              "jobdefinition.name": "$.jobDefinitionName"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.jobDefinitionArn": {
+                  "nonEmpty": true
+                },
+                "$.jobDefinitionName": {
+                  "nonEmpty": true
+                }
+              }
+            },
+            {
+              "kind": "readback",
+              "call": {
+                "op": "DescribeJobDefinitions",
+                "params": {
+                  "jobDefinitions": [
+                    {
+                      "$ref": "jobdefinition.arn"
+                    }
+                  ]
+                }
+              },
+              "checks": {
+                "$.jobDefinitions[0].jobDefinitionArn": {
+                  "equals": {
+                    "$ref": "jobdefinition.arn"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "listContains",
+              "call": {
+                "op": "DescribeJobDefinitions",
+                "params": {
+                  "jobDefinitionName": {
+                    "$name": "jd"
+                  },
+                  "status": "ACTIVE"
+                }
+              },
+              "itemsPath": "$.jobDefinitions",
+              "where": {
+                "$.jobDefinitionArn": {
+                  "$ref": "jobdefinition.arn"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeJobDefinitions",
+          "op": "DescribeJobDefinitions",
+          "call": {
+            "op": "DescribeJobDefinitions",
+            "params": {
+              "jobDefinitions": [
+                {
+                  "$ref": "jobdefinition.arn"
+                }
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.jobDefinitions[0].jobDefinitionArn": {
+                  "equals": {
+                    "$ref": "jobdefinition.arn"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "RegisterJobDefinition"
+          ]
+        },
+        {
+          "name": "TagResource",
+          "op": "TagResource",
+          "call": {
+            "op": "TagResource",
+            "params": {
+              "resourceArn": {
+                "$ref": "jobdefinition.arn"
+              },
+              "tags": {
+                "compat": "scenario"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "ListTagsForResource",
+                "params": {
+                  "resourceArn": {
+                    "$ref": "jobdefinition.arn"
+                  }
+                }
+              },
+              "checks": {
+                "$.tags.compat": {
+                  "equals": "scenario"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "RegisterJobDefinition"
+          ]
+        },
+        {
+          "name": "ListTagsForResource",
+          "op": "ListTagsForResource",
+          "call": {
+            "op": "ListTagsForResource",
+            "params": {
+              "resourceArn": {
+                "$ref": "jobdefinition.arn"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.tags.compat": {
+                  "equals": "scenario"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "RegisterJobDefinition"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "op": "UntagResource",
+          "call": {
+            "op": "UntagResource",
+            "params": {
+              "resourceArn": {
+                "$ref": "jobdefinition.arn"
+              },
+              "tagKeys": [
+                "compat"
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "ListTagsForResource",
+                "params": {
+                  "resourceArn": {
+                    "$ref": "jobdefinition.arn"
+                  }
+                }
+              },
+              "checks": {
+                "$.tags.compat": {
+                  "missing": true
+                }
+              }
+            }
+          ],
+          "depends": [
+            "RegisterJobDefinition"
+          ]
+        },
+        {
+          "name": "DeregisterJobDefinition",
+          "op": "DeregisterJobDefinition",
+          "call": {
+            "op": "DeregisterJobDefinition",
+            "params": {
+              "jobDefinition": {
+                "$ref": "jobdefinition.arn"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "absent",
+              "call": {
+                "op": "DescribeJobDefinitions",
+                "params": {
+                  "jobDefinitionName": {
+                    "$name": "jd"
+                  },
+                  "status": "ACTIVE"
+                }
+              },
+              "itemsPath": "$.jobDefinitions",
+              "where": {
+                "$.jobDefinitionArn": {
+                  "$ref": "jobdefinition.arn"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "RegisterJobDefinition"
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeregisterJobDefinition",
+          "params": {
+            "jobDefinition": {
+              "$ref": "jobdefinition.arn"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "batch-gen-computeenvironment",
+      "kind": "lifecycle",
+      "setup": [],
+      "tests": [
+        {
+          "name": "CreateComputeEnvironment",
+          "op": "CreateComputeEnvironment",
+          "call": {
+            "op": "CreateComputeEnvironment",
+            "params": {
+              "computeEnvironmentName": {
+                "$name": "ce"
+              },
+              "state": "ENABLED",
+              "type": "UNMANAGED"
+            },
+            "export": {
+              "computeenvironment.arn": "$.computeEnvironmentArn",
+              "computeenvironment.name": "$.computeEnvironmentName"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.computeEnvironmentArn": {
+                  "nonEmpty": true
+                },
+                "$.computeEnvironmentName": {
+                  "nonEmpty": true
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "DescribeComputeEnvironments",
+                  "params": {
+                    "computeEnvironments": [
+                      {
+                        "$ref": "computeenvironment.arn"
+                      }
+                    ]
+                  }
+                },
+                "checks": {
+                  "$.computeEnvironments[0].computeEnvironmentArn": {
+                    "equals": {
+                      "$ref": "computeenvironment.arn"
+                    }
+                  },
+                  "$.computeEnvironments[0].state": {
+                    "equals": "ENABLED"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "listContains",
+                "call": {
+                  "op": "DescribeComputeEnvironments",
+                  "params": {}
+                },
+                "itemsPath": "$.computeEnvironments",
+                "where": {
+                  "$.computeEnvironmentArn": {
+                    "$ref": "computeenvironment.arn"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeComputeEnvironments",
+          "op": "DescribeComputeEnvironments",
+          "call": {
+            "op": "DescribeComputeEnvironments",
+            "params": {
+              "computeEnvironments": [
+                {
+                  "$ref": "computeenvironment.arn"
+                }
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.computeEnvironments[0].computeEnvironmentArn": {
+                  "equals": {
+                    "$ref": "computeenvironment.arn"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateComputeEnvironment"
+          ]
+        },
+        {
+          "name": "UpdateComputeEnvironment",
+          "op": "UpdateComputeEnvironment",
+          "call": {
+            "op": "UpdateComputeEnvironment",
+            "params": {
+              "computeEnvironment": {
+                "$ref": "computeenvironment.arn"
+              },
+              "state": "DISABLED"
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "DescribeComputeEnvironments",
+                  "params": {
+                    "computeEnvironments": [
+                      {
+                        "$ref": "computeenvironment.arn"
+                      }
+                    ]
+                  }
+                },
+                "checks": {
+                  "$.computeEnvironments[0].state": {
+                    "equals": "DISABLED"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateComputeEnvironment"
+          ]
+        },
+        {
+          "name": "TagResource",
+          "op": "TagResource",
+          "call": {
+            "op": "TagResource",
+            "params": {
+              "resourceArn": {
+                "$ref": "computeenvironment.arn"
+              },
+              "tags": {
+                "compat": "scenario"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "ListTagsForResource",
+                  "params": {
+                    "resourceArn": {
+                      "$ref": "computeenvironment.arn"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.tags.compat": {
+                    "equals": "scenario"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateComputeEnvironment"
+          ]
+        },
+        {
+          "name": "ListTagsForResource",
+          "op": "ListTagsForResource",
+          "call": {
+            "op": "ListTagsForResource",
+            "params": {
+              "resourceArn": {
+                "$ref": "computeenvironment.arn"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.tags.compat": {
+                  "equals": "scenario"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateComputeEnvironment"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "op": "UntagResource",
+          "call": {
+            "op": "UntagResource",
+            "params": {
+              "resourceArn": {
+                "$ref": "computeenvironment.arn"
+              },
+              "tagKeys": [
+                "compat"
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "ListTagsForResource",
+                  "params": {
+                    "resourceArn": {
+                      "$ref": "computeenvironment.arn"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.tags.compat": {
+                    "missing": true
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateComputeEnvironment"
+          ]
+        },
+        {
+          "name": "DeleteComputeEnvironment",
+          "op": "DeleteComputeEnvironment",
+          "call": {
+            "op": "DeleteComputeEnvironment",
+            "params": {
+              "computeEnvironment": {
+                "$ref": "computeenvironment.arn"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "absent",
+                "call": {
+                  "op": "DescribeComputeEnvironments",
+                  "params": {}
+                },
+                "itemsPath": "$.computeEnvironments",
+                "where": {
+                  "$.computeEnvironmentArn": {
+                    "$ref": "computeenvironment.arn"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateComputeEnvironment"
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeleteComputeEnvironment",
+          "params": {
+            "computeEnvironment": {
+              "$ref": "computeenvironment.arn"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "batch-gen-jobqueue",
+      "kind": "lifecycle",
+      "setup": [
+        {
+          "op": "CreateComputeEnvironment",
+          "params": {
+            "computeEnvironmentName": {
+              "$name": "ce"
+            },
+            "state": "ENABLED",
+            "type": "UNMANAGED"
+          },
+          "export": {
+            "computeenvironment.arn": "$.computeEnvironmentArn",
+            "computeenvironment.name": "$.computeEnvironmentName"
+          }
+        }
+      ],
+      "tests": [
+        {
+          "name": "CreateJobQueue",
+          "op": "CreateJobQueue",
+          "call": {
+            "op": "CreateJobQueue",
+            "params": {
+              "computeEnvironmentOrder": [
+                {
+                  "computeEnvironment": {
+                    "$ref": "computeenvironment.arn"
+                  },
+                  "order": 1
+                }
+              ],
+              "jobQueueName": {
+                "$name": "jq"
+              },
+              "priority": 1,
+              "state": "ENABLED"
+            },
+            "export": {
+              "jobqueue.arn": "$.jobQueueArn",
+              "jobqueue.name": "$.jobQueueName"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.jobQueueArn": {
+                  "nonEmpty": true
+                },
+                "$.jobQueueName": {
+                  "nonEmpty": true
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "DescribeJobQueues",
+                  "params": {
+                    "jobQueues": [
+                      {
+                        "$ref": "jobqueue.arn"
+                      }
+                    ]
+                  }
+                },
+                "checks": {
+                  "$.jobQueues[0].jobQueueArn": {
+                    "equals": {
+                      "$ref": "jobqueue.arn"
+                    }
+                  },
+                  "$.jobQueues[0].state": {
+                    "equals": "ENABLED"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "listContains",
+                "call": {
+                  "op": "DescribeJobQueues",
+                  "params": {}
+                },
+                "itemsPath": "$.jobQueues",
+                "where": {
+                  "$.jobQueueArn": {
+                    "$ref": "jobqueue.arn"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeJobQueues",
+          "op": "DescribeJobQueues",
+          "call": {
+            "op": "DescribeJobQueues",
+            "params": {
+              "jobQueues": [
+                {
+                  "$ref": "jobqueue.arn"
+                }
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.jobQueues[0].jobQueueArn": {
+                  "equals": {
+                    "$ref": "jobqueue.arn"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateJobQueue"
+          ]
+        },
+        {
+          "name": "UpdateJobQueue",
+          "op": "UpdateJobQueue",
+          "call": {
+            "op": "UpdateJobQueue",
+            "params": {
+              "jobQueue": {
+                "$ref": "jobqueue.arn"
+              },
+              "state": "DISABLED"
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "DescribeJobQueues",
+                  "params": {
+                    "jobQueues": [
+                      {
+                        "$ref": "jobqueue.arn"
+                      }
+                    ]
+                  }
+                },
+                "checks": {
+                  "$.jobQueues[0].state": {
+                    "equals": "DISABLED"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateJobQueue"
+          ]
+        },
+        {
+          "name": "TagResource",
+          "op": "TagResource",
+          "call": {
+            "op": "TagResource",
+            "params": {
+              "resourceArn": {
+                "$ref": "jobqueue.arn"
+              },
+              "tags": {
+                "compat": "scenario"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "ListTagsForResource",
+                  "params": {
+                    "resourceArn": {
+                      "$ref": "jobqueue.arn"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.tags.compat": {
+                    "equals": "scenario"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateJobQueue"
+          ]
+        },
+        {
+          "name": "ListTagsForResource",
+          "op": "ListTagsForResource",
+          "call": {
+            "op": "ListTagsForResource",
+            "params": {
+              "resourceArn": {
+                "$ref": "jobqueue.arn"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.tags.compat": {
+                  "equals": "scenario"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateJobQueue"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "op": "UntagResource",
+          "call": {
+            "op": "UntagResource",
+            "params": {
+              "resourceArn": {
+                "$ref": "jobqueue.arn"
+              },
+              "tagKeys": [
+                "compat"
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "ListTagsForResource",
+                  "params": {
+                    "resourceArn": {
+                      "$ref": "jobqueue.arn"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.tags.compat": {
+                    "missing": true
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateJobQueue"
+          ]
+        },
+        {
+          "name": "GetJobQueueSnapshot",
+          "op": "GetJobQueueSnapshot",
+          "call": {
+            "op": "GetJobQueueSnapshot",
+            "params": {
+              "jobQueue": {
+                "$ref": "jobqueue.arn"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.frontOfQueue.jobs": {
+                  "isList": true
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateJobQueue"
+          ]
+        },
+        {
+          "name": "ListJobs",
+          "op": "ListJobs",
+          "call": {
+            "op": "ListJobs",
+            "params": {
+              "jobQueue": {
+                "$ref": "jobqueue.arn"
+              },
+              "jobStatus": "SUBMITTED"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.jobSummaryList": {
+                  "isList": true
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateJobQueue"
+          ]
+        },
+        {
+          "name": "DeleteJobQueue",
+          "op": "DeleteJobQueue",
+          "call": {
+            "op": "DeleteJobQueue",
+            "params": {
+              "jobQueue": {
+                "$ref": "jobqueue.arn"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "absent",
+                "call": {
+                  "op": "DescribeJobQueues",
+                  "params": {}
+                },
+                "itemsPath": "$.jobQueues",
+                "where": {
+                  "$.jobQueueArn": {
+                    "$ref": "jobqueue.arn"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateJobQueue"
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeleteJobQueue",
+          "params": {
+            "jobQueue": {
+              "$ref": "jobqueue.arn"
+            }
+          }
+        },
+        {
+          "op": "DeleteComputeEnvironment",
+          "params": {
+            "computeEnvironment": {
+              "$ref": "computeenvironment.arn"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "batch-gen-probe",
+      "kind": "probe",
+      "parallel": true,
+      "setup": [],
+      "tests": [
+        {
+          "name": "DescribeJobs",
+          "op": "DescribeJobs",
+          "call": {
+            "op": "DescribeJobs",
+            "params": {
+              "jobs": [
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.jobs": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeQuotaShare",
+          "op": "DescribeQuotaShare",
+          "call": {
+            "op": "DescribeQuotaShare",
+            "params": {
+              "quotaShareArn": "arn:aws:batch:us-east-1:123456789012:quota-share/compat-scenario-nonexistent"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.jobQueueArn": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeServiceEnvironments",
+          "op": "DescribeServiceEnvironments",
+          "call": {
+            "op": "DescribeServiceEnvironments",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.serviceEnvironments": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeServiceJob",
+          "op": "DescribeServiceJob",
+          "call": {
+            "op": "DescribeServiceJob",
+            "params": {
+              "jobId": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.jobArn": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListJobsByConsumableResource",
+          "op": "ListJobsByConsumableResource",
+          "call": {
+            "op": "ListJobsByConsumableResource",
+            "params": {
+              "consumableResource": "compat-scenario-nonexistent"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.jobs": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListQuotaShares",
+          "op": "ListQuotaShares",
+          "call": {
+            "op": "ListQuotaShares",
+            "params": {
+              "jobQueue": "compat-scenario-nonexistent"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.quotaShares": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListServiceJobs",
+          "op": "ListServiceJobs",
+          "call": {
+            "op": "ListServiceJobs",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.jobSummaryList": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "teardown": []
+    }
+  ]
+}

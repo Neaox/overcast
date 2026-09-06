@@ -11,7 +11,10 @@ Two lints added for issue #1113 Phase G0 (docs/plans/compat-coverage-modelgen.md
    always declare `"suites"`.
 2. Service-key validation: every group's `service` must be a known Overcast
    capability service key (from `internal/capabilities/all.gen.go`), except
-   the deliberate non-AWS `"cdk"` value used by `cdk-lifecycle`.
+   the deliberate non-AWS `"cdk"` value used by `cdk-lifecycle`, and except a
+   *generated* group naming a Tier 0 service the pruned shape snapshot covers
+   (`models/aws/shapes-services.txt`) -- a G4 recipe that lands before the
+   emulator implements the service, so no capability row exists for it yet.
 
 The generated-registry half of lint 1 (and the generated-file leg of lint 2)
 must tolerate `compat/suites/registry.generated.json` being absent: the file is
@@ -109,13 +112,16 @@ class GeneratedRegistryTest(unittest.TestCase):
             loaded, f"{vcr.DEFAULT_GENERATED_REGISTRY} should be checked in"
         )
         keys = vcr.load_capability_service_keys(vcr.DEFAULT_CAPABILITIES)
-        self.assertEqual(vcr.generated_group_errors(loaded, keys), [])
+        snapshot = vcr.load_shape_snapshot_service_keys(vcr.DEFAULT_SHAPES_SERVICES)
+        self.assertEqual(vcr.generated_group_errors(loaded, keys, snapshot), [])
 
 
 class GeneratedGroupMustDeclareSuitesTest(unittest.TestCase):
     def test_generated_group_without_suites_is_rejected(self):
         generated = {"groups": [group("dynamodb-generated-0001", generated=True)]}
-        errors = vcr.generated_group_errors(generated, capability_keys={"dynamodb"})
+        errors = vcr.generated_group_errors(
+            generated, capability_keys={"dynamodb"}, snapshot_keys=set()
+        )
         self.assertTrue(any("suites" in e for e in errors))
 
     def test_generated_group_with_suites_passes(self):
@@ -129,7 +135,9 @@ class GeneratedGroupMustDeclareSuitesTest(unittest.TestCase):
                 )
             ]
         }
-        errors = vcr.generated_group_errors(generated, capability_keys={"dynamodb"})
+        errors = vcr.generated_group_errors(
+            generated, capability_keys={"dynamodb"}, snapshot_keys=set()
+        )
         self.assertEqual(errors, [])
 
 
@@ -161,6 +169,94 @@ class ServiceKeyValidationTest(unittest.TestCase):
         registry = vcr.load_json(vcr.DEFAULT_REGISTRY)
         capability_keys = vcr.load_capability_service_keys(vcr.DEFAULT_CAPABILITIES)
         self.assertEqual(vcr.service_key_errors(registry, capability_keys), [])
+
+
+class Tier0GeneratedServiceKeyTest(unittest.TestCase):
+    """The G4 widening: a generated group may name a Tier 0 service.
+
+    A recipe for a service Overcast has not implemented lands before the
+    emulator does -- that is what G4 is -- so the service has no capability
+    row and the §7.7 assumption ("generated groups use the capability key by
+    construction") has nothing to check against. The widening is conditioned
+    on the snapshot's own reviewed service list, and it does not reach
+    hand-written groups.
+    """
+
+    def test_tier0_service_passes_for_a_generated_group(self):
+        generated = {
+            "groups": [
+                group(
+                    "batch-gen-jobqueue",
+                    service="batch",
+                    suites=["go-sdk", "python-sdk", "cli"],
+                    generated=True,
+                )
+            ]
+        }
+        errors = vcr.generated_group_errors(
+            generated, capability_keys={"s3", "sqs"}, snapshot_keys={"batch"}
+        )
+        self.assertEqual(errors, [])
+
+    def test_service_outside_the_snapshot_is_still_rejected(self):
+        generated = {
+            "groups": [
+                group(
+                    "bogus-gen-thing",
+                    service="not-a-real-service",
+                    suites=["cli"],
+                    generated=True,
+                )
+            ]
+        }
+        errors = vcr.generated_group_errors(
+            generated, capability_keys={"s3", "sqs"}, snapshot_keys={"batch"}
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("not-a-real-service", errors[0])
+
+    def test_hand_written_group_gets_no_tier0_widening(self):
+        # service_key_errors is called without tier0_keys for registry.json,
+        # so a hand-written group naming a Tier 0 service is still an error:
+        # there is nothing for a hand-written group to test against a service
+        # the emulator does not implement.
+        registry = {"groups": [group("batch-crud", service="batch")]}
+        errors = vcr.service_key_errors(registry, capability_keys={"s3", "sqs"})
+        self.assertEqual(len(errors), 1)
+
+
+class ShapeSnapshotServiceKeyParsingTest(unittest.TestCase):
+    def test_parses_keys_and_ignores_comments_and_blanks(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "shapes-services.txt"
+            path.write_text(
+                "\n".join(
+                    [
+                        "# a comment",
+                        "",
+                        "batch                  # REST-JSON",
+                        "elastic-load-balancing # AWS Query",
+                        "sqs",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                vcr.load_shape_snapshot_service_keys(path),
+                {"batch", "elastic-load-balancing", "sqs"},
+            )
+
+    def test_missing_file_is_an_empty_set_rather_than_a_failure(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(
+                vcr.load_shape_snapshot_service_keys(Path(d) / "nope.txt"), set()
+            )
+
+    def test_real_file_parses_to_a_nonempty_set(self):
+        keys = vcr.load_shape_snapshot_service_keys(vcr.DEFAULT_SHAPES_SERVICES)
+        self.assertIn("sqs", keys)
+        self.assertIn("organizations", keys)
 
 
 class CapabilityServiceKeyParsingTest(unittest.TestCase):

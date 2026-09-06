@@ -513,33 +513,35 @@ func javaSplitOnWordBoundaries(s string) []string {
 	return strings.Fields(result)
 }
 
-// javaSplitCamelBoundaries is the SDK splitter's camel-case rule, which it
-// spells `([a-z])([A-Z][a-zA-Z])` — a lower→upper transition is a boundary only
-// where a letter follows the capital.
+// javaSplitCamelBoundaries is the SDK splitter's camel-case rule. The AWS SDK
+// for Java v2's `Utils.splitOnWordBoundaries` spells it as a **zero-width
+// split**, `split("(?<=[a-z])(?=[A-Z]([a-zA-Z]|[0-9]))")`, not as a replacement:
+// a lower→upper transition is a boundary exactly where a letter or digit
+// follows the capital, and the boundary consumes nothing.
 //
-// It is hand-rolled because RE2 has no lookahead and the third character is
-// what a Go replacement would consume, which changes where the *next* match can
-// start. The trailing letter is load-bearing rather than incidental: the SDK
-// reads a trailing single capital as part of the word before it, so `FooB` is
-// one word (`Foob`) and not two (`FooB`), and a class name spelled the second
-// way does not exist to import.
+// It is hand-rolled because RE2 has neither lookbehind nor lookahead. The
+// trailing letter-or-digit is load-bearing: the SDK reads a trailing single
+// capital as part of the word before it, so `FooB` is one word (`Foob`) and not
+// two, and a class spelled the second way does not exist to import.
 //
-// The scan consumes three characters per match, which is what a non-overlapping
-// ReplaceAll does, so `aBcDe` splits once (`a BcDe`) rather than twice.
+// Consuming the two characters after the boundary — which is what this did
+// until a `batch` recipe needed the name — suppresses a boundary that starts
+// inside them, and the SDK's zero-width split has no such blind spot.
+// `ListJobsByConsumableResource` is the worked example: consuming gave
+// `List Jobs ByConsumable Resource` and so `ListJobsByconsumableResource`,
+// while the class the SDK actually declares is
+// `ListJobsByConsumableResourceRequest` (verified against
+// software.amazon.awssdk:batch:2.40.0). Splitting at zero width gives
+// `List Jobs By Consumable Resource`, which is that name.
 func javaSplitCamelBoundaries(s string) string {
 	r := []rune(s)
 	var out strings.Builder
-	for i := 0; i < len(r); {
-		if i+2 < len(r) && isLowerRune(r[i]) && isUpperRune(r[i+1]) && isLetterRune(r[i+2]) {
-			out.WriteRune(r[i])
+	for i := 0; i < len(r); i++ {
+		if i > 0 && i+1 < len(r) &&
+			isLowerRune(r[i-1]) && isUpperRune(r[i]) && isLetterOrDigitRune(r[i+1]) {
 			out.WriteRune(' ')
-			out.WriteRune(r[i+1])
-			out.WriteRune(r[i+2])
-			i += 3
-			continue
 		}
 		out.WriteRune(r[i])
-		i++
 	}
 	return out.String()
 }
@@ -648,6 +650,12 @@ func javaUnCapitalize(name string) string {
 func isUpperRune(r rune) bool  { return r >= 'A' && r <= 'Z' }
 func isLowerRune(r rune) bool  { return r >= 'a' && r <= 'z' }
 func isLetterRune(r rune) bool { return isUpperRune(r) || isLowerRune(r) }
+func isDigitRune(r rune) bool  { return r >= '0' && r <= '9' }
+
+// isLetterOrDigitRune is the SDK splitter's `([a-zA-Z]|[0-9])` lookahead — the
+// character that has to follow a capital for a lower→upper transition to be a
+// word boundary.
+func isLetterOrDigitRune(r rune) bool { return isLetterRune(r) || isDigitRune(r) }
 func toLowerRune(r rune) rune {
 	if isUpperRune(r) {
 		return r + ('a' - 'A')

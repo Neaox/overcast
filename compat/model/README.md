@@ -510,6 +510,13 @@ capitals: the client method for that same operation is
 `listAWSServiceAccessForOrganization`. Organizations declares both spellings on
 one line.
 
+The splitter's camel rule is a **zero-width split** —
+`split("(?<=[a-z])(?=[A-Z]([a-zA-Z]|[0-9]))")` — rather than a replacement that
+consumes the characters after the boundary, and the difference shows up only
+where two boundaries touch. Batch's `ListJobsByConsumableResource` has one at
+`sBy` and another at `yCo`; consuming makes `By` part of the word after it and
+names `ListJobsByconsumableResourceRequest`, which the SDK does not declare.
+
 An **enum** is spelled as its wire value rather than as the enum class. The SDK
 gives every enum-typed member a String form — a scalar enum's is an overload of
 the same name, a list of enums or a map with an enum key or value gets a second
@@ -544,13 +551,16 @@ builder is why. A setter takes the value itself (`.queue_name(impl Into<String>)
 `.max_number_of_messages(i32)`), never an `Option`, so a member's optionality
 never reaches the call site — and a value set to its type's zero is sent like
 any other value, so the § Values rule below costs that emitter no refusal.
-Everything else it needs is the modeled kind. Two facts it derives are worth
-naming, because getting either wrong is a compile error in the suite: a builder
-is fallible exactly where the structure has a required member
-(`Tag::builder()…build()?` but `Account::builder()…build()`), and a member whose
+Everything else it needs is the modeled kind. Three facts it derives are worth
+naming, because getting any of them wrong is a compile error in the suite: a
+builder is fallible exactly where the structure has a required member
+(`Tag::builder()…build()?` but `Account::builder()…build()`); a member whose
 `snake_case` name is a Rust keyword becomes a raw identifier (Organizations'
-`Type` is `r#type`). What the model cannot answer is whether the vendored crate
-has the operation at all: a crate older than the pinned snapshot is a compile
+`Type` is `r#type`); and a structure or enum **type** is the shape name run
+through smithy-rs's own pascal case rather than the shape name verbatim, so an
+acronym run normalises — Batch models `CEState` and `JQState`, and the crate
+declares `CeState` and `JqState`. What the model cannot answer is whether the
+vendored crate has the operation at all: a crate older than the pinned snapshot is a compile
 failure of the suite rather than a generation-time refusal, because
 `cmd/compatgen` has no Rust toolchain to ask.
 

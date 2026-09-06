@@ -2,6 +2,97 @@
   "version": 1,
   "gaps": [
     {
+      "service": "batch",
+      "operation": "CancelJob",
+      "group": "batch-gen-probe",
+      "reason": "never-probe",
+      "detail": "Cancels a job that has not started running. Against a real account the identifier could name a caller's own queued work, and a cancelled Batch job cannot be resumed — it has to be submitted again."
+    },
+    {
+      "service": "batch",
+      "operation": "CreateQuotaShare",
+      "group": "batch-gen-probe",
+      "reason": "never-probe",
+      "detail": "CreateQuotaShare is not a read operation; probes call unimplemented operations against a live account and must be side-effect free"
+    },
+    {
+      "service": "batch",
+      "operation": "CreateServiceEnvironment",
+      "group": "batch-gen-probe",
+      "reason": "never-probe",
+      "detail": "CreateServiceEnvironment is not a read operation; probes call unimplemented operations against a live account and must be side-effect free"
+    },
+    {
+      "service": "batch",
+      "operation": "DeleteQuotaShare",
+      "group": "batch-gen-probe",
+      "reason": "never-probe",
+      "detail": "DeleteQuotaShare is not a read operation; probes call unimplemented operations against a live account and must be side-effect free"
+    },
+    {
+      "service": "batch",
+      "operation": "DeleteServiceEnvironment",
+      "group": "batch-gen-probe",
+      "reason": "never-probe",
+      "detail": "DeleteServiceEnvironment is not a read operation; probes call unimplemented operations against a live account and must be side-effect free"
+    },
+    {
+      "service": "batch",
+      "operation": "RegisterJobDefinition",
+      "group": "batch-gen-jobdefinition",
+      "reason": "rust-emit-unsupported:containerProperties",
+      "detail": "RegisterJobDefinition.containerProperties cannot be spelled as Rust: no Rust literal for a list member"
+    },
+    {
+      "service": "batch",
+      "operation": "SubmitJob",
+      "group": "batch-gen-probe",
+      "reason": "never-probe",
+      "detail": "Submits real, billable work to a job queue: AWS provisions compute for it and charges for what it consumes. Nothing in a scenario undoes a submission, and a probe group has no teardown."
+    },
+    {
+      "service": "batch",
+      "operation": "SubmitServiceJob",
+      "group": "batch-gen-probe",
+      "reason": "never-probe",
+      "detail": "Submits a SageMaker training service job — the same billable-work objection as SubmitJob, against a service whose training runs are the expensive kind."
+    },
+    {
+      "service": "batch",
+      "operation": "TerminateJob",
+      "group": "batch-gen-probe",
+      "reason": "never-probe",
+      "detail": "Terminates a running job, killing its container mid-execution. On a real account that is someone's in-flight work, and the job cannot be resumed."
+    },
+    {
+      "service": "batch",
+      "operation": "TerminateServiceJob",
+      "group": "batch-gen-probe",
+      "reason": "never-probe",
+      "detail": "Terminates a running SageMaker training service job, discarding whatever the training run had done so far."
+    },
+    {
+      "service": "batch",
+      "operation": "UpdateQuotaShare",
+      "group": "batch-gen-probe",
+      "reason": "never-probe",
+      "detail": "UpdateQuotaShare is not a read operation; probes call unimplemented operations against a live account and must be side-effect free"
+    },
+    {
+      "service": "batch",
+      "operation": "UpdateServiceEnvironment",
+      "group": "batch-gen-probe",
+      "reason": "never-probe",
+      "detail": "UpdateServiceEnvironment is not a read operation; probes call unimplemented operations against a live account and must be side-effect free"
+    },
+    {
+      "service": "batch",
+      "operation": "UpdateServiceJob",
+      "group": "batch-gen-probe",
+      "reason": "never-probe",
+      "detail": "Re-prioritises a service job that is already queued or running, which changes the order real work is scheduled in."
+    },
+    {
       "service": "organizations",
       "operation": "AcceptHandshake",
       "group": "organizations-gen-probe",
