@@ -24,6 +24,7 @@
  *   classnames/no-raw-spinner-in-content     — <Spinner> only inside <Button>/<Badge>/toast
  *   classnames/prefer-shared-formatter       — use src/lib/format.ts instead of toLocale*()/local formatBytes|Date|Duration
  *   classnames/prefer-use-resource-mutation  — use useResourceMutation instead of a raw useMutation() under features/**
+ *   classnames/prefer-resource-table         — use ResourceTable instead of the table primitives under features/**
  *   classnames/no-duplicate-class-cluster    — flag a class-string run that already recurs across many files
  */
 
@@ -38,6 +39,7 @@ import preferButtonBusy from "./rules/prefer-button-busy.js"
 import noRawSpinnerInContent from "./rules/no-raw-spinner-in-content.js"
 import preferSharedFormatter from "./rules/prefer-shared-formatter.js"
 import preferUseResourceMutation from "./rules/prefer-use-resource-mutation.js"
+import preferResourceTable from "./rules/prefer-resource-table.js"
 import noDuplicateClassCluster from "./rules/no-duplicate-class-cluster.js"
 
 export default {
@@ -53,6 +55,7 @@ export default {
     "no-raw-spinner-in-content": noRawSpinnerInContent,
     "prefer-shared-formatter": preferSharedFormatter,
     "prefer-use-resource-mutation": preferUseResourceMutation,
+    "prefer-resource-table": preferResourceTable,
     "no-duplicate-class-cluster": noDuplicateClassCluster,
   },
 }

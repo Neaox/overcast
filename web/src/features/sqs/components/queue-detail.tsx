@@ -60,6 +60,7 @@ import {
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
 import { Definition, DefinitionList } from "@/components/ui/definition-card"
+// eslint-disable-next-line classnames/prefer-resource-table -- the message stream's ghost rows are deliberately not in `query.data`
 import {
   Table,
   TableBody,

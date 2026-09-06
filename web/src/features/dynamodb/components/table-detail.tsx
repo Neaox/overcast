@@ -44,6 +44,7 @@ import {
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
 import { Definition, DefinitionList } from "@/components/ui/definition-card"
+// eslint-disable-next-line classnames/prefer-resource-table -- the Items table needs row selection and DynamoDB's own paging, and derives its columns per result set
 import {
   Table,
   TableBody,
