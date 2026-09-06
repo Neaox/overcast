@@ -1332,24 +1332,13 @@ func (h *Handler) runInstancesTyped(ctx context.Context, req *runInstancesReq) (
 		sgRefs = append(sgRefs, InstanceSG{GroupID: sgID, GroupName: name})
 	}
 	now := h.clk.Now().UTC().Format(time.RFC3339)
-	// Real EC2 places the instance in the requested zone; without this the
-	// first zone in the region was hardcoded, so a caller spreading capacity
-	// across zones (Auto Scaling does) got every instance in one of them and
-	// no way to tell. Mirrors the legacy body (handler_instances.go).
-	az := req.Placement.AvailabilityZone
-	if az == "" {
-		az = h.cfg.Region + "a"
-	}
-	// #1722 gap, shared with the legacy body: real EC2 derives the instance's
-	// zone from SubnetId when Placement.AvailabilityZone is absent (the
-	// subnet pins the zone). Neither body does that here — both simply fall
-	// back to region+"a" regardless of which subnet's zone that contradicts —
-	// so they still agree with each other, just not with AWS. Out of scope
-	// for this fix, which is about the two dispatch paths disagreeing with
-	// each other on the parameter that AWS *is* given.
+	// The subnet is read once and used twice: it carries the VPC whose network
+	// status gates the launch, and it pins the zone the instance lands in.
+	var subnet *Subnet
 	resolvedVpcID := ""
 	if subnetID != "" {
 		if sub, aerr := h.store.getSubnet(ctx, subnetID); aerr == nil {
+			subnet = sub
 			resolvedVpcID = sub.VpcID
 			if vpc, aerr := h.store.getVPC(ctx, sub.VpcID); aerr == nil {
 				ns := vpc.NetworkStatus
@@ -1364,6 +1353,9 @@ func (h *Handler) runInstancesTyped(ctx context.Context, req *runInstancesReq) (
 			}
 		}
 	}
+	// Shared with the legacy body (handler_instances.go), so the two dispatch
+	// paths cannot drift on where the zone comes from.
+	az := launchAvailabilityZone(h.cfg.Region, req.Placement.AvailabilityZone, subnet)
 	instances := make([]typedInstanceXML, 0, maxCount)
 	for i := 0; i < maxCount; i++ {
 		instID := fmt.Sprintf("i-%s", shortID())
