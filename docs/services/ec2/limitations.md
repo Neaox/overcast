@@ -88,27 +88,63 @@ with an empty list — that is a question about which resources look a certain
 way, and "none of them" is an answer.
 
 An ID is eight or seventeen lowercase hex characters after the prefix, the two
-forms EC2 issues. Anything else is `.Malformed` before the lookup happens, so a
-request naming both a malformed ID and an unknown one reports the malformed one.
+forms EC2 issues; `DescribeAddresses`' `--public-ips` is the one selector that
+is an address rather than an ID, and its shape is a dotted quad. Anything else
+is `.Malformed` before the lookup happens, so a request naming both a malformed
+ID and an unknown one reports the malformed one.
 
-| Operation | Unknown ID | Malformed ID |
-| --- | --- | --- |
-| `DescribeVpcs` | `InvalidVpcID.NotFound` | `InvalidVpcID.Malformed` |
-| `DescribeSubnets` | `InvalidSubnetID.NotFound` | `InvalidSubnetID.Malformed` |
-| `DescribeSecurityGroups` | `InvalidGroup.NotFound` | `InvalidGroupId.Malformed` |
-| `DescribeRouteTables` | `InvalidRouteTableID.NotFound` | `InvalidRouteTableId.Malformed` |
-| `DescribeInternetGateways` | `InvalidInternetGatewayID.NotFound` | `InvalidInternetGatewayId.Malformed` |
-| `DescribeNetworkInterfaces` | `InvalidNetworkInterfaceID.NotFound` | `InvalidNetworkInterfaceId.Malformed` |
-| `DescribeInstances` | `InvalidInstanceID.NotFound` | `InvalidInstanceID.Malformed` |
+| Operation | Selector | Unknown ID | Malformed ID |
+| --- | --- | --- | --- |
+| `DescribeVpcs` | `VpcId.N` | `InvalidVpcID.NotFound` | `InvalidVpcID.Malformed` |
+| `DescribeSubnets` | `SubnetId.N` | `InvalidSubnetID.NotFound` | `InvalidSubnetID.Malformed` |
+| `DescribeSecurityGroups` | `GroupId.N` | `InvalidGroup.NotFound` | `InvalidGroupId.Malformed` |
+| `DescribeRouteTables` | `RouteTableId.N` | `InvalidRouteTableID.NotFound` | `InvalidRouteTableId.Malformed` |
+| `DescribeInternetGateways` | `InternetGatewayId.N` | `InvalidInternetGatewayID.NotFound` | `InvalidInternetGatewayId.Malformed` |
+| `DescribeNetworkInterfaces` | `NetworkInterfaceId.N` | `InvalidNetworkInterfaceID.NotFound` | `InvalidNetworkInterfaceId.Malformed` |
+| `DescribeInstances` | `InstanceId.N` | `InvalidInstanceID.NotFound` | `InvalidInstanceID.Malformed` |
+| `DescribeAddresses` | `AllocationId.N` | `InvalidAllocationID.NotFound` | none — see below |
+| `DescribeAddresses` | `PublicIp.N` | `InvalidAddress.NotFound` | `InvalidAddress.Malformed` |
+| `DescribeNatGateways` | `NatGatewayId.N` | `NatGatewayNotFound` | `NatGatewayMalformed` |
+| `DescribeVpnGateways` | `VpnGatewayId.N` | `InvalidVpnGatewayID.NotFound` | none — see below |
+| `DescribeVpcEndpoints` | `VpcEndpointId.N` | `InvalidVpcEndpointId.NotFound` | `InvalidVpcEndpointId.Malformed` |
+| `DescribeVpcPeeringConnections` | `VpcPeeringConnectionId.N` | `InvalidVpcPeeringConnectionID.NotFound` | `InvalidVpcPeeringConnectionId.Malformed` |
 
-The casing is AWS's own and varies by resource, so match the exact string.
-`ReleaseAddress` on an allocation that is not there answers
-`InvalidAllocationID.NotFound`.
+The casing is AWS's own and varies by resource — `InvalidVpcID.Malformed` beside
+`InvalidGroupId.Malformed`, and `NatGatewayNotFound` with no prefix or dot at
+all — so match the exact string rather than deriving it.
 
-Describes not in that table — `DescribeAddresses`, `DescribeNatGateways`,
-`DescribeVpnGateways`, `DescribeVpcEndpoints`,
-`DescribeVpcPeeringConnections` — still treat an ID list as a filter and answer
-`200` with an empty list.
+`DescribeAddresses` is the one operation with two selectors. They are AND-ed
+with each other and with the filters, and each is resolved on its own: an
+allocation ID that is not there is `InvalidAllocationID.NotFound` whichever
+addresses `--public-ips` named.
+
+**Two selectors have no Malformed code.** The EC2 API reference documents none
+for an allocation ID or a virtual private gateway, so Overcast does not invent
+one: a wrongly shaped ID there is reported as one the region does not hold.
+
+```
+$ aws ec2 describe-addresses --allocation-ids not-an-id
+An error occurred (InvalidAllocationID.NotFound): The allocation ID 'not-an-id' does not exist
+```
+
+## Not-found codes outside a `Describe*`
+
+An operation that names one resource — `DeleteVpc`, `DeleteSubnet`,
+`DeleteSecurityGroup`, `StopInstances`, `ModifySubnetAttribute`,
+`AuthorizeSecurityGroupIngress`, `ReleaseAddress` and the rest — answers with
+the same per-resource code as the table above, from the same source. There is no
+generic Overcast code for "that ID is not here":
+
+```
+$ aws ec2 delete-vpc --vpc-id vpc-00000000
+An error occurred (InvalidVpcID.NotFound): The vpc ID 'vpc-00000000' does not exist
+
+$ aws ec2 delete-security-group --group-id sg-00000000
+An error occurred (InvalidGroup.NotFound): The security group 'sg-00000000' does not exist
+```
+
+Shape is not checked on this path — the resource either resolves or it does
+not — so a malformed ID here is a `.NotFound` rather than a `.Malformed`.
 
 ## Related
 

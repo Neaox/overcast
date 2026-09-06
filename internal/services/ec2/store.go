@@ -1,5 +1,22 @@
 package ec2
 
+// store.go — EC2's records, and the answer to "that id is not here".
+//
+// Every get* below reports a miss with its resource's idScope
+// (describe_ids.go): `scope.errNotFoundID(id)`, which is the same code and the
+// same sentence a Describe* answers for an id it cannot resolve. That is one
+// table, not two, and deliberately so — #1847 was filed because there were two
+// and they had diverged. Four of these getters used to share an errNotFound
+// helper that answered `InvalidId.NotFound`, a code AWS does not have for any
+// resource: a DeleteVpc for a VPC that is gone answered a string no AWS client
+// switches on, while DescribeVpcs for the same VPC answered
+// InvalidVpcID.NotFound. The other six spelled their code and message inline,
+// each a copy of a scope's two fields waiting to drift from it.
+//
+// A getter with no scope — key pairs, launch templates — keeps its own error,
+// because those are not selected by a `<Resource>Id.N` list and so have no
+// scope to reuse.
+
 import (
 	"context"
 	"encoding/json"
@@ -248,7 +265,7 @@ func (s *ec2Store) putVPC(ctx context.Context, v *VPC) *protocol.AWSError {
 func (s *ec2Store) getVPC(ctx context.Context, id string) (*VPC, *protocol.AWSError) {
 	raw, ok, err := s.store.Get(ctx, nsVPCs, serviceutil.RegionKey(s.region(ctx), id))
 	if err != nil || !ok {
-		return nil, errNotFound("vpc", id)
+		return nil, vpcIDScope.errNotFoundID(id)
 	}
 	var v VPC
 	if err := json.Unmarshal([]byte(raw), &v); err != nil {
@@ -315,7 +332,7 @@ func (s *ec2Store) putSubnet(ctx context.Context, sub *Subnet) *protocol.AWSErro
 func (s *ec2Store) getSubnet(ctx context.Context, id string) (*Subnet, *protocol.AWSError) {
 	raw, ok, err := s.store.Get(ctx, nsSubnets, serviceutil.RegionKey(s.region(ctx), id))
 	if err != nil || !ok {
-		return nil, errNotFound("subnet", id)
+		return nil, subnetIDScope.errNotFoundID(id)
 	}
 	var sub Subnet
 	if err := json.Unmarshal([]byte(raw), &sub); err != nil {
@@ -366,7 +383,7 @@ func (s *ec2Store) putSecurityGroup(ctx context.Context, sg *SecurityGroup) *pro
 func (s *ec2Store) getSecurityGroup(ctx context.Context, id string) (*SecurityGroup, *protocol.AWSError) {
 	raw, ok, err := s.store.Get(ctx, nsSecurityGroups, serviceutil.RegionKey(s.region(ctx), id))
 	if err != nil || !ok {
-		return nil, errNotFound("security group", id)
+		return nil, securityGroupIDScope.errNotFoundID(id)
 	}
 	var sg SecurityGroup
 	if err := json.Unmarshal([]byte(raw), &sg); err != nil {
@@ -471,7 +488,7 @@ func (s *ec2Store) putInstance(ctx context.Context, inst *Instance) *protocol.AW
 func (s *ec2Store) getInstance(ctx context.Context, id string) (*Instance, *protocol.AWSError) {
 	raw, ok, err := s.store.Get(ctx, nsInstances, serviceutil.RegionKey(s.region(ctx), id))
 	if err != nil || !ok {
-		return nil, errNotFound("instance", id)
+		return nil, instanceIDScope.errNotFoundID(id)
 	}
 	var inst Instance
 	if err := json.Unmarshal([]byte(raw), &inst); err != nil {
@@ -533,16 +550,6 @@ func (s *ec2Store) getVPCIPTranslationByReal(ctx context.Context, vpcID, realIP 
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return &tr, nil
-}
-
-// ── Errors ────────────────────────────────────────────────────────────────────
-
-func errNotFound(resource, id string) *protocol.AWSError {
-	return &protocol.AWSError{
-		Code:       "InvalidId.NotFound",
-		Message:    fmt.Sprintf("The %s ID '%s' does not exist", resource, id),
-		HTTPStatus: http.StatusBadRequest,
-	}
 }
 
 // ── Key Pairs ─────────────────────────────────────────────────────────────────
@@ -645,11 +652,7 @@ func (s *ec2Store) putRouteTable(ctx context.Context, rt *RouteTable) *protocol.
 func (s *ec2Store) getRouteTable(ctx context.Context, id string) (*RouteTable, *protocol.AWSError) {
 	raw, ok, err := s.store.Get(ctx, nsRouteTables, serviceutil.RegionKey(s.region(ctx), id))
 	if err != nil || !ok {
-		return nil, &protocol.AWSError{
-			Code:       "InvalidRouteTableID.NotFound",
-			Message:    fmt.Sprintf("The routeTable ID '%s' does not exist", id),
-			HTTPStatus: http.StatusBadRequest,
-		}
+		return nil, routeTableIDScope.errNotFoundID(id)
 	}
 	var rt RouteTable
 	if err := json.Unmarshal([]byte(raw), &rt); err != nil {
@@ -712,11 +715,7 @@ func (s *ec2Store) putInternetGateway(ctx context.Context, igw *InternetGateway)
 func (s *ec2Store) getInternetGateway(ctx context.Context, id string) (*InternetGateway, *protocol.AWSError) {
 	raw, ok, err := s.store.Get(ctx, nsInternetGateways, serviceutil.RegionKey(s.region(ctx), id))
 	if err != nil || !ok {
-		return nil, &protocol.AWSError{
-			Code:       "InvalidInternetGatewayID.NotFound",
-			Message:    fmt.Sprintf("The internetGateway ID '%s' does not exist", id),
-			HTTPStatus: http.StatusBadRequest,
-		}
+		return nil, internetGatewayIDScope.errNotFoundID(id)
 	}
 	var igw InternetGateway
 	if err := json.Unmarshal([]byte(raw), &igw); err != nil {
@@ -783,11 +782,7 @@ func (s *ec2Store) putVpnGateway(ctx context.Context, vgw *VpnGateway) *protocol
 func (s *ec2Store) getVpnGateway(ctx context.Context, id string) (*VpnGateway, *protocol.AWSError) {
 	raw, ok, err := s.store.Get(ctx, nsVpnGateways, serviceutil.RegionKey(s.region(ctx), id))
 	if err != nil || !ok {
-		return nil, &protocol.AWSError{
-			Code:       "InvalidVpnGatewayID.NotFound",
-			Message:    fmt.Sprintf("The vpnGateway ID '%s' does not exist", id),
-			HTTPStatus: http.StatusBadRequest,
-		}
+		return nil, vpnGatewayIDScope.errNotFoundID(id)
 	}
 	var vgw VpnGateway
 	if err := json.Unmarshal([]byte(raw), &vgw); err != nil {
@@ -860,11 +855,7 @@ func (s *ec2Store) putVpcPeeringConnection(ctx context.Context, pcx *VpcPeeringC
 func (s *ec2Store) getVpcPeeringConnection(ctx context.Context, id string) (*VpcPeeringConnection, *protocol.AWSError) {
 	raw, ok, err := s.store.Get(ctx, nsVpcPeeringConnections, serviceutil.RegionKey(s.region(ctx), id))
 	if err != nil || !ok {
-		return nil, &protocol.AWSError{
-			Code:       "InvalidVpcPeeringConnectionID.NotFound",
-			Message:    fmt.Sprintf("The vpcPeeringConnection ID '%s' does not exist", id),
-			HTTPStatus: http.StatusBadRequest,
-		}
+		return nil, vpcPeeringIDScope.errNotFoundID(id)
 	}
 	var pcx VpcPeeringConnection
 	if err := json.Unmarshal([]byte(raw), &pcx); err != nil {
@@ -989,13 +980,10 @@ func (s *ec2Store) getElasticIP(ctx context.Context, allocID string) (*ElasticIP
 		// The allocation ID 'eipalloc-9b0b7cfe' does not exist".
 		//
 		// Every caller of this getter names an allocation ID (ReleaseAddress,
-		// AssociateAddress, CreateNatGateway), so the code belongs here rather
-		// than at one call site.
-		return nil, &protocol.AWSError{
-			Code:       "InvalidAllocationID.NotFound",
-			Message:    fmt.Sprintf("The allocation ID '%s' does not exist", allocID),
-			HTTPStatus: http.StatusBadRequest,
-		}
+		// AssociateAddress, CreateNatGateway), so it is answered here rather
+		// than at one call site — out of allocationIDScope, which is also what
+		// DescribeAddresses resolves AllocationId.N with.
+		return nil, allocationIDScope.errNotFoundID(allocID)
 	}
 	var eip ElasticIP
 	if err := json.Unmarshal([]byte(raw), &eip); err != nil {
@@ -1058,11 +1046,7 @@ func (s *ec2Store) putNatGateway(ctx context.Context, ngw *NatGateway) *protocol
 func (s *ec2Store) getNatGateway(ctx context.Context, id string) (*NatGateway, *protocol.AWSError) {
 	raw, ok, err := s.store.Get(ctx, nsNatGateways, serviceutil.RegionKey(s.region(ctx), id))
 	if err != nil || !ok {
-		return nil, &protocol.AWSError{
-			Code:       "NatGatewayNotFound",
-			Message:    fmt.Sprintf("The natGateway ID '%s' does not exist", id),
-			HTTPStatus: http.StatusBadRequest,
-		}
+		return nil, natGatewayIDScope.errNotFoundID(id)
 	}
 	var ngw NatGateway
 	if err := json.Unmarshal([]byte(raw), &ngw); err != nil {

@@ -132,6 +132,9 @@ func (h *Handler) describeVpcEndpoints(ctx context.Context, q describeQuery) (*x
 	if aerr != nil {
 		return nil, aerr
 	}
+	if aerr := resolveIDs(vpcEndpointIDScope, requested, all, func(ep *VpcEndpoint) string { return ep.VpcEndpointID }); aerr != nil {
+		return nil, aerr
+	}
 
 	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {

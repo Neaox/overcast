@@ -116,28 +116,124 @@ func TestResolveIDs(t *testing.T) {
 // but InvalidGroupId, InvalidRouteTableID.NotFound but
 // InvalidRouteTableId.Malformed. A client matches the string exactly, so this
 // pins every one of them against being tidied up.
+// A blank Malformed column is deliberate and is pinned here too: the EC2
+// reference documents no Malformed code for an allocation ID or a virtual
+// private gateway, so those scopes check no shape and a wrong-shaped ID comes
+// back as NotFound (TestResolveIDs_scopeWithNoMalformedCode below).
 func TestDescribeIDScopes_carryAWSsOwnCodes(t *testing.T) {
-	want := map[string][3]string{
-		"DescribeVpcs":              {"vpc", "InvalidVpcID.NotFound", "InvalidVpcID.Malformed"},
-		"DescribeSubnets":           {"subnet", "InvalidSubnetID.NotFound", "InvalidSubnetID.Malformed"},
-		"DescribeSecurityGroups":    {"sg", "InvalidGroup.NotFound", "InvalidGroupId.Malformed"},
-		"DescribeRouteTables":       {"rtb", "InvalidRouteTableID.NotFound", "InvalidRouteTableId.Malformed"},
-		"DescribeInternetGateways":  {"igw", "InvalidInternetGatewayID.NotFound", "InvalidInternetGatewayId.Malformed"},
-		"DescribeNetworkInterfaces": {"eni", "InvalidNetworkInterfaceID.NotFound", "InvalidNetworkInterfaceId.Malformed"},
-		"DescribeInstances":         {"i", "InvalidInstanceID.NotFound", "InvalidInstanceID.Malformed"},
+	want := map[string][][3]string{
+		"DescribeVpcs":              {{"vpc", "InvalidVpcID.NotFound", "InvalidVpcID.Malformed"}},
+		"DescribeSubnets":           {{"subnet", "InvalidSubnetID.NotFound", "InvalidSubnetID.Malformed"}},
+		"DescribeSecurityGroups":    {{"sg", "InvalidGroup.NotFound", "InvalidGroupId.Malformed"}},
+		"DescribeRouteTables":       {{"rtb", "InvalidRouteTableID.NotFound", "InvalidRouteTableId.Malformed"}},
+		"DescribeInternetGateways":  {{"igw", "InvalidInternetGatewayID.NotFound", "InvalidInternetGatewayId.Malformed"}},
+		"DescribeNetworkInterfaces": {{"eni", "InvalidNetworkInterfaceID.NotFound", "InvalidNetworkInterfaceId.Malformed"}},
+		"DescribeInstances":         {{"i", "InvalidInstanceID.NotFound", "InvalidInstanceID.Malformed"}},
+		"DescribeAddresses": {
+			{"eipalloc", "InvalidAllocationID.NotFound", ""},
+			{"", "InvalidAddress.NotFound", "InvalidAddress.Malformed"},
+		},
+		"DescribeNatGateways":           {{"nat", "NatGatewayNotFound", "NatGatewayMalformed"}},
+		"DescribeVpnGateways":           {{"vgw", "InvalidVpnGatewayID.NotFound", ""}},
+		"DescribeVpcEndpoints":          {{"vpce", "InvalidVpcEndpointId.NotFound", "InvalidVpcEndpointId.Malformed"}},
+		"DescribeVpcPeeringConnections": {{"pcx", "InvalidVpcPeeringConnectionID.NotFound", "InvalidVpcPeeringConnectionId.Malformed"}},
 	}
 	if len(describeIDScopes) != len(want) {
 		t.Fatalf("describeIDScopes has %d entries, this table has %d", len(describeIDScopes), len(want))
 	}
 	for op, w := range want {
-		scope, ok := describeIDScopes[op]
+		scopes, ok := describeIDScopes[op]
 		if !ok {
 			t.Errorf("%s resolves no ID list", op)
 			continue
 		}
-		if scope.prefix != w[0] || scope.notFound != w[1] || scope.malformed != w[2] {
-			t.Errorf("%s = {%s %s %s}, want {%s %s %s}",
-				op, scope.prefix, scope.notFound, scope.malformed, w[0], w[1], w[2])
+		if len(scopes) != len(w) {
+			t.Errorf("%s has %d scopes, this table has %d", op, len(scopes), len(w))
+			continue
 		}
+		for i, scope := range scopes {
+			if scope.prefix != w[i][0] || scope.notFound != w[i][1] || scope.malformed != w[i][2] {
+				t.Errorf("%s[%d] = {%s %s %s}, want {%s %s %s}",
+					op, i, scope.prefix, scope.notFound, scope.malformed, w[i][0], w[i][1], w[i][2])
+			}
+		}
+	}
+}
+
+// A scope the reference documents no Malformed code for resolves on existence
+// alone: an ID of the wrong shape is one the region does not hold, which is
+// true and is a code AWS does send. Inventing InvalidAllocationID.Malformed
+// would be a code no AWS client ever matches on.
+func TestResolveIDs_scopeWithNoMalformedCode(t *testing.T) {
+	region := heldIDs("eipalloc-0a0a0a0a")
+
+	for _, id := range []string{"not-an-id", "eipalloc-0A0A0A0A", "eipalloc-000"} {
+		t.Run(id, func(t *testing.T) {
+			aerr := resolveIDs(allocationIDScope, selectedIDs([]string{id}), region, heldID)
+			if aerr == nil {
+				t.Fatalf("resolveIDs(%q) = nil, want InvalidAllocationID.NotFound", id)
+			}
+			if aerr.Code != "InvalidAllocationID.NotFound" {
+				t.Errorf("code = %q, want InvalidAllocationID.NotFound", aerr.Code)
+			}
+		})
+	}
+
+	if aerr := resolveIDs(allocationIDScope, selectedIDs([]string{"eipalloc-0a0a0a0a"}), region, heldID); aerr != nil {
+		t.Errorf("a known allocation still resolves: %s: %s", aerr.Code, aerr.Message)
+	}
+}
+
+// DescribeAddresses' second selector is an address rather than a
+// `<prefix>-<hex>` ID, so "malformed" means "not an IPv4 address" — which is
+// what AWS's own InvalidAddress.Malformed row asks for ("in the form
+// xx.xx.xx.xx; for example, 55.123.45.67").
+func TestResolveIDs_publicIPScope(t *testing.T) {
+	region := heldIDs("203.0.113.7")
+
+	cases := []struct {
+		address  string
+		wantCode string
+	}{
+		{"203.0.113.7", ""},
+		{"203.0.113.8", "InvalidAddress.NotFound"},
+		{"0.0.0.0", "InvalidAddress.NotFound"},
+		{"255.255.255.255", "InvalidAddress.NotFound"},
+		{"not-an-ip", "InvalidAddress.Malformed"},
+		{"203.0.113.999", "InvalidAddress.Malformed"},
+		{"203.0.113", "InvalidAddress.Malformed"},
+		{"203.0.113.7.7", "InvalidAddress.Malformed"},
+		{"eipalloc-0a0a0a0a", "InvalidAddress.Malformed"},
+		{"2001:db8::1", "InvalidAddress.Malformed"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.address, func(t *testing.T) {
+			aerr := resolveIDs(publicIPScope, selectedIDs([]string{tc.address}), region, heldID)
+			if tc.wantCode == "" {
+				if aerr != nil {
+					t.Fatalf("resolveIDs = %s: %s, want no error", aerr.Code, aerr.Message)
+				}
+				return
+			}
+			if aerr == nil {
+				t.Fatalf("resolveIDs = nil, want %s", tc.wantCode)
+			}
+			if aerr.Code != tc.wantCode {
+				t.Errorf("code = %q, want %q (message %q)", aerr.Code, tc.wantCode, aerr.Message)
+			}
+		})
+	}
+}
+
+// The malformed message tells the caller what to send instead, and for an
+// address that is not a prefix.
+func TestResolveIDs_malformedMessageNamesTheShapeExpected(t *testing.T) {
+	aerr := resolveIDs(publicIPScope, selectedIDs([]string{"not-an-ip"}), heldIDs(), heldID)
+	if aerr == nil {
+		t.Fatal("resolveIDs = nil, want InvalidAddress.Malformed")
+	}
+	if want := `Invalid id: "not-an-ip" (expecting "xx.xx.xx.xx")`; aerr.Message != want {
+		t.Errorf("message = %q, want %q", aerr.Message, want)
 	}
 }
