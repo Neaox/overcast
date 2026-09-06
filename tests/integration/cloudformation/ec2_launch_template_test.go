@@ -263,9 +263,10 @@ func TestDeleteStack_EC2LaunchTemplateIsRemoved(t *testing.T) {
 
 // asgXMLInstance is one member of a group's Instances set.
 type asgXMLInstance struct {
-	InstanceID   string `xml:"InstanceId"`
-	InstanceType string `xml:"InstanceType"`
-	State        string `xml:"LifecycleState"`
+	InstanceID       string `xml:"InstanceId"`
+	InstanceType     string `xml:"InstanceType"`
+	State            string `xml:"LifecycleState"`
+	AvailabilityZone string `xml:"AvailabilityZone"`
 }
 
 // asgInstancesForGroup polls DescribeAutoScalingGroups until the named group
