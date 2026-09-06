@@ -3947,12 +3947,14 @@
         {
           "operation": "GetPolicy",
           "category": "Managed policies",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "`AttachmentCount` and `PermissionsBoundaryUsageCount` are derived from the users, groups and roles that refer to the policy, so they follow attach/detach and boundary changes; `IsAttachable` is always true, as every policy here is a customer managed one"
         },
         {
           "operation": "ListPolicies",
           "category": "Managed policies",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Carries the same derived `AttachmentCount` and `PermissionsBoundaryUsageCount` as `GetPolicy`"
         },
         {
           "operation": "DeletePolicy",

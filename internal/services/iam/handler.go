@@ -292,9 +292,14 @@ type policyXML struct {
 	Description      string `xml:"Description,omitempty"`
 	DefaultVersionId string `xml:"DefaultVersionId"`
 	AttachmentCount  int    `xml:"AttachmentCount"`
-	IsAttachable     bool   `xml:"IsAttachable"`
-	CreateDate       string `xml:"CreateDate"`
-	UpdateDate       string `xml:"UpdateDate"`
+	// PermissionsBoundaryUsageCount counts the users and roles the policy
+	// bounds. AWS carries it alongside AttachmentCount on every Policy it
+	// returns (IAM API Reference, API_Policy.html); the two move independently,
+	// which is what lets a caller tell an attachment from a boundary.
+	PermissionsBoundaryUsageCount int    `xml:"PermissionsBoundaryUsageCount"`
+	IsAttachable                  bool   `xml:"IsAttachable"`
+	CreateDate                    string `xml:"CreateDate"`
+	UpdateDate                    string `xml:"UpdateDate"`
 }
 
 type groupXML struct {
@@ -389,18 +394,25 @@ func toRoleXML(r *Role) roleXML {
 	}
 }
 
-func toPolicyXML(p *Policy) policyXML {
+// toPolicyXML renders a managed policy. usage carries the two counters, which
+// are derived from the entities that refer to the policy rather than stored on
+// it — see policyUsageFrom.
+//
+// IsAttachable is always true: AWS sets it false only for policies a caller
+// may not attach, and every policy here is a customer managed one.
+func toPolicyXML(p *Policy, usage policyUsage) policyXML {
 	return policyXML{
-		PolicyName:       p.PolicyName,
-		PolicyId:         p.PolicyId,
-		Arn:              p.Arn,
-		Path:             p.Path,
-		Description:      p.Description,
-		DefaultVersionId: policyDefaultVersionID(p),
-		AttachmentCount:  p.AttachmentCount,
-		IsAttachable:     true,
-		CreateDate:       p.CreateDate,
-		UpdateDate:       p.CreateDate,
+		PolicyName:                    p.PolicyName,
+		PolicyId:                      p.PolicyId,
+		Arn:                           p.Arn,
+		Path:                          p.Path,
+		Description:                   p.Description,
+		DefaultVersionId:              policyDefaultVersionID(p),
+		AttachmentCount:               usage.Attachments,
+		PermissionsBoundaryUsageCount: usage.BoundaryUses,
+		IsAttachable:                  true,
+		CreateDate:                    p.CreateDate,
+		UpdateDate:                    p.CreateDate,
 	}
 }
 

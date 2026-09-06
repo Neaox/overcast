@@ -3,5 +3,5 @@
   "headers": {
     "Content-Type": "text/xml"
   },
-  "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<GetPolicyResponse xmlns=\"https://iam.amazonaws.com/doc/2010-05-08/\"><GetPolicyResult><Policy><PolicyName>golden-policy</PolicyName><PolicyId>ANPAREDACTEDREDACTED</PolicyId><Arn>arn:aws:iam::000000000000:policy/golden-policy</Arn><Path>/</Path><DefaultVersionId>v1</DefaultVersionId><AttachmentCount>0</AttachmentCount><IsAttachable>true</IsAttachable><CreateDate>1970-01-01T00:00:00Z</CreateDate><UpdateDate>1970-01-01T00:00:00Z</UpdateDate></Policy></GetPolicyResult><ResponseMetadata><RequestId>REDACTED-REQUEST-ID</RequestId></ResponseMetadata></GetPolicyResponse>"
+  "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<GetPolicyResponse xmlns=\"https://iam.amazonaws.com/doc/2010-05-08/\"><GetPolicyResult><Policy><PolicyName>golden-policy</PolicyName><PolicyId>ANPAREDACTEDREDACTED</PolicyId><Arn>arn:aws:iam::000000000000:policy/golden-policy</Arn><Path>/</Path><DefaultVersionId>v1</DefaultVersionId><AttachmentCount>0</AttachmentCount><PermissionsBoundaryUsageCount>0</PermissionsBoundaryUsageCount><IsAttachable>true</IsAttachable><CreateDate>1970-01-01T00:00:00Z</CreateDate><UpdateDate>1970-01-01T00:00:00Z</UpdateDate></Policy></GetPolicyResult><ResponseMetadata><RequestId>REDACTED-REQUEST-ID</RequestId></ResponseMetadata></GetPolicyResponse>"
 }

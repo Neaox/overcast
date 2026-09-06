@@ -1483,7 +1483,8 @@ func (h *Handler) createPolicyTyped(ctx context.Context, req *createPolicyReq) (
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.IAMPolicyCreated, Time: h.clk.Now(), Source: "iam", Payload: events.ResourcePayload{Name: req.PolicyName}})
 	}
-	return &createPolicyResp{Xmlns: iamXMLNS, Result: createPolicyResult{Policy: toPolicyXML(p)}, Meta: metaFromCtx(ctx)}, nil
+	// A policy that has just been created is attached to nothing.
+	return &createPolicyResp{Xmlns: iamXMLNS, Result: createPolicyResult{Policy: toPolicyXML(p, policyUsage{})}, Meta: metaFromCtx(ctx)}, nil
 }
 
 func (h *Handler) getPolicyTyped(ctx context.Context, req *getPolicyReq) (*getPolicyResp, *protocol.AWSError) {
@@ -1491,7 +1492,11 @@ func (h *Handler) getPolicyTyped(ctx context.Context, req *getPolicyReq) (*getPo
 	if aerr != nil {
 		return nil, aerr
 	}
-	return &getPolicyResp{Xmlns: iamXMLNS, Result: getPolicyResult{Policy: toPolicyXML(p)}, Meta: metaFromCtx(ctx)}, nil
+	usage, aerr := h.store.policyUsageCounts(ctx)
+	if aerr != nil {
+		return nil, aerr
+	}
+	return &getPolicyResp{Xmlns: iamXMLNS, Result: getPolicyResult{Policy: toPolicyXML(p, usage[p.Arn])}, Meta: metaFromCtx(ctx)}, nil
 }
 
 func (h *Handler) listPoliciesTyped(ctx context.Context, _ *listPoliciesReq) (*listPoliciesResp, *protocol.AWSError) {
@@ -1499,9 +1504,13 @@ func (h *Handler) listPoliciesTyped(ctx context.Context, _ *listPoliciesReq) (*l
 	if aerr != nil {
 		return nil, aerr
 	}
+	usage, aerr := h.store.policyUsageCounts(ctx)
+	if aerr != nil {
+		return nil, aerr
+	}
 	xmlPolicies := make([]policyXML, 0, len(policies))
 	for i := range policies {
-		xmlPolicies = append(xmlPolicies, toPolicyXML(&policies[i]))
+		xmlPolicies = append(xmlPolicies, toPolicyXML(&policies[i], usage[policies[i].Arn]))
 	}
 	return &listPoliciesResp{Xmlns: iamXMLNS, Result: listPoliciesResult{
 		Policies: listMembersXML[policyXML]{Members: xmlPolicies, Tag: "member"}, IsTruncated: false,
@@ -2163,9 +2172,12 @@ func (h *Handler) getAccountAuthorizationDetailsTyped(ctx context.Context, _ *ge
 			PermissionsBoundary:      toPermissionsBoundaryXML(ro.PermissionsBoundary),
 		})
 	}
+	// The entities were loaded above for their own detail lists, so the usage
+	// tally comes off those rather than scanning the store a second time.
+	usage := policyUsageFrom(users, roles, groups)
 	policyDetails := make([]policyXML, 0, len(policies))
 	for i := range policies {
-		policyDetails = append(policyDetails, toPolicyXML(&policies[i]))
+		policyDetails = append(policyDetails, toPolicyXML(&policies[i], usage[policies[i].Arn]))
 	}
 
 	return &getAccountAuthorizationDetailsResp{Xmlns: iamXMLNS, Result: getAccountAuthorizationDetailsResult{

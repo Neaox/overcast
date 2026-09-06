@@ -76,15 +76,14 @@ type AttachedPolicy struct {
 
 // Policy represents an IAM managed policy.
 type Policy struct {
-	PolicyName      string            `json:"PolicyName"`
-	PolicyId        string            `json:"PolicyId"`
-	Arn             string            `json:"Arn"`
-	Path            string            `json:"Path"`
-	Document        string            `json:"Document"`
-	CreateDate      string            `json:"CreateDate"`
-	AttachmentCount int               `json:"AttachmentCount"`
-	Tags            map[string]string `json:"Tags,omitempty"`
-	Description     string            `json:"Description,omitempty"`
+	PolicyName  string            `json:"PolicyName"`
+	PolicyId    string            `json:"PolicyId"`
+	Arn         string            `json:"Arn"`
+	Path        string            `json:"Path"`
+	Document    string            `json:"Document"`
+	CreateDate  string            `json:"CreateDate"`
+	Tags        map[string]string `json:"Tags,omitempty"`
+	Description string            `json:"Description,omitempty"`
 	// DefaultVersion numbers the operative document ("v1" when zero) and
 	// LatestVersion the highest version ever minted. Only counters are kept:
 	// CreatePolicyVersion replaces the stored document when it sets the
@@ -320,53 +319,95 @@ func (s *iamStore) listPolicies(ctx context.Context) ([]Policy, *protocol.AWSErr
 	return policies, nil
 }
 
+// policyUsage is the two ways a managed policy can be in use, which AWS
+// reports as separate members of the Policy shape: AttachmentCount, "the
+// number of entities (users, groups, and roles) that the policy is attached
+// to", and PermissionsBoundaryUsageCount, "the number of entities (users and
+// roles) for which the policy is used to set the permissions boundary" — IAM
+// API Reference, API_Policy.html. Note the narrower entity set on the second:
+// a group has no permissions boundary.
+type policyUsage struct {
+	Attachments  int
+	BoundaryUses int
+}
+
+// inUse reports whether anything at all refers to the policy. AWS's
+// DeletePolicy refuses while any of it remains.
+func (u policyUsage) inUse() bool { return u.Attachments > 0 || u.BoundaryUses > 0 }
+
+// policyUsageFrom tallies usage per policy ARN from entities the caller has
+// already loaded, so an operation that reads them for its own reasons does not
+// scan them twice.
+//
+// Both counts are derived on read rather than kept as a stored counter. A
+// counter has to be corrected everywhere an entity changes, and every place
+// one is missed is a policy that reads as in use when it is not — or, worse,
+// as unused when it is, which is what makes a cleanup script delete a policy
+// something still depends on.
+func policyUsageFrom(users []User, roles []Role, groups []Group) map[string]policyUsage {
+	usage := make(map[string]policyUsage)
+	countAttachments := func(attached []AttachedPolicy) {
+		for _, ap := range attached {
+			u := usage[ap.PolicyArn]
+			u.Attachments++
+			usage[ap.PolicyArn] = u
+		}
+	}
+	countBoundary := func(arn string) {
+		if arn == "" {
+			return
+		}
+		u := usage[arn]
+		u.BoundaryUses++
+		usage[arn] = u
+	}
+
+	for i := range users {
+		countAttachments(users[i].AttachedPolicies)
+		countBoundary(users[i].PermissionsBoundary)
+	}
+	for i := range roles {
+		countAttachments(roles[i].AttachedPolicies)
+		countBoundary(roles[i].PermissionsBoundary)
+	}
+	for i := range groups {
+		countAttachments(groups[i].AttachedPolicies)
+	}
+	return usage
+}
+
+// policyUsageCounts loads every entity and tallies managed-policy usage.
+//
+// Records that cannot be decoded are skipped by the list helpers rather than
+// failing the scan; a policy whose only attachment is recorded in a corrupt
+// record therefore reads as unattached, which lets a delete through instead of
+// wedging it. See AGENTS.md § "Malformed persisted state must be isolated".
+func (s *iamStore) policyUsageCounts(ctx context.Context) (map[string]policyUsage, *protocol.AWSError) {
+	users, aerr := s.listUsers(ctx)
+	if aerr != nil {
+		return nil, aerr
+	}
+	roles, aerr := s.listRoles(ctx)
+	if aerr != nil {
+		return nil, aerr
+	}
+	groups, aerr := s.listGroups(ctx)
+	if aerr != nil {
+		return nil, aerr
+	}
+	return policyUsageFrom(users, roles, groups), nil
+}
+
 // policyIsAttached reports whether a managed policy ARN is attached to any
 // user, role or group, or used as one of their permissions boundaries. AWS's
 // DeletePolicy refuses while any of those remain, so this is what stands in for
 // ListEntitiesForPolicy's count plus PermissionsBoundaryUsageCount.
-//
-// Records that cannot be decoded are skipped by the list helpers rather than
-// failing the scan; a policy whose only attachment is recorded in a corrupt
-// record therefore reads as unattached, which lets the delete through instead
-// of wedging it. See AGENTS.md § "Malformed persisted state must be isolated".
 func (s *iamStore) policyIsAttached(ctx context.Context, arn string) (bool, *protocol.AWSError) {
-	hasArn := func(attached []AttachedPolicy) bool {
-		for _, ap := range attached {
-			if ap.PolicyArn == arn {
-				return true
-			}
-		}
-		return false
-	}
-
-	users, aerr := s.listUsers(ctx)
+	usage, aerr := s.policyUsageCounts(ctx)
 	if aerr != nil {
 		return false, aerr
 	}
-	for i := range users {
-		if hasArn(users[i].AttachedPolicies) || users[i].PermissionsBoundary == arn {
-			return true, nil
-		}
-	}
-	roles, aerr := s.listRoles(ctx)
-	if aerr != nil {
-		return false, aerr
-	}
-	for i := range roles {
-		if hasArn(roles[i].AttachedPolicies) || roles[i].PermissionsBoundary == arn {
-			return true, nil
-		}
-	}
-	groups, aerr := s.listGroups(ctx)
-	if aerr != nil {
-		return false, aerr
-	}
-	for i := range groups {
-		if hasArn(groups[i].AttachedPolicies) {
-			return true, nil
-		}
-	}
-	return false, nil
+	return usage[arn].inUse(), nil
 }
 
 // ─── Group operations ─────────────────────────────────────────────────────────

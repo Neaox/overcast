@@ -44,6 +44,7 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 | ----------------- | ----------------------------------------------------------------------------------------------- |
 | Entities          | Users, roles, groups, managed and inline policies, instance profiles, access keys, tags on all of them |
 | Policy documents  | Parsed before they are stored — every operation that takes one refuses a malformed document with `MalformedPolicyDocument` (400) |
+| Policy usage      | `GetPolicy` and `ListPolicies` count real attachments in `AttachmentCount`, and bounded entities in `PermissionsBoundaryUsageCount` |
 | Group membership  | `GetGroup` resolves members into `Users`, paginated with `Marker` / `MaxItems` (default 100, cap 1000) |
 | Permissions boundaries | Attached at create or later, reported as `AttachedPermissionsBoundary`, and read by both the simulator and enforcement |
 | Policy simulation | `SimulateCustomPolicy` and `SimulatePrincipalPolicy` run a real evaluation and return AWS's `allowed` / `explicitDeny` / `implicitDeny` vocabulary |
