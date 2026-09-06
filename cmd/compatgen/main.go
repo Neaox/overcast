@@ -146,6 +146,11 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 	var scenarios []*scenario
 	gaps := gapsDocument{Version: gapsVersion, Gaps: []gap{}}
 	outputs := make(outputSet)
+	// The typed backends compile source rather than interpreting the IR, so
+	// their files are outputs of this run too. unable collects the groups an
+	// emitter refused, which decides each group's `suites` below.
+	var goServices []string
+	unable := unableSuites{}
 	for _, r := range c.recipes {
 		model, err := loadModel(filepath.Join(root, filepath.FromSlash(shapesDir)), r.modelService())
 		if err != nil {
@@ -167,7 +172,30 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 			return nil, nil, err
 		}
 		outputs[scenarioPath(r.Service)] = contents
+		if hasBackend(goSDKSuite) {
+			emission, err := emitGo(gen)
+			if err != nil {
+				return nil, nil, fmt.Errorf("%s: %w", r.Service, err)
+			}
+			outputs[emission.Path] = emission.Contents
+			gaps.Gaps = append(gaps.Gaps, emission.Gaps...)
+			goServices = append(goServices, r.Service)
+			for name := range emission.Refused {
+				if unable[name] == nil {
+					unable[name] = map[string]bool{}
+				}
+				unable[name][goSDKSuite] = true
+			}
+		}
 	}
+	// The index is emitted whether or not the backend is enabled: the go-sdk
+	// groups package calls it unconditionally, so it has to exist — empty —
+	// for a checkout where scenarioBackends does not name go-sdk.
+	goIndex, err := emitGoIndex(goServices)
+	if err != nil {
+		return nil, nil, err
+	}
+	outputs[goIndexPath] = goIndex
 	sortGaps(gaps.Gaps)
 	contents, err := encodeDocument(gaps)
 	if err != nil {
@@ -177,7 +205,7 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 	if err := checkPromotionsAreKnownGroups(c.promotions, scenarios); err != nil {
 		return nil, nil, err
 	}
-	registry := buildRegistry(scenarios, scenarioBackends, c.promotions)
+	registry := buildRegistry(scenarios, scenarioBackends, c.promotions, unable)
 	contents, err = encodeDocument(registry)
 	if err != nil {
 		return nil, nil, err
@@ -205,6 +233,11 @@ func validateOutput(c *corpus, rel string, contents []byte) error {
 		return wrapSchemaErr(rel, c.schemas.validate(schemaGaps, contents))
 	case rel == registryPath:
 		return wrapSchemaErr(rel, c.suites.validate(schemaGeneratedRegistry, contents))
+	case strings.HasPrefix(rel, goSuiteDir+"/"):
+		// Emitted Go has no JSON schema; its contract is that it parses and is
+		// gofmt-clean, which emitGo proves by running go/format over the bytes
+		// it is about to return and failing generation if it will not parse.
+		return nil
 	}
 	return fmt.Errorf("internal: no schema is checked for generated file %s", rel)
 }
@@ -226,6 +259,9 @@ func runGenerate(opts options, stdout io.Writer) error {
 		return err
 	}
 	if err := checkStaleScenarios(opts.root, outputs, opts.check); err != nil {
+		return err
+	}
+	if err := checkStaleEmittedGo(opts.root, outputs, opts.check); err != nil {
 		return err
 	}
 	if opts.check {
@@ -275,6 +311,44 @@ func checkStaleScenarios(root string, outputs outputSet, check bool) error {
 	if len(stale) > 0 {
 		sort.Strings(stale)
 		return fmt.Errorf("scenario file(s) with no recipe: %s; run `make generate-compat-model` to remove them", strings.Join(stale, ", "))
+	}
+	return nil
+}
+
+// checkStaleEmittedGo catches an emitted Go file whose recipe was deleted, or
+// one left behind by a checkout where go-sdk was a scenario backend and this
+// one where it is not. The suite compiles every file in the package, so a
+// stale one is a build failure rather than dead weight.
+func checkStaleEmittedGo(root string, outputs outputSet, check bool) error {
+	dir := filepath.Join(root, filepath.FromSlash(goSuiteDir))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var stale []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "scenarios_") || !strings.HasSuffix(name, "_gen.go") {
+			continue
+		}
+		rel := goSuiteDir + "/" + name
+		if _, produced := outputs[rel]; produced {
+			continue
+		}
+		if check {
+			stale = append(stale, rel)
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			return err
+		}
+	}
+	if len(stale) > 0 {
+		sort.Strings(stale)
+		return fmt.Errorf("emitted Go file(s) with no scenario: %s; run `make generate-compat-model` to remove them", strings.Join(stale, ", "))
 	}
 	return nil
 }

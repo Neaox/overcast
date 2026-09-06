@@ -3,10 +3,12 @@
 `compatgen` turns the pruned AWS shape snapshot (`models/aws/shapes/`) plus
 the hand-curated recipes under `compat/model/recipes/` into the compat
 scenario IR (`compat/model/scenarios/`), the refusal report
-(`compat/model/gaps.json`) and the generated registry sibling
-(`compat/suites/registry.generated.json`). It is a build-time tool whose
-output is committed data; nothing under `compat/` imports it or any other
-emulator Go code.
+(`compat/model/gaps.json`), the generated registry sibling
+(`compat/suites/registry.generated.json`) and — for the suites whose SDK has
+no dynamic-dispatch API — the source they compile
+(`compat/suites/go-sdk/internal/groups/scenarios_*_gen.go`). It is a
+build-time tool whose output is committed data; nothing under `compat/`
+imports it or any other emulator Go code.
 
 The IR, the recipe format and the refusal vocabulary are documented in
 [compat/model/README.md](../../compat/model/README.md). The design is
@@ -25,7 +27,7 @@ is required because the capability table it reads
 
 | Flag | Meaning |
 | --- | --- |
-| *(none)* | generate every recipe under `compat/model/recipes/` and rewrite all three outputs |
+| *(none)* | generate every recipe under `compat/model/recipes/` and rewrite every output |
 | `-check` | regenerate in memory and compare byte-for-byte, writing nothing; also fails on a scenario file whose recipe is gone |
 | `-scaffold <service>` | print a recipe skeleton for a service in the shape snapshot |
 | `-review-report [service]` | print the Markdown review report for a PR body |
@@ -133,10 +135,50 @@ entries and the gap report.
   are passed and an interpreter has no model to convert with, so such a
   member stays unbound and the operation is refused.
 - Write a group to the registry while no suite has a scenario backend. The
-  `scenarioBackends` table in `registry.go` is that availability; it is
-  empty until the G2 interpreters land, so the registry stays `groups: []`
-  and the empty-file gate keeps holding. The scenario files and `gaps.json`
+  `scenarioBackends` table in `registry.go` is that availability. It was
+  empty until the G2 interpreters landed, so the registry stayed `groups: []`
+  and the empty-file gate kept holding; the scenario files and `gaps.json`
   are fully generated regardless.
+- List a suite against a group its backend cannot execute. `suites` is
+  derived from backend availability, so a group the Go emitter refused is
+  scoped to the other backends instead — and a group no backend can run is
+  left out of the registry altogether. Listing it anyway would turn the
+  refusal into a hard failure in that suite, whose loader treats a generated
+  test with no backend as a coverage hole rather than a skip.
+
+## Source emitters
+
+The three interpreter suites execute the IR at run time. The typed SDKs
+cannot: they have no public dynamic-dispatch API, and
+[the plan](../../docs/plans/compat-coverage-modelgen.md) §3.2 rejects reaching
+into their marshaller layers to fake one, because the reason for running eight
+suites is that each exercises its own real typed serialization path. So
+`emit_go.go` writes Go instead — one function per scenario test, each building
+a real `*sqs.CreateQueueInput` and calling a real client method — which the
+`go-sdk` suite's ordinary build compiles.
+
+What is emitted is the *data* plus the typed calls. The semantics — the
+context bag, `$name`/`$ref`, the closed check set, error matching,
+`eventually`, the six-field failure message — are written once by hand in
+`compat/suites/go-sdk/internal/scenario` and never re-emitted.
+
+Two things keep the emitter honest:
+
+- **One naming table.** Everything it knows about spelling Go is in the
+  `goName*` functions in `emit_go.go`, and `-explain -lang go` renders through
+  the same ones, so the pseudo-code a reader reproduces a failure with is the
+  source the emitter wrote. `TestExplainGoRendersTheEmittedCall` asserts it.
+- **It refuses rather than guesses.** A member whose modeled kind has no Go
+  value expression — a timestamp, blob, document or union — is recorded in
+  `gaps.json` as `go-emit-unsupported:<Member>`, and the group is scoped away
+  from `go-sdk` rather than emitted as a guess or silently dropped. Nothing in
+  the pilot corpus reaches it: those kinds are refused upstream already.
+
+The emitted bytes go through `go/format` before they are written, and
+generation fails if they will not parse. A golden file under
+`testdata/golden/` holds the emitted source for the fixture service, so what
+the emitter writes is reviewed as a diff rather than inferred from the
+generator's code.
 
 ## Determinism
 
@@ -150,7 +192,15 @@ check from the command line. CI runs both.
 ## Tests
 
 `go test -tags dev ./cmd/compatgen` runs unit tests over a fixture service
-under `testdata/` (shapes, recipe and values). Its five resources between
+under `testdata/` (shapes, recipe and values). It is hermetic and sub-second:
+nothing opens a network connection, and the emitted Go is proved to parse and
+to be gofmt-clean here, while the proof that it *compiles* is the `go-sdk`
+suite's own build.
+
+`OVERCAST_UPDATE_GOLDEN=1 go test -tags dev -run TestEmitGo ./cmd/compatgen`
+rewrites `testdata/golden/scenarios_widgets_gen.go.golden`. Read the diff
+before committing it — the golden file is the review artifact for what the
+emitter writes, and one regenerated without being read proves nothing. Its five resources between
 them carry every recipe role — a full lifecycle, a pre-existing resource, a
 setup-only resource whose create cannot be bound and one that requires it,
 authored operations, an authored create assertion, an async budget, and both

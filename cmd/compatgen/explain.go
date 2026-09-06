@@ -102,8 +102,15 @@ type style struct {
 	pathExpr func(root, path string) string // response path access
 	// call renders an operation call; the top-level members are rendered
 	// individually so builder-style SDKs can spell them as setters.
-	call     func(op string, members [][2]string) string
-	tru, fls string
+	call func(op string, members [][2]string) string
+	// callLines renders a call as the statements a backend actually writes,
+	// for a language whose call is more than one expression. It is set only
+	// where an emitter exists, and it is the emitter's own renderer, so
+	// `-explain` shows the source that backend compiles rather than a second
+	// description of it. The last line is the call itself, which is what the
+	// assignment prefix goes in front of.
+	callLines func(op string, params map[string]any) []string
+	tru, fls  string
 }
 
 func (st style) value(v any) string {
@@ -205,7 +212,15 @@ func (e *explainer) commentf(format string, args ...any) {
 }
 
 func (e *explainer) callLine(assign, op string, params map[string]any, export map[string]string) {
-	e.linef("%s%s", assign, e.st.call(op, e.st.members(params)))
+	if e.st.callLines != nil {
+		lines := e.st.callLines(op, params)
+		for _, line := range lines[:len(lines)-1] {
+			e.linef("%s", line)
+		}
+		e.linef("%s%s", assign, lines[len(lines)-1])
+	} else {
+		e.linef("%s%s", assign, e.st.call(op, e.st.members(params)))
+	}
 	for _, ctx := range sortedStringKeys(export) {
 		e.commentf("export %s = %s", ctx, export[ctx])
 	}
@@ -258,7 +273,8 @@ func (e *explainer) assertion(a assertion, index int) {
 	case assertAbsent:
 		e.commentf("assert[%d] absent", index)
 		if a.Error != nil {
-			e.linef("expect %s to fail with %s (or %s)", e.st.call(a.Call.Op, e.st.members(a.Call.Params)), a.Error.Code, a.Error.Shape)
+			e.commentf("the call below must fail with %s (or %s)", a.Error.Code, a.Error.Shape)
+			e.callLine("", a.Call.Op, a.Call.Params, a.Call.Export)
 			return
 		}
 		root := "resp"

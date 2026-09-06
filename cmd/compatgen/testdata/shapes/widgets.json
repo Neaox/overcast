@@ -72,7 +72,7 @@
 "ListWidgetsAndCogs": {"type":"operation","input":"ListWidgetsAndCogsRequest","output":"ListWidgetsAndCogsResponse"},
 "ListWidgetsAndCogsRequest": {"type":"structure","traits":{"smithy.api#input":{}}},
 "ListWidgetsAndCogsResponse": {"type":"structure","members":{"Cogs":{"target":"CogList"},"Widgets":{"target":"WidgetList"}},"traits":{"smithy.api#output":{}}},
-"ListWidgetsRequest": {"type":"structure","members":{"NamePrefix":{"target":"smithy.api#String"}},"traits":{"smithy.api#input":{}}},
+"ListWidgetsRequest": {"type":"structure","members":{"CreatedAfter":{"target":"smithy.api#Timestamp"},"NamePrefix":{"target":"smithy.api#String"}},"traits":{"smithy.api#input":{}}},
 "ListWidgetsResponse": {"type":"structure","members":{"Widgets":{"target":"WidgetList"}},"traits":{"smithy.api#output":{}}},
 "PingWidgets": {"type":"operation","input":"PingWidgetsRequest","output":"PingWidgetsResponse"},
 "PingWidgetsRequest": {"type":"structure","traits":{"smithy.api#input":{}}},

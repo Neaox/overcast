@@ -235,7 +235,7 @@ func TestGenerate_onlyProbeGroupsAreParallel(t *testing.T) {
 	for _, g := range gen.scenario.Groups {
 		fromScenario[g.Name] = g.Parallel
 	}
-	registered := buildRegistry([]*scenario{gen.scenario}, []string{"cli"}, nil).Groups
+	registered := buildRegistry([]*scenario{gen.scenario}, []string{"cli"}, nil, nil).Groups
 	if len(registered) != len(gen.scenario.Groups) {
 		t.Fatalf("registry holds %d groups, scenario holds %d", len(registered), len(gen.scenario.Groups))
 	}
