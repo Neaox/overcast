@@ -377,7 +377,12 @@ func (h *Handler) cancelKeyDeletionTyped(ctx context.Context, req *keyIDRequest)
 		return nil, protocol.ErrInternalError
 	}
 	h.publishCtx(ctx, events.KMSKeyStateChanged, events.ResourcePayload{Name: k.KeyID})
-	return &cancelKeyDeletionResponse{KeyId: k.KeyID, KeyArn: k.ARN, KeyState: k.KeyState}, nil
+	// KeyId is "The Amazon Resource Name (key ARN) of the KMS key whose
+	// deletion is canceled" (API_CancelKeyDeletion.html), the same contract as
+	// ScheduleKeyDeletion's. KeyArn is an emulator addition AWS's response
+	// syntax does not carry; it stays because a client may already read it and
+	// SDKs ignore members they do not model.
+	return &cancelKeyDeletionResponse{KeyId: k.ARN, KeyArn: k.ARN, KeyState: k.KeyState}, nil
 }
 
 func (h *Handler) createAliasTyped(ctx context.Context, req *createAliasRequest) (*struct{}, *protocol.AWSError) {

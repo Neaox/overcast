@@ -13,7 +13,7 @@ func init() {
 		capabilities.Capability{Service: "kms", Operation: "DisableKey", Category: "Key lifecycle", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "kms", Operation: "UpdateKeyDescription", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "Also dispatched by CloudFormation when AWS::KMS::Key Description changes"},
 		capabilities.Capability{Service: "kms", Operation: "ScheduleKeyDeletion", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "`PendingWindowInDays` 7-30, defaulting to 30; response `KeyId` is the key ARN"},
-		capabilities.Capability{Service: "kms", Operation: "CancelKeyDeletion", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "Restores key to `Disabled` state"},
+		capabilities.Capability{Service: "kms", Operation: "CancelKeyDeletion", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "Restores key to `Disabled` state; response `KeyId` is the key ARN"},
 
 		capabilities.Capability{Service: "kms", Operation: "CreateAlias", Category: "Aliases", Status: capabilities.StatusSupported, Notes: "`alias/` prefix required; reserved `alias/aws/` and duplicate names rejected"},
 		capabilities.Capability{Service: "kms", Operation: "DeleteAlias", Category: "Aliases", Status: capabilities.StatusSupported},

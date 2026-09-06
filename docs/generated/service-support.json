@@ -4549,7 +4549,7 @@
           "operation": "CancelKeyDeletion",
           "category": "Key lifecycle",
           "status": "✅ Supported",
-          "notes": "Restores key to `Disabled` state"
+          "notes": "Restores key to `Disabled` state; response `KeyId` is the key ARN"
         },
         {
           "operation": "CreateAlias",

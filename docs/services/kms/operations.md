@@ -42,7 +42,7 @@ All 34 listed operations are implemented. Back to [KMS](../kms.md).
 | `DisableKey`           | ✅ Supported |                                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_DisableKey.html)           |
 | `UpdateKeyDescription` | ✅ Supported | Also dispatched by CloudFormation when AWS::KMS::Key Description changes                                                                                                        | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_UpdateKeyDescription.html) |
 | `ScheduleKeyDeletion`  | ✅ Supported | `PendingWindowInDays` 7-30, defaulting to 30; response `KeyId` is the key ARN                                                                                                   | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ScheduleKeyDeletion.html)  |
-| `CancelKeyDeletion`    | ✅ Supported | Restores key to `Disabled` state                                                                                                                                                | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_CancelKeyDeletion.html)    |
+| `CancelKeyDeletion`    | ✅ Supported | Restores key to `Disabled` state; response `KeyId` is the key ARN                                                                                                               | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_CancelKeyDeletion.html)    |
 
 ### Aliases
 
