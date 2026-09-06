@@ -24,3 +24,10 @@ organizations
 
 # compat-coverage-modelgen G2 pilot (docs/plans/compat-coverage-modelgen.md §4.1).
 sqs
+
+# compat-coverage-modelgen G4 wave 2 (#1883): implemented services, chosen by
+# implemented-operations per snapshot byte.
+secrets-manager
+sns
+kms
+iam
