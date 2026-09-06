@@ -1,5 +1,5 @@
 /**
- * classnames/prefer-button-busy
+ * local/prefer-button-busy
  *
  * docs/plans/web-ui-dry-refactor.md §7: "flag a JSX `<Button>` whose
  * `disabled` expression mentions `isPending` or whose children contain

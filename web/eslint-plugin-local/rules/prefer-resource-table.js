@@ -1,5 +1,5 @@
 /**
- * classnames/prefer-resource-table
+ * local/prefer-resource-table
  *
  * #1327 Wave E: "an ESLint `no-restricted-imports` entry for
  * `@/components/ui/table` outside `components/ui/**`, with an explicit
@@ -17,7 +17,7 @@
  * `prefer-use-resource-mutation` uses — it demands a reason at the site rather
  * than in a second configuration file, and `grep` finds every one of them:
  *
- *   // eslint-disable-next-line classnames/prefer-resource-table -- <why>
+ *   // eslint-disable-next-line local/prefer-resource-table -- <why>
  *
  * That reason sits beside the "ResourceTable didn't fit because …" comment
  * CONTRIBUTING already asks for at the call site; the disable line is what makes

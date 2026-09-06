@@ -52,7 +52,7 @@ The UI is served at `http://localhost:5173`. Its dev server proxies `/api/*` to 
 
 [oxlint](https://oxc.rs) is the only linter — there is no ESLint here.
 **[`.oxlintrc.json`](./.oxlintrc.json) owns the rule set**, including the two JS plugins
-(`eslint-plugin-classnames`, `@tanstack/eslint-plugin-query`) and the type-aware rules;
+(`eslint-plugin-local`, `@tanstack/eslint-plugin-query`) and the type-aware rules;
 add new rules there. Its header explains why ESLint could be retired with nothing lost.
 See [CONTRIBUTING.md](../CONTRIBUTING.md#linting--oxlint).
 

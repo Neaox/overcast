@@ -1,5 +1,5 @@
 /**
- * classnames/prefer-use-resource-mutation
+ * local/prefer-use-resource-mutation
  *
  * docs/plans/web-ui-dry-refactor.md §7: "flag `useMutation(` in
  * `src/features/**`. Enforces P8. Needs an allowlist comment for the handful
@@ -11,7 +11,7 @@
  * instead, which is the exact duplication the audit's thesis names.
  *
  * The "allowlist comment" the plan asks for is a plain ESLint disable
- * comment — `// eslint-disable-next-line classnames/prefer-use-resource-mutation -- <reason>`
+ * comment — `// eslint-disable-next-line local/prefer-use-resource-mutation -- <reason>`
  * — rather than a second configuration surface: it already requires a
  * reason at the call site and shows up in a `grep`, which is what an
  * allowlist is for.

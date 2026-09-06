@@ -1,5 +1,5 @@
 /**
- * classnames/no-concatenation
+ * local/no-concatenation
  *
  * Disallow string concatenation (`+`) in className attributes. Use cn() instead.
  *

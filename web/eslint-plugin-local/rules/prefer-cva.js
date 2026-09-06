@@ -1,5 +1,5 @@
 /**
- * classnames/prefer-cva
+ * local/prefer-cva
  *
  * Detect cn() calls in className that are complex enough to benefit from
  * class-variance-authority (cva). Flags calls that contain multiple

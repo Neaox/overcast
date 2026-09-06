@@ -14,7 +14,11 @@
 //   `react-hooks/x`         -> `react/x`      (oxlint ships the React Compiler
 //                                              rules under the react plugin)
 //   `react-refresh/only-export-components` -> `react/only-export-components`
-//   `classnames/x`, `@tanstack/query/x` -> JS plugins, same rule names
+//   `@tanstack/query/x`     -> same rule name (JS plugin, upstream package)
+//   `classnames/x`          -> `local/x`  (JS plugin, this repo's own — renamed
+//                                          from `classnames` because six of its
+//                                          thirteen rules never linted a class
+//                                          name; see the jsPlugins block below)
 //
 // ---- Why ESLint could be deleted outright, with nothing lost ---------------
 //
@@ -88,13 +92,20 @@
   },
 
   // ESLint v9 config API-compatible plugins, run through oxlint's JS-plugin
-  // host (oxc's parser, no ESLint). Aliased so the rule names stay
-  // byte-identical to the ESLint ones (suppression comments and docs keep
-  // reading the same).
+  // host (oxc's parser, no ESLint). `@tanstack/query` keeps its upstream
+  // spelling, so its own docs and any suppression comment still read the same.
+  //
+  // The repo-local plugin is `local` for what it is: rules defined in this
+  // repository rather than pulled from a package, which is the fact a reader
+  // scanning lint output needs. It answered to `classnames` until this rename —
+  // accurate in 2026-05 when every rule was about `cn()` construction, and
+  // wrong by 2026-08, when #1292 put five scaffold guardrails in it because the
+  // plugin was already wired up. A namespace that describes where a rule comes
+  // from cannot go stale the way one describing what it lints did.
   "jsPlugins": [
     {
-      "name": "classnames",
-      "specifier": "./eslint-plugin-classnames/index.js"
+      "name": "local",
+      "specifier": "./eslint-plugin-local/index.js"
     },
     {
       "name": "@tanstack/query",
@@ -105,7 +116,7 @@
   // `dist` is build output. The plain-JS exclusions are inherited from the
   // ESLint config this replaced, which scoped its only config object to
   // `**/*.{ts,tsx}` — so .js/.mjs/.cjs files (vite.config, prettier config, the
-  // local classnames plugin) have never been linted here and are not started on
+  // local plugin) have never been linted here and are not started on
   // now. oxlint would lint them by default.
   "ignorePatterns": ["dist", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"],
 
@@ -264,20 +275,20 @@
     // defaults it to false, so it has to be spelled out here.
     "react/only-export-components": ["error", { "allowConstantExport": true }],
 
-    // ---- local plugin: web/eslint-plugin-classnames (JS plugin) -----------
-    "classnames/no-template-literal": "warn",
-    "classnames/no-concatenation": "warn",
-    "classnames/no-bare-ternary": "warn",
-    "classnames/no-redundant-cn": "warn",
-    "classnames/no-dup-ternary": "warn",
-    "classnames/prefer-cva": "warn",
-    "classnames/no-local-detail-row": "warn",
-    "classnames/prefer-button-busy": "warn",
-    "classnames/no-raw-spinner-in-content": "warn",
-    "classnames/prefer-shared-formatter": "warn",
-    "classnames/prefer-use-resource-mutation": "warn",
-    "classnames/prefer-resource-table": "warn",
-    "classnames/no-duplicate-class-cluster": "warn",
+    // ---- local plugin: web/eslint-plugin-local (JS plugin) -----------
+    "local/no-template-literal": "warn",
+    "local/no-concatenation": "warn",
+    "local/no-bare-ternary": "warn",
+    "local/no-redundant-cn": "warn",
+    "local/no-dup-ternary": "warn",
+    "local/prefer-cva": "warn",
+    "local/no-local-detail-row": "warn",
+    "local/prefer-button-busy": "warn",
+    "local/no-raw-spinner-in-content": "warn",
+    "local/prefer-shared-formatter": "warn",
+    "local/prefer-use-resource-mutation": "warn",
+    "local/prefer-resource-table": "warn",
+    "local/no-duplicate-class-cluster": "warn",
 
     // ---- @tanstack/eslint-plugin-query (JS plugin) ------------------------
     "@tanstack/query/exhaustive-deps": "error",

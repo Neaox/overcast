@@ -15,7 +15,7 @@ import { Select } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState, Spinner } from "@/components/ui/primitives"
-// eslint-disable-next-line classnames/prefer-resource-table -- the output of one simulation run — no stable row identity, no useful order, and two nothing-states `ResourceTable` cannot tell apart
+// eslint-disable-next-line local/prefer-resource-table -- the output of one simulation run — no stable row identity, no useful order, and two nothing-states `ResourceTable` cannot tell apart
 import {
   Table,
   TableBody,

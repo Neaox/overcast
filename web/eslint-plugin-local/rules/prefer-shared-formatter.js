@@ -1,5 +1,5 @@
 /**
- * classnames/prefer-shared-formatter
+ * local/prefer-shared-formatter
  *
  * docs/plans/web-ui-dry-refactor.md §7: "flag `toLocaleString` /
  * `toLocaleDateString` / `toLocaleTimeString` and any local
