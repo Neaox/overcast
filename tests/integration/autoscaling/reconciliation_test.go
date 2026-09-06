@@ -425,22 +425,26 @@ func TestCreateAutoScalingGroup_refusesConfigurationsItCannotReconcile(t *testin
 		name   string
 		params map[string]string
 	}{
+		// Both carry a zone because a group has to name a zone or a subnet at
+		// all (#1843); it is not what either case is testing.
 		{
 			name: "mixed instances policy",
 			params: map[string]string{
 				"AutoScalingGroupName": "mip-asg",
 				"MixedInstancesPolicy.LaunchTemplate.LaunchTemplateSpecification.LaunchTemplateName": "my-template",
-				"MinSize": "1",
-				"MaxSize": "2",
+				"MinSize":                    "1",
+				"MaxSize":                    "2",
+				"AvailabilityZones.member.1": "us-east-1a",
 			},
 		},
 		{
 			name: "launch from a running instance",
 			params: map[string]string{
-				"AutoScalingGroupName": "inst-asg",
-				"InstanceId":           "i-0123456789abcdef0",
-				"MinSize":              "1",
-				"MaxSize":              "2",
+				"AutoScalingGroupName":       "inst-asg",
+				"InstanceId":                 "i-0123456789abcdef0",
+				"MinSize":                    "1",
+				"MaxSize":                    "2",
+				"AvailabilityZones.member.1": "us-east-1a",
 			},
 		},
 	}
@@ -479,11 +483,14 @@ func TestCreateAutoScalingGroup_requiresALaunchSource(t *testing.T) {
 	// Given: an empty store
 	srv := helpers.NewTestServer(t)
 
-	// When: a group is created with no launch configuration
+	// When: a group is created with no launch configuration. It names a zone
+	// because a group has to name a zone or a subnet at all (#1843), so the
+	// missing launch source is the only thing wrong with it.
 	resp := asCall(t, srv, "CreateAutoScalingGroup", map[string]string{
-		"AutoScalingGroupName": "bare-asg",
-		"MinSize":              "1",
-		"MaxSize":              "2",
+		"AutoScalingGroupName":       "bare-asg",
+		"MinSize":                    "1",
+		"MaxSize":                    "2",
+		"AvailabilityZones.member.1": "us-east-1a",
 	})
 	body := xmlText(t, resp)
 
@@ -493,6 +500,9 @@ func TestCreateAutoScalingGroup_requiresALaunchSource(t *testing.T) {
 	}
 	if !strings.Contains(body, "ValidationError") {
 		t.Errorf("body does not name ValidationError: %s", body)
+	}
+	if !strings.Contains(body, "Valid requests must contain either LaunchTemplate") {
+		t.Errorf("body is not the launch-source refusal: %s", body)
 	}
 }
 

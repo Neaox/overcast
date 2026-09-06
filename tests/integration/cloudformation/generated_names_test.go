@@ -437,8 +437,11 @@ func TestCreateStack_resourcesWithoutNames_areNamedByCloudFormation(t *testing.T
 			name:      "AWS::AutoScaling::AutoScalingGroup",
 			logicalID: "AutoScalingGroup",
 			deps:      depLaunchConfig,
+			// AvailabilityZones only because a group has to name a zone or a
+			// subnet at all (#1843); this case is about the generated name.
 			properties: `{"Type": "AWS::AutoScaling::AutoScalingGroup", "Properties": {
-        "MinSize": "0", "MaxSize": "1", "LaunchConfigurationName": {"Ref": "DepLaunchConfig"}}}`,
+        "MinSize": "0", "MaxSize": "1", "AvailabilityZones": ["us-east-1a"],
+        "LaunchConfigurationName": {"Ref": "DepLaunchConfig"}}}`,
 			// No charset: AutoScalingGroupName admits every printable ASCII
 			// character except a colon.
 			constraint: &nameConstraint{maxLen: 255},
@@ -719,8 +722,11 @@ func TestCreateStack_twoUnnamedResourcesOfOneType_doNotCollide(t *testing.T) {
 		{
 			name: "AWS::AutoScaling::AutoScalingGroup",
 			deps: depLaunchConfig,
+			// AvailabilityZones only because a group has to name a zone or a
+			// subnet at all (#1843); this case is about the generated name.
 			resource: `{"Type": "AWS::AutoScaling::AutoScalingGroup", "Properties": {
-				"MinSize": "0", "MaxSize": "1", "LaunchConfigurationName": {"Ref": "DepLaunchConfig"}}}`,
+				"MinSize": "0", "MaxSize": "1", "AvailabilityZones": ["us-east-1a"],
+				"LaunchConfigurationName": {"Ref": "DepLaunchConfig"}}}`,
 		},
 		{
 			name: "AWS::AutoScaling::LaunchConfiguration",
