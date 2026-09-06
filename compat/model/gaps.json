@@ -373,6 +373,41 @@
       "detail": "Mutates an in-flight responsibility transfer — a billing-ownership change already under way."
     },
     {
+      "service": "secretsmanager",
+      "operation": "RemoveRegionsFromReplication",
+      "group": "secretsmanager-gen-probe",
+      "reason": "never-probe",
+      "detail": "Deletes a secret's replicas in other Regions. AWS deletes a replica immediately — there is no recovery window for one — so the secret value stops being readable in that Region the moment the call lands, and nothing in a probe group puts it back."
+    },
+    {
+      "service": "secretsmanager",
+      "operation": "ReplicateSecretToRegions",
+      "group": "secretsmanager-gen-probe",
+      "reason": "never-probe",
+      "detail": "Creates a copy of the secret in other Regions. Each replica is a separate billed secret that outlives the run, and ForceOverwriteReplicaSecret will overwrite a secret somebody already keeps under that name in the destination Region."
+    },
+    {
+      "service": "secretsmanager",
+      "operation": "RestoreSecret",
+      "group": "secretsmanager-gen-probe",
+      "reason": "never-probe",
+      "detail": "Cancels a scheduled deletion. Aimed at a stranger's secret it un-deletes something the owner deliberately scheduled for removal, and the recovery window is the only notice that owner gets before the secret goes for good."
+    },
+    {
+      "service": "secretsmanager",
+      "operation": "RotateSecret",
+      "group": "secretsmanager-gen-probe",
+      "reason": "probe-of-implemented-op",
+      "detail": "RotateSecret is implemented (Supported), so it may not be probed, and no recipe resource gives it a role"
+    },
+    {
+      "service": "secretsmanager",
+      "operation": "StopReplicationToReplica",
+      "group": "secretsmanager-gen-probe",
+      "reason": "never-probe",
+      "detail": "Promotes a replica to a standalone secret and breaks its link to the primary. The split is not reversible — the two secrets diverge from that call onwards — and it is run against the replica, which is somebody's live secret."
+    },
+    {
       "service": "servicediscovery",
       "operation": "CreatePrivateDnsNamespace",
       "group": "servicediscovery-gen-probe",

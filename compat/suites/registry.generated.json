@@ -733,6 +733,141 @@
       ]
     },
     {
+      "service": "secretsmanager",
+      "name": "secretsmanager-gen-secret",
+      "generated": true,
+      "scenario": "compat/model/scenarios/secretsmanager.json",
+      "state": "candidate",
+      "suites": [
+        "cli",
+        "dotnet-sdk",
+        "go-sdk",
+        "java-sdk",
+        "node-js-sdk",
+        "python-sdk",
+        "rust-sdk"
+      ],
+      "tests": [
+        {
+          "name": "CreateSecret"
+        },
+        {
+          "name": "DescribeSecret",
+          "depends": [
+            "CreateSecret"
+          ]
+        },
+        {
+          "name": "UpdateSecret",
+          "depends": [
+            "CreateSecret"
+          ]
+        },
+        {
+          "name": "TagResource",
+          "depends": [
+            "CreateSecret"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "depends": [
+            "CreateSecret"
+          ]
+        },
+        {
+          "name": "GetRandomPassword"
+        },
+        {
+          "name": "BatchGetSecretValue",
+          "depends": [
+            "CreateSecret"
+          ]
+        },
+        {
+          "name": "ValidateResourcePolicy",
+          "depends": [
+            "CreateSecret"
+          ]
+        },
+        {
+          "name": "PutResourcePolicy",
+          "depends": [
+            "CreateSecret"
+          ]
+        },
+        {
+          "name": "GetResourcePolicy",
+          "depends": [
+            "CreateSecret"
+          ]
+        },
+        {
+          "name": "DeleteResourcePolicy",
+          "depends": [
+            "CreateSecret"
+          ]
+        },
+        {
+          "name": "CancelRotateSecret",
+          "depends": [
+            "CreateSecret"
+          ]
+        },
+        {
+          "name": "ListSecrets",
+          "depends": [
+            "CreateSecret"
+          ]
+        },
+        {
+          "name": "DeleteSecret",
+          "depends": [
+            "CreateSecret"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "secretsmanager",
+      "name": "secretsmanager-gen-version",
+      "generated": true,
+      "scenario": "compat/model/scenarios/secretsmanager.json",
+      "state": "candidate",
+      "suites": [
+        "cli",
+        "dotnet-sdk",
+        "go-sdk",
+        "java-sdk",
+        "node-js-sdk",
+        "python-sdk",
+        "rust-sdk"
+      ],
+      "tests": [
+        {
+          "name": "PutSecretValue"
+        },
+        {
+          "name": "GetSecretValue",
+          "depends": [
+            "PutSecretValue"
+          ]
+        },
+        {
+          "name": "UpdateSecretVersionStage",
+          "depends": [
+            "PutSecretValue"
+          ]
+        },
+        {
+          "name": "ListSecretVersionIds",
+          "depends": [
+            "PutSecretValue"
+          ]
+        }
+      ]
+    },
+    {
       "service": "servicediscovery",
       "name": "servicediscovery-gen-instance",
       "generated": true,

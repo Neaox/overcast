@@ -17,6 +17,9 @@ mod scenarios_elastic_load_balancing_gen;
 #[path = "scenarios_organizations_gen.rs"]
 mod scenarios_organizations_gen;
 
+#[path = "scenarios_secretsmanager_gen.rs"]
+mod scenarios_secretsmanager_gen;
+
 #[path = "scenarios_servicediscovery_gen.rs"]
 mod scenarios_servicediscovery_gen;
 
@@ -28,6 +31,7 @@ pub fn scenario_groups(clients: &Arc<AwsClients>) -> Vec<Box<dyn ServiceGroup>> 
         Box::new(scenarios_batch_gen::ScenariosBatch::new(clients)),
         Box::new(scenarios_elastic_load_balancing_gen::ScenariosElasticLoadBalancing::new(clients)),
         Box::new(scenarios_organizations_gen::ScenariosOrganizations::new(clients)),
+        Box::new(scenarios_secretsmanager_gen::ScenariosSecretsmanager::new(clients)),
         Box::new(scenarios_servicediscovery_gen::ScenariosServicediscovery::new(clients)),
         Box::new(scenarios_sqs_gen::ScenariosSqs::new(clients)),
     ]
