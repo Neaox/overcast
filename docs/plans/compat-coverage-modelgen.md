@@ -1,8 +1,14 @@
 # Model-driven compat coverage — scenario generation across every suite
 
-> Status: **in progress** — G0 complete, G1 landing, G2 not started but
-> unblocked once #1709 lands; #1700 is done. See the § 2 note for what has
-> landed and what has not. Proposed 2026-08-03. Owner: TBD.
+> Status: **in progress** — G0 and G1 are done, and **G2 is code complete**.
+> All three interpreters are on `main` (`python-sdk` #1787, `node-js-sdk` #1788,
+> `cli` #1790), and every §4.1 criterion and §4.2's criteria 1–3 are met in all
+> three suites. Two things remain before the pilot is done: the first
+> candidate → gated promotion (§4.2 criterion 4's second half — the soak
+> machinery landed with #1792/#1798 and now needs three agreeing nightly runs)
+> and the regeneration demonstration (§4.2 criterion 5, #1813). See the § 2
+> note dated 2026-09-06 for what has landed and what has not.
+> Proposed 2026-08-03. Owner: TBD.
 > Siblings written concurrently, and part of the same tier programme:
 > [inert-tier-rollout.md](./inert-tier-rollout.md) (Tier 1 implementation — the
 > thing generated tests will mostly exercise),
@@ -183,10 +189,12 @@ at full operation depth (§3.9).
 
 > **Model-utilisation audit, 2026-09-06 (#1795).** Counted from the files at
 > the revision `models/aws/VERSION` pins: **12 of the 46 traits** the pruner
-> keeps are read by any shipped consumer, and 26 are held for an inert
-> generator that does not exist yet. **Zero** Smithy `resource` shapes appear
-> in any committed snapshot (121 of 426 upstream model files carry any), so
-> §3.4's and §3.7's expectation that resource bindings would supply lifecycles
+> kept were read by any shipped consumer, and 26 were held for an inert
+> generator that does not exist yet. (#1804 has since made it 13 of 47, by
+> adding `aws.protocols#awsQueryCompatible` and reading it in the same PR.)
+> **Zero** Smithy `resource` shapes appear in any committed snapshot (121 of
+> 426 upstream model files carry any), so §3.4's and §3.7's expectation that
+> resource bindings would supply lifecycles
 > was false for every service in scope and both pilots use name clustering —
 > those two sections now say so. Three derivations the pilots had typed by
 > hand reproduce from the model exactly: `notFound.error` from the read's
@@ -196,6 +204,76 @@ at full operation depth (§3.9).
 > effective over-refusals. #1795 moves all three into the generator, the
 > recipe value staying as an override, and makes `-scaffold` name the rule
 > behind every value it proposes.
+
+> **G2 is code complete — 2026-09-06.** The three interpreters are on `main`,
+> the generated registry is no longer empty, and the pilot has run in all three
+> suites. This supersedes the 2026-09-05 note's account of what is outstanding.
+> What landed, all under #1113:
+>
+> | Deliverable | PR |
+> | --- | --- |
+> | **G2 interpreters** (#1768) — one PR per suite, each flipping its own entry in `scenarioBackends` | `python-sdk` #1787, `node-js-sdk` #1788 (review fixes #1796), `cli` #1790 |
+> | Teardown runs after a failed setup, in the harnesses that skipped it | `cli` #1790, `go-sdk` #1808, `node-js-sdk` #1812 — `python-sdk` never had the fault |
+> | **Candidate → gated soak** (#1789, closed) — `--promote-generated`, the `promotions.json` ledger, the nightly `promote` job | #1792, review fixes #1798 |
+> | **The interpreter rules pinned** in [compat/model/README.md](../../compat/model/README.md), with a shared error-matching fixture set every suite runs | #1817 |
+> | **Model utilisation** (#1795, closed) — shared snapshot vocabulary, `awsQueryCompatible` in the snapshot and header, derived `notFound.error` and `list.itemsPath`, default-deny probes, scaffold provenance, the §3.4/§3.7 corrections | #1797, #1804, #1800, #1809, #1802, #1803 |
+> | **Loader uniformity** (#1737, closed) — `suites` scoping on every group in all eight loaders, three baseline shards re-seeded, the baseline-change lint made registry-aware | #1794 |
+> | Compat endpoint defaults to `127.0.0.1`; `python-sdk`'s scenario client cache shared across groups | #1807 |
+> | **Fidelity bugs the programme found in the emulator** | #1750 (organization ID shape, closing #1736), #1816 (SQS `x-amzn-query-error` header, closing #1810) |
+>
+> `scenarioBackends` in
+> [cmd/compatgen/registry.go](../../cmd/compatgen/registry.go) reads `cli`,
+> `node-js-sdk`, `python-sdk`, so `compat/suites/registry.generated.json` now
+> carries the **seven pilot groups, 56 tests**, every group `candidate` and
+> scoped to those three suites.
+>
+> **The pilot run.** Each interpreter PR ran the seven groups three times
+> against a local Overcast started by `scripts/run-test-instance.sh`, with a
+> distinct run id each time: **30 `pass`, 27 `unimplemented`, 0 `fail`, 0
+> `skip`**, identical test for test across all three runs in every suite. Zero
+> trace — `ListQueues` and `ListPolicies` both answer `[]` afterwards — and the
+> four hand-written `sqs` groups are untouched and still pass, 21 of 21. That
+> tally was taken before #1809 refused `CancelMessageMoveTask` as a write and
+> took it out of `sqs-gen-probe`; the corpus at this commit is 56 tests, so the
+> same run today reads **30 / 26 / 0 / 0**. That last figure is arithmetic on
+> the artifacts, not a fourth measurement.
+>
+> **Wall clock, measured 2026-09-06** over the seven groups against a slim image
+> on loopback, and recorded in #1801: `node-js-sdk` **1.2 s**, `python-sdk`
+> **1.6 s**, `cli` **23 s**. §4.3's ≤ 90 s local budget is met — the slowest
+> suite takes a quarter of it, and all three together 26 s. The earlier 77 s
+> for `cli` (#1790) was not spawn cost: on a dual-stack host `localhost`
+> resolves to `::1` first while the container publishes IPv4 only, so every new
+> connection paid a ~2 s IPv6-then-IPv4 fallback. #1807 made `127.0.0.1` the
+> default endpoint everywhere and the fallback went with it. What is left is
+> genuine process-spawn cost, and §3.10 says where it binds.
+>
+> **Recomputed at this commit**, from the checked-in artifacts:
+> `compat/suites/registry.json` is **141 groups / 797 tests / 36 services**;
+> `compat/suites/registry.generated.json` is **7 groups / 56 tests**, all
+> `candidate`; `compat/baseline/` holds **5,369 entries** — 3,286 `pass`, 2,046
+> `skip`, 36 `unimplemented`, 1 `na`, **0 `fail`** — with `node-js-sdk.json` now
+> the largest shard at 129,021 B of the 512 KiB ceiling;
+> `compat/parity-debt.json` holds **327** entries; `compat/model/gaps.json`
+> holds **32** refusals, every one `never-probe` (29 `organizations`, 3 `sqs`);
+> and `compat/model/promotions.json` is `groups: {}`, no group having soaked
+> yet. Candidate groups gate nothing, which is why 56 generated tests × 3 suites
+> do not appear in the baseline.
+>
+> **Open, and the whole of G2's remainder.** Three things, in decreasing order
+> of what they gate:
+>
+> - **The first candidate → gated promotion** (§4.2 criterion 4). The machinery
+>   is merged and the ledger is empty because it now needs three agreeing
+>   nightly runs, which could not start before the groups were on `main`.
+>   Nothing to build; something to wait for.
+> - **#1813, the §4.2 criterion 5 regeneration demonstration.** Two PRs: the OU
+>   lifecycle recipe (#1818, in flight) and then the inert emulator half.
+> - **#1801, running a probe group's tests in parallel within the group.** A
+>   performance follow-up rather than a gate, and the one measured lever for
+>   `cli` (§3.10).
+>
+> #1768 tracks all three.
 
 Counts below were computed from the checked-in generated artifacts, not from
 `STATUS.md` — **`STATUS.md` prose is stale** (it describes Shield as "Stub — all
@@ -690,8 +768,8 @@ gated by default until someone gets a label.
 | Stage | Rule | Enforced by |
 | --- | --- | --- |
 | Candidate | Runs everywhere, reports everywhere, gates nothing | `state` in the generated registry |
-| Soak | The existing nightly 3× flake-detection job includes candidates | [compat-flake-detection.yml](../../.github/workflows/compat-flake-detection.yml) |
-| Promotion | A group whose every (suite, test) answered identically across 3 consecutive nightly runs with **no `fail` and no `skip`** flips to `gated`, via a bot PR on `automation/promote-generated`. `unimplemented` promotes: a Tier 0 probe group is exactly that case, and a stable 501 is the operation answering as modelled | `--promote-generated` in `cmd/compat`, writing `compat/model/promotions.json`, which `cmd/compatgen` reads to emit each group's `state` |
+| Soak | The nightly 3× flake-detection job runs candidates, and a `promote` job downstream of it reads all three runs | the `detect` and `promote` jobs in [compat-flake-detection.yml](../../.github/workflows/compat-flake-detection.yml) |
+| Promotion | A group flips to `gated` when **every suite it is scoped to reported every one of its tests in all 3 runs**, every `(suite, test)` carried the **same** status in all 3, and no status was `fail` **or `skip`** — via a bot PR on `automation/promote-generated`. A suite missing from one run is not two runs of evidence and an absence; it is one run in which the group was never exercised. A group that skips consistently is perfectly consistent and has been exercised zero times — consistency is not evidence. `unimplemented` promotes: a Tier 0 probe group is exactly that case, and a stable 501 is the operation answering as modelled | `--promote-generated` in `cmd/compat` (#1792, #1798), writing `compat/model/promotions.json`, which `cmd/compatgen` reads to emit each group's `state` |
 | Stuck | Inconsistent groups stay candidate; `--promote-generated` names the offending `(suite, test)`s and reports a candidate older than 30 days as overdue (a `::warning` on the nightly). The flipping tests themselves raise the usual per-(suite, group) issue, since candidate groups run in the same nightly the flake detector reads | `--promote-generated`; [scripts/compat-flake-issue.py](../../scripts/compat-flake-issue.py) |
 
 Promotion is mechanical, so it needs no reviewer label — the reviewer decision
@@ -839,6 +917,38 @@ Both are explicit repo values and both bite here.
   latency census for free. They are **not** a benchmark gate: CI runners are too
   noisy, and performance claims still require the paced local methodology in
   [storage-test-plan.md](./storage-test-plan.md).
+
+**What the G2 pilot measured — 2026-09-06, the seven pilot groups against a
+slim image on loopback** (recorded in #1801; per-suite wall clock is in the §2
+note). Three findings, because each changes a different decision.
+
+- **`cli`'s wall clock is its largest group, not its slot count.** The suite
+  takes 23 s and `organizations-gen-probe` accounts for 23.1 s of it — 25
+  process spawns at roughly 850 ms each, against a per-test cost 29× that of
+  `node-js-sdk`. Raising `OVERCAST_COMPAT_PARALLEL_SLOTS` from 8 to 16 changes
+  nothing, because slots distribute *groups* and this is one group. Running a
+  probe group's own tests concurrently is the measured lever: 16.9 s serial,
+  5.2 s at 4-way, 3.3 s at 8-way, tracked as **#1801**. §3.6's rotating shard
+  will not substitute for it at fleet scale, for the same reason — a shard
+  distributes whole groups too — so at the 2,000–5,000 generated tests a Tier-1
+  fleet implies, probe-group parallelism is what decides `cli`'s CI wall clock.
+- **The two `WaitTimeSeconds: 1` absence polls are the only unconditional waits
+  in the corpus, and they must not be shortened.** Each is the `ReceiveMessage`
+  inside an `absent` clause — `sqs-gen-message/DeleteMessage` and
+  `sqs-gen-batch/DeleteMessageBatch` — and the clause holds on its first
+  attempt, so each costs one second of long poll and no more. Dropping to
+  `WaitTimeSeconds: 0` makes it a short poll, which samples a subset of servers
+  and can answer empty while the message is still there: a **false pass**, and
+  the one failure mode an absence check may not have. The three other
+  `ReceiveMessage` calls carrying a wait expect a message and return as soon as
+  one arrives.
+- **`eventually` budgets cost nothing on the happy path.** The corpus carries 15
+  of them, several deliberately generous — eight at 30 attempts 2 s apart for
+  the queue resource, one at 12 attempts 5 s apart for `PurgeQueue`'s lagging
+  counters. A budget bounds a retry loop that exits on the first attempt that
+  holds, so a passing run never spends it. Reading a wide budget as slow is
+  reading the worst case as the cost, and shrinking one to save time buys
+  nothing while making a slow-but-correct emulator response a failure.
 
 **Fidelity.**
 
@@ -990,6 +1100,37 @@ Acceptance criteria:
 > `sqs-gen-batch` resource of their own rather than refused. The plan asked for
 > two groups; four is what the service's shape produces.
 
+> **Recounted and run — 2026-09-06.** `compat/model/scenarios/sqs.json` now
+> covers **20 of the 23 modeled operations** in **22 tests**: `sqs-gen-queue`
+> (13), `sqs-gen-message` (4), `sqs-gen-batch` (4) and `sqs-gen-probe` (**1** —
+> `ListMessageMoveTasks`). The probe group lost `CancelMessageMoveTask` to
+> #1809, which made probe membership default-deny by verb, and `gaps.json`
+> accordingly records **three** `sqs` refusals rather than two, all
+> `never-probe`: `AddPermission`, `RemovePermission` and
+> `CancelMessageMoveTask`. That **supersedes the `no-output-to-assert` reading**
+> of the first two above — the verb rule refuses them earlier, before anything
+> is bound, so the restatement of criterion 3 still holds but for a different
+> reason.
+>
+> `CancelMessageMoveTask` is the judgement call in that set, and it is the
+> owner's to reverse: a cancel carrying a curated, deliberately nonexistent task
+> handle lands nowhere, so one `allowProbe` line in `recipes/sqs.json` would put
+> it back in front of the remaining guards. Whether coverage then reaches 21 of
+> 23 is a second question those guards answer, not this one — its whole output
+> is `ApproximateNumberOfMessagesMoved`, a `Long` defaulting to `0`, which is
+> neither an identity member nor a list, so `no-output-to-assert` is the likely
+> next refusal. Default-deny is what makes the first call a decision rather than
+> an accident. Criterion 2 is met either way, at exactly its floor.
+>
+> | Criterion | Status | Evidence |
+> | --- | --- | --- |
+> | 1 — one reviewed recipe plus ≤ 15 lines of `values.json` | **Met** | `recipes/sqs.json` and six curated literals in eleven lines (#1709) |
+> | 2 — ≥ 20 of 23 operations covered, every refusal in `gaps.json` with a reason | **Met, at the floor** | 20 covered; three refusals, each carrying its sentence |
+> | 3 — every test has ≥ 1 assertion clause; unsupported operations probed or explained | **Met** | the first half is structural in the IR; the second reads as restated above |
+> | 4 — passes in `python-sdk`, `node-js-sdk` and `cli`, identical across three runs | **Met** | #1787, #1788, #1790 — identical test for test in all three suites |
+> | 5 — zero trace | **Met** | `ListQueues` returns `[]` after every run |
+> | 6 — no key collides with a hand-written group; hand-written results unchanged | **Met** | `sqs-queues`, `sqs-messages`, `sqs-dlq` and `sqs-fifo` still pass 21 of 21 |
+
 ### 4.2 `organizations` — prove the unimplemented path (Tier 0 → Tier 1)
 
 Chosen because it is the cleanest instance of the problem: **63 modeled
@@ -1082,31 +1223,73 @@ Acceptance criteria:
    hand-written test changes in any suite**. Show this end to end on at least
    one operation before declaring the pilot complete.
 
+> **Run — 2026-09-06.** The recount above is unchanged at this commit: **34 of
+> 63** operations covered by 34 tests in three groups, 25 of them probes, and 29
+> refusals in `gaps.json`, every one `never-probe` with its own curated
+> sentence. #1809 moved the *derivation* of those refusals from the recipe's
+> hand-written `neverProbe` map to a default-deny verb rule with the map as the
+> exception list, which changed which of them carry a curated sentence rather
+> than a generated one; it changed no membership.
+>
+> Criterion 1's "the 62 undeclared operations" reads **25 of the 54** today. The
+> other 29 are the `never-probe` refusals, which is the guard working rather
+> than coverage lost, and criterion 5's demonstration is aimed at five of them.
+>
+> | Criterion | Status | Evidence |
+> | --- | --- | --- |
+> | 1 — the probe group's operations all record `unimplemented`, none `fail`, in all three suites | **Met** | all 25 do, in `python-sdk`, `node-js-sdk` and `cli` |
+> | 2 — `DescribeOrganization` passes with a shape assertion | **Met** | it passes, as does the same ARN check inside `organizations-gen-policy/CreatePolicy`. First compat coverage any `StatusInert` operation has had |
+> | 3 — independently runnable, creates nothing, needs no teardown | **Met for the two groups it describes** | `organizations-gen-organization` and `organizations-gen-probe`; the policy group creates a real policy and has a teardown |
+> | 4 — three identical runs; the groups promote through the normal soak with no hand edits | **Half met** | the runs are identical in all three suites; nothing has promoted yet |
+> | 5 — the regeneration demonstration | **Open — #1813** | the OU lifecycle recipe (#1818, in flight), then the inert emulator implementation |
+>
+> Criterion 4's second half is not blocked on anything: `promotions.json` is
+> `groups: {}` because the nightly `promote` job (#1792, #1798) needs three
+> agreeing nightly runs of its own, and the first of those can only start once
+> the groups are on `main`, which they now are. Criterion 5 is two PRs in order
+> — the recipe establishes the before state, then the emulator PR regenerates
+> the corpus in the same commit, with nothing under `compat/suites/` touched.
+> That untouched directory is the whole of what the criterion asserts.
+
 ### 4.3 Pilot budget
 
 The two services add **≤ 90 s** to a full local run and **≤ 2 min** to the
 slowest CI matrix job. Exceeding that means sharding lands before rollout, not
 after.
 
+**Met, measured 2026-09-06** over the seven pilot groups against a slim image on
+loopback: `node-js-sdk` 1.2 s, `python-sdk` 1.6 s, `cli` 23 s — the slowest
+suite at a quarter of the local budget, and all three together at 26 s. So
+sharding is not what G2 needs, and §3.10 records why it would not be the lever
+at fleet scale either.
+
 ### 4.4 G2 handoff — what an interpreter author has to agree to
 
-Added 2026-09-05 from #1709's own report. The IR and its contract are settled
-and documented for interpreter authors in
-[compat/model/README.md](../../compat/model/README.md) (new in #1709); what
-follows is the set of decisions three interpreters have to make identically,
-and the places the pilot is expected to bite.
+Added 2026-09-05 from #1709's own report; **resolved 2026-09-06 by #1817**.
+Every decision below has been made, all three interpreters make it identically,
+and each is now pinned normatively in
+[compat/model/README.md](../../compat/model/README.md) — section by section,
+where a fourth interpreter author will look for it. This section is the index
+into that, and the record of how each was settled; the README is the spec.
 
 **The contract, in one list.**
 
-- **Error matching.** An `error` clause carries both the modeled `shape` and the
-  wire `code` — for SQS's not-found, `QueueDoesNotExist` and
-  `AWS.SimpleQueueService.NonExistentQueue` — and an interpreter accepts an
-  error whose reported code **or** type name equals **either**, because the
-  SDKs disagree about which of the two they surface. Overcast puts the legacy
-  code in the JSON `__type` and sends no `x-amzn-query-error` header
-  ([internal/services/sqs/store.go](../../internal/services/sqs/store.go));
-  AWS's JSON-protocol SQS is understood to carry it in that header instead, so
-  confirm which one each SDK reports during the soak rather than assuming.
+- **Error matching** (README § Errors). An `error` clause carries both the
+  modeled `shape` and the wire `code` — for SQS's not-found,
+  `QueueDoesNotExist` and `AWS.SimpleQueueService.NonExistentQueue` — and an
+  interpreter accepts an error whose code, on any of a **closed list of
+  surfaces**, equals **either**: the exception class name, `__type` raw and
+  after the last `#`, `Error.Code`/`Code`/`code`, and `x-amzn-query-error`
+  before the first `;`. Matching is by **equality, never containment** — a
+  message that merely contains a code satisfies nothing — and a failure that
+  states no code on any surface matches nothing at all. On an
+  `awsQueryCompatible` service the header **replaces** the body's code rather
+  than joining it. The soak settled the open half: Overcast sent no
+  `x-amzn-query-error` at all, which #1816 fixed for SQS (closing #1810), so the
+  same clause now matches through the header and through `__type`. Nine shared
+  fixtures in `compat/model/testdata/errors/` hold the whole rule, and every
+  interpreter runs all nine, skipping by name and with a reason any surface it
+  cannot observe — a silently ignored fixture looks exactly like a passing one.
 - **Names.** `$name` is `{OVERCAST_COMPAT_RUN_ID}-{group}-{suffix}`, with the
   group token the *whole* group name and no shortening anywhere — that is what
   makes the name-hygiene rule (§2.4) hold by construction.
@@ -1142,7 +1325,33 @@ and the places the pilot is expected to bite.
   three PRs flips its own entry and commits the regenerated
   `registry.generated.json`; until one suite is in it the generated registry
   stays `groups: []` by construction (§3.6), so the interpreter and the groups
-  it can run arrive together.
+  it can run arrive together. All three have now done exactly that, and the
+  table reads `cli, node-js-sdk, python-sdk`. G3's typed backends follow the
+  same route with no new mechanism.
+
+**What the three interpreters had to be aligned on afterwards**, which is the
+part of this section a G3 author should read first: none of the three is a
+quirk of the language that had it, so each is available in any backend.
+
+- `eventually` reported its budget as a *suffix* on the last attempt's message
+  in one suite and a *prefix* in the others, so one generated group's give-up
+  read differently depending on who ran it. The prefix form is the rule.
+- A `matches` pattern the interpreter's own regex engine will not compile
+  escaped as a raw language-level exception in one suite. It is an ordinary
+  mismatch — expected `pattern <p>`, actual `unsupported pattern: <why>` — and
+  the pattern is compiled *before* the value is looked at, so the report does
+  not depend on what came back.
+- A code-carrying surface was read in one spelling rather than every spelling
+  the rule lists, and one suite fell back to a substring match when nothing
+  parsed — which is precisely where the near miss that equality excludes comes
+  back. The fixtures pin both directions: neither `NotFoundException` nor
+  `ResourceNotFoundException` may satisfy a clause naming the other.
+
+**Teardown after a failed setup** is the fourth, and it was a harness fault
+rather than an interpreter one: three suites reported the group's tests as
+`skip` and then returned without unwinding what setup had already created.
+Fixed in `cli` (#1790), `go-sdk` (#1808) and `node-js-sdk` (#1812); `python-sdk`
+never had it. The sentence in this list had been describing an intention.
 
 **Where this list is coordinated.** G2 is tracked as **#1768**, which carries
 this contract, the one-PR-per-suite breakdown (`python-sdk`, `node-js-sdk`,
@@ -1165,7 +1374,11 @@ list test re-exports, because AWS asks a delete to carry the most recent one;
 and every `ReceiveMessage` that must leave a message visible passes
 `VisibilityTimeout: 0`, while the two that must leave it in flight do not,
 because `ChangeMessageVisibility` on a visible message is `MessageNotInflight`
-on AWS.
+on AWS. **Every one of them held on the first run** — three identical runs in
+each of the three suites, no fail and no flip — so they are recorded here as
+settled choices rather than as things to watch. The two absence polls and the
+`eventually` budgets among them are load-bearing, not slack: §3.10 says why
+neither may be shortened for speed.
 
 **One assertion was already known to fail, and it has since been fixed.**
 Identity fields are asserted against the model's own pattern where RE2 can
@@ -1181,23 +1394,27 @@ been written around. It was filed as **#1736** and fixed by **#1750**, which
 derives the id deterministically from the account id as `o-` plus ten hex
 characters
 ([internal/services/organizations/inert_policy.go](../../internal/services/organizations/inert_policy.go),
-with `aws_id_pattern_test.go` holding the pattern). Both assertions should now
-pass; the G2 run is what proves it.
+with `aws_id_pattern_test.go` holding the pattern). **Both pass in all three
+suites** as of the 2026-09-06 run, which is what §4.2's criterion 2 asked for.
+It is also the pattern to expect from the rest of the programme: #1816 is the
+second instance, an SQS error surface the interpreters needed and Overcast was
+not sending. A generated corpus finds fidelity bugs because it asserts what the
+model says rather than what the emulator does.
 
 ---
 
 ## 5. Phasing
 
-Status as of 2026-09-05 is in the §2 note: **G0 is done, G1 is landing, and G2
-is unblocked once #1709 lands** — #1700 has merged in full. The `Status` column
-below records that; `Contents` is left as written so the original scope stays
-legible.
+Status as of 2026-09-06 is in the §2 note: **G0 and G1 are done, and G2 is code
+complete** — three interpreters merged, the pilot run, two items open. The
+`Status` column below records that; `Contents` is left as written so the
+original scope stays legible.
 
 | Phase | Status | Contents | Effort | Acceptance gate |
 | --- | --- | --- | --- | --- |
 | **G0** Foundations | **Done** — #1356, #1357, #1367, #1370, and the loader tail under #1393, all seven suite PRs merged and the issue closed. `suites` scoping was honoured for every group in four suites and for generated groups only in `java-sdk`, `dotnet-sdk` and `rust-sdk` until #1737 aligned the three and re-seeded their baseline shards — see the §2 note | Shard `compat/baseline.json` → `compat/baseline/<suite>.json` (+ size budget); `--shard i/n` and `--generated-registry-file` in `cmd/compat`; `registry.generated.schema.json`; all 8 loaders read the generated sibling and fall back to a scenario resolver hook; `candidate`/`gated` state honoured by both gates; `compat/AGENTS.md` amendment for generated `suites` scoping + the lint that bounds it | M | With an **empty** generated registry, every gate, report and dashboard behaves exactly as today; baseline shards aggregate byte-identically; the scoping lint rejects a hand-written group that adds `suites` |
-| **G1** Model layer | **Done**, pending #1709's merge — `internal/awsmodel` #1359, shape snapshot via inert-tier I1 with `sqs` added in #1684, `cmd/compatgen` and `compat/model/` in #1709 | Extract `internal/awsmodel` AST reader; `cmd/compatgen` skeleton; the pruned shape snapshot `models/aws/shapes/` + `shapes-sha256` (shared deliverable with [inert-tier-rollout.md](./inert-tier-rollout.md) Phase I1 — build once, whichever plan gets there first); IR + recipe JSON schemas; `--scaffold`, `--review-report`, `--explain`; `gaps.json` | M | `make compat-model-check` regenerates byte-identically offline; the sha gate catches a hand edit; the snapshot is within its size budget; scaffolding a service produces a recipe skeleton a human can complete |
-| **G2** Pilot | Not started, tracked as **#1768** — **gated on #1709** alone now that #1700 and #1750 have merged. Both recipes and both scenario files already exist (#1709); what is missing is the three interpreters, one PR each. Start from §4.4 | `python-sdk`, `node-js-sdk` and `cli` interpreters; `recipes/sqs.json` + `recipes/organizations.json`; the §4 acceptance criteria | L | Every §4.1 and §4.2 criterion met, including the regeneration demonstration in §4.2.5 |
+| **G1** Model layer | **Done** — `internal/awsmodel` #1359, shape snapshot via inert-tier I1 with `sqs` added in #1684, `cmd/compatgen` and `compat/model/` in #1709. The model-utilisation follow-ups (#1795, closed) then moved three derivations out of the recipes and into the generator — see the §2 note | Extract `internal/awsmodel` AST reader; `cmd/compatgen` skeleton; the pruned shape snapshot `models/aws/shapes/` + `shapes-sha256` (shared deliverable with [inert-tier-rollout.md](./inert-tier-rollout.md) Phase I1 — build once, whichever plan gets there first); IR + recipe JSON schemas; `--scaffold`, `--review-report`, `--explain`; `gaps.json` | M | `make compat-model-check` regenerates byte-identically offline; the sha gate catches a hand edit; the snapshot is within its size budget; scaffolding a service produces a recipe skeleton a human can complete |
+| **G2** Pilot | **Code complete**, tracked as **#1768**. All three interpreters are merged — `python-sdk` #1787, `node-js-sdk` #1788 (+ #1796), `cli` #1790 — and the seven pilot groups run in all three suites with zero failures, identical across three runs, inside the §4.3 budget; the §2 note has the tally. Every §4.1 criterion and §4.2's 1–3 are met. Open: the first candidate → gated promotion, whose machinery landed with #1792/#1798 and which needs three agreeing nightly runs; and #1813, the §4.2 criterion 5 regeneration demonstration (#1818 in flight). #1801 is a performance follow-up, not a gate | `python-sdk`, `node-js-sdk` and `cli` interpreters; `recipes/sqs.json` + `recipes/organizations.json`; the §4 acceptance criteria | L | Every §4.1 and §4.2 criterion met, including the regeneration demonstration in §4.2.5 |
 | **G3** Typed backends | Not started | Source emitters for `go-sdk`, then `java-sdk`, `dotnet-sdk`, `rust-sdk` (one suite per PR); member→field naming rules per language | L each | Generated source compiles in the suite's normal build; the pilot groups produce **identical** results to the interpreter suites; generated `suites` scoping widens automatically on regeneration |
 | **G4** Tier-1 fleet rollout | Not started | One service per PR, ordered by [inert-tier-rollout.md](./inert-tier-rollout.md) then [full-emulation-priority.md](./full-emulation-priority.md); capped probe groups for [services-never-emulated.md](./services-never-emulated.md) | L, parallelizable per service | Per service: recipe reviewed, no unexplained refusal in `gaps.json`, soak passed, CI wall-clock within budget, coverage metric moves |
 | **G5** Steady state | Not started | Weekly model-refresh PR regenerates scenarios; coverage becomes the dashboard headline; `--slowest N` latency census | S | A model-refresh PR shows added/removed operations per service and cannot break the gate; coverage per service/tier is published |
@@ -1293,3 +1510,17 @@ Done means all of the following hold simultaneously:
    `cognito-identity-provider`). Generated groups will use the capability key by
    construction; a lint should hold hand-written groups to the same rule, and it
    is cheap to add during G0.
+8. **Probe safety rests on an operation's *name*, not on the model's own
+   statement — added 2026-09-06.** §3.5's guard 5 refuses everything that is not
+   a `Describe*`, `List*` or `Get*`
+   ([cmd/compatgen/recipe.go](../../cmd/compatgen/recipe.go)). Smithy has a
+   trait that says this outright, `smithy.api#readonly`, and the pruner does not
+   keep it: it is absent from `shapeTraitAllowlist` in
+   [cmd/awsmodelgen/shapes.go](../../cmd/awsmodelgen/shapes.go), so no committed
+   snapshot carries it. The verb rule is a sound default and it is default-deny,
+   so its errors cost coverage rather than safety — `CancelMessageMoveTask`
+   (§4.1) is the pilot's one instance. But it is a heuristic standing in for a
+   fact the model already knows, and the fix is one line in the pruner's
+   allowlist plus a regeneration. Decide before G4 puts probe groups on a
+   per-service cadence, because the cost of the heuristic scales with the
+   allowlist and the exceptions are hand-written.
