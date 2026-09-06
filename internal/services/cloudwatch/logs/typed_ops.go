@@ -37,6 +37,9 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"FilterLogEvents": op.NewTyped[filterLogEventsRequest, filterLogEventsResponse](
 			"FilterLogEvents", h.filterLogEventsTyped,
 		),
+		"GetLogRecord": op.NewTyped[getLogRecordRequest, getLogRecordResponse](
+			"GetLogRecord", h.getLogRecordTyped,
+		),
 		"StartLiveTail": unsupportedOperation("StartLiveTail"),
 		"PutRetentionPolicy": op.NewTyped[putRetentionPolicyRequest, struct{}](
 			"PutRetentionPolicy", h.putRetentionPolicyTyped,

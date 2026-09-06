@@ -1,6 +1,6 @@
 ---
 title: "CloudWatch Logs operations"
-description: "Every CloudWatch Logs operation Overcast declares — 18 of 22 implemented — with status, behaviour notes and a link to the AWS API reference for each."
+description: "Every CloudWatch Logs operation Overcast declares — 19 of 23 implemented — with status, behaviour notes and a link to the AWS API reference for each."
 section: "Service Reference"
 tags:
   - cloudwatch
@@ -14,18 +14,18 @@ tags:
 
 # CloudWatch Logs operations
 
-18 of 22 listed operations are implemented. Back to [CloudWatch Logs](../cloudwatch-logs.md).
+19 of 23 listed operations are implemented. Back to [CloudWatch Logs](../cloudwatch-logs.md).
 
 ## Summary
 
-| Category    | ✅ Supported | ❌ Unsupported |
-| ----------- | ------------ | -------------- |
-| Log groups  | 3            |                |
-| Log streams | 3            |                |
-| Log events  | 4            |                |
-| Insights    |              | 3              |
-| Retention   | 2            | 1              |
-| Tagging     | 6            |                |
+| Category    | ✅ Supported | ⚠️ Partial | ❌ Unsupported |
+| ----------- | ------------ | ---------- | -------------- |
+| Log groups  | 3            |            |                |
+| Log streams | 3            |            |                |
+| Log events  | 4            | 1          |                |
+| Insights    |              |            | 3              |
+| Retention   | 2            |            | 1              |
+| Tagging     | 6            |            |                |
 
 ---
 
@@ -36,25 +36,26 @@ tags:
 | Operation           | Status       | Notes                                                                                                                                                                                   | AWS Docs                                                                                                |
 | ------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `CreateLogGroup`    | ✅ Supported | Validates name; returns error on duplicate; applies create-time `tags` atomically with the group (`kmsKeyId`, `logGroupClass` and `deletionProtectionEnabled` are accepted but ignored) | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_CreateLogGroup.html)    |
-| `DescribeLogGroups` | ✅ Supported | Optional `logGroupNamePrefix` filter                                                                                                                                                    | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_DescribeLogGroups.html) |
+| `DescribeLogGroups` | ✅ Supported | Optional `logGroupNamePrefix` filter; `limit` (default and maximum 50) and `nextToken` page the ASCII-sorted result                                                                     | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_DescribeLogGroups.html) |
 | `DeleteLogGroup`    | ✅ Supported | Deletes group and all streams/events                                                                                                                                                    | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_DeleteLogGroup.html)    |
 
 ### Log streams
 
-| Operation            | Status       | Notes                                              | AWS Docs                                                                                                 |
-| -------------------- | ------------ | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `CreateLogStream`    | ✅ Supported | Validates group exists; returns error on duplicate | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_CreateLogStream.html)    |
-| `DescribeLogStreams` | ✅ Supported | Optional `logStreamNamePrefix` filter              | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_DescribeLogStreams.html) |
-| `DeleteLogStream`    | ✅ Supported | Deletes stream and all its events                  | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_DeleteLogStream.html)    |
+| Operation            | Status       | Notes                                                                                                                                                     | AWS Docs                                                                                                 |
+| -------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `CreateLogStream`    | ✅ Supported | Validates group exists; returns error on duplicate                                                                                                        | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_CreateLogStream.html)    |
+| `DescribeLogStreams` | ✅ Supported | Optional `logStreamNamePrefix` filter; `limit` (default and maximum 50) and `nextToken` page the result (`orderBy`/`descending` are accepted but ignored) | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_DescribeLogStreams.html) |
+| `DeleteLogStream`    | ✅ Supported | Deletes stream and all its events                                                                                                                         | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_DeleteLogStream.html)    |
 
 ### Log events
 
-| Operation         | Status       | Notes                                                                                                                                                                                                                                                       | AWS Docs                                                                                              |
-| ----------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `PutLogEvents`    | ✅ Supported | Accepts batch of events; sets ingestion time                                                                                                                                                                                                                | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutLogEvents.html)    |
-| `GetLogEvents`    | ✅ Supported | startTime/endTime filtering; startFromHead                                                                                                                                                                                                                  | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_GetLogEvents.html)    |
-| `FilterLogEvents` | ✅ Supported | Text patterns (AND, quoted, ?OR), JSON patterns (`{ $.field op value }` with `&&`/`\|\|`, EXISTS, IS NULL), space-delimited patterns (`[col, col = val, ...]` with `*` glob, `%regex%`, numeric ops, `&&`/`\|\|`, ellipsis); time range, stream name/prefix | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_FilterLogEvents.html) |
-| `StartLiveTail`   | ✅ Supported | AWS event-stream response opening with initial-response, then sessionStart/sessionUpdate; supports group identifiers, stream names/prefixes, and filter patterns                                                                                            | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_StartLiveTail.html)   |
+| Operation         | Status       | Notes                                                                                                                                                                                                                                                                                                                           | AWS Docs                                                                                              |
+| ----------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `PutLogEvents`    | ✅ Supported | Accepts a batch of events and sets ingestion time; an event more than 2 hours ahead, older than 14 days or older than the group's retention is discarded and reported in `rejectedLogEventsInfo` behind a 200; a batch that is not in chronological order is refused with `InvalidParameterException`                           | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutLogEvents.html)    |
+| `GetLogEvents`    | ✅ Supported | startTime/endTime filtering; startFromHead                                                                                                                                                                                                                                                                                      | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_GetLogEvents.html)    |
+| `FilterLogEvents` | ✅ Supported | Text patterns (AND, quoted, ?OR), JSON patterns (`{ $.field op value }` with `&&`/`\|\|`, EXISTS, IS NULL), space-delimited patterns (`[col, col = val, ...]` with `*` glob, `%regex%`, numeric ops, `&&`/`\|\|`, ellipsis); time range, stream name/prefix; each event carries an `eventId` that resolves through GetLogRecord | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_FilterLogEvents.html) |
+| `GetLogRecord`    | ⚠️ Partial   | Resolves an `eventId` returned by FilterLogEvents to that event's `@message`, `@timestamp`, `@ingestionTime`, `@log` and `@logStream`; a Logs Insights `@ptr` cannot be produced here because StartQuery is unimplemented, and a structured message is not split into per-field entries                                         | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_GetLogRecord.html)    |
+| `StartLiveTail`   | ✅ Supported | AWS event-stream response opening with initial-response, then sessionStart/sessionUpdate; supports group identifiers, stream names/prefixes, and filter patterns                                                                                                                                                                | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_StartLiveTail.html)   |
 
 ### Insights
 

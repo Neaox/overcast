@@ -952,3 +952,23 @@ func errInvalidParameter(msg string) *protocol.AWSError {
 		HTTPStatus: http.StatusBadRequest,
 	}
 }
+
+// errInvalidNextToken is what every paginated CloudWatch Logs operation
+// answers for a continuation token that is not validly one of its own.
+// Reporting it is the point: silently restarting from page 1 is the
+// duplicate-delivery failure serviceutil.ErrInvalidPageToken exists to
+// prevent, and one wording keeps the four operations that page consistent.
+func errInvalidNextToken() *protocol.AWSError {
+	return errInvalidParameter("The specified nextToken is invalid.")
+}
+
+// errLogRecordNotFound reports a logRecordPointer that decodes but names an
+// event this emulator no longer holds — deleted with its stream or group, or
+// swept by the retention policy.
+func errLogRecordNotFound() *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ResourceNotFoundException",
+		Message:    "The specified log record does not exist.",
+		HTTPStatus: http.StatusBadRequest,
+	}
+}

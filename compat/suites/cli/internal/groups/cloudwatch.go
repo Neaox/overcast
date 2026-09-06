@@ -3,6 +3,7 @@ package groups
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/overcast-sh/overcast-compat-cli/internal/awscli"
 	"github.com/overcast-sh/overcast-compat-cli/internal/harness"
@@ -207,7 +208,11 @@ func (g *cwlGroup) setupEvents(_ context.Context, t *harness.TestContext) error 
 }
 
 func (g *cwlGroup) PutLogEvents(_ context.Context, t *harness.TestContext) error {
-	events := `[{"timestamp":1700000000000,"message":"hello from CLI test"}]`
+	// The timestamp has to be current: CloudWatch Logs discards an event older
+	// than 14 days or more than two hours in the future, reporting it in
+	// rejectedLogEventsInfo rather than failing the call, so a hard-coded
+	// timestamp silently stops storing anything as it ages (#1721).
+	events := fmt.Sprintf(`[{"timestamp":%d,"message":"hello from CLI test"}]`, time.Now().UnixMilli())
 	if err := awscli.Run(t.Endpoint, t.Region,
 		"logs", "put-log-events",
 		"--log-group-name", g.eventsGroupName(t),

@@ -108,11 +108,11 @@ func TestStartLiveTail_streamsMatchingEvents(t *testing.T) {
 
 	// When: matching and non-matching log events are written
 	putLogEvents(t, srv, groupName, "app/one", []logEvent{
-		{Timestamp: 1000, Message: "INFO ignored"},
-		{Timestamp: 1001, Message: "ERROR accepted"},
+		{Timestamp: evtTS(1000), Message: "INFO ignored"},
+		{Timestamp: evtTS(1001), Message: "ERROR accepted"},
 	})
 	putLogEvents(t, srv, groupName, "app/two", []logEvent{
-		{Timestamp: 1002, Message: "ERROR accepted too"},
+		{Timestamp: evtTS(1002), Message: "ERROR accepted too"},
 	})
 
 	// Then: Live Tail emits sessionUpdates containing only matching events. The
@@ -139,10 +139,10 @@ func TestStartLiveTail_streamsMatchingEvents(t *testing.T) {
 		}
 		seen[result.LogStreamName+"\x00"+result.Message] = result
 	}
-	if got, ok := seen["app/one\x00ERROR accepted"]; !ok || got.Timestamp != 1001 {
+	if got, ok := seen["app/one\x00ERROR accepted"]; !ok || got.Timestamp != evtTS(1001) {
 		t.Fatalf("missing app/one ERROR event, got: %+v", results)
 	}
-	if got, ok := seen["app/two\x00ERROR accepted too"]; !ok || got.Timestamp != 1002 {
+	if got, ok := seen["app/two\x00ERROR accepted too"]; !ok || got.Timestamp != evtTS(1002) {
 		t.Fatalf("missing app/two ERROR event, got: %+v", results)
 	}
 }
@@ -169,7 +169,7 @@ func TestStartLiveTail_manySmallWritesAllArrive(t *testing.T) {
 	const writes = 30
 	for i := 0; i < writes; i++ {
 		putLogEvents(t, srv, groupName, "app/one", []logEvent{
-			{Timestamp: int64(2000 + i), Message: "line " + strconv.Itoa(i)},
+			{Timestamp: evtTS(int64(2000 + i)), Message: "line " + strconv.Itoa(i)},
 		})
 	}
 
@@ -217,7 +217,7 @@ func TestStartLiveTail_overflowDropsOldestAndSaysSampled(t *testing.T) {
 	const total = 5600
 	events := make([]logEvent, total)
 	for i := range events {
-		events[i] = logEvent{Timestamp: int64(3000 + i), Message: "flood " + strconv.Itoa(i)}
+		events[i] = logEvent{Timestamp: evtTS(int64(3000 + i)), Message: "flood " + strconv.Itoa(i)}
 	}
 	putLogEvents(t, srv, groupName, "app/one", events)
 
@@ -770,8 +770,8 @@ func TestPutLogEvents_success(t *testing.T) {
 		"logGroupName":  "/aws/lambda/my-function",
 		"logStreamName": "my-stream",
 		"logEvents": []map[string]any{
-			{"timestamp": 1743120000000, "message": "START RequestId: abc-123"},
-			{"timestamp": 1743120001000, "message": "END RequestId: abc-123"},
+			{"timestamp": evtTS(0), "message": "START RequestId: abc-123"},
+			{"timestamp": evtTS(1000), "message": "END RequestId: abc-123"},
 		},
 	})
 	defer resp.Body.Close()
@@ -797,7 +797,7 @@ func TestPutLogEvents_groupNotFound(t *testing.T) {
 	resp := logsCall(t, srv, "PutLogEvents", map[string]any{
 		"logGroupName":  "/aws/lambda/no-such-function",
 		"logStreamName": "my-stream",
-		"logEvents":     []map[string]any{{"timestamp": 1743120000000, "message": "hello"}},
+		"logEvents":     []map[string]any{{"timestamp": evtTS(0), "message": "hello"}},
 	})
 	defer resp.Body.Close()
 
@@ -815,7 +815,7 @@ func TestPutLogEvents_streamNotFound(t *testing.T) {
 	resp := logsCall(t, srv, "PutLogEvents", map[string]any{
 		"logGroupName":  "/aws/lambda/my-function",
 		"logStreamName": "no-such-stream",
-		"logEvents":     []map[string]any{{"timestamp": 1743120000000, "message": "hello"}},
+		"logEvents":     []map[string]any{{"timestamp": evtTS(0), "message": "hello"}},
 	})
 	defer resp.Body.Close()
 
@@ -850,9 +850,9 @@ func TestGetLogEvents_success(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/my-function")
 	createLogStream(t, srv, "/aws/lambda/my-function", "my-stream")
 	putLogEvents(t, srv, "/aws/lambda/my-function", "my-stream", []logEvent{
-		{Timestamp: 1743120000000, Message: "START RequestId: abc-123"},
-		{Timestamp: 1743120001000, Message: "log line one"},
-		{Timestamp: 1743120002000, Message: "END RequestId: abc-123"},
+		{Timestamp: evtTS(0), Message: "START RequestId: abc-123"},
+		{Timestamp: evtTS(1000), Message: "log line one"},
+		{Timestamp: evtTS(2000), Message: "END RequestId: abc-123"},
 	})
 
 	// When: GetLogEvents is called
@@ -927,18 +927,18 @@ func TestGetLogEvents_timeRange(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/my-function")
 	createLogStream(t, srv, "/aws/lambda/my-function", "my-stream")
 	putLogEvents(t, srv, "/aws/lambda/my-function", "my-stream", []logEvent{
-		{Timestamp: 1000, Message: "before-range"},
-		{Timestamp: 2000, Message: "in-range-start"},
-		{Timestamp: 3000, Message: "in-range-end"},
-		{Timestamp: 4000, Message: "after-range"},
+		{Timestamp: evtTS(1000), Message: "before-range"},
+		{Timestamp: evtTS(2000), Message: "in-range-start"},
+		{Timestamp: evtTS(3000), Message: "in-range-end"},
+		{Timestamp: evtTS(4000), Message: "after-range"},
 	})
 
 	// When: GetLogEvents is called with startTime=2000, endTime=3000
 	resp := logsCall(t, srv, "GetLogEvents", map[string]any{
 		"logGroupName":  "/aws/lambda/my-function",
 		"logStreamName": "my-stream",
-		"startTime":     2000,
-		"endTime":       3001,
+		"startTime":     evtTS(2000),
+		"endTime":       evtTS(3001),
 	})
 	defer resp.Body.Close()
 
@@ -1015,8 +1015,8 @@ func TestRPCv2CBOR_LogEventsRoundTrip(t *testing.T) {
 		"logGroupName":  "/aws/lambda/cbor-events",
 		"logStreamName": "stream",
 		"logEvents": []map[string]any{
-			{"timestamp": int64(1000), "message": "hello cbor"},
-			{"timestamp": int64(2000), "message": "goodbye cbor"},
+			{"timestamp": evtTS(1000), "message": "hello cbor"},
+			{"timestamp": evtTS(2000), "message": "goodbye cbor"},
 		},
 	})
 	helpers.AssertStatus(t, resp, http.StatusOK)
@@ -1034,7 +1034,7 @@ func TestRPCv2CBOR_LogEventsRoundTrip(t *testing.T) {
 	resp = logsCBORCall(t, srv, "GetLogEvents", map[string]any{
 		"logGroupName":  "/aws/lambda/cbor-events",
 		"logStreamName": "stream",
-		"startTime":     int64(1500),
+		"startTime":     evtTS(1500),
 	})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
@@ -1064,7 +1064,7 @@ func TestDeleteLogGroup_success(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/my-function")
 	createLogStream(t, srv, "/aws/lambda/my-function", "my-stream")
 	putLogEvents(t, srv, "/aws/lambda/my-function", "my-stream", []logEvent{
-		{Timestamp: 1000, Message: "hello"},
+		{Timestamp: evtTS(1000), Message: "hello"},
 	})
 
 	// When: DeleteLogGroup is called
@@ -1143,11 +1143,11 @@ func TestFilterLogEvents_noFilter(t *testing.T) {
 	createLogStream(t, srv, "/aws/lambda/my-function", "stream-a")
 	createLogStream(t, srv, "/aws/lambda/my-function", "stream-b")
 	putLogEvents(t, srv, "/aws/lambda/my-function", "stream-a", []logEvent{
-		{Timestamp: 1000, Message: "alpha first"},
-		{Timestamp: 3000, Message: "alpha third"},
+		{Timestamp: evtTS(1000), Message: "alpha first"},
+		{Timestamp: evtTS(3000), Message: "alpha third"},
 	})
 	putLogEvents(t, srv, "/aws/lambda/my-function", "stream-b", []logEvent{
-		{Timestamp: 2000, Message: "beta second"},
+		{Timestamp: evtTS(2000), Message: "beta second"},
 	})
 
 	// When: FilterLogEvents is called without a filter pattern
@@ -1181,10 +1181,10 @@ func TestFilterLogEvents_withFilterPattern(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/my-function")
 	createLogStream(t, srv, "/aws/lambda/my-function", "my-stream")
 	putLogEvents(t, srv, "/aws/lambda/my-function", "my-stream", []logEvent{
-		{Timestamp: 1000, Message: "INFO starting up"},
-		{Timestamp: 2000, Message: "ERROR something broke"},
-		{Timestamp: 3000, Message: "INFO recovered"},
-		{Timestamp: 4000, Message: "ERROR another failure"},
+		{Timestamp: evtTS(1000), Message: "INFO starting up"},
+		{Timestamp: evtTS(2000), Message: "ERROR something broke"},
+		{Timestamp: evtTS(3000), Message: "INFO recovered"},
+		{Timestamp: evtTS(4000), Message: "ERROR another failure"},
 	})
 
 	// When: FilterLogEvents is called with filterPattern "ERROR"
@@ -1213,9 +1213,9 @@ func TestFilterLogEvents_withQuotedTerms(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/my-function")
 	createLogStream(t, srv, "/aws/lambda/my-function", "my-stream")
 	putLogEvents(t, srv, "/aws/lambda/my-function", "my-stream", []logEvent{
-		{Timestamp: 1000, Message: "request completed successfully"},
-		{Timestamp: 2000, Message: "request failed with error"},
-		{Timestamp: 3000, Message: "another error occurred"},
+		{Timestamp: evtTS(1000), Message: "request completed successfully"},
+		{Timestamp: evtTS(2000), Message: "request failed with error"},
+		{Timestamp: evtTS(3000), Message: "another error occurred"},
 	})
 
 	// When: FilterLogEvents uses a quoted exact phrase
@@ -1241,9 +1241,9 @@ func TestFilterLogEvents_multipleTerms(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/my-function")
 	createLogStream(t, srv, "/aws/lambda/my-function", "my-stream")
 	putLogEvents(t, srv, "/aws/lambda/my-function", "my-stream", []logEvent{
-		{Timestamp: 1000, Message: "ERROR user abc-123 not found"},
-		{Timestamp: 2000, Message: "INFO user abc-123 logged in"},
-		{Timestamp: 3000, Message: "ERROR system crash"},
+		{Timestamp: evtTS(1000), Message: "ERROR user abc-123 not found"},
+		{Timestamp: evtTS(2000), Message: "INFO user abc-123 logged in"},
+		{Timestamp: evtTS(3000), Message: "ERROR system crash"},
 	})
 
 	// When: FilterLogEvents uses space-separated terms (AND logic)
@@ -1272,17 +1272,17 @@ func TestFilterLogEvents_timeRange(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/my-function")
 	createLogStream(t, srv, "/aws/lambda/my-function", "my-stream")
 	putLogEvents(t, srv, "/aws/lambda/my-function", "my-stream", []logEvent{
-		{Timestamp: 1000, Message: "too early"},
-		{Timestamp: 2000, Message: "in range"},
-		{Timestamp: 3000, Message: "also in range"},
-		{Timestamp: 4000, Message: "too late"},
+		{Timestamp: evtTS(1000), Message: "too early"},
+		{Timestamp: evtTS(2000), Message: "in range"},
+		{Timestamp: evtTS(3000), Message: "also in range"},
+		{Timestamp: evtTS(4000), Message: "too late"},
 	})
 
 	// When: FilterLogEvents is called with time bounds
 	resp := logsCall(t, srv, "FilterLogEvents", map[string]any{
 		"logGroupName": "/aws/lambda/my-function",
-		"startTime":    2000,
-		"endTime":      3000,
+		"startTime":    evtTS(2000),
+		"endTime":      evtTS(3000),
 	})
 	defer resp.Body.Close()
 
@@ -1304,13 +1304,13 @@ func TestFilterLogEvents_logStreamNames(t *testing.T) {
 	createLogStream(t, srv, "/aws/lambda/my-function", "stream-b")
 	createLogStream(t, srv, "/aws/lambda/my-function", "stream-c")
 	putLogEvents(t, srv, "/aws/lambda/my-function", "stream-a", []logEvent{
-		{Timestamp: 1000, Message: "from a"},
+		{Timestamp: evtTS(1000), Message: "from a"},
 	})
 	putLogEvents(t, srv, "/aws/lambda/my-function", "stream-b", []logEvent{
-		{Timestamp: 2000, Message: "from b"},
+		{Timestamp: evtTS(2000), Message: "from b"},
 	})
 	putLogEvents(t, srv, "/aws/lambda/my-function", "stream-c", []logEvent{
-		{Timestamp: 3000, Message: "from c"},
+		{Timestamp: evtTS(3000), Message: "from c"},
 	})
 
 	// When: FilterLogEvents specifies only stream-a and stream-c
@@ -1338,13 +1338,13 @@ func TestFilterLogEvents_logStreamNamePrefix(t *testing.T) {
 	createLogStream(t, srv, "/aws/lambda/my-function", "2026/03/28/b")
 	createLogStream(t, srv, "/aws/lambda/my-function", "2026/03/27/c")
 	putLogEvents(t, srv, "/aws/lambda/my-function", "2026/03/28/a", []logEvent{
-		{Timestamp: 1000, Message: "28-a"},
+		{Timestamp: evtTS(1000), Message: "28-a"},
 	})
 	putLogEvents(t, srv, "/aws/lambda/my-function", "2026/03/28/b", []logEvent{
-		{Timestamp: 2000, Message: "28-b"},
+		{Timestamp: evtTS(2000), Message: "28-b"},
 	})
 	putLogEvents(t, srv, "/aws/lambda/my-function", "2026/03/27/c", []logEvent{
-		{Timestamp: 3000, Message: "27-c"},
+		{Timestamp: evtTS(3000), Message: "27-c"},
 	})
 
 	// When: FilterLogEvents uses logStreamNamePrefix
@@ -1370,9 +1370,9 @@ func TestFilterLogEvents_jsonFieldEquals(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/json-filter")
 	createLogStream(t, srv, "/aws/lambda/json-filter", "stream")
 	putLogEvents(t, srv, "/aws/lambda/json-filter", "stream", []logEvent{
-		{Timestamp: 1000, Message: `{"level":"ERROR","msg":"disk full"}`},
-		{Timestamp: 2000, Message: `{"level":"INFO","msg":"started"}`},
-		{Timestamp: 3000, Message: `{"level":"ERROR","msg":"timeout"}`},
+		{Timestamp: evtTS(1000), Message: `{"level":"ERROR","msg":"disk full"}`},
+		{Timestamp: evtTS(2000), Message: `{"level":"INFO","msg":"started"}`},
+		{Timestamp: evtTS(3000), Message: `{"level":"ERROR","msg":"timeout"}`},
 	})
 
 	// When: FilterLogEvents uses a JSON equality filter
@@ -1398,9 +1398,9 @@ func TestFilterLogEvents_jsonNumericComparison(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/json-numeric")
 	createLogStream(t, srv, "/aws/lambda/json-numeric", "stream")
 	putLogEvents(t, srv, "/aws/lambda/json-numeric", "stream", []logEvent{
-		{Timestamp: 1000, Message: `{"statusCode":200}`},
-		{Timestamp: 2000, Message: `{"statusCode":404}`},
-		{Timestamp: 3000, Message: `{"statusCode":503}`},
+		{Timestamp: evtTS(1000), Message: `{"statusCode":200}`},
+		{Timestamp: evtTS(2000), Message: `{"statusCode":404}`},
+		{Timestamp: evtTS(3000), Message: `{"statusCode":503}`},
 	})
 
 	// When: FilterLogEvents uses a numeric comparison
@@ -1426,9 +1426,9 @@ func TestFilterLogEvents_jsonAndOr(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/json-logic")
 	createLogStream(t, srv, "/aws/lambda/json-logic", "stream")
 	putLogEvents(t, srv, "/aws/lambda/json-logic", "stream", []logEvent{
-		{Timestamp: 1000, Message: `{"level":"ERROR","code":503}`},
-		{Timestamp: 2000, Message: `{"level":"ERROR","code":400}`},
-		{Timestamp: 3000, Message: `{"level":"WARN","code":503}`},
+		{Timestamp: evtTS(1000), Message: `{"level":"ERROR","code":503}`},
+		{Timestamp: evtTS(2000), Message: `{"level":"ERROR","code":400}`},
+		{Timestamp: evtTS(3000), Message: `{"level":"WARN","code":503}`},
 	})
 
 	// When: FilterLogEvents uses && combinator
@@ -1454,9 +1454,9 @@ func TestFilterLogEvents_jsonExists(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/json-exists")
 	createLogStream(t, srv, "/aws/lambda/json-exists", "stream")
 	putLogEvents(t, srv, "/aws/lambda/json-exists", "stream", []logEvent{
-		{Timestamp: 1000, Message: `{"error":"disk full","req":"abc"}`},
-		{Timestamp: 2000, Message: `{"msg":"ok","req":"def"}`},
-		{Timestamp: 3000, Message: `{"error":"timeout","req":"ghi"}`},
+		{Timestamp: evtTS(1000), Message: `{"error":"disk full","req":"abc"}`},
+		{Timestamp: evtTS(2000), Message: `{"msg":"ok","req":"def"}`},
+		{Timestamp: evtTS(3000), Message: `{"error":"timeout","req":"ghi"}`},
 	})
 
 	// When: FilterLogEvents uses EXISTS
@@ -1482,8 +1482,8 @@ func TestFilterLogEvents_jsonNestedField(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/json-nested")
 	createLogStream(t, srv, "/aws/lambda/json-nested", "stream")
 	putLogEvents(t, srv, "/aws/lambda/json-nested", "stream", []logEvent{
-		{Timestamp: 1000, Message: `{"request":{"method":"GET","path":"/health"}}`},
-		{Timestamp: 2000, Message: `{"request":{"method":"POST","path":"/api"}}`},
+		{Timestamp: evtTS(1000), Message: `{"request":{"method":"GET","path":"/health"}}`},
+		{Timestamp: evtTS(2000), Message: `{"request":{"method":"POST","path":"/api"}}`},
 	})
 
 	// When: FilterLogEvents uses a nested field path
@@ -1509,9 +1509,9 @@ func TestFilterLogEvents_textOrInclude(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/text-or")
 	createLogStream(t, srv, "/aws/lambda/text-or", "stream")
 	putLogEvents(t, srv, "/aws/lambda/text-or", "stream", []logEvent{
-		{Timestamp: 1000, Message: "ERROR disk full"},
-		{Timestamp: 2000, Message: "WARN memory high"},
-		{Timestamp: 3000, Message: "INFO all good"},
+		{Timestamp: evtTS(1000), Message: "ERROR disk full"},
+		{Timestamp: evtTS(2000), Message: "WARN memory high"},
+		{Timestamp: evtTS(3000), Message: "INFO all good"},
 	})
 
 	// When: FilterLogEvents uses ? prefix for OR matching
@@ -1537,9 +1537,9 @@ func TestFilterLogEvents_jsonNonJSONMessages(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/json-mixed")
 	createLogStream(t, srv, "/aws/lambda/json-mixed", "stream")
 	putLogEvents(t, srv, "/aws/lambda/json-mixed", "stream", []logEvent{
-		{Timestamp: 1000, Message: `{"level":"ERROR"}`},
-		{Timestamp: 2000, Message: "plain text ERROR line"},
-		{Timestamp: 3000, Message: `not json {"level":"ERROR"}`},
+		{Timestamp: evtTS(1000), Message: `{"level":"ERROR"}`},
+		{Timestamp: evtTS(2000), Message: "plain text ERROR line"},
+		{Timestamp: evtTS(3000), Message: `not json {"level":"ERROR"}`},
 	})
 
 	// When: a JSON filter is applied
@@ -1584,9 +1584,9 @@ func TestFilterLogEvents_spaceDelimitedBasic(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/space-basic")
 	createLogStream(t, srv, "/aws/lambda/space-basic", "stream-1")
 	putLogEvents(t, srv, "/aws/lambda/space-basic", "stream-1", []logEvent{
-		{Timestamp: 1000, Message: "INFO 2024-01-01 GET /index.html 200 1234"},
-		{Timestamp: 2000, Message: "ERROR 2024-01-01 POST /api/v1 500 5678"},
-		{Timestamp: 3000, Message: "INFO 2024-01-01 GET /page.html 404 910"},
+		{Timestamp: evtTS(1000), Message: "INFO 2024-01-01 GET /index.html 200 1234"},
+		{Timestamp: evtTS(2000), Message: "ERROR 2024-01-01 POST /api/v1 500 5678"},
+		{Timestamp: evtTS(3000), Message: "INFO 2024-01-01 GET /page.html 404 910"},
 	})
 
 	// When: filter for status 4*
@@ -1603,8 +1603,8 @@ func TestFilterLogEvents_spaceDelimitedBasic(t *testing.T) {
 	if len(result.Events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(result.Events))
 	}
-	if result.Events[0].Timestamp != 3000 {
-		t.Errorf("expected timestamp 3000, got %d", result.Events[0].Timestamp)
+	if result.Events[0].Timestamp != evtTS(3000) {
+		t.Errorf("expected timestamp evtTS(3000) = %d, got %d", evtTS(3000), result.Events[0].Timestamp)
 	}
 }
 
@@ -1614,9 +1614,9 @@ func TestFilterLogEvents_spaceDelimitedRegex(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/space-regex")
 	createLogStream(t, srv, "/aws/lambda/space-regex", "stream-1")
 	putLogEvents(t, srv, "/aws/lambda/space-regex", "stream-1", []logEvent{
-		{Timestamp: 1000, Message: "127.0.0.1 frank /index.html 404 1534"},
-		{Timestamp: 2000, Message: "192.168.1.1 bob /index.html 404 1534"},
-		{Timestamp: 3000, Message: "127.0.0.9 alice /page.html 403 2000"},
+		{Timestamp: evtTS(1000), Message: "127.0.0.1 frank /index.html 404 1534"},
+		{Timestamp: evtTS(2000), Message: "192.168.1.1 bob /index.html 404 1534"},
+		{Timestamp: evtTS(3000), Message: "127.0.0.9 alice /page.html 403 2000"},
 	})
 
 	// When: filter using regex on IP
@@ -1641,9 +1641,9 @@ func TestFilterLogEvents_spaceDelimitedCompoundOr(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/space-compound")
 	createLogStream(t, srv, "/aws/lambda/space-compound", "stream-1")
 	putLogEvents(t, srv, "/aws/lambda/space-compound", "stream-1", []logEvent{
-		{Timestamp: 1000, Message: "GET /page 404 1534"},
-		{Timestamp: 2000, Message: "POST /api 200 1534"},
-		{Timestamp: 3000, Message: "DELETE /old 410 1534"},
+		{Timestamp: evtTS(1000), Message: "GET /page 404 1534"},
+		{Timestamp: evtTS(2000), Message: "POST /api 200 1534"},
+		{Timestamp: evtTS(3000), Message: "DELETE /old 410 1534"},
 	})
 
 	// When: filter for status_code = 404 || status_code = 410
@@ -1668,8 +1668,8 @@ func TestFilterLogEvents_spaceDelimitedEllipsis(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/space-ellipsis")
 	createLogStream(t, srv, "/aws/lambda/space-ellipsis", "stream-1")
 	putLogEvents(t, srv, "/aws/lambda/space-ellipsis", "stream-1", []logEvent{
-		{Timestamp: 1000, Message: "127.0.0.1 frank admin 2024-01-01 /index.html 404 1534"},
-		{Timestamp: 2000, Message: "127.0.0.1 bob admin 2024-01-01 /api 200 1534"},
+		{Timestamp: evtTS(1000), Message: "127.0.0.1 frank admin 2024-01-01 /index.html 404 1534"},
+		{Timestamp: evtTS(2000), Message: "127.0.0.1 bob admin 2024-01-01 /api 200 1534"},
 	})
 
 	// When: filter using ellipsis to skip leading fields
@@ -1686,8 +1686,8 @@ func TestFilterLogEvents_spaceDelimitedEllipsis(t *testing.T) {
 	if len(result.Events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(result.Events))
 	}
-	if result.Events[0].Timestamp != 1000 {
-		t.Errorf("expected timestamp 1000, got %d", result.Events[0].Timestamp)
+	if result.Events[0].Timestamp != evtTS(1000) {
+		t.Errorf("expected timestamp evtTS(1000) = %d, got %d", evtTS(1000), result.Events[0].Timestamp)
 	}
 }
 
@@ -1697,8 +1697,8 @@ func TestFilterLogEvents_spaceDelimitedBracketQuoteFields(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/space-bracket")
 	createLogStream(t, srv, "/aws/lambda/space-bracket", "stream-1")
 	putLogEvents(t, srv, "/aws/lambda/space-bracket", "stream-1", []logEvent{
-		{Timestamp: 1000, Message: `127.0.0.1 Prod frank [10/Oct/2000:13:25:15 -0700] "GET /index.html HTTP/1.0" 404 1534`},
-		{Timestamp: 2000, Message: `127.0.0.1 Prod frank [10/Oct/2000:13:25:15 -0700] "GET /api HTTP/1.0" 200 1534`},
+		{Timestamp: evtTS(1000), Message: `127.0.0.1 Prod frank [10/Oct/2000:13:25:15 -0700] "GET /index.html HTTP/1.0" 404 1534`},
+		{Timestamp: evtTS(2000), Message: `127.0.0.1 Prod frank [10/Oct/2000:13:25:15 -0700] "GET /api HTTP/1.0" 200 1534`},
 	})
 
 	// When: filter matching 7 fields (bracket+quote groups count as 1 each)
@@ -1715,8 +1715,8 @@ func TestFilterLogEvents_spaceDelimitedBracketQuoteFields(t *testing.T) {
 	if len(result.Events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(result.Events))
 	}
-	if result.Events[0].Timestamp != 1000 {
-		t.Errorf("expected timestamp 1000, got %d", result.Events[0].Timestamp)
+	if result.Events[0].Timestamp != evtTS(1000) {
+		t.Errorf("expected timestamp evtTS(1000) = %d, got %d", evtTS(1000), result.Events[0].Timestamp)
 	}
 }
 
@@ -1741,7 +1741,7 @@ func TestFilterLogEvents_returnsStreamName(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/my-function")
 	createLogStream(t, srv, "/aws/lambda/my-function", "my-stream")
 	putLogEvents(t, srv, "/aws/lambda/my-function", "my-stream", []logEvent{
-		{Timestamp: 1000, Message: "hello"},
+		{Timestamp: evtTS(1000), Message: "hello"},
 	})
 
 	// When: FilterLogEvents is called
@@ -1900,6 +1900,19 @@ func createLogStream(t *testing.T, srv *helpers.TestServer, groupName, streamNam
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
 }
+
+// evtBase anchors the small, readable relative offsets these tests use for
+// event timestamps (0, 1000, 2000, …) inside PutLogEvents' accepted ingestion
+// window. AWS discards a log event older than 14 days or more than two hours
+// in the future and reports it only in `rejectedLogEventsInfo` (#1721), so a
+// bare epoch-millisecond literal — over fifty years old — is data the emulator
+// now correctly refuses to store. One fixed anchor per test binary keeps the
+// offsets comparable across a test's own events while staying in the window.
+var evtBase = time.Now().Add(-time.Hour).UnixMilli()
+
+// evtTS turns one of those offsets into the absolute epoch millisecond the
+// wire carries.
+func evtTS(offset int64) int64 { return evtBase + offset }
 
 // logEvent is the wire shape used by PutLogEvents.
 type logEvent struct {
@@ -2271,9 +2284,9 @@ func TestGetLogEvents_TailLoop_ForwardTokenDoesNotReRead(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/tail-loop")
 	createLogStream(t, srv, "/aws/lambda/tail-loop", "stream")
 	putLogEvents(t, srv, "/aws/lambda/tail-loop", "stream", []logEvent{
-		{Timestamp: 1000, Message: "one"},
-		{Timestamp: 2000, Message: "two"},
-		{Timestamp: 3000, Message: "three"},
+		{Timestamp: evtTS(1000), Message: "one"},
+		{Timestamp: evtTS(2000), Message: "two"},
+		{Timestamp: evtTS(3000), Message: "three"},
 	})
 
 	// When: GetLogEvents is called from the head, then polled again with the
@@ -2313,7 +2326,7 @@ func TestGetLogEvents_SameTokenWhenExhausted(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/exhausted")
 	createLogStream(t, srv, "/aws/lambda/exhausted", "stream")
 	putLogEvents(t, srv, "/aws/lambda/exhausted", "stream", []logEvent{
-		{Timestamp: 1000, Message: "one"},
+		{Timestamp: evtTS(1000), Message: "one"},
 	})
 
 	// When: GetLogEvents is called from the head, then polled again with the
@@ -2353,7 +2366,7 @@ func TestGetLogEvents_SameTokenWhenExhausted(t *testing.T) {
 	// poll with the SAME token — proving the tail-loop actually progresses
 	// once there's something new, not just that it stays stable when idle.
 	putLogEvents(t, srv, "/aws/lambda/exhausted", "stream", []logEvent{
-		{Timestamp: 2000, Message: "two"},
+		{Timestamp: evtTS(2000), Message: "two"},
 	})
 	fourth := getLogEvents(t, srv, map[string]any{
 		"logGroupName":  "/aws/lambda/exhausted",
@@ -2374,11 +2387,11 @@ func TestGetLogEvents_TailLoop_ExactlyOnce(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/exactly-once")
 	createLogStream(t, srv, "/aws/lambda/exactly-once", "stream")
 	putLogEvents(t, srv, "/aws/lambda/exactly-once", "stream", []logEvent{
-		{Timestamp: 1000, Message: "e1"},
-		{Timestamp: 2000, Message: "e2"},
-		{Timestamp: 3000, Message: "e3"},
-		{Timestamp: 4000, Message: "e4"},
-		{Timestamp: 5000, Message: "e5"},
+		{Timestamp: evtTS(1000), Message: "e1"},
+		{Timestamp: evtTS(2000), Message: "e2"},
+		{Timestamp: evtTS(3000), Message: "e3"},
+		{Timestamp: evtTS(4000), Message: "e4"},
+		{Timestamp: evtTS(5000), Message: "e5"},
 	})
 
 	// When: a tail loop drains the stream 2 events at a time
@@ -2429,9 +2442,9 @@ func TestGetLogEvents_StartFromHead_BothDirections(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/start-from-head")
 	createLogStream(t, srv, "/aws/lambda/start-from-head", "stream")
 	putLogEvents(t, srv, "/aws/lambda/start-from-head", "stream", []logEvent{
-		{Timestamp: 1000, Message: "oldest"},
-		{Timestamp: 2000, Message: "middle"},
-		{Timestamp: 3000, Message: "newest"},
+		{Timestamp: evtTS(1000), Message: "oldest"},
+		{Timestamp: evtTS(2000), Message: "middle"},
+		{Timestamp: evtTS(3000), Message: "newest"},
 	})
 
 	// When/Then: startFromHead=true returns the earliest events
@@ -2505,16 +2518,16 @@ func TestFilterLogEvents_paginationContract(t *testing.T) {
 	createLogStream(t, srv, "/aws/lambda/filter-pagination", "stream-b")
 
 	putLogEvents(t, srv, "/aws/lambda/filter-pagination", "stream-a", []logEvent{
-		{Timestamp: 1000, Message: "ERROR e1"},
-		{Timestamp: 3000, Message: "INFO ignored-1"},
-		{Timestamp: 5000, Message: "ERROR e3"},
-		{Timestamp: 7000, Message: "ERROR e5"},
+		{Timestamp: evtTS(1000), Message: "ERROR e1"},
+		{Timestamp: evtTS(3000), Message: "INFO ignored-1"},
+		{Timestamp: evtTS(5000), Message: "ERROR e3"},
+		{Timestamp: evtTS(7000), Message: "ERROR e5"},
 	})
 	putLogEvents(t, srv, "/aws/lambda/filter-pagination", "stream-b", []logEvent{
-		{Timestamp: 2000, Message: "ERROR e2"},
-		{Timestamp: 4000, Message: "INFO ignored-2"},
-		{Timestamp: 6000, Message: "ERROR e4"},
-		{Timestamp: 8000, Message: "ERROR e6"},
+		{Timestamp: evtTS(2000), Message: "ERROR e2"},
+		{Timestamp: evtTS(4000), Message: "INFO ignored-2"},
+		{Timestamp: evtTS(6000), Message: "ERROR e4"},
+		{Timestamp: evtTS(8000), Message: "ERROR e6"},
 	})
 	wantIDs := []string{"e1", "e2", "e3", "e4", "e5", "e6"}
 
@@ -2583,15 +2596,15 @@ func TestFilterLogEvents_BufferedEventVisibleInWindow(t *testing.T) {
 	createLogGroup(t, srv, "/aws/lambda/filter-buffered")
 	createLogStream(t, srv, "/aws/lambda/filter-buffered", "stream")
 	putLogEvents(t, srv, "/aws/lambda/filter-buffered", "stream", []logEvent{
-		{Timestamp: 1000, Message: "ERROR freshly buffered"},
+		{Timestamp: evtTS(1000), Message: "ERROR freshly buffered"},
 	})
 
 	// When: FilterLogEvents is called over a window covering that event
 	resp := logsCall(t, srv, "FilterLogEvents", map[string]any{
 		"logGroupName":  "/aws/lambda/filter-buffered",
 		"filterPattern": "ERROR",
-		"startTime":     0,
-		"endTime":       2000,
+		"startTime":     evtTS(0),
+		"endTime":       evtTS(2000),
 	})
 	defer resp.Body.Close()
 
