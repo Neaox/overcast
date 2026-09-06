@@ -1,5 +1,5 @@
 /**
- * classnames/no-duplicate-class-cluster
+ * local/no-duplicate-class-cluster
  *
  * docs/plans/web-ui-dry-refactor.md §7: "a generic rule that fails when a
  * literal class string over N tokens appears in more than M files. Would have

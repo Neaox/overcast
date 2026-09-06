@@ -1,5 +1,5 @@
 /**
- * classnames/no-template-literal
+ * local/no-template-literal
  *
  * Disallow template literals in className attributes. Use cn() instead.
  *

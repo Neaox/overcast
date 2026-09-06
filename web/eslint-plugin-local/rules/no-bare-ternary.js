@@ -1,5 +1,5 @@
 /**
- * classnames/no-bare-ternary
+ * local/no-bare-ternary
  *
  * Disallow bare ternary/logical expressions in className attributes that
  * aren't wrapped in cn(). Wrapping in cn() enables:

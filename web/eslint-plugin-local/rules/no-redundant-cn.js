@@ -1,5 +1,5 @@
 /**
- * classnames/no-redundant-cn
+ * local/no-redundant-cn
  *
  * Disallow cn() calls that contain only a single static string argument.
  * cn() (clsx + tailwind-merge) adds runtime overhead to resolve class

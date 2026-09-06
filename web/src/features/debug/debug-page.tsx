@@ -14,7 +14,7 @@ import { PageHeader, QueryListState, Spinner } from "@/components/ui/primitives"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-// eslint-disable-next-line classnames/prefer-resource-table -- the raw backing store: its paging is driven by the virtual window and the selected row is an attribute on the `<tr>`
+// eslint-disable-next-line local/prefer-resource-table -- the raw backing store: its paging is driven by the virtual window and the selected row is an attribute on the `<tr>`
 import { Table, TableBody, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"

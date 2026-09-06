@@ -1621,8 +1621,10 @@ entry point). **There is no ESLint in this repository.**
 
 - **[`web/.oxlintrc.json`](./web/.oxlintrc.json) owns the rule set** — every rule,
   its severity, and the reasoning. It also loads
-  `web/eslint-plugin-classnames` and `@tanstack/eslint-plugin-query` as oxlint JS
-  plugins, aliased so rule names stay `classnames/…` and `@tanstack/query/…`.
+  `web/eslint-plugin-local` and `@tanstack/eslint-plugin-query` as oxlint JS
+  plugins. `@tanstack/query/…` keeps its upstream spelling; this repo's own
+  rules are `local/…`, named for where they come from rather than what they
+  lint — the namespace was `classnames/…` until the plugin outgrew it.
   Type-aware rules run through `oxlint-tsgolint`, which embeds its own
   typescript-go, so they do not depend on the `typescript` devDependency.
 - **New rules go in `.oxlintrc.json`.** There is nowhere else to put one.
@@ -1703,7 +1705,7 @@ at all (the IAM policy simulator's result grid, the debug page), and one whose s
 genuinely does not fit (`log-search-results`' virtualized stream). When you do, say why
 in a comment at the call site — "ResourceTable didn't fit because …" — so the next
 reader can tell a decision from an oversight, and disable
-`classnames/prefer-resource-table` on the import with the same reason. That rule flags
+`local/prefer-resource-table` on the import with the same reason. That rule flags
 any import of the table primitives under `features/**`, so an exception is recorded
 twice on purpose: once for the reader, at the call site, and once for the linter, at the
 import it needs. Fifty-five bespoke tables accumulated before that rule existed; their

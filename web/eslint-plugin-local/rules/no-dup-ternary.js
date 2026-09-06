@@ -1,5 +1,5 @@
 /**
- * classnames/no-dup-ternary
+ * local/no-dup-ternary
  *
  * When a cn() call contains a ternary where both branches share identical
  * Tailwind utility classes, hoist the shared classes out of the ternary.

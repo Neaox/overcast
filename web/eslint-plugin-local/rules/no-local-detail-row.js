@@ -1,5 +1,5 @@
 /**
- * classnames/no-local-detail-row
+ * local/no-local-detail-row
  *
  * docs/plans/web-ui-dry-refactor.md §7: "flag a local
  * `function DetailRow|InfoRow|MetaRow` in `src/features/**`. Directly

@@ -584,7 +584,7 @@ the grid back into the page fails CI rather than only lint-warning.
   and a reworded header must not break a saved link.
 - **2026-09-06 — the drift guard** (#1327 Wave E). The issue's optional enforcement item asked
   for an ESLint `no-restricted-imports` entry with an allowlist; ESLint is gone (#1330), so it is
-  `classnames/prefer-resource-table` in the house plugin instead — an import of
+  `local/prefer-resource-table` in the house plugin instead — an import of
   `@/components/ui/table` under `src/features/**` warns, and the allowlist is a disable comment
   carrying its reason, the shape `prefer-use-resource-mutation` already uses. Eight sites carry one
   today: the six deliberately-bespoke tables plus `s3/object-controls` (borrows one `TableHead`)
@@ -996,7 +996,12 @@ build a parallel one.
 Both existing mechanisms can be extended, and both should be — the audit's clearest lesson is that
 extraction without enforcement decays within a release.
 
-### The eslint plugin (`web/eslint-plugin-classnames/`) — landed 2026-08-23 (#1201)
+### The eslint plugin (`web/eslint-plugin-local/`) — landed 2026-08-23 (#1201)
+
+> Renamed from `web/eslint-plugin-classnames/` (namespace `classnames/…` → `local/…`) on
+> 2026-09-06: it was created in 2026-05 for `cn()` construction alone, and by the time the six
+> guardrails below landed in it, half its rules had nothing to do with a class name. `local` names
+> where a rule comes from — this repository — which is the fact that cannot go stale.
 
 Twelve rules now, all `warn`, all about hygiene the new scaffolds should own. It is an ESLint
 flat-config plugin with a `rules/` directory — adding rules is a file plus one line in `index.js`.
@@ -1026,7 +1031,7 @@ original six, which don't have one either:
   hits.**
 - **`prefer-use-resource-mutation`** — flags `useMutation(` in `src/features/**`. **78 real hits.**
   The "allowlist" the original brief asked for is a plain
-  `// eslint-disable-next-line classnames/prefer-use-resource-mutation -- <reason>` — no second
+  `// eslint-disable-next-line local/prefer-use-resource-mutation -- <reason>` — no second
   config surface needed, since a disable comment already requires and preserves a reason.
 - **`no-duplicate-class-cluster`** — cross-file by nature (a single file's AST can't answer "is this
   common"), so it reads the whole `src/` tree itself with `node:fs` on first use and caches the

@@ -31,7 +31,7 @@ import {
 } from "@/features/apigateway/data"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
-// eslint-disable-next-line classnames/prefer-resource-table -- the resource tree renders one row per method under its resource, sharing the parent's columns — `expandedContent` gives a panel, not sub-rows
+// eslint-disable-next-line local/prefer-resource-table -- the resource tree renders one row per method under its resource, sharing the parent's columns — `expandedContent` gives a panel, not sub-rows
 import {
   Table,
   TableBody,

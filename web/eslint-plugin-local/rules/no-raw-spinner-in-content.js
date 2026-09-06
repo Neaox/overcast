@@ -1,5 +1,5 @@
 /**
- * classnames/no-raw-spinner-in-content
+ * local/no-raw-spinner-in-content
  *
  * docs/plans/web-ui-dry-refactor.md §7: "flag `<Spinner>` that is not inside
  * a `<Button>`, `<Badge>` or toast. Encodes the 5b rule ('14-16px, chips and

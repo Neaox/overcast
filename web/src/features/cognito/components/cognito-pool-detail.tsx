@@ -70,7 +70,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { Definition, DefinitionCard, DefinitionList } from "@/components/ui/definition-card"
-// eslint-disable-next-line classnames/prefer-resource-table -- an attribute grid, not a list of resources
+// eslint-disable-next-line local/prefer-resource-table -- an attribute grid, not a list of resources
 import {
   Table,
   TableBody,

@@ -1,5 +1,5 @@
 /**
- * eslint-plugin-classnames — enforce idiomatic Tailwind className construction
+ * eslint-plugin-local — enforce idiomatic Tailwind className construction
  * in React components that use the cn() utility (clsx + tailwind-merge), plus
  * the docs/plans/web-ui-dry-refactor.md §7 guardrails that keep the
  * `ResourceTable`/`ResourceListPage`/`ResourceListSection` scaffolds (and
@@ -13,19 +13,19 @@
  *   - Conditional styling is readable and maintainable
  *
  * Rules:
- *   classnames/no-template-literal          — use cn() instead of template literals
- *   classnames/no-concatenation              — use cn() instead of string concatenation
- *   classnames/no-bare-ternary               — wrap conditional classNames in cn()
- *   classnames/no-redundant-cn               — don't use cn() for a single static string
- *   classnames/no-dup-ternary                — hoist shared classes out of ternary branches
- *   classnames/prefer-cva                    — suggest cva() once a cn() call gets variant-shaped
- *   classnames/no-local-detail-row           — no local DetailRow/InfoRow/MetaRow under features/**
- *   classnames/prefer-button-busy            — use <Button busy> instead of disabled={isPending} + <Spinner>
- *   classnames/no-raw-spinner-in-content     — <Spinner> only inside <Button>/<Badge>/toast
- *   classnames/prefer-shared-formatter       — use src/lib/format.ts instead of toLocale*()/local formatBytes|Date|Duration
- *   classnames/prefer-use-resource-mutation  — use useResourceMutation instead of a raw useMutation() under features/**
- *   classnames/prefer-resource-table         — use ResourceTable instead of the table primitives under features/**
- *   classnames/no-duplicate-class-cluster    — flag a class-string run that already recurs across many files
+ *   local/no-template-literal          — use cn() instead of template literals
+ *   local/no-concatenation              — use cn() instead of string concatenation
+ *   local/no-bare-ternary               — wrap conditional classNames in cn()
+ *   local/no-redundant-cn               — don't use cn() for a single static string
+ *   local/no-dup-ternary                — hoist shared classes out of ternary branches
+ *   local/prefer-cva                    — suggest cva() once a cn() call gets variant-shaped
+ *   local/no-local-detail-row           — no local DetailRow/InfoRow/MetaRow under features/**
+ *   local/prefer-button-busy            — use <Button busy> instead of disabled={isPending} + <Spinner>
+ *   local/no-raw-spinner-in-content     — <Spinner> only inside <Button>/<Badge>/toast
+ *   local/prefer-shared-formatter       — use src/lib/format.ts instead of toLocale*()/local formatBytes|Date|Duration
+ *   local/prefer-use-resource-mutation  — use useResourceMutation instead of a raw useMutation() under features/**
+ *   local/prefer-resource-table         — use ResourceTable instead of the table primitives under features/**
+ *   local/no-duplicate-class-cluster    — flag a class-string run that already recurs across many files
  */
 
 import noTemplateLiteral from "./rules/no-template-literal.js"
