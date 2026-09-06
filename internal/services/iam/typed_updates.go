@@ -122,6 +122,9 @@ func (h *Handler) createPolicyVersionTyped(ctx context.Context, req *createPolic
 	if strings.TrimSpace(req.PolicyDocument) == "" {
 		return nil, protocol.ErrMissingParameter("PolicyDocument")
 	}
+	if aerr := checkPolicyDocument(req.PolicyDocument); aerr != nil {
+		return nil, aerr
+	}
 	p, aerr := h.store.getPolicy(ctx, req.PolicyArn)
 	if aerr != nil {
 		return nil, aerr

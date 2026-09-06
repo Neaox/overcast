@@ -28,6 +28,38 @@ What the policy evaluator covers and where it stops, behind the summary on
 Within the single account Overcast emulates, an allow in either the identity
 policies or the resource policy is sufficient, and a deny in either is final.
 
+## Policy documents are checked at the API boundary
+
+Every operation that takes a document — `CreatePolicy`, `CreatePolicyVersion`,
+`CreateRole`, `UpdateAssumeRolePolicy`, `PutRolePolicy`, `PutUserPolicy`,
+`PutGroupPolicy` — parses it first and refuses a malformed one with
+`MalformedPolicyDocument` (400), as AWS does. The check is structural, and it
+is the same parser the evaluator uses, so a document `CreatePolicy` accepts is
+one enforcement can read.
+
+| Checked                                        | Rule                                 |
+| ---------------------------------------------- | -------------------------------------- |
+| The document                                   | Valid JSON, and a JSON object          |
+| `Statement`                                    | Present, and an object or a non-empty array |
+| `Effect`                                       | Exactly `Allow` or `Deny` — AWS is case sensitive here |
+| `Action`                                       | One of `Action` or `NotAction`, never both |
+| `Resource`                                     | `Resource` and `NotResource` are mutually exclusive |
+| `Version`                                      | When present, `2012-10-17` or `2008-10-17` |
+
+Deeper checks are deliberately absent rather than half-implemented, so a
+document can still be nonsense in ways AWS would catch:
+
+- ARN syntax in `Resource`, `NotResource` and `Principal`
+- whether an action name or condition-operator name is real
+- `Sid` uniqueness and character set
+- a `Principal` in an identity policy, or a trust policy without one — AWS
+  refuses both, this does not
+- a missing `Resource` where AWS requires one
+- the 6,144-character document size limit
+- an omitted or empty document. AWS answers a `ValidationError` on the
+  parameter's minimum length; here only `CreatePolicyVersion` requires the
+  parameter and the other writers still store an empty document
+
 ## What it will not guess
 
 A condition operator or principal type the evaluator does not implement makes

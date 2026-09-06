@@ -169,7 +169,7 @@ func TestCreateRole_appliesTagsAtCreation(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	resp := iamCall(t, srv, "CreateRole", url.Values{
 		"RoleName":                 {"tagged-role"},
-		"AssumeRolePolicyDocument": {`{"Version":"2012-10-17","Statement":[]}`},
+		"AssumeRolePolicyDocument": {validAssumePolicy},
 		"Tags.member.1.Key":        {"env"},
 		"Tags.member.1.Value":      {"prod"},
 	})
@@ -306,7 +306,7 @@ func TestCreateRole_reservedPrefixRejected(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	resp := iamCall(t, srv, "CreateRole", url.Values{
 		"RoleName":                 {"invalid-tag-create-role"},
-		"AssumeRolePolicyDocument": {`{"Version":"2012-10-17","Statement":[]}`},
+		"AssumeRolePolicyDocument": {validAssumePolicy},
 		"Tags.member.1.Key":        {"aws:reserved"},
 		"Tags.member.1.Value":      {"x"},
 	})

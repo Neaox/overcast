@@ -20,7 +20,7 @@ func TestUpdateRole_scalarPropertiesAndBoundaryRemoval(t *testing.T) {
 	boundaryArn := createPolicy(t, srv, "role-boundary")
 	create := iamCall(t, srv, "CreateRole", url.Values{
 		"RoleName":                 {"updated-role"},
-		"AssumeRolePolicyDocument": {`{"Version":"2012-10-17","Statement":[]}`},
+		"AssumeRolePolicyDocument": {validAssumePolicy},
 		"Description":              {"before"},
 		"MaxSessionDuration":       {"7200"},
 		"PermissionsBoundary":      {boundaryArn},
@@ -73,7 +73,7 @@ func TestUpdateRole_distinguishesClearFromOmit(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	create := iamCall(t, srv, "CreateRole", url.Values{
 		"RoleName":                 {"described-role"},
-		"AssumeRolePolicyDocument": {"{}"},
+		"AssumeRolePolicyDocument": {validAssumePolicy},
 		"Description":              {"keep or clear"},
 	})
 	create.Body.Close()
@@ -135,7 +135,7 @@ func TestCreateRole_rejectsOutOfRangeMaxSessionDuration(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	resp := iamCall(t, srv, "CreateRole", url.Values{
 		"RoleName":                 {"short-session-role"},
-		"AssumeRolePolicyDocument": {"{}"},
+		"AssumeRolePolicyDocument": {validAssumePolicy},
 		"MaxSessionDuration":       {"60"},
 	})
 	defer resp.Body.Close()
@@ -195,7 +195,7 @@ func TestCreatePolicyVersion_nonDefaultLeavesOperativeDocument(t *testing.T) {
 	// When: a version is created without SetAsDefault.
 	created := iamCall(t, srv, "CreatePolicyVersion", url.Values{
 		"PolicyArn":      {arn},
-		"PolicyDocument": {`{"Version":"2012-10-17","Statement":[]}`},
+		"PolicyDocument": {validIdentityPolicy},
 	})
 	defer created.Body.Close()
 	helpers.AssertStatus(t, created, http.StatusOK)
@@ -216,7 +216,7 @@ func TestCreatePolicyVersion_missingPolicyIsNoSuchEntity(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	resp := iamCall(t, srv, "CreatePolicyVersion", url.Values{
 		"PolicyArn":      {"arn:aws:iam::000000000000:policy/absent"},
-		"PolicyDocument": {"{}"},
+		"PolicyDocument": {validIdentityPolicy},
 	})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusNotFound)
@@ -230,14 +230,14 @@ func TestCreatePolicyAndRole_descriptionRoundTrips(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	createResp := iamCall(t, srv, "CreatePolicy", url.Values{
 		"PolicyName":     {"described-policy"},
-		"PolicyDocument": {`{"Version":"2012-10-17","Statement":[]}`},
+		"PolicyDocument": {validIdentityPolicy},
 		"Description":    {"policy description"},
 	})
 	createResp.Body.Close()
 	helpers.AssertStatus(t, createResp, http.StatusOK)
 	roleResp := iamCall(t, srv, "CreateRole", url.Values{
 		"RoleName":                 {"described-role"},
-		"AssumeRolePolicyDocument": {"{}"},
+		"AssumeRolePolicyDocument": {validAssumePolicy},
 		"Description":              {"role description"},
 	})
 	roleResp.Body.Close()

@@ -1004,7 +1004,7 @@ func (h *Handler) createUserTyped(ctx context.Context, req *createUserReq) (*cre
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.IAMUserCreated, Time: h.clk.Now(), Source: "iam", Payload: events.ResourcePayload{Name: name}})
 	}
-	return &createUserResp{Xmlns: iamXMLNS, Result: createUserResult{User: toUserXML(u)}, Meta: metaFromCtx(ctx)}, nil
+	return &createUserResp{Xmlns: iamXMLNS, Result: createUserResult{User: toUserXMLWithTags(u)}, Meta: metaFromCtx(ctx)}, nil
 }
 
 func (h *Handler) getUserTyped(ctx context.Context, req *getUserReq) (*getUserResp, *protocol.AWSError) {
@@ -1016,7 +1016,7 @@ func (h *Handler) getUserTyped(ctx context.Context, req *getUserReq) (*getUserRe
 	if aerr != nil {
 		return nil, aerr
 	}
-	return &getUserResp{Xmlns: iamXMLNS, Result: getUserResult{User: toUserXML(u)}, Meta: metaFromCtx(ctx)}, nil
+	return &getUserResp{Xmlns: iamXMLNS, Result: getUserResult{User: toUserXMLWithTags(u)}, Meta: metaFromCtx(ctx)}, nil
 }
 
 func (h *Handler) listUsersTyped(ctx context.Context, _ *listUsersReq) (*listUsersResp, *protocol.AWSError) {
@@ -1129,6 +1129,9 @@ func (h *Handler) listAccessKeysTyped(ctx context.Context, req *listAccessKeysRe
 // --- Inline User Policies ---
 
 func (h *Handler) putUserPolicyTyped(ctx context.Context, req *putUserPolicyReq) (*putUserPolicyResp, *protocol.AWSError) {
+	if aerr := checkPolicyDocument(req.PolicyDocument); aerr != nil {
+		return nil, aerr
+	}
 	u, aerr := h.store.getUser(ctx, req.UserName)
 	if aerr != nil {
 		return nil, aerr
@@ -1172,6 +1175,9 @@ func (h *Handler) deleteUserPolicyTyped(ctx context.Context, req *deleteUserPoli
 // --- Roles ---
 
 func (h *Handler) createRoleTyped(ctx context.Context, req *createRoleReq) (*createRoleResp, *protocol.AWSError) {
+	if aerr := checkPolicyDocument(req.AssumeRolePolicyDocument); aerr != nil {
+		return nil, aerr
+	}
 	path := normPath(req.Path)
 	if _, aerr := h.store.getRole(ctx, req.RoleName); aerr == nil {
 		return nil, errEntityAlreadyExists("role", req.RoleName)
@@ -1209,7 +1215,7 @@ func (h *Handler) createRoleTyped(ctx context.Context, req *createRoleReq) (*cre
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.IAMRoleCreated, Time: h.clk.Now(), Source: "iam", Payload: events.ResourcePayload{Name: req.RoleName}})
 	}
-	return &createRoleResp{Xmlns: iamXMLNS, Result: createRoleResult{Role: toRoleXML(role)}, Meta: metaFromCtx(ctx)}, nil
+	return &createRoleResp{Xmlns: iamXMLNS, Result: createRoleResult{Role: toRoleXMLWithTags(role)}, Meta: metaFromCtx(ctx)}, nil
 }
 
 func (h *Handler) getRoleTyped(ctx context.Context, req *getRoleReq) (*getRoleResp, *protocol.AWSError) {
@@ -1217,7 +1223,7 @@ func (h *Handler) getRoleTyped(ctx context.Context, req *getRoleReq) (*getRoleRe
 	if aerr != nil {
 		return nil, aerr
 	}
-	return &getRoleResp{Xmlns: iamXMLNS, Result: getRoleResult{Role: toRoleXML(role)}, Meta: metaFromCtx(ctx)}, nil
+	return &getRoleResp{Xmlns: iamXMLNS, Result: getRoleResult{Role: toRoleXMLWithTags(role)}, Meta: metaFromCtx(ctx)}, nil
 }
 
 func (h *Handler) listRolesTyped(ctx context.Context, _ *listRolesReq) (*listRolesResp, *protocol.AWSError) {
@@ -1254,6 +1260,9 @@ func (h *Handler) deleteRoleTyped(ctx context.Context, req *deleteRoleReq) (*del
 // --- Inline Role Policies ---
 
 func (h *Handler) putRolePolicyTyped(ctx context.Context, req *putRolePolicyReq) (*putRolePolicyResp, *protocol.AWSError) {
+	if aerr := checkPolicyDocument(req.PolicyDocument); aerr != nil {
+		return nil, aerr
+	}
 	role, aerr := h.store.getRole(ctx, req.RoleName)
 	if aerr != nil {
 		return nil, aerr
@@ -1371,7 +1380,7 @@ func (h *Handler) createInstanceProfileTyped(ctx context.Context, req *createIns
 		return nil, aerr
 	}
 	return &createInstanceProfileResp{Xmlns: iamXMLNS, Result: createInstanceProfileResult{
-		InstanceProfile: toInstanceProfileXML(profile, nil),
+		InstanceProfile: toInstanceProfileXMLWithTags(profile, nil),
 	}, Meta: metaFromCtx(ctx)}, nil
 }
 
@@ -1385,14 +1394,24 @@ func (h *Handler) deleteInstanceProfileTyped(ctx context.Context, req *deleteIns
 	return &deleteInstanceProfileResp{Xmlns: iamXMLNS, Meta: metaFromCtx(ctx)}, nil
 }
 
-func toInstanceProfileResp(ctx context.Context, store *iamStore, profile *InstanceProfile) instanceProfileXML {
+// instanceProfileRoleXML resolves the roles an instance profile names. The
+// embedded roles carry no tags: AWS's own GetInstanceProfile,
+// ListInstanceProfiles and ListInstanceProfilesForRole samples show them
+// without, and nothing in the API Reference says they should have them.
+func instanceProfileRoleXML(ctx context.Context, store *iamStore, profile *InstanceProfile) []roleXML {
 	var roles []roleXML
 	for _, rn := range profile.Roles {
 		if role, aerr := store.getRole(ctx, rn); aerr == nil {
 			roles = append(roles, toRoleXML(role))
 		}
 	}
-	return toInstanceProfileXML(profile, roles)
+	return roles
+}
+
+// toInstanceProfileResp renders an instance profile for the listing
+// operations, which return the resource without its tags.
+func toInstanceProfileResp(ctx context.Context, store *iamStore, profile *InstanceProfile) instanceProfileXML {
+	return toInstanceProfileXML(profile, instanceProfileRoleXML(ctx, store, profile))
 }
 
 func (h *Handler) getInstanceProfileTyped(ctx context.Context, req *getInstanceProfileReq) (*getInstanceProfileResp, *protocol.AWSError) {
@@ -1401,7 +1420,7 @@ func (h *Handler) getInstanceProfileTyped(ctx context.Context, req *getInstanceP
 		return nil, aerr
 	}
 	return &getInstanceProfileResp{Xmlns: iamXMLNS, Result: getInstanceProfileResult{
-		InstanceProfile: toInstanceProfileResp(ctx, h.store, profile),
+		InstanceProfile: toInstanceProfileXMLWithTags(profile, instanceProfileRoleXML(ctx, h.store, profile)),
 	}, Meta: metaFromCtx(ctx)}, nil
 }
 
@@ -1446,6 +1465,9 @@ func (h *Handler) removeRoleFromInstanceProfileTyped(ctx context.Context, req *r
 // --- Managed Policies ---
 
 func (h *Handler) createPolicyTyped(ctx context.Context, req *createPolicyReq) (*createPolicyResp, *protocol.AWSError) {
+	if aerr := checkPolicyDocument(req.PolicyDocument); aerr != nil {
+		return nil, aerr
+	}
 	path := normPath(req.Path)
 	arn := h.store.arnForPolicy(path, req.PolicyName)
 	if _, aerr := h.store.getPolicy(ctx, arn); aerr == nil {
@@ -1471,7 +1493,8 @@ func (h *Handler) createPolicyTyped(ctx context.Context, req *createPolicyReq) (
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.IAMPolicyCreated, Time: h.clk.Now(), Source: "iam", Payload: events.ResourcePayload{Name: req.PolicyName}})
 	}
-	return &createPolicyResp{Xmlns: iamXMLNS, Result: createPolicyResult{Policy: toPolicyXML(p)}, Meta: metaFromCtx(ctx)}, nil
+	// A policy that has just been created is attached to nothing.
+	return &createPolicyResp{Xmlns: iamXMLNS, Result: createPolicyResult{Policy: toPolicyXMLWithTags(p, policyUsage{})}, Meta: metaFromCtx(ctx)}, nil
 }
 
 func (h *Handler) getPolicyTyped(ctx context.Context, req *getPolicyReq) (*getPolicyResp, *protocol.AWSError) {
@@ -1479,7 +1502,11 @@ func (h *Handler) getPolicyTyped(ctx context.Context, req *getPolicyReq) (*getPo
 	if aerr != nil {
 		return nil, aerr
 	}
-	return &getPolicyResp{Xmlns: iamXMLNS, Result: getPolicyResult{Policy: toPolicyXML(p)}, Meta: metaFromCtx(ctx)}, nil
+	usage, aerr := h.store.policyUsageCounts(ctx)
+	if aerr != nil {
+		return nil, aerr
+	}
+	return &getPolicyResp{Xmlns: iamXMLNS, Result: getPolicyResult{Policy: toPolicyXMLWithTags(p, usage[p.Arn])}, Meta: metaFromCtx(ctx)}, nil
 }
 
 func (h *Handler) listPoliciesTyped(ctx context.Context, _ *listPoliciesReq) (*listPoliciesResp, *protocol.AWSError) {
@@ -1487,9 +1514,13 @@ func (h *Handler) listPoliciesTyped(ctx context.Context, _ *listPoliciesReq) (*l
 	if aerr != nil {
 		return nil, aerr
 	}
+	usage, aerr := h.store.policyUsageCounts(ctx)
+	if aerr != nil {
+		return nil, aerr
+	}
 	xmlPolicies := make([]policyXML, 0, len(policies))
 	for i := range policies {
-		xmlPolicies = append(xmlPolicies, toPolicyXML(&policies[i]))
+		xmlPolicies = append(xmlPolicies, toPolicyXML(&policies[i], usage[policies[i].Arn]))
 	}
 	return &listPoliciesResp{Xmlns: iamXMLNS, Result: listPoliciesResult{
 		Policies: listMembersXML[policyXML]{Members: xmlPolicies, Tag: "member"}, IsTruncated: false,
@@ -1626,6 +1657,9 @@ func (h *Handler) listGroupsTyped(ctx context.Context, _ *listGroupsReq) (*listG
 // --- Inline Group Policies ---
 
 func (h *Handler) putGroupPolicyTyped(ctx context.Context, req *putGroupPolicyReq) (*putGroupPolicyResp, *protocol.AWSError) {
+	if aerr := checkPolicyDocument(req.PolicyDocument); aerr != nil {
+		return nil, aerr
+	}
 	g, aerr := h.store.getGroup(ctx, req.GroupName)
 	if aerr != nil {
 		return nil, aerr
@@ -2037,7 +2071,7 @@ func (h *Handler) createServiceLinkedRoleTyped(ctx context.Context, req *createS
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.IAMRoleCreated, Time: h.clk.Now(), Source: "iam", Payload: events.ResourcePayload{Name: roleName}})
 	}
-	return &createServiceLinkedRoleResp{Xmlns: iamXMLNS, Result: createServiceLinkedRoleResult{Role: toRoleXML(role)}, Meta: metaFromCtx(ctx)}, nil
+	return &createServiceLinkedRoleResp{Xmlns: iamXMLNS, Result: createServiceLinkedRoleResult{Role: toRoleXMLWithTags(role)}, Meta: metaFromCtx(ctx)}, nil
 }
 
 // --- Instance Profiles For Role ---
@@ -2059,6 +2093,9 @@ func (h *Handler) listInstanceProfilesForRoleTyped(ctx context.Context, req *lis
 // --- Role Mutation ---
 
 func (h *Handler) updateAssumeRolePolicyTyped(ctx context.Context, req *updateAssumeRolePolicyReq) (*updateAssumeRolePolicyResp, *protocol.AWSError) {
+	if aerr := checkPolicyDocument(req.PolicyDocument); aerr != nil {
+		return nil, aerr
+	}
 	role, aerr := h.store.getRole(ctx, req.RoleName)
 	if aerr != nil {
 		return nil, aerr
@@ -2145,9 +2182,12 @@ func (h *Handler) getAccountAuthorizationDetailsTyped(ctx context.Context, _ *ge
 			PermissionsBoundary:      toPermissionsBoundaryXML(ro.PermissionsBoundary),
 		})
 	}
+	// The entities were loaded above for their own detail lists, so the usage
+	// tally comes off those rather than scanning the store a second time.
+	usage := policyUsageFrom(users, roles, groups)
 	policyDetails := make([]policyXML, 0, len(policies))
 	for i := range policies {
-		policyDetails = append(policyDetails, toPolicyXML(&policies[i]))
+		policyDetails = append(policyDetails, toPolicyXML(&policies[i], usage[policies[i].Arn]))
 	}
 
 	return &getAccountAuthorizationDetailsResp{Xmlns: iamXMLNS, Result: getAccountAuthorizationDetailsResult{

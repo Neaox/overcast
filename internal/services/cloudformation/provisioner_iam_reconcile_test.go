@@ -119,8 +119,11 @@ func TestIAMRoleCreate_cleansUpRoleWhenAttachmentFails(t *testing.T) {
 		return http.StatusOK
 	})
 	props := map[string]any{
-		"RoleName":          "half-made-role",
-		"ManagedPolicyArns": []any{"arn:aws:iam::aws:policy/ReadOnlyAccess"},
+		// A trust policy is required (the handler refuses a role without one since
+		// #1717); this test is about the attachment failing, not the document.
+		"AssumeRolePolicyDocument": map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{"Effect": "Allow", "Principal": map[string]any{"Service": "ec2.amazonaws.com"}, "Action": "sts:AssumeRole"}}},
+		"RoleName":                 "half-made-role",
+		"ManagedPolicyArns":        []any{"arn:aws:iam::aws:policy/ReadOnlyAccess"},
 	}
 	rCtx := &resolveContext{Region: "us-east-1"}
 

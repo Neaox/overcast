@@ -46,7 +46,7 @@ func createRole(t *testing.T, srv *helpers.TestServer, name string) {
 	t.Helper()
 	resp := iamCall(t, srv, "CreateRole", url.Values{
 		"RoleName":                 {name},
-		"AssumeRolePolicyDocument": {`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}`},
+		"AssumeRolePolicyDocument": {validAssumePolicy},
 	})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
@@ -462,7 +462,7 @@ func TestDeleteUserPolicy_success(t *testing.T) {
 	pr := iamCall(t, srv, "PutUserPolicy", url.Values{
 		"UserName":       {"alice"},
 		"PolicyName":     {"read-s3"},
-		"PolicyDocument": {`{"Version":"2012-10-17"}`},
+		"PolicyDocument": {validIdentityPolicy},
 	})
 	defer pr.Body.Close()
 	helpers.AssertStatus(t, pr, http.StatusOK)
@@ -487,7 +487,7 @@ func TestCreateRole_success(t *testing.T) {
 	// When: CreateRole is called
 	resp := iamCall(t, srv, "CreateRole", url.Values{
 		"RoleName":                 {"test-role"},
-		"AssumeRolePolicyDocument": {`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}`},
+		"AssumeRolePolicyDocument": {validAssumePolicy},
 	})
 	defer resp.Body.Close()
 
@@ -513,7 +513,7 @@ func TestCreateRole_withPath(t *testing.T) {
 	// When: CreateRole is called with a Path
 	resp := iamCall(t, srv, "CreateRole", url.Values{
 		"RoleName":                 {"path-role"},
-		"AssumeRolePolicyDocument": {`{}`},
+		"AssumeRolePolicyDocument": {validAssumePolicy},
 		"Path":                     {"/service-role/"},
 	})
 	defer resp.Body.Close()
@@ -534,7 +534,7 @@ func TestCreateRole_duplicate(t *testing.T) {
 	// When: CreateRole is called with the same name
 	resp := iamCall(t, srv, "CreateRole", url.Values{
 		"RoleName":                 {"test-role"},
-		"AssumeRolePolicyDocument": {`{}`},
+		"AssumeRolePolicyDocument": {validAssumePolicy},
 	})
 	defer resp.Body.Close()
 
@@ -666,7 +666,7 @@ func TestGetRolePolicy_success(t *testing.T) {
 	pr := iamCall(t, srv, "PutRolePolicy", url.Values{
 		"RoleName":       {"test-role"},
 		"PolicyName":     {"inline-pol"},
-		"PolicyDocument": {`{"Version":"2012-10-17"}`},
+		"PolicyDocument": {validIdentityPolicy},
 	})
 	defer pr.Body.Close()
 	helpers.AssertStatus(t, pr, http.StatusOK)
@@ -698,7 +698,7 @@ func TestListRolePolicies_success(t *testing.T) {
 	pr := iamCall(t, srv, "PutRolePolicy", url.Values{
 		"RoleName":       {"test-role"},
 		"PolicyName":     {"inline-pol"},
-		"PolicyDocument": {`{"Version":"2012-10-17"}`},
+		"PolicyDocument": {validIdentityPolicy},
 	})
 	defer pr.Body.Close()
 	helpers.AssertStatus(t, pr, http.StatusOK)
@@ -737,7 +737,7 @@ func TestDeleteRolePolicy_success(t *testing.T) {
 	pr := iamCall(t, srv, "PutRolePolicy", url.Values{
 		"RoleName":       {"test-role"},
 		"PolicyName":     {"inline-pol"},
-		"PolicyDocument": {`{"Version":"2012-10-17"}`},
+		"PolicyDocument": {validIdentityPolicy},
 	})
 	defer pr.Body.Close()
 	helpers.AssertStatus(t, pr, http.StatusOK)
@@ -1151,7 +1151,7 @@ func TestCreatePolicy_withPath(t *testing.T) {
 	// When: CreatePolicy is called with a Path
 	resp := iamCall(t, srv, "CreatePolicy", url.Values{
 		"PolicyName":     {"path-policy"},
-		"PolicyDocument": {`{"Version":"2012-10-17"}`},
+		"PolicyDocument": {validIdentityPolicy},
 		"Path":           {"/org/"},
 	})
 	defer resp.Body.Close()
@@ -1172,7 +1172,7 @@ func TestCreatePolicy_duplicate(t *testing.T) {
 	// When: CreatePolicy is called with the same name
 	resp := iamCall(t, srv, "CreatePolicy", url.Values{
 		"PolicyName":     {"test-policy"},
-		"PolicyDocument": {`{"Version":"2012-10-17"}`},
+		"PolicyDocument": {validIdentityPolicy},
 	})
 	defer resp.Body.Close()
 
@@ -1608,7 +1608,7 @@ func TestGetGroupPolicy_success(t *testing.T) {
 	pr := iamCall(t, srv, "PutGroupPolicy", url.Values{
 		"GroupName":      {"devs"},
 		"PolicyName":     {"s3-access"},
-		"PolicyDocument": {"test-doc"},
+		"PolicyDocument": {validIdentityPolicy},
 	})
 	defer pr.Body.Close()
 	helpers.AssertStatus(t, pr, http.StatusOK)
@@ -1643,7 +1643,7 @@ func TestDeleteGroupPolicy_success(t *testing.T) {
 	pr := iamCall(t, srv, "PutGroupPolicy", url.Values{
 		"GroupName":      {"devs"},
 		"PolicyName":     {"s3-access"},
-		"PolicyDocument": {"test-doc"},
+		"PolicyDocument": {validIdentityPolicy},
 	})
 	defer pr.Body.Close()
 
@@ -1661,7 +1661,7 @@ func TestListGroupPolicies_success(t *testing.T) {
 	pr := iamCall(t, srv, "PutGroupPolicy", url.Values{
 		"GroupName":      {"devs"},
 		"PolicyName":     {"s3-access"},
-		"PolicyDocument": {"test-doc"},
+		"PolicyDocument": {validIdentityPolicy},
 	})
 	defer pr.Body.Close()
 
@@ -1829,7 +1829,7 @@ func TestListUserPolicies_success(t *testing.T) {
 	pr := iamCall(t, srv, "PutUserPolicy", url.Values{
 		"UserName":       {"alice"},
 		"PolicyName":     {"s3-access"},
-		"PolicyDocument": {"test-doc"},
+		"PolicyDocument": {validIdentityPolicy},
 	})
 	defer pr.Body.Close()
 	helpers.AssertStatus(t, pr, http.StatusOK)
@@ -2097,7 +2097,7 @@ func TestUpdateAssumeRolePolicy_notFound(t *testing.T) {
 
 	resp := iamCall(t, srv, "UpdateAssumeRolePolicy", url.Values{
 		"RoleName":       {"nonexistent"},
-		"PolicyDocument": {"{}"},
+		"PolicyDocument": {validAssumePolicy},
 	})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusNotFound)

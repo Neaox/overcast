@@ -43,6 +43,9 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 | Area              | Behaviour                                                                                     |
 | ----------------- | ----------------------------------------------------------------------------------------------- |
 | Entities          | Users, roles, groups, managed and inline policies, instance profiles, access keys, tags on all of them |
+| Policy documents  | Parsed before they are stored — every operation that takes one refuses a malformed document with `MalformedPolicyDocument` (400) |
+| Policy usage      | `GetPolicy` and `ListPolicies` count real attachments in `AttachmentCount`, and bounded entities in `PermissionsBoundaryUsageCount` |
+| Tags              | Applied inline at create, changed with `Tag*`/`Untag*`, and returned on the resource by `GetRole`, `GetUser`, `GetPolicy` and `GetInstanceProfile` — the `List*` operations omit them, as AWS does |
 | Group membership  | `GetGroup` resolves members into `Users`, paginated with `Marker` / `MaxItems` (default 100, cap 1000) |
 | Permissions boundaries | Attached at create or later, reported as `AttachedPermissionsBoundary`, and read by both the simulator and enforcement |
 | Policy simulation | `SimulateCustomPolicy` and `SimulatePrincipalPolicy` run a real evaluation and return AWS's `allowed` / `explicitDeny` / `implicitDeny` vocabulary |
@@ -98,6 +101,7 @@ documentation gives. Ten services differ from their Overcast service key:
 | Enforcement                                                                  | Always on                                 | Off unless `OVERCAST_ENFORCE_IAM=true`; identity policies only                        |
 | Credentials                                                                  | Verified against the signing key          | Accepted without verification                                                         |
 | Policy versions                                                              | Every version is retained and retrievable | A counter only — no `GetPolicyVersion`, `ListPolicyVersions` or `DeletePolicyVersion` |
+| Policy document validation                                                   | The full policy grammar                   | Structure only — see [Limitations](./iam/limitations.md#policy-documents-are-checked-at-the-api-boundary) |
 | Login profiles, MFA devices, SSH keys, signing certificates, Git credentials | Full API                                  | Not modelled                                                                          |
 
 The policy language the evaluator does and does not cover is in

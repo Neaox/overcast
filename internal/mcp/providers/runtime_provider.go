@@ -5571,14 +5571,16 @@ func (p *RuntimeProvider) toolIAMCreatePolicy(ctx context.Context, params json.R
 	} else if found {
 		return nil, fmt.Errorf("iam policy %q already exists", arn)
 	}
+	// AttachmentCount is not set: IAM derives it from the entities that refer
+	// to the policy rather than storing it, so a freshly created policy needs
+	// nothing here to read as attached to nothing.
 	policy := iam.Policy{
-		PolicyName:      name,
-		PolicyId:        "ANPA" + strings.ToUpper(strings.ReplaceAll(uuid.NewString(), "-", ""))[:16],
-		Arn:             arn,
-		Path:            path,
-		Document:        document,
-		CreateDate:      time.Now().UTC().Format(time.RFC3339),
-		AttachmentCount: 0,
+		PolicyName: name,
+		PolicyId:   "ANPA" + strings.ToUpper(strings.ReplaceAll(uuid.NewString(), "-", ""))[:16],
+		Arn:        arn,
+		Path:       path,
+		Document:   document,
+		CreateDate: time.Now().UTC().Format(time.RFC3339),
 	}
 	raw, err := json.Marshal(policy)
 	if err != nil {
