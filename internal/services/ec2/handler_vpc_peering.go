@@ -221,6 +221,9 @@ func (h *Handler) describeVpcPeeringConnections(ctx context.Context, q describeQ
 	if aerr != nil {
 		return nil, aerr
 	}
+	if aerr := resolveIDs(vpcPeeringIDScope, requested, all, func(pcx *VpcPeeringConnection) string { return pcx.VpcPeeringConnectionID }); aerr != nil {
+		return nil, aerr
+	}
 
 	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {

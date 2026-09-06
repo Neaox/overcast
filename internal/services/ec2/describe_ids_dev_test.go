@@ -21,16 +21,24 @@ func TestCapabilityNotesNameTheIDErrorCodes(t *testing.T) {
 	for _, c := range ec2Capabilities(t) {
 		notes[c.Operation] = c.Notes
 	}
-	for op, scope := range describeIDScopes {
+	for op, scopes := range describeIDScopes {
 		note, ok := notes[op]
 		if !ok {
 			t.Errorf("%s resolves an ID list but declares no capability", op)
 			continue
 		}
-		for _, code := range []string{scope.notFound, scope.malformed} {
-			if !strings.Contains(note, code) {
-				t.Errorf("%s note does not name %s:\n  %s\n"+
-					"add it to capabilities_dev.go and re-run capgen", op, code, note)
+		for _, scope := range scopes {
+			for _, code := range []string{scope.notFound, scope.malformed} {
+				// A scope with no Malformed code has nothing to promise: the
+				// EC2 reference documents none for that resource, and
+				// describe_ids.go answers NotFound instead.
+				if code == "" {
+					continue
+				}
+				if !strings.Contains(note, code) {
+					t.Errorf("%s note does not name %s:\n  %s\n"+
+						"add it to capabilities_dev.go and re-run capgen", op, code, note)
+				}
 			}
 		}
 	}

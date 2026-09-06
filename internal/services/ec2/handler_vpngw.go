@@ -134,6 +134,9 @@ func (h *Handler) describeVpnGateways(ctx context.Context, q describeQuery) (*xm
 	if aerr != nil {
 		return nil, aerr
 	}
+	if aerr := resolveIDs(vpnGatewayIDScope, requested, all, func(vgw *VpnGateway) string { return vgw.VpnGatewayID }); aerr != nil {
+		return nil, aerr
+	}
 
 	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {
