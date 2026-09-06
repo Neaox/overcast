@@ -1,6 +1,6 @@
 ---
 title: "Organizations operations"
-description: "Every Organizations operation Overcast declares — 9 of 9 implemented — with status, behaviour notes and a link to the AWS API reference for each."
+description: "Every Organizations operation Overcast declares — 15 of 15 implemented — with status, behaviour notes and a link to the AWS API reference for each."
 section: "Service Reference"
 tags:
   - docs
@@ -13,15 +13,17 @@ tags:
 
 # Organizations operations
 
-All 9 listed operations are implemented. Back to [Organizations](../organizations.md).
+All 15 listed operations are implemented. Back to [Organizations](../organizations.md).
 
 ## Summary
 
-| Category          | 🧊 Inert |
-| ----------------- | -------- |
-| Operations        | 1        |
-| Policy operations | 5        |
-| Tag operations    | 3        |
+| Category                       | 🧊 Inert |
+| ------------------------------ | -------- |
+| Operations                     | 1        |
+| Policy operations              | 5        |
+| Root operations                | 1        |
+| Organizational unit operations | 5        |
+| Tag operations                 | 3        |
 
 ---
 
@@ -43,13 +45,29 @@ All 9 listed operations are implemented. Back to [Organizations](../organization
 | `DeletePolicy`   | 🧊 Inert | PolicyInUseException is unreachable: attaching a policy is not emulated, so no policy can be in use.  | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_DeletePolicy.html)   |
 | `ListPolicies`   | 🧊 Inert | Filters by the required policy type and paginates. An invalid NextToken is rejected, never restarted. | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_ListPolicies.html)   |
 
+### Root operations
+
+| Operation   | Status   | Notes                                                                                                                              | AWS Docs                                                                                 |
+| ----------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `ListRoots` | 🧊 Inert | One root per organization, with an ID derived from the organization ID. PolicyTypes is always empty: enabling one is not emulated. | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_ListRoots.html) |
+
+### Organizational unit operations
+
+| Operation                          | Status   | Notes                                                                                                                        | AWS Docs                                                                                                        |
+| ---------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `CreateOrganizationalUnit`         | 🧊 Inert | The parent must be the root or an existing unit. Derives the ID, ARN and Path; a duplicate name under one parent is refused. | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_CreateOrganizationalUnit.html)         |
+| `DescribeOrganizationalUnit`       | 🧊 Inert |                                                                                                                              | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_DescribeOrganizationalUnit.html)       |
+| `UpdateOrganizationalUnit`         | 🧊 Inert | Renames the unit. Its ID, ARN and Path are stable across the rename, and a sibling's name is refused.                        | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_UpdateOrganizationalUnit.html)         |
+| `DeleteOrganizationalUnit`         | 🧊 Inert | OrganizationalUnitNotEmptyException covers child units only; accounts are not emulated, so none can be in the way.           | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_DeleteOrganizationalUnit.html)         |
+| `ListOrganizationalUnitsForParent` | 🧊 Inert | Direct children only, paginated. An unknown parent is ParentNotFoundException, not an empty list.                            | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_ListOrganizationalUnitsForParent.html) |
+
 ### Tag operations
 
-| Operation             | Status   | Notes                                                                                                        | AWS Docs                                                                                           |
-| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| `TagResource`         | 🧊 Inert | Policies only. A root, OU or account ID returns TargetNotFoundException, since none of those are stored yet. | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_TagResource.html)         |
-| `UntagResource`       | 🧊 Inert | Policies only, as for TagResource.                                                                           | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_UntagResource.html)       |
-| `ListTagsForResource` | 🧊 Inert | Policies only, as for TagResource.                                                                           | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_ListTagsForResource.html) |
+| Operation             | Status   | Notes                                                                                                                      | AWS Docs                                                                                           |
+| --------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `TagResource`         | 🧊 Inert | Policies, organizational units and the root. An account ID returns TargetNotFoundException, since accounts are not stored. | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_TagResource.html)         |
+| `UntagResource`       | 🧊 Inert | Policies, organizational units and the root, as for TagResource.                                                           | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_UntagResource.html)       |
+| `ListTagsForResource` | 🧊 Inert | Policies, organizational units and the root, as for TagResource.                                                           | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_ListTagsForResource.html) |
 
 ## Related
 

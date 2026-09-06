@@ -130,10 +130,12 @@ func TestDispatch_HandWrittenWinsOverAnInertBinding(t *testing.T) {
 // TestDispatch_UnboundOperationStaysTier0 is §3.6's default: an operation
 // with no binding returns the protocol-correct 501, not a fabricated
 // success. AttachPolicy is the case that matters here — it is the verb the
-// policy resource's whole point would tempt someone to fake.
+// policy resource's whole point would tempt someone to fake — and MoveAccount
+// is its counterpart for the organizational-unit tree: an OU exists to hold
+// accounts, and this emulator holds none.
 func TestDispatch_UnboundOperationStaysTier0(t *testing.T) {
 	s := newTestService(t)
-	for _, name := range []string{"AttachPolicy", "CreateAccount", "ListRoots"} {
+	for _, name := range []string{"AttachPolicy", "CreateAccount", "MoveAccount", "ListParents"} {
 		rec := dispatch(t, s, name, map[string]any{})
 		if rec.Code != http.StatusNotImplemented {
 			t.Fatalf("%s returned %d, want 501", name, rec.Code)

@@ -34,20 +34,39 @@ var handWrittenOps = []string{
 // 688 B/op over an eight-operation table.
 func (s *Service) inertBindings() []inert.Binding {
 	return []inert.Binding{
+		{Op: "CreateOrganizationalUnit", Class: inert.ClassCreate, Resource: "organizationalUnit",
+			Invoke: op.NewTyped("CreateOrganizationalUnit", s.createOrganizationalUnit)},
 		{Op: "CreatePolicy", Class: inert.ClassCreate, Resource: "policy",
 			Invoke: op.NewTyped("CreatePolicy", s.createPolicy)},
+		{Op: "DeleteOrganizationalUnit", Class: inert.ClassDelete, Resource: "organizationalUnit",
+			Invoke: op.NewTyped("DeleteOrganizationalUnit", s.deleteOrganizationalUnit)},
 		{Op: "DeletePolicy", Class: inert.ClassDelete, Resource: "policy",
 			Invoke: op.NewTyped("DeletePolicy", s.deletePolicy)},
+		{Op: "DescribeOrganizationalUnit", Class: inert.ClassRead, Resource: "organizationalUnit",
+			Invoke: op.NewTyped("DescribeOrganizationalUnit", s.describeOrganizationalUnit)},
 		{Op: "DescribePolicy", Class: inert.ClassRead, Resource: "policy",
 			Invoke: op.NewTyped("DescribePolicy", s.describePolicy)},
+		{Op: "ListOrganizationalUnitsForParent", Class: inert.ClassList, Resource: "organizationalUnit",
+			Invoke: op.NewTyped("ListOrganizationalUnitsForParent", s.listOrganizationalUnitsForParent)},
 		{Op: "ListPolicies", Class: inert.ClassList, Resource: "policy",
 			Invoke: op.NewTyped("ListPolicies", s.listPolicies)},
-		{Op: "ListTagsForResource", Class: inert.ClassListTags, Resource: "policy",
+		// The root has no lifecycle to bind — one per organization, derived
+		// rather than stored — so ListRoots is the whole resource.
+		{Op: "ListRoots", Class: inert.ClassList, Resource: "root",
+			Invoke: op.NewTyped("ListRoots", s.listRoots)},
+		// The three tag operations serve every taggable resource this
+		// service holds, which is why their Resource is the tag store
+		// itself rather than one collection: taggableARN resolves a policy
+		// id, an organizational unit id or the root to the ARN the shared
+		// store is keyed by.
+		{Op: "ListTagsForResource", Class: inert.ClassListTags, Resource: "tags",
 			Invoke: op.NewTyped("ListTagsForResource", s.listTagsForResource)},
-		{Op: "TagResource", Class: inert.ClassTag, Resource: "policy",
+		{Op: "TagResource", Class: inert.ClassTag, Resource: "tags",
 			Invoke: op.NewTyped("TagResource", s.tagResource)},
-		{Op: "UntagResource", Class: inert.ClassUntag, Resource: "policy",
+		{Op: "UntagResource", Class: inert.ClassUntag, Resource: "tags",
 			Invoke: op.NewTyped("UntagResource", s.untagResource)},
+		{Op: "UpdateOrganizationalUnit", Class: inert.ClassUpdate, Resource: "organizationalUnit",
+			Invoke: op.NewTyped("UpdateOrganizationalUnit", s.updateOrganizationalUnit)},
 		{Op: "UpdatePolicy", Class: inert.ClassUpdate, Resource: "policy",
 			Invoke: op.NewTyped("UpdatePolicy", s.updatePolicy)},
 	}

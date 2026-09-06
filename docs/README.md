@@ -127,7 +127,7 @@ Shorter overview: the [service reference index](./services/README.md).
 | EKS              | [eks.md](./services/eks.md)                         | 50  | IaC/discovery-oriented stub   |
 | ELBv2            | [elb.md](./services/elb.md)                         | 22  | IaC/discovery-oriented stub   |
 | MSK              | [msk.md](./services/msk.md)                         | 30  | IaC/discovery-oriented stub   |
-| Organizations    | [organizations.md](./services/organizations.md)     | 9   | IaC/discovery-oriented stub   |
+| Organizations    | [organizations.md](./services/organizations.md)     | 15  | IaC/discovery-oriented stub   |
 | Transfer Family  | [transfer.md](./services/transfer.md)               | 13  | IaC/discovery-oriented stub   |
 
 <!-- END overcast:service-index -->

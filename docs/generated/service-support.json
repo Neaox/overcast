@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1479,
+  "total_ops": 1485,
   "services": [
     {
       "service": "s3",
@@ -8810,8 +8810,8 @@
     {
       "service": "organizations",
       "display_name": "Organizations",
-      "total_ops": 9,
-      "implemented_ops": 9,
+      "total_ops": 15,
+      "implemented_ops": 15,
       "operations": [
         {
           "operation": "DescribeOrganization",
@@ -8847,22 +8847,57 @@
           "notes": "Filters by the required policy type and paginates. An invalid NextToken is rejected, never restarted."
         },
         {
+          "operation": "ListRoots",
+          "category": "Root operations",
+          "status": "🧊 Inert",
+          "notes": "One root per organization, with an ID derived from the organization ID. PolicyTypes is always empty: enabling one is not emulated."
+        },
+        {
+          "operation": "CreateOrganizationalUnit",
+          "category": "Organizational unit operations",
+          "status": "🧊 Inert",
+          "notes": "The parent must be the root or an existing unit. Derives the ID, ARN and Path; a duplicate name under one parent is refused."
+        },
+        {
+          "operation": "DescribeOrganizationalUnit",
+          "category": "Organizational unit operations",
+          "status": "🧊 Inert"
+        },
+        {
+          "operation": "UpdateOrganizationalUnit",
+          "category": "Organizational unit operations",
+          "status": "🧊 Inert",
+          "notes": "Renames the unit. Its ID, ARN and Path are stable across the rename, and a sibling's name is refused."
+        },
+        {
+          "operation": "DeleteOrganizationalUnit",
+          "category": "Organizational unit operations",
+          "status": "🧊 Inert",
+          "notes": "OrganizationalUnitNotEmptyException covers child units only; accounts are not emulated, so none can be in the way."
+        },
+        {
+          "operation": "ListOrganizationalUnitsForParent",
+          "category": "Organizational unit operations",
+          "status": "🧊 Inert",
+          "notes": "Direct children only, paginated. An unknown parent is ParentNotFoundException, not an empty list."
+        },
+        {
           "operation": "TagResource",
           "category": "Tag operations",
           "status": "🧊 Inert",
-          "notes": "Policies only. A root, OU or account ID returns TargetNotFoundException, since none of those are stored yet."
+          "notes": "Policies, organizational units and the root. An account ID returns TargetNotFoundException, since accounts are not stored."
         },
         {
           "operation": "UntagResource",
           "category": "Tag operations",
           "status": "🧊 Inert",
-          "notes": "Policies only, as for TagResource."
+          "notes": "Policies, organizational units and the root, as for TagResource."
         },
         {
           "operation": "ListTagsForResource",
           "category": "Tag operations",
           "status": "🧊 Inert",
-          "notes": "Policies only, as for TagResource."
+          "notes": "Policies, organizational units and the root, as for TagResource."
         }
       ]
     },
