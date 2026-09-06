@@ -4,10 +4,11 @@ package main
 
 import (
 	"encoding/json"
-	"github.com/overcast-sh/overcast/internal/awsmodel"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/overcast-sh/overcast/internal/awsmodel"
 )
 
 // Every test here runs against the `widgets` fixture under testdata/ or
