@@ -1,5 +1,5 @@
 {
-  "$comment": "Organizations pilot recipe (docs/plans/compat-coverage-modelgen.md §4.2). The policy is the one real lifecycle the emulator implements; the organization is pre-existing and read-only. Everything else is a probe, and organizations is the service where that is dangerous: its operations act on accounts and on the organization itself, and several of them cannot be undone. Two rules keep them safe. A probe never binds a value exported from a resource the run owns, so no probe can name the caller's own management account — which is why this recipe exports no account id and binds no AccountId, and a curated, deliberately nonexistent account id in values.json stands in. And probes are default-deny by verb, so every modeled operation that writes is refused before it is bound — the destructive and irreversible ones, the account-mutating ones, the ones that take no identifier that could miss, and the ones that would merely create something no teardown removes — because a probe binds curated identifiers that are deliberately nonexistent rather than provably so, and a probe group has no teardown. What survives is a probe group of reads. The neverProbe list below names those same operations not to refuse them a second time but to say, in one sentence each, what the call actually does; that sentence is what gaps.json reports in place of the generated one.",
+  "$comment": "Organizations pilot recipe (docs/plans/compat-coverage-modelgen.md §4.2). Two lifecycles. The policy is the one the emulator implements. The organizational unit is the one it does not: no capability row declares any of the five OU operations, nor ListRoots, so organizations-gen-ou's setup cannot run and every test in it records `skip` today. That costs nothing — a candidate group is outside the baseline gates, and one that only skips cannot promote — and the day the service reaches Tier 1 the same generated tests start passing, with no test edit in any suite. That is criterion 5, and why the group is declared before the implementation rather than after it. What the model says about those five is the same either way: a create, a read that identifies what it made, a list it appears in, a rename, a delete and a not-found error proving the delete took effect. The organization and the root are pre-existing — nothing creates or deletes either — and the root is a resource at all because a CreateOrganizationalUnit needs a ParentId that exists. Everything else is a probe, and organizations is the service where that is dangerous: its operations act on accounts and on the organization itself, and several of them cannot be undone. Two rules keep them safe. A probe never binds a value exported from a resource the run owns, so no probe can name the caller's own management account — which is why this recipe exports no account id and binds no AccountId, and a curated, deliberately nonexistent account id in values.json stands in. And probes are default-deny by verb, so every modeled operation that writes is refused before it is bound — the destructive and irreversible ones, the account-mutating ones, the ones that take no identifier that could miss, and the ones that would merely create something no teardown removes — because a probe binds curated identifiers that are deliberately nonexistent rather than provably so, and a probe group has no teardown. What survives is a probe group of reads. The neverProbe list below names those same operations not to refuse them a second time but to say, in one sentence each, what the call actually does; that sentence is what gaps.json reports in place of the generated one.",
   "service": "organizations",
   "neverProbe": {
     "AcceptHandshake": "Accepting a handshake is irreversible: it joins an account to an organization, or enables all features, and AWS documents neither as reversible.",
@@ -9,10 +9,8 @@
     "CreateAccount": "Creates a real, billable AWS account inside the organization. An AWS account can be closed but never deleted, and it counts against the organization's account quota for good.",
     "CreateGovCloudAccount": "Creates a linked AWS GovCloud (US) account together with its commercial account; both are real, billable and permanent.",
     "CreateOrganization": "Makes the calling account the management account of a new organization. An account can belong to only one organization, so this either fails or permanently changes the caller's own account.",
-    "CreateOrganizationalUnit": "Creates an organizational unit under whichever root the call names. A probe group has no teardown, so anything a probe creates is left behind, and the curated parent id is only deliberately nonexistent, never provably so.",
     "DeclineHandshake": "Declines an invitation permanently: AWS moves the handshake to DECLINED, and it can no longer be accepted.",
     "DeleteOrganization": "Deletes the organization itself, along with every policy, organizational unit and setting in it. There is no undo.",
-    "DeleteOrganizationalUnit": "Deletes an organizational unit. Nothing recreates it, and the curated id it would carry is deliberately nonexistent rather than provably so.",
     "DeleteResourcePolicy": "Deletes the organization's delegation resource policy, which may be the only grant giving delegated administrators their access; the document is not recoverable.",
     "DeregisterDelegatedAdministrator": "Immediately withdraws an account's delegated administrator role for a service, and with it that account's access to the service's organization-wide data.",
     "DetachPolicy": "Detaching a policy takes effect immediately and can remove the guardrail every account under the target relies on.",
@@ -29,7 +27,6 @@
     "RegisterDelegatedAdministrator": "Grants an account delegated administrator rights over a service for the entire organization.",
     "RemoveAccountFromOrganization": "Removes a member account from the organization. The account must be able to operate standalone, and rejoining needs a fresh invitation.",
     "TerminateResponsibilityTransfer": "Terminates an in-flight responsibility transfer; the transfer cannot be resumed afterwards.",
-    "UpdateOrganizationalUnit": "Renames an organizational unit. The curated id it would carry is deliberately nonexistent, not provably so, and a rename is not something a stranger's organization should absorb.",
     "UpdateResponsibilityTransfer": "Mutates an in-flight responsibility transfer — a billing-ownership change already under way."
   },
   "resources": [
@@ -76,6 +73,55 @@
         "identityPath": "$.Organization.Arn",
         "exports": { "id": "$.Organization.Id", "arn": "$.Organization.Arn" }
       }
+    },
+    {
+      "$comment": "Pre-existing, like the organization: every organization has exactly one root, ListRoots is how you find it, and nothing a test does creates or removes it. Its identity carries no `identity` name deliberately — the read that asserts it is the same call that exports it, so equality against its own export would assert nothing; without one the generator checks the value against RootId's modeled pattern instead, which is a real statement about the response. The root exists here because it is the only legal ParentId for a top-level organizational unit, which is what `binds` hands to the ou below.",
+      "id": "root",
+      "binds": { "ParentId": "root.id" },
+      "read": {
+        "op": "ListRoots",
+        "identityPath": "$.Roots[0].Id",
+        "exports": { "id": "$.Roots[0].Id" }
+      }
+    },
+    {
+      "$comment": "The organizational unit: a full lifecycle over five operations the emulator does not implement yet (see the top of this file). ParentId comes from the root, and is written out at the create as well as bound, because which parent an OU is made under is the one thing a reader of the create needs to know. The rename is the mutation: `Name` is the only member UpdateOrganizationalUnit takes besides the id, so `from` is the name the create used and `to` is a second $name, and DescribeOrganizationalUnit is where the change shows up. notFound is left to the derivation — DescribeOrganizationalUnit declares exactly one not-found-shaped error, OrganizationalUnitNotFoundException. Tags are the generic Organizations ones: TaggableResourceId accepts an ou- id as readily as a p- one, so the policy's tag lifecycle applies here unchanged.",
+      "id": "ou",
+      "requires": ["root"],
+      "create": {
+        "op": "CreateOrganizationalUnit",
+        "params": {
+          "Name": { "$name": "ou" },
+          "ParentId": { "$ref": "root.id" }
+        }
+      },
+      "exports": { "id": "$.OrganizationalUnit.Id", "arn": "$.OrganizationalUnit.Arn" },
+      "binds": { "OrganizationalUnitId": "ou.id", "ResourceId": "ou.id" },
+      "read": {
+        "op": "DescribeOrganizationalUnit",
+        "identityPath": "$.OrganizationalUnit.Id",
+        "identity": "id"
+      },
+      "list": {
+        "op": "ListOrganizationalUnitsForParent",
+        "identityPath": "$.Id",
+        "identity": "id"
+      },
+      "mutable": [
+        {
+          "op": "UpdateOrganizationalUnit",
+          "member": "Name",
+          "from": { "$name": "ou" },
+          "to": { "$name": "ou-renamed" },
+          "readPath": "$.OrganizationalUnit.Name"
+        }
+      ],
+      "tags": {
+        "tag": { "op": "TagResource", "member": "Tags" },
+        "untag": { "op": "UntagResource", "member": "TagKeys" },
+        "list": { "op": "ListTagsForResource", "path": "$.Tags" }
+      },
+      "delete": { "op": "DeleteOrganizationalUnit" }
     }
   ]
 }

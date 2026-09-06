@@ -52,13 +52,6 @@
     },
     {
       "service": "organizations",
-      "operation": "CreateOrganizationalUnit",
-      "group": "organizations-gen-probe",
-      "reason": "never-probe",
-      "detail": "Creates an organizational unit under whichever root the call names. A probe group has no teardown, so anything a probe creates is left behind, and the curated parent id is only deliberately nonexistent, never provably so."
-    },
-    {
-      "service": "organizations",
       "operation": "DeclineHandshake",
       "group": "organizations-gen-probe",
       "reason": "never-probe",
@@ -70,13 +63,6 @@
       "group": "organizations-gen-probe",
       "reason": "never-probe",
       "detail": "Deletes the organization itself, along with every policy, organizational unit and setting in it. There is no undo."
-    },
-    {
-      "service": "organizations",
-      "operation": "DeleteOrganizationalUnit",
-      "group": "organizations-gen-probe",
-      "reason": "never-probe",
-      "detail": "Deletes an organizational unit. Nothing recreates it, and the curated id it would carry is deliberately nonexistent rather than provably so."
     },
     {
       "service": "organizations",
@@ -189,13 +175,6 @@
       "group": "organizations-gen-probe",
       "reason": "never-probe",
       "detail": "Terminates an in-flight responsibility transfer; the transfer cannot be resumed afterwards."
-    },
-    {
-      "service": "organizations",
-      "operation": "UpdateOrganizationalUnit",
-      "group": "organizations-gen-probe",
-      "reason": "never-probe",
-      "detail": "Renames an organizational unit. The curated id it would carry is deliberately nonexistent, not provably so, and a rename is not something a stranger's organization should absorb."
     },
     {
       "service": "organizations",

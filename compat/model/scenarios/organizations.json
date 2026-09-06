@@ -343,6 +343,354 @@
       "teardown": []
     },
     {
+      "name": "organizations-gen-root",
+      "kind": "lifecycle",
+      "setup": [],
+      "tests": [
+        {
+          "name": "ListRoots",
+          "op": "ListRoots",
+          "call": {
+            "op": "ListRoots",
+            "params": {},
+            "export": {
+              "root.id": "$.Roots[0].Id"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Roots[0].Id": {
+                  "matches": "^r-[0-9a-z]{4,32}$"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "teardown": []
+    },
+    {
+      "name": "organizations-gen-ou",
+      "kind": "lifecycle",
+      "setup": [
+        {
+          "op": "ListRoots",
+          "params": {},
+          "export": {
+            "root.id": "$.Roots[0].Id"
+          }
+        }
+      ],
+      "tests": [
+        {
+          "name": "CreateOrganizationalUnit",
+          "op": "CreateOrganizationalUnit",
+          "call": {
+            "op": "CreateOrganizationalUnit",
+            "params": {
+              "Name": {
+                "$name": "ou"
+              },
+              "ParentId": {
+                "$ref": "root.id"
+              }
+            },
+            "export": {
+              "ou.arn": "$.OrganizationalUnit.Arn",
+              "ou.id": "$.OrganizationalUnit.Id"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.OrganizationalUnit.Arn": {
+                  "matches": "^arn:aws:organizations::\\d{12}:ou\\/o-[a-z0-9]{10,32}\\/ou-[0-9a-z]{4,32}-[0-9a-z]{8,32}$"
+                },
+                "$.OrganizationalUnit.Id": {
+                  "matches": "^ou-[0-9a-z]{4,32}-[a-z0-9]{8,32}$"
+                }
+              }
+            },
+            {
+              "kind": "readback",
+              "call": {
+                "op": "DescribeOrganizationalUnit",
+                "params": {
+                  "OrganizationalUnitId": {
+                    "$ref": "ou.id"
+                  }
+                }
+              },
+              "checks": {
+                "$.OrganizationalUnit.Id": {
+                  "equals": {
+                    "$ref": "ou.id"
+                  }
+                },
+                "$.OrganizationalUnit.Name": {
+                  "equals": {
+                    "$name": "ou"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "listContains",
+              "call": {
+                "op": "ListOrganizationalUnitsForParent",
+                "params": {
+                  "ParentId": {
+                    "$ref": "root.id"
+                  }
+                }
+              },
+              "itemsPath": "$.OrganizationalUnits",
+              "where": {
+                "$.Id": {
+                  "$ref": "ou.id"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeOrganizationalUnit",
+          "op": "DescribeOrganizationalUnit",
+          "call": {
+            "op": "DescribeOrganizationalUnit",
+            "params": {
+              "OrganizationalUnitId": {
+                "$ref": "ou.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.OrganizationalUnit.Id": {
+                  "equals": {
+                    "$ref": "ou.id"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateOrganizationalUnit"
+          ]
+        },
+        {
+          "name": "UpdateOrganizationalUnit",
+          "op": "UpdateOrganizationalUnit",
+          "call": {
+            "op": "UpdateOrganizationalUnit",
+            "params": {
+              "Name": {
+                "$name": "ou-renamed"
+              },
+              "OrganizationalUnitId": {
+                "$ref": "ou.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "DescribeOrganizationalUnit",
+                "params": {
+                  "OrganizationalUnitId": {
+                    "$ref": "ou.id"
+                  }
+                }
+              },
+              "checks": {
+                "$.OrganizationalUnit.Name": {
+                  "equals": {
+                    "$name": "ou-renamed"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateOrganizationalUnit"
+          ]
+        },
+        {
+          "name": "TagResource",
+          "op": "TagResource",
+          "call": {
+            "op": "TagResource",
+            "params": {
+              "ResourceId": {
+                "$ref": "ou.id"
+              },
+              "Tags": [
+                {
+                  "Key": "compat",
+                  "Value": "scenario"
+                }
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "call": {
+                "op": "ListTagsForResource",
+                "params": {
+                  "ResourceId": {
+                    "$ref": "ou.id"
+                  }
+                }
+              },
+              "itemsPath": "$.Tags",
+              "where": {
+                "$.Key": "compat",
+                "$.Value": "scenario"
+              }
+            }
+          ],
+          "depends": [
+            "CreateOrganizationalUnit"
+          ]
+        },
+        {
+          "name": "ListTagsForResource",
+          "op": "ListTagsForResource",
+          "call": {
+            "op": "ListTagsForResource",
+            "params": {
+              "ResourceId": {
+                "$ref": "ou.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.Tags",
+              "where": {
+                "$.Key": "compat",
+                "$.Value": "scenario"
+              }
+            }
+          ],
+          "depends": [
+            "CreateOrganizationalUnit"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "op": "UntagResource",
+          "call": {
+            "op": "UntagResource",
+            "params": {
+              "ResourceId": {
+                "$ref": "ou.id"
+              },
+              "TagKeys": [
+                "compat"
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "absent",
+              "call": {
+                "op": "ListTagsForResource",
+                "params": {
+                  "ResourceId": {
+                    "$ref": "ou.id"
+                  }
+                }
+              },
+              "itemsPath": "$.Tags",
+              "where": {
+                "$.Key": "compat"
+              }
+            }
+          ],
+          "depends": [
+            "CreateOrganizationalUnit"
+          ]
+        },
+        {
+          "name": "ListOrganizationalUnitsForParent",
+          "op": "ListOrganizationalUnitsForParent",
+          "call": {
+            "op": "ListOrganizationalUnitsForParent",
+            "params": {
+              "ParentId": {
+                "$ref": "root.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.OrganizationalUnits",
+              "where": {
+                "$.Id": {
+                  "$ref": "ou.id"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateOrganizationalUnit"
+          ]
+        },
+        {
+          "name": "DeleteOrganizationalUnit",
+          "op": "DeleteOrganizationalUnit",
+          "call": {
+            "op": "DeleteOrganizationalUnit",
+            "params": {
+              "OrganizationalUnitId": {
+                "$ref": "ou.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "absent",
+              "call": {
+                "op": "DescribeOrganizationalUnit",
+                "params": {
+                  "OrganizationalUnitId": {
+                    "$ref": "ou.id"
+                  }
+                }
+              },
+              "error": {
+                "shape": "OrganizationalUnitNotFoundException",
+                "code": "OrganizationalUnitNotFoundException"
+              }
+            }
+          ],
+          "depends": [
+            "CreateOrganizationalUnit"
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeleteOrganizationalUnit",
+          "params": {
+            "OrganizationalUnitId": {
+              "$ref": "ou.id"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "organizations-gen-probe",
       "kind": "probe",
       "setup": [],
@@ -421,26 +769,6 @@
               "kind": "responseField",
               "checks": {
                 "$.Handshake": {
-                  "nonEmpty": true
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "DescribeOrganizationalUnit",
-          "op": "DescribeOrganizationalUnit",
-          "call": {
-            "op": "DescribeOrganizationalUnit",
-            "params": {
-              "OrganizationalUnitId": "ou-abcd-12345678"
-            }
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.OrganizationalUnit": {
                   "nonEmpty": true
                 }
               }
@@ -716,26 +1044,6 @@
           ]
         },
         {
-          "name": "ListOrganizationalUnitsForParent",
-          "op": "ListOrganizationalUnitsForParent",
-          "call": {
-            "op": "ListOrganizationalUnitsForParent",
-            "params": {
-              "ParentId": "r-abcd"
-            }
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.OrganizationalUnits": {
-                  "isList": true
-                }
-              }
-            }
-          ]
-        },
-        {
           "name": "ListOutboundResponsibilityTransfers",
           "op": "ListOutboundResponsibilityTransfers",
           "call": {
@@ -790,24 +1098,6 @@
               "kind": "responseField",
               "checks": {
                 "$.Policies": {
-                  "isList": true
-                }
-              }
-            }
-          ]
-        },
-        {
-          "name": "ListRoots",
-          "op": "ListRoots",
-          "call": {
-            "op": "ListRoots",
-            "params": {}
-          },
-          "assert": [
-            {
-              "kind": "responseField",
-              "checks": {
-                "$.Roots": {
                   "isList": true
                 }
               }
