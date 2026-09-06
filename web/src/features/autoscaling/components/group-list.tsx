@@ -42,9 +42,15 @@ import {
   ResourceName,
   RowAction,
 } from "@/components/ui/resource-list-page"
-import { ResourceTable } from "@/components/ui/resource-table"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 
-export function AutoScalingGroupList() {
+interface AutoScalingGroupListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function AutoScalingGroupList({ sort, onSortChange }: AutoScalingGroupListProps = {}) {
   const [selected, setSelected] = useState<string>()
   const [capacityTarget, setCapacityTarget] = useState<{ name: string; desired: number }>()
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
@@ -98,6 +104,8 @@ export function AutoScalingGroupList() {
         emptyTitle="No Auto Scaling groups"
         emptyDescription="Create a launch configuration and a group — the reconciler will launch EC2 instances to match its desired capacity."
         errorTitle="Failed to load Auto Scaling groups"
+        sort={sort}
+        onSortChange={onSortChange}
         rowKey={(group) => group.AutoScalingGroupName ?? ""}
         onRowClick={(group) =>
           setSelected(
@@ -120,6 +128,8 @@ export function AutoScalingGroupList() {
             ),
           },
           {
+            // The id is the `?sort=` token; pinning it survives a reworded header.
+            id: "group",
             header: "Group",
             // The identity column stays put — the chevron column ahead of it is
             // chrome, so "Group" is what a reader scans for.

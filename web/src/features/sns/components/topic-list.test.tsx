@@ -84,3 +84,26 @@ describe("TopicList", () => {
     expect(screen.getByText("Create a topic to get started.")).toBeInTheDocument()
   })
 })
+
+// Same contract on the messaging side: `routes/sns/index.tsx` owns `sort`.
+describe("TopicList — sort bound to the route", () => {
+  // The list declares `defaultSort` name-ascending, which stands in while the
+  // route has no `?sort=` — so the first click flips it to descending rather
+  // than starting the cycle from nothing.
+  it("reports the column's own id rather than a slug of the header", async () => {
+    const onSortChange = vi.fn()
+    const { user } = renderWithData(<TopicList sort={undefined} onSortChange={onSortChange} />, [
+      [snsTopicsQueryOptions().queryKey, topics],
+    ])
+
+    await user.click(screen.getByRole("button", { name: "Name" }))
+    expect(onSortChange).toHaveBeenCalledWith({ id: "name", desc: true })
+  })
+
+  it("renders the order the route asks for, before any click", () => {
+    renderWithData(<TopicList sort={{ id: "name", desc: true }} onSortChange={vi.fn()} />, [
+      [snsTopicsQueryOptions().queryKey, topics],
+    ])
+    expect(nameColumn()).toEqual(["orders", "billing", "alerts"])
+  })
+})

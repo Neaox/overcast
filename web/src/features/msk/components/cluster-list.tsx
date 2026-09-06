@@ -28,14 +28,20 @@ import {
   ResourceListPage,
   ResourceName,
 } from "@/components/ui/resource-list-page"
-import { ResourceTable } from "@/components/ui/resource-table"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { Combobox } from "@/components/ui/combobox"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import type { ClusterInfo } from "@/services/api/msk"
 
-export function ClusterList() {
+interface ClusterListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function ClusterList({ sort, onSortChange }: ClusterListProps = {}) {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<ClusterInfo>()
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
@@ -99,6 +105,8 @@ export function ClusterList() {
         // ListClusters returns the emulator's storage order; A→Z is what a name
         // column implies.
         defaultSort={{ id: "cluster-name", desc: false }}
+        sort={sort}
+        onSortChange={onSortChange}
         rowKey={(c) => c.ClusterArn ?? ""}
         columns={[
           {

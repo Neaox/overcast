@@ -34,13 +34,19 @@ import {
   RowAction,
   SelectCheckbox,
 } from "@/components/ui/resource-list-page"
-import { ResourceTable } from "@/components/ui/resource-table"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { RawStateLink } from "@/features/debug/raw-state-link"
 import { cn } from "@/lib/utils"
 
-export function QueueList() {
+interface QueueListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function QueueList({ sort, onSortChange }: QueueListProps = {}) {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { toast } = useToast()
@@ -151,6 +157,8 @@ export function QueueList() {
         // ListQueues returns the emulator's storage order; A→Z is what a name
         // column implies, and it keeps a queue in place across a refetch.
         defaultSort={{ id: "queue-name", desc: false }}
+        sort={sort}
+        onSortChange={onSortChange}
         rowKey={(q) => q.name}
         onRowClick={(q) => navigate({ to: "/sqs/$queue", params: { queue: q.name } })}
         columns={[

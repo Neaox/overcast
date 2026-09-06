@@ -100,3 +100,27 @@ describe("FunctionList", () => {
     expect(empty.compareDocumentPosition(advisory)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 })
+
+// The route owns the sort now (#1327): `routes/lambda/index.tsx` validates
+// `sort` and hands `useSortSearchParam`'s pair down. What this page has to get
+// right is the token it reports and the order it renders for one it is given —
+// the `?sort=` contract, not the sorting itself, which the engine's own tests
+// cover.
+describe("FunctionList — sort bound to the route", () => {
+  it("reports the column's own id rather than a slug of the header", async () => {
+    const onSortChange = vi.fn()
+    const { user } = renderWithData(<FunctionList sort={undefined} onSortChange={onSortChange} />, [
+      [lambdaFunctionsQueryOptions().queryKey, functions],
+    ])
+
+    await user.click(screen.getByRole("button", { name: /Name/ }))
+    expect(onSortChange).toHaveBeenCalledWith({ id: "name", desc: false })
+  })
+
+  it("renders the order the route asks for, before any click", () => {
+    renderWithData(<FunctionList sort={{ id: "name", desc: true }} onSortChange={vi.fn()} />, [
+      [lambdaFunctionsQueryOptions().queryKey, functions],
+    ])
+    expect(renderedNames()).toEqual(["gamma", "beta", "alpha"])
+  })
+})

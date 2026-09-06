@@ -11,7 +11,7 @@ import {
   ResourceName,
   RowAction,
 } from "@/components/ui/resource-list-page"
-import { ResourceTable } from "@/components/ui/resource-table"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { RegionElsewhereNotice } from "@/features/preflight/components/region-elsewhere-notice"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { RawStateLink } from "@/features/debug/raw-state-link"
@@ -23,7 +23,13 @@ function topicNameOf(topic: { TopicArn?: string }): string {
   return topic.TopicArn?.split(":").pop() ?? ""
 }
 
-export function TopicList() {
+interface TopicListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function TopicList({ sort, onSortChange }: TopicListProps = {}) {
   const navigate = useNavigate()
 
   const [showCreate, setShowCreate] = useState(false)
@@ -80,6 +86,8 @@ export function TopicList() {
         // ListTopics returns the emulator's own storage order, which is not
         // stable across refetches; A→Z is the order a name column implies.
         defaultSort={{ id: "name", desc: false }}
+        sort={sort}
+        onSortChange={onSortChange}
         rowKey={(topic) => topic.TopicArn ?? ""}
         onRowClick={(topic) =>
           navigate({ to: "/sns/$topic", params: { topic: topicNameOf(topic) } })

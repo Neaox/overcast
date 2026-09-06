@@ -600,6 +600,26 @@ describe("ResourceTable > controlled sort", () => {
     expect(onSortChange).toHaveBeenCalledWith({ id: "retention-days", desc: true })
   })
 
+  // A list that declares a default means it for the no-param case too, which is
+  // most page loads: `?sort=` absent must not mean the emulator's storage order
+  // on a list that refetches.
+  it("falls back to defaultSort while the controlled sort is undefined", async () => {
+    const onSortChange = vi.fn()
+    const { user } = render(
+      <StreamsTable
+        sort={undefined}
+        onSortChange={onSortChange}
+        defaultSort={{ id: "name", desc: true }}
+      />,
+    )
+    expect(rowOrder()).toEqual(["stream-30", "stream-10", "stream-2"])
+
+    // The cycle is asc ⇄ desc while a fallback is in place: "none" would render
+    // as the fallback, so it is not offered as a click that changes nothing.
+    await user.click(screen.getByRole("button", { name: "Name" }))
+    expect(onSortChange).toHaveBeenCalledWith({ id: "name", desc: false })
+  })
+
   it("renders the order the sort prop asks for", () => {
     render(<StreamsTable sort={{ id: "name", desc: true }} onSortChange={() => {}} />)
     expect(rowOrder()).toEqual(["stream-30", "stream-10", "stream-2"])
