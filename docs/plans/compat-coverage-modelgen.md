@@ -354,6 +354,123 @@ at full operation depth (§3.9).
 > **G4 fleet rollout is unblocked.** §5's G4 row names no first service to
 > recompute against; do not invent one here.
 
+> **G4 wave 1 is done at Tier 0, and wave 2 is chosen by measurement —
+> 2026-09-07.** Wave 1 named the three services with a committed shape
+> snapshot: `batch` (REST-JSON, #1881), `elastic-load-balancing` (AWS Query,
+> #1882, plus the classification fix #1889 closing #1884), `servicediscovery`
+> (AWS JSON 1.1, #1887) — the same trio as `inert-tier-rollout.md` Phase I4.
+> All three PRs are **merged**, stacked bottom-up onto `main`. Each service is
+> Tier 0 today, so every result is exactly what §3.1's second consequence
+> predicts — no `pass`, no `fail`, every probe `unimplemented`, every
+> lifecycle test `skip` behind a failed setup — measured once per suite
+> against an Overcast built from each branch (Tier 0 needs no soak):
+>
+> | Service | pass | unimplemented | skip | fail | wall clock |
+> | --- | ---: | ---: | ---: | ---: | ---: |
+> | `batch` | 0 | 11 | 34 | 0 | go-sdk 4 s / cli 3 s |
+> | `servicediscovery` | 0 | 3 | 25 | 0 | go-sdk 3 s / cli 2 s |
+> | `elastic-load-balancing` | 0 | 5 | 12 | 0 | go-sdk 2 s / cli 3 s |
+>
+> The `elastic-load-balancing` row is the result **after** #1889; before it,
+> #1884's fault (ELB Classic and ELBv2 share the `elasticloadbalancing`
+> signing name, and the emulator answered every Classic request from ELBv2)
+> gave 1 `pass` / 2 `fail` instead of two of those five `unimplemented`s.
+>
+> **Recomputed at this commit, from the checked-in artifacts:**
+> `compat/suites/registry.generated.json` is **22 groups / 152 tests** — the
+> nine pilot groups (`organizations`, `sqs`) are `gated`; the thirteen wave-1
+> groups (`batch` 6, `elastic-load-balancing` 3, `servicediscovery` 4) are all
+> still `candidate`, because the wave's first nightly promotion has not run
+> yet (tracked open in #1883). `compat/model/gaps.json` holds **65** entries —
+> 59 `never-probe`, 3 `unsupported-tag-shape` (ELB's `RemoveTags`, whose
+> `TagKeyOnly` list of structures `detectTagShape` does not accept), 3
+> `rust-emit-unsupported`. Those three (`batch-gen-jobdefinition`,
+> `elastic-load-balancing-gen-loadbalancer`, `servicediscovery-gen-service`)
+> were scoped to six backends with `rust-sdk` excluded while #1885 (the rust
+> emitter could not spell a composite nested inside a structure literal) was
+> open; #1890 fixed it the same day and regained the three rows, so every
+> wave-1 and pilot group now lists all seven.
+>
+> **Four generator faults, found and fixed inside the wave** — `batch` and
+> `elastic-load-balancing` are the corpus's first REST-JSON and first AWS
+> Query services, so each exercised `cmd/compatgen` in a way no JSON-1.1
+> service had: `@clientOptional` had been read by `RequiredMembers` as "not
+> required," a fault no other service's snapshot ever exposed because Batch
+> alone marks all 182 of its `@required` members `@clientOptional` too — five
+> probes reported `fail` (an SDK validation error) instead of the honest
+> `unimplemented` a 501 gives, until `RequiredMembers` was made to honour
+> `@required` outright; the java emitter's camel-case boundary splitter
+> consumed a letter at the join (`ListJobsByConsumableResource` →
+> the invalid `ListJobsByconsumableResourceRequest`); the rust emitter passed
+> a bare shape name through where smithy-rs pascal-cases it (`CEState` → the
+> crate's own `CeState`); and the `cli` backend ran its generated calls
+> unsigned, which Overcast's REST fallback answers as S3 rather than the
+> operation's own 501 — 11 of batch's 45 tests read `fail` unsigned and
+> `unimplemented` once signed. `scripts/validate-compat-registry.py` was also
+> widened to accept, for the generated registry only, a service the pruned
+> shape snapshot covers but the emulator has no capability row for at all —
+> G4 breaks §7 item 7's "generated groups will use the capability key by
+> construction" assumption on purpose. `elastic-load-balancing` landed the
+> cli/python-sdk name-override tables (§7 item 3) for the four services whose
+> per-backend name is not the endpoint prefix (`elasticloadbalancing`,
+> `monitoring`, `email`, `states`).
+>
+> **Follow-ups filed from the wave, none blocking:** #1885 (rust nested
+> composites, above; fixed by #1890, merged 2026-09-07), #1886 (`$name`
+> exceeds an undeclared AWS length limit — ELB Classic's load balancer name
+> caps at 32 characters and `$name` is 54; §7 records it as an open
+> question), #1878 (`rust-sdk` needs an XML→document conversion before a
+> Query/REST-XML service is implemented — blocks
+> `elastic-load-balancing`'s inert-tier implementation from reaching
+> `rust-sdk` parity, not the recipe merged here), #1865 (one convention for
+> where the shared error-fixture corpus runs, carried over from G3). #1884 is
+> closed, fixed by #1889 above.
+>
+> **Wave 2 chosen by measurement, 2026-09-07 (#1883).** The pruner was run
+> read-only against the pinned models (revision `06544fdc`, no tracked file
+> touched) over nine candidate services, scored by **implemented operations
+> per KB of snapshot** — how much immediate pass/fail signal a recipe buys —
+> rather than by smallest operation count, the selector §7 item 1 had assumed
+> would still apply at this scale:
+>
+> | Service | Bytes | Ops | B/op | Implemented ops | impl/KB |
+> | --- | ---: | ---: | ---: | ---: | ---: |
+> | `secretsmanager` | 32,256 | 46 | 701 | 19 | 0.603 |
+> | `sns` | 43,009 | 84 | 512 | 22 | 0.524 |
+> | `iam` | 181,071 | 360 | 503 | 74 | 0.418 |
+> | `kms` | 86,962 | 108 | 805 | 34 | 0.400 |
+> | `cognito-idp` | 197,617 | 264 | 749 | 70 | 0.363 |
+> | `lambda` | 188,486 | 176 | 1,071 | 61 | 0.331 |
+> | `dynamodb` | 122,247 | 116 | 1,054 | 21 | 0.176 |
+> | `s3` | 246,352 | 112 | 2,200 — over the 1,608 gate | 45 | 0.187 |
+> | `ec2` | 1,899,684 | 1,602 | 1,186 | 79 | 0.043 |
+>
+> **Wave 2 = `secretsmanager`, `sns`, `kms`, `iam`**: 343,298 B / 598 ops / 574
+> B/op / 149 implemented operations combined. The committed snapshot — five
+> services, 307,535 B today, inside the 336 KiB budget
+> `internal/awsapi/shapes_provenance_test.go` enforces — would grow to
+> 650,833 B, so `maxShapeSnapshotBytes` needs raising once, deliberately, to
+> 800 KiB (650,833 B × ~1.26 headroom, the same factor `inert-tier-rollout.md`
+> §4.6 used to set 336 KiB): 2.6% of the 24 MiB fleet ceiling. Landing order:
+> one PR adds the four snapshots and the budget raise, then one recipe PR per
+> service — `secretsmanager`, `sns`, `kms` in parallel, `iam` after (it alone
+> is 360 operations). **The snapshot/budget PR merged as #1891** (2026-09-07;
+> merged at this writing, and unreflected in the tree this note was checked
+> against); none of the four recipe PRs is open yet.
+>
+> Two findings for `inert-tier-rollout.md`, not blockers here: `s3` is the
+> only measured service over the per-op gate, and needs structural pruning or
+> a more compact encoding before any wave takes it on; and the ten smallest
+> Tier-0 JSON-family services (4-19 operations each) **all** exceed the 1,608
+> B/op gate, several by 30-90%, because fixed per-service shape overhead
+> dominates at a tiny operation count (seven of the ten are query/verb APIs
+> §3.6 keeps at Tier 0 regardless) — so smallest-operation-count is the wrong
+> selector for an inert-tier wave, and implemented-operations-per-byte is the
+> one that produced a workable wave 2. The measurement also caught
+> `inert-tier-rollout.md` §4.6 citing a stale model revision (`66e973ca`);
+> `models/aws/VERSION` now pins `06544fdc`, though the five committed
+> snapshots still total exactly 307,535 B either way.
+
 Counts below were computed from the checked-in generated artifacts, not from
 `STATUS.md` — **`STATUS.md` prose is stale** (it describes Shield as "Stub — all
 ops return 501" while `internal/capabilities/all.gen.go:*` declares five Shield
@@ -1501,6 +1618,11 @@ at fleet scale either.
 SDK cannot send `VisibilityTimeout: 0` and the recipe's 1 s hide needs a poll
 that outlasts it (§3.10) — ~4 s per suite per run, still inside the budget.
 
+**G4 wave 1, measured 2026-09-06/07** (Tier 0, one run each, no soak needed):
+`batch` go-sdk 4 s / cli 3 s, `servicediscovery` go-sdk 3 s / cli 2 s,
+`elastic-load-balancing` go-sdk 2 s / cli 3 s — each comfortably inside this
+budget; see the §2 note dated 2026-09-07 for the full per-service table.
+
 ### 4.4 G2 handoff — what an interpreter author has to agree to
 
 Added 2026-09-05 from #1709's own report; **resolved 2026-09-06 by #1817**.
@@ -1654,7 +1776,7 @@ original scope stays legible.
 | **G1** Model layer | **Done** — `internal/awsmodel` #1359, shape snapshot via inert-tier I1 with `sqs` added in #1684, `cmd/compatgen` and `compat/model/` in #1709. The model-utilisation follow-ups (#1795, closed) then moved three derivations out of the recipes and into the generator — see the §2 note | Extract `internal/awsmodel` AST reader; `cmd/compatgen` skeleton; the pruned shape snapshot `models/aws/shapes/` + `shapes-sha256` (shared deliverable with [inert-tier-rollout.md](./inert-tier-rollout.md) Phase I1 — build once, whichever plan gets there first); IR + recipe JSON schemas; `--scaffold`, `--review-report`, `--explain`; `gaps.json` | M | `make compat-model-check` regenerates byte-identically offline; the sha gate catches a hand edit; the snapshot is within its size budget; scaffolding a service produces a recipe skeleton a human can complete |
 | **G2** Pilot | **Done**, tracked as **#1768** (closed 2026-09-06). All three interpreters are merged — `python-sdk` #1787, `node-js-sdk` #1788 (+ #1796), `cli` #1790 — and the seven pilot groups run in all three suites with zero failures, identical across three runs, inside the §4.3 budget; the §2 note has the tally. Every §4.1 criterion and §4.2's 1–3 are met. #1813, the §4.2 criterion 5 regeneration demonstration, is met (#1818 then #1813): regeneration changed no byte of the corpus and the generated OU tests started passing on their own, in all three interpreters. The first candidate → gated promotion (machinery #1792/#1798) happened on 2026-09-06 as #1871, gating all nine groups; #1879 made the gate test state-aware. #1801 landed as #1823 | `python-sdk`, `node-js-sdk` and `cli` interpreters; `recipes/sqs.json` + `recipes/organizations.json`; the §4 acceptance criteria | L | Every §4.1 and §4.2 criterion met, including the regeneration demonstration in §4.2.5 |
 | **G3** Typed backends | **Done**, tracked as **#1820**. All four typed backends landed, one PR each: `go-sdk` (#1830, plus #1836 for emit-time SDK type resolution and #1833 for the precedent notes), `java-sdk` (#1851), `dotnet-sdk` (#1848), `rust-sdk` (#1853). Every backend produces results identical, test for test, to the three interpreters and to each other — 39 `pass` / 23 `unimplemented` / 0 `fail` / 0 `skip`, three runs each — and every generated group's `suites` now lists all seven backends. §3.2's binding decision, measured rather than assumed: only `go-sdk` reads the vendored SDK at emit time; `java-sdk`, `dotnet-sdk` and `rust-sdk` derive types from the pinned model alone. G4 fleet rollout is unblocked; see the §2 note dated 2026-09-06 | Source emitters for `go-sdk`, then `java-sdk`, `dotnet-sdk`, `rust-sdk` (one suite per PR); member→field naming rules per language | L each | Generated source compiles in the suite's normal build; the pilot groups produce **identical** results to the interpreter suites; generated `suites` scoping widens automatically on regeneration |
-| **G4** Tier-1 fleet rollout | **Started**, tracked as **#1883** — wave 1 is the three services with committed snapshots (`batch`, `elastic-load-balancing`, `servicediscovery`; the inert tier's Phase I4 pilot trio), one stacked PR each, all Tier 0 today so every probe test lands `unimplemented` and every lifecycle group `skip` until the inert tier implements them (the #1818 → #1821 precedent). Known gap before any Query/REST-XML service is implemented: #1878 (rust-sdk XML → document) | One service per PR, ordered by [inert-tier-rollout.md](./inert-tier-rollout.md) then [full-emulation-priority.md](./full-emulation-priority.md); capped probe groups for [services-never-emulated.md](./services-never-emulated.md) | L, parallelizable per service | Per service: recipe reviewed, no unexplained refusal in `gaps.json`, soak passed, CI wall-clock within budget, coverage metric moves |
+| **G4** Tier-1 fleet rollout | **In progress**, tracked as **#1883**. **Wave 1 done** at Tier 0 (2026-09-07): `batch` #1881, `elastic-load-balancing` #1882 (+ classification fix #1889, closing #1884), `servicediscovery` #1887 — the inert tier's Phase I4 pilot trio, stacked bottom-up and merged. Every probe test lands `unimplemented` and every lifecycle group `skip` until the inert tier implements each service (the #1818 → #1821 precedent) — measured 0 `pass` / 0 `fail` in all three, batch 11 `unimplemented`/34 `skip`, servicediscovery 3/25, elastic-load-balancing 5/12; see the §2 note dated 2026-09-07 for the per-service table and the four generator faults the wave found. The 13 new groups are `candidate`, pending the wave's first nightly promotion. **Wave 2 chosen by measurement** (#1883, 2026-09-07): `secretsmanager`, `sns`, `kms`, `iam`, selected by implemented-operations-per-snapshot-byte rather than by smallest operation count; its snapshot/budget PR (`maxShapeSnapshotBytes` to 800 KiB) merged as #1891, and the `secretsmanager`, `sns` and `kms` recipe PRs are in flight (`iam` follows). Known gap before any Query/REST-XML service reaches Tier 1: #1878 (rust-sdk XML → document); the rust nested-composite fault (#1885) is fixed by #1890, so no group is scoped away from `rust-sdk` any more; and #1896 (only `rust-sdk` reads a nested `Error.Code`) must land before the first Query service reaches Tier 1 | One service per PR, ordered by [inert-tier-rollout.md](./inert-tier-rollout.md) then [full-emulation-priority.md](./full-emulation-priority.md); capped probe groups for [services-never-emulated.md](./services-never-emulated.md) | L, parallelizable per service | Per service: recipe reviewed, no unexplained refusal in `gaps.json`, soak passed, CI wall-clock within budget, coverage metric moves |
 | **G5** Steady state | Not started | Weekly model-refresh PR regenerates scenarios; coverage becomes the dashboard headline; `--slowest N` latency census | S | A model-refresh PR shows added/removed operations per service and cannot break the gate; coverage per service/tier is published |
 | **G6** Native-group migration (§3.11; overlaps G4/G5, starts any time after G3) | Not started | Port the existing 94 hand-written groups to authored IR scenarios, group by group: same registry names, one parallel soak cycle, results must match, then delete the per-language code. Exceptions file + lint for what stays native (streaming, presigned flows, the idiom suite). | L, parallelizable per group | Per group: soak-parity with the native predecessor, native code deleted, registry names unchanged; fleet-wide: rust/dotnet parity debt reaches zero via backends, the exceptions file is the only remaining native test code and every entry carries a reason |
 
@@ -1779,3 +1901,28 @@ Done means all of the following hold simultaneously:
    every push, because `compat-suite-unit-tests` excluded it on the assumption
    that the image build already covered it, and the image build's context
    could not reach the corpus at all.
+10. **`$name` can exceed an AWS length limit the model never declares — added
+    2026-09-07, filed as #1886.** The IR's name-hygiene rule (§2.4, §3.3)
+    fixes `$name` as `{runId}-{group}-{suffix}`, and a recipe has no shorter
+    spelling available. Real AWS caps some resource names well below what
+    that produces without saying so in the model: an ELB Classic load
+    balancer name is capped at 32 characters, and the `elastic-load-balancing`
+    wave-1 recipe's own `$name` is 54 (the §2 note dated 2026-09-07). Overcast
+    does not enforce the limit, so it accepts a create real AWS would refuse
+    on the name alone — and so will the inert tier that implements it.
+    Fixing it means either a modeled length constraint (which would make the
+    generator refuse the operation instead of generating it) or a shorter
+    `$name` scheme, and the second changes every generated name in the corpus
+    at once — not a decision for one recipe PR. Decide the corpus-wide
+    spelling before a second service with a comparable cap lands.
+11. **Two G4 wave 1 follow-ups remain open, both filed 2026-09-06, neither
+    blocking.** #1885: the rust emitter cannot spell a composite nested inside
+    a structure literal, which costs `batch-gen-jobdefinition`,
+    `elastic-load-balancing-gen-loadbalancer` and
+    `servicediscovery-gen-service` their `rust-sdk` row until it lands — a
+    fix merged as #1890 on 2026-09-07. #1878: `rust-sdk` needs an
+    XML→document conversion before a Query or
+    REST-XML service reaches Tier 1 — it blocks nothing generated so far, but
+    will block `elastic-load-balancing`'s own inert-tier implementation from
+    reaching `rust-sdk` parity. See the §2 note dated 2026-09-07 for what each
+    currently costs.
