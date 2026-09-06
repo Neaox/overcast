@@ -400,9 +400,12 @@ generated half:
   SDK unmarshals it, which is what makes the `x-amzn-query-error` carrier an
   observation rather than an assumption. The two `cliBanner` fixtures are the
   only ones this suite cannot see, and it names them rather than skipping
-  quietly. The Dockerfile copies the fixture directory in for exactly this
-  test, which is why this suite's build context is `compat/` rather than
-  `compat/suites/`.
+  quietly. This suite's build context is `compat/suites/` like every other
+  suite's, which does not contain the corpus, so this test detects that and
+  skips itself by name inside the Docker build; it runs for real only from a
+  full checkout, in `test.yml`'s `compat-suite-unit-tests` job with
+  `OVERCAST_COMPAT_FIXTURES_REQUIRED=1` set — see
+  [compat/AGENTS.md § Where the shared error corpus runs](../../AGENTS.md#where-the-shared-error-corpus-runs).
 
 This project did not exist before
 [#1697](https://github.com/overcast-sh/overcast/pull/1697) — until then this

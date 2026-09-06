@@ -94,10 +94,24 @@ class ErrorFixturesTest {
     @JsonIgnoreProperties(ignoreUnknown = false)
     record Spec(String shape, String code) {}
 
+    /**
+     * Set to "1" only by test.yml's compat-suite-unit-tests job, which runs
+     * {@code mvn -B test} from a full checkout where the corpus is always
+     * reachable. Its absence there would mean the shared conformance set
+     * silently stopped being checked anywhere — see compat/AGENTS.md
+     * § Where the shared error corpus runs.
+     */
+    private static final String REQUIRED_ENV_VAR = "OVERCAST_COMPAT_FIXTURES_REQUIRED";
+
     @TestFactory
     List<DynamicNode> sharedErrorFixtures() throws IOException {
         File dir = fixtureDir();
         if (dir == null) {
+            if ("1".equals(System.getenv(REQUIRED_ENV_VAR))) {
+                fail(REQUIRED_ENV_VAR + "=1 but no compat/model/testdata/errors found above the working"
+                        + " directory — this suite's fixture test must run from a full checkout"
+                        + " (test.yml's compat-suite-unit-tests job)");
+            }
             // The Docker build copies this suite's sources without the model
             // directory, so the shared corpus is not reachable there. Reported
             // as a skip rather than a pass: a conformance set that quietly

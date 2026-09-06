@@ -263,12 +263,20 @@ func TestGenericAPIErrorIsNotAnExceptionName(t *testing.T) {
 	}
 }
 
+// fixturesRequiredEnvVar is set to "1" only by test.yml's
+// compat-suite-unit-tests job, which runs this test from a full checkout
+// where the corpus is always reachable. Its absence there would mean the
+// shared conformance set silently stopped being checked anywhere — see
+// compat/AGENTS.md § Where the shared error corpus runs.
+const fixturesRequiredEnvVar = "OVERCAST_COMPAT_FIXTURES_REQUIRED"
+
 func repoRootFromTest(t *testing.T) string {
 	t.Helper()
-	dir, err := os.Getwd()
+	start, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
+	dir := start
 	for i := 0; i < 8; i++ {
 		if _, err := os.Stat(filepath.Join(dir, "compat", "model", "scenarios")); err == nil {
 			return dir
@@ -279,6 +287,10 @@ func repoRootFromTest(t *testing.T) string {
 		}
 		dir = parent
 	}
-	t.Skip("no compat/model above the test working directory; nothing to check")
+	if os.Getenv(fixturesRequiredEnvVar) == "1" {
+		t.Fatalf("%s=1 but no compat/model found walking up from %s — this suite's fixture test must run from a full checkout (test.yml's compat-suite-unit-tests job)",
+			fixturesRequiredEnvVar, start)
+	}
+	t.Skipf("no compat/model above %s; nothing to check (set %s=1 to make this fatal)", start, fixturesRequiredEnvVar)
 	return ""
 }

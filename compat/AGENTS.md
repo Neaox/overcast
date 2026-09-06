@@ -413,32 +413,58 @@ tagged with a content hash of the suite's sources so it rebuilds when they
 change, and the name is the script's own constant — the runner neither knows
 nor supplies it.
 
-Those images are independently buildable, but **the build context is
-`compat/suites/`, not the suite directory.** The shared `registry.json` lives at
-the top of that tree, and each image copies it in as `/registry.json`
-(`OVERCAST_REGISTRY_PATH`); a suite-directory context cannot reach it:
+Those images are independently buildable, and **the build context is
+`compat/suites/`, not the suite directory, for all three — no exceptions.** The
+shared `registry.json` lives at the top of that tree, and each image copies it
+in as `/registry.json` (`OVERCAST_REGISTRY_PATH`); a suite-directory context
+cannot reach it:
 
 ```bash
 # Build just the java-sdk image
 docker build -f compat/suites/java-sdk/Dockerfile -t oc-java-sdk-compat compat/suites
-```
 
-`dotnet-sdk` is the one exception, and it widens rather than narrows: its
-context is **`compat/`**, because the unit tests its build stage runs include
-the shared error-matching conformance fixtures under
-`compat/model/testdata/errors` (see [Errors](../model/README.md#errors)), which
-`compat/suites/` does not contain — and a fixture a suite silently does not run
-looks exactly like one it passes. A `Dockerfile.dockerignore` beside that
-suite's Dockerfile keeps the wider context cheap and applies to it alone.
-
-`DOCKER_BUILDKIT=1` is not optional here: `Dockerfile.dockerignore` is a
-BuildKit feature and there is no `compat/.dockerignore`, so a classic build
-would send the whole 2.6 GiB context to the daemon.
-
-```bash
 # Build just the dotnet-sdk image
-DOCKER_BUILDKIT=1 docker build -f compat/suites/dotnet-sdk/Dockerfile -t oc-dotnet-sdk-compat compat
+docker build -f compat/suites/dotnet-sdk/Dockerfile -t oc-dotnet-sdk-compat compat/suites
 ```
+
+Each of the three also runs its unit tests inside the image build (`mvn
+package`, `cargo test`, `dotnet test`) so a registration regression fails the
+build rather than surfacing as a wrong result in a compat run. None of that
+needs `compat/model/`, so none of it needs a wider context — see
+[Where the shared error corpus runs](#where-the-shared-error-corpus-runs)
+below for the one test in each of those three that does need it, and where it
+actually runs instead.
+
+### Where the shared error corpus runs
+
+[compat/model/testdata/errors](./model/testdata/errors) is the shared
+error-matching conformance corpus every suite's matcher must answer
+identically (see [Errors](./model/README.md#errors)). **Every suite's fixture
+test runs from a full checkout, in `test.yml`'s `compat-suite-unit-tests` job
+— never inside a Docker image build.** That job sets
+`OVERCAST_COMPAT_FIXTURES_REQUIRED=1` for all of its steps, and every fixture
+test honours it the same way:
+
+- **Corpus found:** run for real, exactly as before.
+- **Corpus not found, and the env var is set:** fail loudly, naming the
+  reason — this is the one place the corpus must always be reachable, so
+  silence here would mean nothing in CI ever checked it.
+- **Corpus not found, and the env var is unset:** skip by name, with a
+  reason. This is the branch a suite's own Docker image build takes: `java-sdk`,
+  `dotnet-sdk` and `rust-sdk` all build from the `compat/suites/` context (see
+  above), which does not contain `compat/model/`, so their fixture test would
+  otherwise either fail the image build for a corpus the build was never meant
+  to reach, or — worse — silently report nothing while looking exactly like a
+  passing conformance check.
+
+This is a single convention applied uniformly, not four suites each making
+their own call: three different shapes reached this corpus one PR at a time
+during G3 (#1820) — go-sdk from the root checkout always, java-sdk and rust-sdk
+via extra steps in `compat-suite-unit-tests` because their build context could
+not reach it, and dotnet-sdk by widening its build context to `compat/` with a
+`Dockerfile.dockerignore` instead. The third shape cost a 2.6 GiB classic-build
+trap and a BuildKit-only ignore file nothing else in `compat/` needed; #1865
+replaced all three with the one rule above.
 
 ### Flags that read a results file instead of producing one
 

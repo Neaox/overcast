@@ -233,16 +233,26 @@ func checkClause(t *testing.T, file, where string, a *Assertion) {
 	}
 }
 
+// fixturesRequiredEnvVar is set to "1" only by test.yml's
+// compat-suite-unit-tests job, which runs this test from a full checkout
+// where the corpus is always reachable. Its absence there would mean the
+// shared conformance set silently stopped being checked anywhere — see
+// compat/AGENTS.md § Where the shared error corpus runs.
+const fixturesRequiredEnvVar = "OVERCAST_COMPAT_FIXTURES_REQUIRED"
+
 // repoRootFromTest walks up from the test's working directory to the directory
 // holding compat/model. The test skips rather than fails when there is none:
 // the suite module is also built in images that carry no model directory, and
-// a corpus check has nothing to say there.
+// a corpus check has nothing to say there — unless fixturesRequiredEnvVar says
+// this run is expected to see it, in which case that silence would mean the
+// shared conformance set was not checked anywhere, and the test fails loudly.
 func repoRootFromTest(t *testing.T) string {
 	t.Helper()
-	dir, err := os.Getwd()
+	start, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
+	dir := start
 	for i := 0; i < 8; i++ {
 		if _, err := os.Stat(filepath.Join(dir, "compat", "model", "scenarios")); err == nil {
 			return dir
@@ -253,6 +263,10 @@ func repoRootFromTest(t *testing.T) string {
 		}
 		dir = parent
 	}
-	t.Skip("no compat/model above the test working directory; nothing to check")
+	if os.Getenv(fixturesRequiredEnvVar) == "1" {
+		t.Fatalf("%s=1 but no compat/model found walking up from %s — this suite's fixture test must run from a full checkout (test.yml's compat-suite-unit-tests job)",
+			fixturesRequiredEnvVar, start)
+	}
+	t.Skipf("no compat/model above %s; nothing to check (set %s=1 to make this fatal)", start, fixturesRequiredEnvVar)
 	return ""
 }
