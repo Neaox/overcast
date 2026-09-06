@@ -13,6 +13,8 @@ use std::fmt::Write as _;
 
 use serde_json::Value as Json;
 
+use super::capture::Wire;
+
 /// What a failure message prints where a path did not resolve.
 pub(crate) const MISSING: &str = "<missing>";
 
@@ -151,21 +153,59 @@ pub(crate) fn render_resolved(value: Option<&Json>) -> String {
 /// `30.0` have said the same thing, and `serde_json` keeps the two
 /// representations apart — so numbers are compared as `f64`, which is also what
 /// the three interpreters compare after parsing.
-pub(crate) fn equal(a: &Json, b: &Json) -> bool {
+///
+/// `wire` is the one thing that bends that, and only where the wire itself is
+/// missing the information. An XML body has no types — `<Interval>30` and
+/// `<Enabled>true` are both text — and [`super::xml`] keeps them as text,
+/// because nothing in this crate holds the model that would say which is which.
+/// Every other backend does hold it, through its SDK, so it compares a typed 30
+/// against the `equals: 30` a recipe writes and passes. Against an XML document
+/// the comparison is therefore against the literal's own spelling, which is
+/// what makes this suite answer what the others answer on the same assertion.
+/// It stays an equality: `"30"` matches `30`, and `"30x"` matches neither.
+pub(crate) fn equal(a: &Json, b: &Json, wire: Wire) -> bool {
     match (a, b) {
         (Json::Number(x), Json::Number(y)) => match (x.as_f64(), y.as_f64()) {
             (Some(x), Some(y)) => x == y,
             _ => x == y,
         },
         (Json::Array(x), Json::Array(y)) => {
-            x.len() == y.len() && x.iter().zip(y).all(|(x, y)| equal(x, y))
+            x.len() == y.len() && x.iter().zip(y).all(|(x, y)| equal(x, y, wire))
         }
         (Json::Object(x), Json::Object(y)) => {
             x.len() == y.len()
                 && x.iter()
-                    .all(|(key, value)| y.get(key).is_some_and(|other| equal(value, other)))
+                    .all(|(key, value)| y.get(key).is_some_and(|other| equal(value, other, wire)))
         }
+        _ if wire == Wire::Xml => untyped_equal(a, b),
         _ => a == b,
+    }
+}
+
+/// One XML-derived value against one scenario literal, where the two are not
+/// already the same JSON kind.
+///
+/// The wire spells a scalar one way, so the literal is rendered into that
+/// spelling rather than the value being guessed at — which is the difference
+/// between this and typing the document by how its text happens to look. A
+/// modeled string whose value is `"true"` — ELB's `ProxyProtocol` policy
+/// attribute is one — stays the string it is, and an `equals: "true"` on it
+/// still holds.
+///
+/// The last arm is the empty element: `<X/>` says a member arrived with no
+/// content and not whether it is an empty string or an empty list, so
+/// [`super::xml`] reads it as `[]`, and a scenario writing the other reading of
+/// the same emptiness means the same thing.
+fn untyped_equal(got: &Json, want: &Json) -> bool {
+    match (got, want) {
+        (Json::String(text), Json::String(other)) => text == other,
+        (Json::String(text), Json::Number(number)) => text
+            .parse::<f64>()
+            .ok()
+            .is_some_and(|parsed| number.as_f64() == Some(parsed)),
+        (Json::String(text), Json::Bool(flag)) => text == if *flag { "true" } else { "false" },
+        (Json::Array(items), Json::String(text)) => items.is_empty() && text.is_empty(),
+        _ => false,
     }
 }
 
