@@ -3,6 +3,7 @@ package cloudformation
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -235,25 +236,38 @@ func TestResourceDelete_aServiceFailureIsStillReported(t *testing.T) {
 		physicalID string
 		code       int
 		body       string
+		// wantCode and wantMessage are the two things the service said that the
+		// teardown failure has to reach the operator carrying — see
+		// status_reason.go, which renders them into CloudFormation's shape
+		// rather than pasting the wire body in.
+		wantCode    string
+		wantMessage string
 	}{
 		// EC2's refusal to delete a resource something else still depends on.
 		// It must never be read as absence: the resource is very much there.
 		{"AWS::EC2::Subnet", "subnet-1234", 400,
 			`<?xml version="1.0" encoding="UTF-8"?><Response><Errors><Error><Code>DependencyViolation</Code>` +
-				`<Message>The subnet 'subnet-1234' has dependencies and cannot be deleted.</Message></Error></Errors></Response>`},
+				`<Message>The subnet 'subnet-1234' has dependencies and cannot be deleted.</Message></Error></Errors></Response>`,
+			"DependencyViolation", "The subnet 'subnet-1234' has dependencies and cannot be deleted."},
 		{"AWS::EC2::SecurityGroup", "sg-1234", 400,
 			`<?xml version="1.0" encoding="UTF-8"?><Response><Errors><Error><Code>DependencyViolation</Code>` +
-				`<Message>resource sg-1234 has a dependent object</Message></Error></Errors></Response>`},
+				`<Message>resource sg-1234 has a dependent object</Message></Error></Errors></Response>`,
+			"DependencyViolation", "resource sg-1234 has a dependent object"},
 		{"AWS::EKS::Cluster", "live-cluster", 500,
-			`{"__type":"InternalFailure","message":"cluster delete failed"}`},
+			`{"__type":"InternalFailure","message":"cluster delete failed"}`,
+			"InternalFailure", "cluster delete failed"},
 		{"AWS::ApiGateway::RestApi", "liveapi", 500,
-			`{"__type":"InternalFailure","message":"rest api delete failed"}`},
+			`{"__type":"InternalFailure","message":"rest api delete failed"}`,
+			"InternalFailure", "rest api delete failed"},
 		{"AWS::Events::Rule", "arn:aws:events:us-east-1:000000000000:rule/live-rule", 400,
-			`{"__type":"ValidationException","message":"Rule can't be deleted since it has targets."}`},
+			`{"__type":"ValidationException","message":"Rule can't be deleted since it has targets."}`,
+			"ValidationException", "Rule can't be deleted since it has targets."},
 		{"AWS::KMS::Key", "live-key", 400,
-			`{"__type":"KMSInvalidStateException","message":"Key is pending deletion"}`},
+			`{"__type":"KMSInvalidStateException","message":"Key is pending deletion"}`,
+			"KMSInvalidStateException", "Key is pending deletion"},
 		{"AWS::ECS::TaskDefinition", "live-td:1", 400,
-			`{"__type":"ClientException","message":"taskDefinition must include a revision (family:revision)."}`},
+			`{"__type":"ClientException","message":"taskDefinition must include a revision (family:revision)."}`,
+			"ClientException", "taskDefinition must include a revision (family:revision)."},
 	}
 
 	for _, tc := range cases {
@@ -275,8 +289,12 @@ func TestResourceDelete_aServiceFailureIsStillReported(t *testing.T) {
 			if err == nil {
 				t.Fatalf("Delete of %s reported success over a resource that is still standing", tc.resType)
 			}
-			if !strings.Contains(err.Error(), tc.body) && !strings.Contains(err.Error(), "HTTP") {
-				t.Errorf("error %q carries neither the service's answer nor its status", err)
+			for _, want := range []string{
+				tc.wantCode, tc.wantMessage, "Status Code: " + strconv.Itoa(tc.code),
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not carry %q — the operator has to be told what the service said", err, want)
+				}
 			}
 		})
 	}

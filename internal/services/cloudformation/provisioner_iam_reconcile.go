@@ -49,11 +49,17 @@ func iamQuery(ctx context.Context, router http.Handler, region, action string, p
 	return nil
 }
 
-// isIAMNoSuchEntity reports whether err is IAM's NoSuchEntity refusal, as
-// formatted by internalCall.do ("HTTP 404: <body>").
+// isIAMNoSuchEntity reports whether err is IAM's NoSuchEntity refusal.
+//
+// It reads the dispatch failure's own fields rather than its rendered text.
+// The text used to be the only thing available, so this grepped it for
+// "HTTP 404" and "<Code>NoSuchEntity</Code>" — a match that would have gone
+// quietly false the moment the reason changed shape, which is exactly what
+// status_reason.go did to it.
 func isIAMNoSuchEntity(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "HTTP 404") &&
-		strings.Contains(err.Error(), "<Code>NoSuchEntity</Code>")
+	var callErr *serviceCallError
+	return errors.As(err, &callErr) &&
+		callErr.StatusCode == http.StatusNotFound && callErr.Code == "NoSuchEntity"
 }
 
 // ─── Property shapes ────────────────────────────────────────────────────────

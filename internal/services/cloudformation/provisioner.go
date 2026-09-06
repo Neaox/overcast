@@ -105,6 +105,20 @@ func (p *provisioner) regionCtx(region string) context.Context {
 	return middleware.ContextWithRegion(p.ctx, region)
 }
 
+// operationCtx is regionCtx plus the token of the stack operation about to
+// run, which a failed dispatch names in the resource's status reason — see
+// withOperationToken.
+//
+// Every stack operation starts from here: createStack, updateStack,
+// deleteStack, rollbackStack and continueUpdateRollback all build their context
+// through provisionAsync, and the two synchronous wrappers below take the same
+// route. A nested stack is deliberately not one of them — it provisions under
+// its parent's context and so records the parent's token, which is the same
+// token its own events already carry (see resolveContext.ClientRequestToken).
+func (p *provisioner) operationCtx(stack *Stack) context.Context {
+	return withOperationToken(p.regionCtx(stack.Region), stack.ClientRequestToken)
+}
+
 // ── Asynchronous provisioning ──────────────────────────────────────────────
 
 // provisionAsync runs one stack operation on a provisioning goroutine and
@@ -122,7 +136,7 @@ func (p *provisioner) regionCtx(region string) context.Context {
 // provisioning continues after the caller has been answered, and the hops it
 // records still belong to the request that asked for the work.
 func (p *provisioner) provisionAsync(stack *Stack, rec *trace.Recorder, run func(ctx context.Context)) {
-	ctx := p.regionCtx(stack.Region)
+	ctx := p.operationCtx(stack)
 	if rec != nil {
 		ctx = trace.ContextWithRecorder(ctx, rec)
 	}
@@ -201,7 +215,7 @@ func (p *provisioner) completeChangeSet(cs *ChangeSet) stackCompletionFunc {
 // resolves outputs, and sets the final stack status. Both top-level createStack
 // (async) and nestedStackHandler (inline) use this method.
 func (p *provisioner) provisionStackResources(stack *Stack, tmpl *Template) {
-	p.provisionStackResourcesCtx(p.regionCtx(stack.Region), stack, tmpl)
+	p.provisionStackResourcesCtx(p.operationCtx(stack), stack, tmpl)
 }
 
 func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Stack, tmpl *Template) {
@@ -366,7 +380,7 @@ func (p *provisioner) updateStack(stack *Stack, tmpl *Template, previous stackGe
 }
 
 func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template, previous stackGeneration) {
-	p.updateStackResourcesCtx(p.regionCtx(stack.Region), stack, tmpl, previous)
+	p.updateStackResourcesCtx(p.operationCtx(stack), stack, tmpl, previous)
 }
 
 func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack, tmpl *Template, previous stackGeneration) {
@@ -2875,6 +2889,18 @@ func (c internalCall) hopLabels() (service, operation, targetURI string) {
 	}
 }
 
+// serviceKey names the service this call reaches, for the failure reason a
+// non-2xx response becomes — see status_reason.go.
+//
+// It goes through hopLabels rather than repeating its switch. hopLabels avoids
+// that work on the hot path deliberately, but a dispatch that has already
+// failed is not the hot path, and one string the caller discards is cheaper
+// than a second copy of the classification.
+func (c internalCall) serviceKey() string {
+	service, _, _ := c.hopLabels()
+	return service
+}
+
 // restService names the service a REST dispatch reaches: what the caller
 // stated, or what the path betrays.
 //
@@ -2936,7 +2962,7 @@ func (c internalCall) do(ctx context.Context, router http.Handler) (*httptest.Re
 	if recorder == nil {
 		router.ServeHTTP(rec, req)
 		noteLimitations(ctx, rec)
-		return rec, statusError(rec)
+		return rec, statusError(ctx, c.serviceKey(), rec)
 	}
 	defer noteLimitations(ctx, rec)
 
@@ -2963,16 +2989,7 @@ func (c internalCall) do(ctx context.Context, router http.Handler) (*httptest.Re
 		Timestamp:      start,
 		Error:          hopErr,
 	})
-	return rec, statusError(rec)
-}
-
-// statusError maps a >= 400 internal response to an error, as every dispatch
-// helper here has always done.
-func statusError(rec *httptest.ResponseRecorder) error {
-	if rec.Code >= 400 {
-		return fmt.Errorf("HTTP %d: %s", rec.Code, rec.Body.String())
-	}
-	return nil
+	return rec, statusError(ctx, service, rec)
 }
 
 // teardownError classifies the outcome of a delete dispatched while tearing a
@@ -3064,13 +3081,7 @@ func resourceAlreadyGone(rec *httptest.ResponseRecorder) bool {
 	if rec.Code == http.StatusNotFound {
 		return true
 	}
-	body := lettersLower(rec.Body.String())
-	for _, phrase := range absentResourcePhrases {
-		if strings.Contains(body, phrase) {
-			return true
-		}
-	}
-	return false
+	return namesAbsence(lettersLower(rec.Body.String()))
 }
 
 // absentResourcePhrases are the ways AWS spells "it is not there" once

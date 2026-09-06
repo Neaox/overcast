@@ -2,7 +2,7 @@ service: cloudformation
 status: implementation_mismatch
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-21
+last_updated: 2026-09-06
 protocols: [query]
 implementation: [internal/services/cloudformation]
 integration_tests: [tests/integration/cloudformation]
@@ -149,6 +149,30 @@ operations:
           - internal/services/cloudformation/rollback_stack_test.go::TestRollbackStack_retainExceptOnCreateControlsRetainedCreateResources
           - tests/integration/cloudformation/cloudformation_test.go::TestCreateStack_rollbackRetainsResourceWithDeletionPolicyRetain
         notes: A resource with DeletionPolicy Retain remains service-side when automatic stack creation rollback runs, including a resource that received a physical ID before stabilization failed. Its stack history records DELETE_SKIPPED. Template RetainExceptOnCreate deletes during initial create rollback but retains during ordinary deletion, while the RollbackStack operation flag can opt newly created Retain resources into deletion.
+      - name: failed resource status reason shape
+        status: fixed
+        tests:
+          - internal/services/cloudformation/status_reason_test.go
+          - tests/integration/cloudformation/resource_status_reason_test.go
+          - tests/integration/cloudformation/lambda_properties_test.go::TestUpdateStack_LambdaEmptyCodeDelegatesPackageSpecificValidation
+        notes: >-
+          A resource whose provisioning failed because an internal service call
+          answered >= 400 now reports CloudFormation's own reason shape —
+          `Resource handler returned message: "<message> (Service: …, Status
+          Code: …, Error Code: …, Request ID: …)" (RequestToken: …,
+          HandlerErrorCode: …)` — instead of the raw XML or JSON error body a
+          `cdk deploy` used to print. The code and message are read out of all
+          four error envelopes the emulator writes (S3's bare Error, the Query
+          protocol's ErrorResponse, EC2's Response/Errors, and the JSON
+          protocols' __type/message); a body that parses as neither still falls
+          back to the previous "HTTP <status>: <body>" rendering, so nothing is
+          lost. Three details stay unverified against real AWS and say so in
+          internal/services/cloudformation/status_reason.go: the Extended
+          Request ID field is omitted because Overcast mints no x-amz-id-2;
+          RequestToken carries the stack operation's ClientRequestToken rather
+          than real CloudFormation's per-resource provider invocation token;
+          and the HandlerErrorCode mapping is derived from what the enum's
+          members mean rather than from observed CloudFormation output.
   DescribeChangeSet:
     status: fixed
     aws_docs:
@@ -196,6 +220,10 @@ findings:
     - AWS::ECS::Service stabilization preserves the actionable scheduler failure when a newer task-start progress event exists.
     - Automatic create rollback honors DeletionPolicy Retain and records DELETE_SKIPPED for the retained resource; RetainExceptOnCreate distinguishes initial create rollback from ordinary deletion.
     - AWS::EKS::Cluster Ref now resolves to the cluster name instead of the ARN, so a nodegroup, Fargate profile, or add-on wired to its cluster by Ref reaches CREATE_COMPLETE instead of failing with a "No cluster found for name" error; Fn::GetAtt Arn is unchanged (#1690).
+    - >-
+      A failed resource's ResourceStatusReason is CloudFormation's "Resource
+      handler returned message: … (RequestToken: …, HandlerErrorCode: …)"
+      sentence rather than the service's raw XML/JSON error body.
   remaining_gaps:
     - Audit resource-type tracking against provisioner registrations.
     - Add CloudFormation Ref compatibility tests for resource handlers whose physical ID differs from documented Ref semantics.
