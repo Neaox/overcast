@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/overcast-sh/overcast/internal/inert"
 	"github.com/overcast-sh/overcast/internal/protocol"
@@ -147,8 +148,11 @@ type rootView struct {
 	Name string `json:"Name" cbor:"Name"`
 	// PolicyTypes is the set of policy types *enabled on this root*, which is
 	// not the same set DescribeOrganization reports as available in the
-	// organization. Enabling one is EnablePolicyType's job and that operation
-	// is Tier 0 here, so nothing can ever have enabled one and the honest
+	// organization (see describeOrganizationTyped's
+	// organizationDetails.AvailablePolicyTypes in typed_logic.go — that list
+	// is hand-picked to just SERVICE_CONTROL_POLICY, independent of this
+	// one). Enabling one is EnablePolicyType's job and that operation is
+	// Tier 0 here, so nothing can ever have enabled one and the honest
 	// answer is the empty list — never omitted, because "no policy types are
 	// enabled" is a fact about the root rather than an absence of
 	// information.
@@ -307,6 +311,9 @@ func (rec *organizationalUnitRecord) view() organizationalUnitView {
 // ---- handlers --------------------------------------------------------------
 
 func (s *Service) listRoots(_ context.Context, in *listRootsRequest) (*listRootsResponse, *protocol.AWSError) {
+	if aerr := checkMaxResults(in.MaxResults); aerr != nil {
+		return nil, aerr
+	}
 	// One organization, one root. The list is built rather than read, so
 	// there is no store call to fail — but the continuation token still has
 	// to be honest: a garbage token is the modeled error, never a silent
@@ -314,7 +321,7 @@ func (s *Service) listRoots(_ context.Context, in *listRootsRequest) (*listRoots
 	page, err := serviceutil.Paginate([]rootView{s.root()}, int(deref(in.MaxResults)), derefString(in.NextToken),
 		serviceutil.PaginateOptions{DefaultLimit: listMaxResults, MaxLimit: listMaxResults})
 	if err != nil {
-		return nil, inert.PageError(err, errInvalidInput)
+		return nil, inert.PageError(err, errInvalidNextToken)
 	}
 	return &listRootsResponse{NextToken: page.NextToken, Roots: page.Items}, nil
 }
@@ -323,7 +330,7 @@ func (s *Service) createOrganizationalUnit(ctx context.Context, in *createOrgani
 	// §3.4: exactly the checks the model states — @required presence and
 	// @length. Nothing cross-field, nothing referential beyond the parent
 	// reference the operation's own ParentNotFoundException exists for.
-	if aerr := validateOrganizationalUnitName(in.Name); aerr != nil {
+	if aerr := validateOrganizationalUnitName(in.Name, true); aerr != nil {
 		return nil, aerr
 	}
 	parent, aerr := s.resolveParent(ctx, in.ParentId)
@@ -365,6 +372,12 @@ func (s *Service) createOrganizationalUnit(ctx context.Context, in *createOrgani
 		UpdatedAt: now,
 	}
 
+	// The record is persisted before its tags are applied: a failed Put must
+	// never leave tags written against an ARN with no backing record (an
+	// orphan ListTagsForResource could answer for).
+	if err := s.ous.Put(ctx, id, rec); err != nil {
+		return nil, inert.StorageError(err)
+	}
 	// Tags on the create input write through to the same store the tag
 	// operations read, so ListTagsForResource can never disagree with what
 	// CreateOrganizationalUnit accepted (§3.1's Tag class, §7.3).
@@ -372,9 +385,6 @@ func (s *Service) createOrganizationalUnit(ctx context.Context, in *createOrgani
 		if _, aerr := s.tags.Apply(ctx, rec.Arn, tagMap(in.Tags), tagRules); aerr != nil {
 			return nil, aerr
 		}
-	}
-	if err := s.ous.Put(ctx, id, rec); err != nil {
-		return nil, inert.StorageError(err)
 	}
 	return &createOrganizationalUnitResponse{OrganizationalUnit: rec.view()}, nil
 }
@@ -394,8 +404,13 @@ func (s *Service) updateOrganizationalUnit(ctx context.Context, in *updateOrgani
 	}
 	// A merge, not a replace: Name is the only member this operation takes
 	// besides the identifier, and only a caller who sent it moves anything.
+	// changed tracks whether anything on the record actually moved, so a
+	// caller that omits Name (or resends the current one) is a true no-op:
+	// no UpdatedAt bump and no store write, rather than a rewrite of an
+	// otherwise-identical record.
+	changed := false
 	if in.Name != nil && *in.Name != rec.Name {
-		if aerr := validateOrganizationalUnitName(*in.Name); aerr != nil {
+		if aerr := validateOrganizationalUnitName(*in.Name, false); aerr != nil {
 			return nil, aerr
 		}
 		// UpdateOrganizationalUnit declares
@@ -412,6 +427,10 @@ func (s *Service) updateOrganizationalUnit(ctx context.Context, in *updateOrgani
 			}
 		}
 		rec.Name = *in.Name
+		changed = true
+	}
+	if !changed {
+		return &updateOrganizationalUnitResponse{OrganizationalUnit: rec.view()}, nil
 	}
 	rec.UpdatedAt = s.ous.Now()
 
@@ -456,6 +475,9 @@ func (s *Service) listOrganizationalUnitsForParent(ctx context.Context, in *list
 	// operation's own ParentNotFoundException rather than an empty list: the
 	// difference between "no children" and "no such parent" is one a caller
 	// acts on.
+	if aerr := checkMaxResults(in.MaxResults); aerr != nil {
+		return nil, aerr
+	}
 	parent, aerr := s.resolveParent(ctx, in.ParentId)
 	if aerr != nil {
 		return nil, aerr
@@ -466,11 +488,14 @@ func (s *Service) listOrganizationalUnitsForParent(ctx context.Context, in *list
 	}
 
 	// MaxResults is @range min 1 max 20 in the model, which is where both
-	// numbers come from — not from a house default.
+	// numbers come from — not from a house default. AWS answers
+	// InvalidInputException (MAX_VALUE_EXCEEDED / MIN_VALUE_EXCEEDED)
+	// instead of silently clamping, which is why checkMaxResults runs before
+	// Paginate rather than relying on its own MaxLimit clamp.
 	page, err := serviceutil.Paginate(children, int(deref(in.MaxResults)), derefString(in.NextToken),
 		serviceutil.PaginateOptions{DefaultLimit: listMaxResults, MaxLimit: listMaxResults})
 	if err != nil {
-		return nil, inert.PageError(err, errInvalidInput)
+		return nil, inert.PageError(err, errInvalidNextToken)
 	}
 
 	out := &listOrganizationalUnitsForParentResponse{
@@ -502,7 +527,7 @@ type parentRef struct {
 // so is better than a fabricated success under an invented parent.
 func (s *Service) resolveParent(ctx context.Context, parentID string) (parentRef, *protocol.AWSError) {
 	if parentID == "" {
-		return parentRef{}, invalidInput("ParentId is a required parameter.")
+		return parentRef{}, invalidInput(reasonInputRequired, "ParentId is a required parameter.")
 	}
 	if parentID == s.rootID() {
 		return parentRef{id: parentID, path: s.rootPath()}, nil
@@ -525,7 +550,7 @@ func (s *Service) resolveParent(ctx context.Context, parentID string) (parentRef
 // OrganizationalUnitNotFoundException rather than a 500.
 func (s *Service) loadOrganizationalUnit(ctx context.Context, id string) (*organizationalUnitRecord, *protocol.AWSError) {
 	if id == "" {
-		return nil, invalidInput("OrganizationalUnitId is a required parameter.")
+		return nil, invalidInput(reasonInputRequired, "OrganizationalUnitId is a required parameter.")
 	}
 	rec, found, err := s.ous.Get(ctx, id)
 	if err != nil {
@@ -563,12 +588,29 @@ func (s *Service) childrenOf(ctx context.Context, parentID string) ([]*organizat
 // validateOrganizationalUnitName holds OrganizationalUnitName's modeled
 // @length 1..128. Its @pattern is `^[\s\S]*$`, which accepts anything, so
 // there is nothing else to check.
-func validateOrganizationalUnitName(name string) *protocol.AWSError {
+//
+// @length counts Unicode code points, not bytes — Smithy's length trait is
+// defined over the string's length as a sequence of code points, and the
+// pattern accepts non-ASCII text, so a multi-byte name must not be rejected
+// (or accepted past the limit) based on len(name)'s byte count. utf8.RuneCountInString
+// is the code-point count.
+//
+// required distinguishes why an empty name is invalid: CreateOrganizationalUnit
+// takes Name as a plain (non-pointer) string, so an empty value there is
+// indistinguishable from an absent one and reports the model's
+// CALLER_REQUIRED_FIELD_MISSING-style INPUT_REQUIRED. UpdateOrganizationalUnit's
+// Name is a pointer — the caller here already sent a non-nil, differing
+// value that decoded to "" — so the same empty string is a length violation
+// (MIN_LENGTH_EXCEEDED) rather than a missing parameter.
+func validateOrganizationalUnitName(name string, required bool) *protocol.AWSError {
 	if name == "" {
-		return invalidInput("Name is a required parameter.")
+		if required {
+			return invalidInput(reasonInputRequired, "Name is a required parameter.")
+		}
+		return invalidInput(reasonMinLengthExceeded, "Name must be at least 1 character.")
 	}
-	if len(name) > maxOrganizationalUnitName {
-		return invalidInput(fmt.Sprintf("Name must be at most %d characters.", maxOrganizationalUnitName))
+	if n := utf8.RuneCountInString(name); n > maxOrganizationalUnitName {
+		return invalidInput(reasonMaxLengthExceeded, fmt.Sprintf("Name must be at most %d characters.", maxOrganizationalUnitName))
 	}
 	return nil
 }

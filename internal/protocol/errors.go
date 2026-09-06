@@ -60,6 +60,16 @@ type AWSError struct {
 	// service that never sets it. See internal/services/sqs's query error
 	// table for the one service that does, and why.
 	QueryErrorCode string
+	// Reason, when set, is rendered as the JSON error body's "Reason"
+	// member. Several AWS JSON-protocol services model an enum-valued
+	// Reason member on one of their exception shapes that AWS always
+	// populates alongside Code/Message — Organizations'
+	// InvalidInputException.Reason (the InvalidInputExceptionReason enum) is
+	// the first Overcast caller. Left empty (the default, and the only
+	// value any service without such a member ever sets) it renders no
+	// field at all, so this is a no-op for every service that never sets
+	// it — the same shape as QueryErrorCode above.
+	Reason string
 	// cause is the underlying error that triggered this AWSError.
 	// It is not sent to clients — it is for internal logging and error chain
 	// inspection only. Equivalent to JavaScript's Error.cause.
@@ -121,6 +131,7 @@ func Wrap(template *AWSError, cause error) *AWSError {
 		Message:        template.Message,
 		HTTPStatus:     template.HTTPStatus,
 		QueryErrorCode: template.QueryErrorCode,
+		Reason:         template.Reason,
 		cause:          cause,
 	}
 }
@@ -357,6 +368,9 @@ func WriteXMLError(w http.ResponseWriter, r *http.Request, aerr *AWSError) {
 type jsonErrorResponse struct {
 	Type    string `json:"__type"`
 	Message string `json:"message"`
+	// Reason mirrors AWSError.Reason — omitted entirely for the services
+	// that never set it (see AWSError.Reason's doc comment).
+	Reason string `json:"Reason,omitempty"`
 }
 
 // WriteJSONError writes an AWS JSON-protocol error response.
@@ -369,6 +383,7 @@ func WriteJSONError(w http.ResponseWriter, r *http.Request, aerr *AWSError) {
 	body, _ := json.Marshal(&jsonErrorResponse{
 		Type:    aerr.Code,
 		Message: aerr.Message,
+		Reason:  aerr.Reason,
 	})
 
 	// Drain the request body so the HTTP/1.1 connection can be reused by the

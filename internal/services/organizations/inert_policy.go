@@ -106,6 +106,20 @@ var (
 		Message:    "You provided invalid values for one or more of the request parameters.",
 		HTTPStatus: http.StatusBadRequest,
 	}
+	// errInvalidNextToken is InvalidInputException with Reason set to the
+	// wire value of the modeled INVALID_PAGINATION_TOKEN enum member
+	// (INVALID_NEXT_TOKEN — the enum's Go-side member name and its
+	// @enumValue differ, see the reason constants below). It is the
+	// invalid-token template every paginated operation in this service
+	// passes to inert.PageError, so a garbage continuation token is
+	// distinguished from any other bad input by Reason alone, the same way
+	// AWS distinguishes it.
+	errInvalidNextToken = &protocol.AWSError{
+		Code:       "InvalidInputException",
+		Message:    "You provided an invalid value for NextToken.",
+		HTTPStatus: http.StatusBadRequest,
+		Reason:     reasonInvalidNextToken,
+	}
 	// TargetNotFoundException, @httpError 404 — the tag operations'
 	// not-found, since their input names a target rather than a policy.
 	errTargetNotFound = &protocol.AWSError{
@@ -114,6 +128,81 @@ var (
 		HTTPStatus: http.StatusNotFound,
 	}
 )
+
+// ---- InvalidInputException.Reason values (§3.3/InvalidInputExceptionReason) -
+//
+// Read out of the modeled InvalidInputExceptionReason enum, verbatim — the
+// enum member's *wire value* (its `smithy.api#enumValue` trait), which for
+// most members equals the member name but not all: the model spells the
+// missing-NextToken member INVALID_PAGINATION_TOKEN while its wire value is
+// INVALID_NEXT_TOKEN, which is what actually goes on the wire and is called
+// out below. (The pruned shape snapshot itself is generator input only and
+// deliberately not named by path in runtime code — see the file header.)
+//
+// Only the reasons an existing invalid-input path in this service can
+// actually produce are declared here. Two enum members reachable in
+// principle are deliberately absent:
+//   - INVALID_PATTERN never fires because every string member this service
+//     validates a pattern for is unconstrained: PolicyName, PolicyContent,
+//     PolicyDescription and OrganizationalUnitName all carry the modeled
+//     pattern `^[\s\S]*$`, which accepts anything. The one place a pattern
+//     really does constrain input — PolicyId/OrganizationalUnitId/ParentId's
+//     `p-…`/`ou-…`/`r-…` shapes — is deliberately not pattern-checked; see
+//     the "Differences from AWS" row in docs/services/organizations.md.
+//   - MIN_LENGTH_EXCEEDED does not apply to a create path: CreatePolicy's
+//     Name/Content and CreateOrganizationalUnit's Name are plain (non-pointer)
+//     strings, so an empty value there is indistinguishable from an absent
+//     one and reports INPUT_REQUIRED instead. It does apply to Update, whose
+//     equivalent members are pointers — see reasonMinLengthExceeded's use in
+//     updatePolicy and validateOrganizationalUnitName.
+const (
+	// reasonInputRequired is INPUT_REQUIRED — a required member that is
+	// missing (or, for a plain-string required member, indistinguishable
+	// from missing because it decoded to "").
+	reasonInputRequired = "INPUT_REQUIRED"
+	// reasonInvalidEnumPolicyType is INVALID_ENUM_POLICY_TYPE — CreatePolicy's
+	// Type and ListPolicies' Filter both target the PolicyType enum, and a
+	// value outside policyTypes fails the same way for both.
+	reasonInvalidEnumPolicyType = "INVALID_ENUM_POLICY_TYPE"
+	// reasonInvalidNextToken is INVALID_NEXT_TOKEN, the wire value of the
+	// INVALID_PAGINATION_TOKEN enum member (the enum's Go-side name differs
+	// from what actually goes on the wire — see the const block's header).
+	reasonInvalidNextToken = "INVALID_NEXT_TOKEN"
+	// reasonMaxLengthExceeded is MAX_LENGTH_EXCEEDED — OrganizationalUnitName's
+	// modeled @length max (128).
+	reasonMaxLengthExceeded = "MAX_LENGTH_EXCEEDED"
+	// reasonMinLengthExceeded is MIN_LENGTH_EXCEEDED — a pointer member that
+	// was sent but decoded to a value shorter than its modeled @length min.
+	reasonMinLengthExceeded = "MIN_LENGTH_EXCEEDED"
+	// reasonMaxValueExceeded and reasonMinValueExceeded are MaxResults'
+	// modeled @range violations (min 1, max 20) — see checkMaxResults.
+	reasonMaxValueExceeded = "MAX_VALUE_EXCEEDED"
+	reasonMinValueExceeded = "MIN_VALUE_EXCEEDED"
+)
+
+// checkMaxResults enforces MaxResults' modeled @range (min 1, max 20 — the
+// one shape every paginated operation in this service binds its MaxResults
+// member to). AWS answers InvalidInputException for a value outside that
+// range instead of silently clamping to the bound, so this must run before
+// serviceutil.Paginate, whose own MaxLimit clamp exists for services whose
+// model declares no explicit range and is the wrong behaviour here.
+//
+// A nil MaxResults (the member omitted) is not a violation — Paginate's
+// DefaultLimit applies, as it always has.
+func checkMaxResults(v *int32) *protocol.AWSError {
+	if v == nil {
+		return nil
+	}
+	switch {
+	case *v > listMaxResults:
+		return invalidInput(reasonMaxValueExceeded,
+			fmt.Sprintf("You specified a value for MaxResults that is greater than the maximum allowed value of %d.", listMaxResults))
+	case *v < 1:
+		return invalidInput(reasonMinValueExceeded,
+			"You specified a value for MaxResults that is less than the minimum allowed value of 1.")
+	}
+	return nil
+}
 
 // tagRules are the tag constraints Organizations models. The codes are
 // the ones its tag operations declare. They are per-service rather than
@@ -327,19 +416,27 @@ func (rec *policyRecord) view() policyView {
 // ---- handlers --------------------------------------------------------------
 
 func (s *Service) createPolicy(ctx context.Context, in *createPolicyRequest) (*createPolicyResponse, *protocol.AWSError) {
-	// §3.4: exactly the checks the model states — @required presence,
-	// @length, enum membership. Nothing cross-field, nothing referential.
+	// §3.4: exactly the checks the model states — @required presence and
+	// enum membership. Nothing cross-field, nothing referential.
+	//
+	// Audit note (post-merge review of #1376): unlike
+	// validateOrganizationalUnitName, nothing here enforces PolicyName's
+	// modeled @length max (128), PolicyContent's (min 1 — presence already
+	// covers that one) or PolicyDescription's (max 512). There is no
+	// byte-vs-rune bug to fix because there is no length check to have had
+	// one; adding those checks is a separate, tracked follow-up rather than
+	// part of this review pass.
 	if in.Name == "" {
-		return nil, invalidInput("Name is a required parameter.")
+		return nil, invalidInput(reasonInputRequired, "Name is a required parameter.")
 	}
 	if in.Content == "" {
-		return nil, invalidInput("Content is a required parameter.")
+		return nil, invalidInput(reasonInputRequired, "Content is a required parameter.")
 	}
 	if in.Description == nil {
-		return nil, invalidInput("Description is a required parameter.")
+		return nil, invalidInput(reasonInputRequired, "Description is a required parameter.")
 	}
 	if !policyTypes[in.Type] {
-		return nil, invalidInput("Type must be one of the modeled policy types.")
+		return nil, invalidInput(reasonInvalidEnumPolicyType, "Type must be one of the modeled policy types.")
 	}
 
 	id := policyID(in.Name)
@@ -362,6 +459,12 @@ func (s *Service) createPolicy(ctx context.Context, in *createPolicyRequest) (*c
 	}
 	rec.Arn = s.policyARN(rec)
 
+	// The record is persisted before its tags are applied: a failed Put must
+	// never leave tags written against an ARN with no backing record (an
+	// orphan ListTagsForResource could answer for).
+	if err := s.policies.Put(ctx, id, rec); err != nil {
+		return nil, inert.StorageError(err)
+	}
 	// Tags on the create input write through to the same store the tag
 	// operations read, so ListTagsForResource can never disagree with what
 	// CreatePolicy accepted (§3.1's Tag class, §7.3).
@@ -369,9 +472,6 @@ func (s *Service) createPolicy(ctx context.Context, in *createPolicyRequest) (*c
 		if _, aerr := s.tags.Apply(ctx, rec.Arn, tagMap(in.Tags), tagRules); aerr != nil {
 			return nil, aerr
 		}
-	}
-	if err := s.policies.Put(ctx, id, rec); err != nil {
-		return nil, inert.StorageError(err)
 	}
 	return &createPolicyResponse{Policy: rec.view()}, nil
 }
@@ -390,20 +490,41 @@ func (s *Service) updatePolicy(ctx context.Context, in *updatePolicyRequest) (*u
 		return nil, aerr
 	}
 	// A merge, not a replace: only members the caller actually sent move.
+	// changed tracks whether anything on the record actually differs from
+	// what is stored, so a caller that omits every optional member (or
+	// resends the current values) is a true no-op: no UpdatedAt bump and no
+	// store write.
+	//
+	// Content and Name are pointers here, so a non-nil, empty-string value
+	// is a value the caller actually sent — PolicyContent and PolicyName
+	// both carry a modeled @length min of 1, so that is a length violation
+	// (MIN_LENGTH_EXCEEDED), not a missing parameter (unlike CreatePolicy's
+	// plain-string Name/Content, where "" is indistinguishable from absent).
+	changed := false
 	if in.Name != nil {
 		if *in.Name == "" {
-			return nil, invalidInput("Name must not be empty.")
+			return nil, invalidInput(reasonMinLengthExceeded, "Name must be at least 1 character.")
 		}
-		rec.Name = *in.Name
+		if *in.Name != rec.Name {
+			rec.Name = *in.Name
+			changed = true
+		}
 	}
-	if in.Description != nil {
+	if in.Description != nil && *in.Description != rec.Description {
 		rec.Description = *in.Description
+		changed = true
 	}
 	if in.Content != nil {
 		if *in.Content == "" {
-			return nil, invalidInput("Content must not be empty.")
+			return nil, invalidInput(reasonMinLengthExceeded, "Content must be at least 1 character.")
 		}
-		rec.Content = *in.Content
+		if *in.Content != rec.Content {
+			rec.Content = *in.Content
+			changed = true
+		}
+	}
+	if !changed {
+		return &updatePolicyResponse{Policy: rec.view()}, nil
 	}
 	rec.UpdatedAt = s.policies.Now()
 
@@ -433,8 +554,14 @@ func (s *Service) deletePolicy(ctx context.Context, in *deletePolicyRequest) (*d
 }
 
 func (s *Service) listPolicies(ctx context.Context, in *listPoliciesRequest) (*listPoliciesResponse, *protocol.AWSError) {
+	if in.Filter == "" {
+		return nil, invalidInput(reasonInputRequired, "Filter is a required parameter.")
+	}
 	if !policyTypes[in.Filter] {
-		return nil, invalidInput("Filter is a required parameter and must be one of the modeled policy types.")
+		return nil, invalidInput(reasonInvalidEnumPolicyType, "Filter must be one of the modeled policy types.")
+	}
+	if aerr := checkMaxResults(in.MaxResults); aerr != nil {
+		return nil, aerr
 	}
 
 	all, err := s.policies.List(ctx)
@@ -449,11 +576,14 @@ func (s *Service) listPolicies(ctx context.Context, in *listPoliciesRequest) (*l
 	}
 
 	// MaxResults is @range min 1 max 20 in the model, which is where both
-	// numbers come from — not from a house default.
+	// numbers come from — not from a house default. AWS answers
+	// InvalidInputException (MAX_VALUE_EXCEEDED / MIN_VALUE_EXCEEDED)
+	// instead of silently clamping, which is why checkMaxResults runs above
+	// rather than relying on Paginate's own MaxLimit clamp.
 	page, err := serviceutil.Paginate(matching, int(deref(in.MaxResults)), derefString(in.NextToken),
 		serviceutil.PaginateOptions{DefaultLimit: 20, MaxLimit: 20})
 	if err != nil {
-		return nil, inert.PageError(err, errInvalidInput)
+		return nil, inert.PageError(err, errInvalidNextToken)
 	}
 
 	out := &listPoliciesResponse{NextToken: page.NextToken, Policies: make([]policySummary, 0, len(page.Items))}
@@ -469,7 +599,7 @@ func (s *Service) tagResource(ctx context.Context, in *tagResourceRequest) (*tag
 		return nil, aerr
 	}
 	if len(in.Tags) == 0 {
-		return nil, invalidInput("Tags is a required parameter.")
+		return nil, invalidInput(reasonInputRequired, "Tags is a required parameter.")
 	}
 	if _, aerr := s.tags.Apply(ctx, arn, tagMap(in.Tags), tagRules); aerr != nil {
 		return nil, aerr
@@ -483,7 +613,7 @@ func (s *Service) untagResource(ctx context.Context, in *untagResourceRequest) (
 		return nil, aerr
 	}
 	if in.TagKeys == nil {
-		return nil, invalidInput("TagKeys is a required parameter.")
+		return nil, invalidInput(reasonInputRequired, "TagKeys is a required parameter.")
 	}
 	if _, aerr := s.tags.Remove(ctx, arn, in.TagKeys); aerr != nil {
 		return nil, aerr
@@ -504,11 +634,12 @@ func (s *Service) listTagsForResource(ctx context.Context, in *listTagsForResour
 		return resourceTag{Key: k, Value: v}
 	})
 	// ListTagsForResource is @paginated with an inputToken/outputToken but no
-	// pageSize member, so there is no caller-supplied limit to honour — only
-	// a token to keep honest.
+	// pageSize member (confirmed against ListTagsForResourceRequest in the
+	// model — it has no MaxResults), so there is no caller-supplied limit to
+	// validate or honour — only a token to keep honest.
 	page, err := serviceutil.Paginate(items, 0, derefString(in.NextToken), serviceutil.PaginateOptions{DefaultLimit: 50})
 	if err != nil {
-		return nil, inert.PageError(err, errInvalidInput)
+		return nil, inert.PageError(err, errInvalidNextToken)
 	}
 	return &listTagsForResourceResponse{NextToken: page.NextToken, Tags: page.Items}, nil
 }
@@ -520,7 +651,7 @@ func (s *Service) listTagsForResource(ctx context.Context, in *listTagsForResour
 // it), so it surfaces as PolicyNotFoundException rather than a 500.
 func (s *Service) loadPolicy(ctx context.Context, id string) (*policyRecord, *protocol.AWSError) {
 	if id == "" {
-		return nil, invalidInput("PolicyId is a required parameter.")
+		return nil, invalidInput(reasonInputRequired, "PolicyId is a required parameter.")
 	}
 	rec, found, err := s.policies.Get(ctx, id)
 	if err != nil {
@@ -549,7 +680,7 @@ func (s *Service) loadPolicy(ctx context.Context, id string) (*policyRecord, *pr
 func (s *Service) taggableARN(ctx context.Context, resourceID string) (string, *protocol.AWSError) {
 	switch {
 	case resourceID == "":
-		return "", invalidInput("ResourceId is a required parameter.")
+		return "", invalidInput(reasonInputRequired, "ResourceId is a required parameter.")
 	case resourceID == s.rootID():
 		// The root is derived rather than stored, so there is no record to
 		// look up — but it is a resource ListRoots just returned, and
@@ -578,8 +709,11 @@ func (s *Service) taggableARN(ctx context.Context, resourceID string) (string, *
 	}
 }
 
-func invalidInput(message string) *protocol.AWSError {
-	return &protocol.AWSError{Code: errInvalidInput.Code, Message: message, HTTPStatus: errInvalidInput.HTTPStatus}
+// invalidInput builds InvalidInputException with the modeled Reason member
+// set — AWS always populates it, and every invalid-input path in this
+// service goes through here so no path can omit it by accident.
+func invalidInput(reason, message string) *protocol.AWSError {
+	return &protocol.AWSError{Code: errInvalidInput.Code, Message: message, HTTPStatus: errInvalidInput.HTTPStatus, Reason: reason}
 }
 
 func tagMap(tags []resourceTag) map[string]string {

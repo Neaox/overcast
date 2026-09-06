@@ -163,6 +163,70 @@ func TestWrap_preservesQueryErrorCode(t *testing.T) {
 	}
 }
 
+// TestWriteJSONError_reasonField is the writer-level counterpart of
+// Organizations' InvalidInputException.Reason: WriteJSONError renders a
+// "Reason" member only when AWSError.Reason is set (the field every service
+// without a modeled Reason-shaped member leaves empty), and omits it
+// entirely otherwise rather than sending an empty string AWS never sends.
+func TestWriteJSONError_reasonField(t *testing.T) {
+	cases := []struct {
+		name string
+		aerr *protocol.AWSError
+		want string // "" means the field must be absent from the body entirely
+	}{
+		{
+			name: "unset Reason omits the field",
+			aerr: &protocol.AWSError{Code: "InternalError", Message: "boom", HTTPStatus: http.StatusInternalServerError},
+			want: "",
+		},
+		{
+			name: "set Reason is rendered verbatim",
+			aerr: &protocol.AWSError{Code: "InvalidInputException", Message: "boom", HTTPStatus: http.StatusBadRequest, Reason: "MAX_VALUE_EXCEEDED"},
+			want: "MAX_VALUE_EXCEEDED",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/", nil)
+			protocol.WriteJSONError(w, req, tc.aerr)
+
+			body, _ := io.ReadAll(w.Result().Body)
+			var raw map[string]any
+			if err := json.Unmarshal(body, &raw); err != nil {
+				t.Fatalf("decoding body %s: %v", body, err)
+			}
+			if tc.want == "" {
+				if _, present := raw["Reason"]; present {
+					t.Errorf("body %s carries a Reason field, want it absent", body)
+				}
+				return
+			}
+			if got, _ := raw["Reason"].(string); got != tc.want {
+				t.Errorf("Reason = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestWrap_preservesReason confirms Wrap carries Reason from its template
+// like every other field, so a wrapped Organizations InvalidInputException
+// keeps its modeled Reason.
+func TestWrap_preservesReason(t *testing.T) {
+	template := &protocol.AWSError{
+		Code:       "InvalidInputException",
+		Message:    "boom",
+		HTTPStatus: http.StatusBadRequest,
+		Reason:     "MIN_VALUE_EXCEEDED",
+	}
+	wrapped := protocol.Wrap(template, errors.New("cause"))
+
+	if wrapped.Reason != template.Reason {
+		t.Errorf("Reason = %q, want %q", wrapped.Reason, template.Reason)
+	}
+}
+
 // TestNotImplemented_setsUnsupportedHeader verifies the 501 sentinel header.
 func TestNotImplemented_setsUnsupportedHeader(t *testing.T) {
 	// Given: a handler that returns NotImplemented
