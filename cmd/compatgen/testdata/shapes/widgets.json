@@ -81,6 +81,7 @@
 "PolishWidgetRequest": {"type":"structure","members":{"WidgetId":{"target":"WidgetId","traits":{"smithy.api#required":{}}}},"traits":{"smithy.api#input":{}}},
 "PurgeWidgets": {"type":"operation","input":"PurgeWidgetsRequest","output":"smithy.api#Unit"},
 "PurgeWidgetsRequest": {"type":"structure","traits":{"smithy.api#input":{}}},
+"RetentionPolicy": {"type":"structure","members":{"Days":{"target":"smithy.api#Integer","traits":{"smithy.api#required":{}}},"Enabled":{"target":"smithy.api#Boolean"}}},
 "RotateWidget": {"type":"operation","input":"RotateWidgetRequest","output":"smithy.api#Unit"},
 "RotateWidgetRequest": {"type":"structure","members":{"Angle":{"target":"smithy.api#Integer","traits":{"smithy.api#required":{}}},"WidgetId":{"target":"WidgetId","traits":{"smithy.api#required":{}}}},"traits":{"smithy.api#input":{}}},
 "ScanWidgets": {"type":"operation","input":"ScanWidgetsRequest","output":"ScanWidgetsResponse","traits":{"smithy.api#paginated":{"inputToken":"NextToken","outputToken":"NextToken"}}},
@@ -106,7 +107,7 @@
 "UntagWidget": {"type":"operation","input":"UntagWidgetRequest","output":"smithy.api#Unit"},
 "UntagWidgetRequest": {"type":"structure","members":{"TagKeys":{"target":"TagKeyList","traits":{"smithy.api#required":{}}},"WidgetId":{"target":"WidgetId","traits":{"smithy.api#required":{}}}},"traits":{"smithy.api#input":{}}},
 "UpdateWidget": {"type":"operation","input":"UpdateWidgetRequest","output":"UpdateWidgetResponse","errors":["WidgetNotFound"]},
-"UpdateWidgetRequest": {"type":"structure","members":{"Description":{"target":"smithy.api#String"},"WidgetId":{"target":"WidgetId","traits":{"smithy.api#required":{}}}},"traits":{"smithy.api#input":{}}},
+"UpdateWidgetRequest": {"type":"structure","members":{"Description":{"target":"smithy.api#String"},"Settings":{"target":"WidgetSettings"},"WidgetId":{"target":"WidgetId","traits":{"smithy.api#required":{}}}},"traits":{"smithy.api#input":{}}},
 "UpdateWidgetResponse": {"type":"structure","members":{"Widget":{"target":"Widget"}},"traits":{"smithy.api#output":{}}},
 "Widget": {"type":"structure","members":{"Color":{"target":"Color"},"Description":{"target":"smithy.api#String"},"Name":{"target":"WidgetName"},"Size":{"target":"WidgetSize"},"WidgetId":{"target":"WidgetId"}}},
 "WidgetExists": {"type":"structure","members":{"message":{"target":"smithy.api#String"}},"traits":{"smithy.api#error":"client","smithy.api#httpError":409}},
@@ -115,6 +116,7 @@
 "WidgetName": {"type":"string","traits":{"smithy.api#length":{"max":64,"min":1},"smithy.api#pattern":"^[a-z0-9-]+$"}},
 "WidgetNotFound": {"type":"structure","members":{"message":{"target":"smithy.api#String"}},"traits":{"aws.protocols#awsQueryError":{"code":"Widget.NotFound","httpResponseCode":404},"smithy.api#error":"client","smithy.api#httpError":404}},
 "WidgetService": {"type":"service","version":"2026-01-01","operations":["ArchiveWidget","CalibrateGauge","CreateCog","CreateSprocket","CreateWidget","DeleteSprocket","DeleteWidget","DescribeGauge","DescribeGizmo","DescribeWidget","FreezeWidget","GetSprocket","GetWidget","GetWidgetAck","GetWidgetHistory","GetWidgetSecret","ListCogs","ListGauges","ListSprocketTags","ListWidgetTags","ListWidgets","ListWidgetsAndCogs","PingWidgets","PolishWidget","PurgeWidgets","RotateWidget","ScanWidgets","SetWidgetSize","SyncWidgets","TagSprocket","TagWidget","UntagSprocket","UntagWidget","UpdateWidget"],"traits":{"aws.api#service":{"endpointPrefix":"widgets","sdkId":"Widgets"},"aws.auth#sigv4":{"name":"widgets"},"aws.protocols#awsJson1_1":{}}},
+"WidgetSettings": {"type":"structure","members":{"Cogs":{"target":"CogList"},"Labels":{"target":"TagMap"},"Retention":{"target":"RetentionPolicy"},"Tags":{"target":"SprocketTagList"}}},
 "WidgetSize": {"type":"integer","traits":{"smithy.api#range":{"max":100,"min":1}}}
 }
 }

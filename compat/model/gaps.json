@@ -38,13 +38,6 @@
     },
     {
       "service": "batch",
-      "operation": "RegisterJobDefinition",
-      "group": "batch-gen-jobdefinition",
-      "reason": "rust-emit-unsupported:containerProperties",
-      "detail": "RegisterJobDefinition.containerProperties cannot be spelled as Rust: no Rust literal for a list member"
-    },
-    {
-      "service": "batch",
       "operation": "SubmitJob",
       "group": "batch-gen-probe",
       "reason": "never-probe",
@@ -154,13 +147,6 @@
       "group": "elastic-load-balancing-gen-probe",
       "reason": "never-probe",
       "detail": "Adds an Availability Zone to a live load balancer, changing where it serves from and what it bills for."
-    },
-    {
-      "service": "elastic-load-balancing",
-      "operation": "ModifyLoadBalancerAttributes",
-      "group": "elastic-load-balancing-gen-loadbalancer",
-      "reason": "rust-emit-unsupported:LoadBalancerAttributes",
-      "detail": "ModifyLoadBalancerAttributes.LoadBalancerAttributes cannot be spelled as Rust: no Rust literal for a structure member"
     },
     {
       "service": "elastic-load-balancing",
@@ -406,13 +392,6 @@
       "group": "servicediscovery-gen-probe",
       "reason": "never-probe",
       "detail": "Not refused for danger — it reads and changes nothing — but for what it could assert. Its whole response is one revision counter, and a counter read for a namespace that does not exist says nothing true about the service. It is covered instead by DiscoverInstances on the service the run owns."
-    },
-    {
-      "service": "servicediscovery",
-      "operation": "ListOperations",
-      "group": "servicediscovery-gen-service",
-      "reason": "rust-emit-unsupported:Filters",
-      "detail": "ListOperations.Filters cannot be spelled as Rust: no Rust literal for a list member"
     },
     {
       "service": "servicediscovery",

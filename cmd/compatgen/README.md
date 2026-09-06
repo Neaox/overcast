@@ -354,6 +354,7 @@ carries.
 | map | `{"a":"b"}` | `.attributes(K::from("a"), "b")`, one call per entry |
 | list of strings | `["compat"]` | `.tag_keys("compat")`, one call per element |
 | list of structures | `[{"Key":"k"}]` | `.tags(types::Tag::builder().key("k").build()…)` |
+| structure | `{"Enabled":true}` | `.cross_zone_load_balancing(types::CrossZoneLoadBalancing::builder().enabled(true).build())` |
 | any of them, `{"$ref":"q"}` | | `.queue_url(b.string("QueueUrl")?)` |
 
 The last row is the only thing left to run time, and it is not the expression:
@@ -361,6 +362,30 @@ the runtime evaluates a call's whole params tree before anything is sent — tha
 evaluation is failure-message field 3 — and the typed call reads one leaf of it
 back **by path**. So an expression is spelled once, as data, and the value the
 SDK is handed is the value the failure message quotes.
+
+A structure's own members are spelled by those same rows, at any depth: a
+nested structure is another builder chain, a nested list the same repeated
+setter, a nested map the same two-argument insert. Batch's
+`RegisterJobDefinition` sends a list of `ResourceRequirement` inside
+`containerProperties`, and comes out as one expression:
+
+```rust
+.container_properties(
+    aws_sdk_batch::types::ContainerProperties::builder()
+        .image("public.ecr.aws/amazonlinux/amazonlinux:2023")
+        .resource_requirements(
+            aws_sdk_batch::types::ResourceRequirement::builder()
+                .r#type(aws_sdk_batch::types::ResourceType::from("VCPU"))
+                .value("1")
+                .build()
+        )
+        .build()
+)
+```
+
+Only the indent follows the nesting; the type name, the raw identifier and
+whether `build()` is fallible are each asked of the nested shape rather than
+inherited from the shape around it.
 
 Two of the model's answers are derived rather than read, and both are stated
 here because getting either wrong is a compile error in the suite:
@@ -385,7 +410,10 @@ loud, and the fix is a pin in `compat/suites/rust-sdk/Cargo.toml`.
 Two things produce `rust-emit-unsupported:<Member>`: a member whose modeled
 kind has no IR literal (a timestamp, blob, document or union), and an
 expression bound to a composite member, which has no scalar slot to land in.
-Neither is reached by the current corpus.
+Neither is reached by the current corpus. A composite **literal** is not one of
+them at any depth — that was a third cause until #1885, and it cost three of
+the twelve G4 wave-1 groups their `rust-sdk` row for nothing more than a
+structure member the emitter declined to open.
 
 There is no formatter to run over the emitted Rust — this is a Go program, and
 CI's docs job carries no Rust toolchain — so the layout `emit_rust.go` writes
