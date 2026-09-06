@@ -592,6 +592,70 @@ func TestListGraphqlApis_filtersAndPaginates(t *testing.T) {
 	}
 }
 
+// TestListGraphqlApis_defaultsToAWSPageSize pins the page size a client gets
+// when it omits maxResults. AWS caps the parameter at 25 and applies that same
+// 25 as the default, so the omitted case is a page like any other — a walk that
+// terminates, not one unbounded response.
+//
+// The walk is the second half of the assertion: a default that pages but loses
+// or repeats an item is no better than one that returns everything.
+func TestListGraphqlApis_defaultsToAWSPageSize(t *testing.T) {
+	// Given: more APIs than one default page holds
+	srv := helpers.NewTestServer(t)
+	const total = 30
+	created := make(map[string]bool, total)
+	for i := 0; i < total; i++ {
+		apiID, _ := createTestAPI(t, srv)
+		created[apiID] = true
+	}
+
+	// When: ListGraphqlApis is called with no maxResults
+	first := appsyncGet(t, srv, "/v1/apis")
+	defer first.Body.Close()
+
+	// Then: it returns one AWS-sized page, not everything
+	helpers.AssertStatus(t, first, http.StatusOK)
+	var page struct {
+		GraphqlAPIs []struct {
+			ApiId string `json:"apiId"`
+		} `json:"graphqlApis"`
+		NextToken string `json:"nextToken"`
+	}
+	helpers.DecodeJSON(t, first, &page)
+	if len(page.GraphqlAPIs) != 25 {
+		t.Fatalf("expected the AWS default page size of 25, got %d", len(page.GraphqlAPIs))
+	}
+	if page.NextToken == "" {
+		t.Fatal("expected nextToken: 30 APIs do not fit in one default page")
+	}
+
+	// And: walking the default-sized pages yields every API exactly once
+	seen := make(map[string]bool, total)
+	for {
+		for _, api := range page.GraphqlAPIs {
+			if seen[api.ApiId] {
+				t.Fatalf("api %s returned on more than one page", api.ApiId)
+			}
+			if !created[api.ApiId] {
+				t.Fatalf("api %s was never created", api.ApiId)
+			}
+			seen[api.ApiId] = true
+		}
+		if page.NextToken == "" {
+			break
+		}
+		next := appsyncGet(t, srv, "/v1/apis?nextToken="+url.QueryEscape(page.NextToken))
+		helpers.AssertStatus(t, next, http.StatusOK)
+		page.GraphqlAPIs = nil
+		page.NextToken = ""
+		helpers.DecodeJSON(t, next, &page)
+		next.Body.Close()
+	}
+	if len(seen) != total {
+		t.Fatalf("walk returned %d of %d APIs", len(seen), total)
+	}
+}
+
 // ─── UpdateGraphqlApi ─────────────────────────────────────────────────────────
 
 func TestUpdateGraphqlApi_success(t *testing.T) {

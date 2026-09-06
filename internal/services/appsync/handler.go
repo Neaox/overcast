@@ -139,7 +139,14 @@ func containsString(values []string, value string) bool {
 	return false
 }
 
-func paginateList[T any](r *http.Request, items []T, maxDefault int) ([]T, string, *protocol.AWSError) {
+// maxResultsLimit is both the cap AppSync's List* operations put on maxResults
+// and the page size they apply when a client omits it: AWS documents the
+// parameter's valid range as 0-25 and defaults it to the same 25, so an omitted
+// maxResults yields a page and a nextToken rather than the whole collection.
+// https://docs.aws.amazon.com/appsync/latest/APIReference/API_ListGraphqlApis.html
+const maxResultsLimit = 25
+
+func paginateList[T any](r *http.Request, items []T) ([]T, string, *protocol.AWSError) {
 	q := r.URL.Query()
 	start := 0
 	if token := q.Get("nextToken"); token != "" {
@@ -150,16 +157,13 @@ func paginateList[T any](r *http.Request, items []T, maxDefault int) ([]T, strin
 		start = parsed
 	}
 
-	max := maxDefault
+	max := maxResultsLimit
 	if raw := q.Get("maxResults"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 0 || parsed > 25 {
-			return nil, "", badRequestError("maxResults must be between 0 and 25.")
+		if err != nil || parsed < 0 || parsed > maxResultsLimit {
+			return nil, "", badRequestError(fmt.Sprintf("maxResults must be between 0 and %d.", maxResultsLimit))
 		}
 		max = parsed
-	}
-	if max < 0 || max > len(items) {
-		max = len(items)
 	}
 	if start > len(items) {
 		start = len(items)
@@ -176,7 +180,7 @@ func paginateList[T any](r *http.Request, items []T, maxDefault int) ([]T, strin
 }
 
 func writeListJSON[T any](w http.ResponseWriter, r *http.Request, field string, items []T) {
-	page, next, aerr := paginateList(r, items, len(items))
+	page, next, aerr := paginateList(r, items)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
