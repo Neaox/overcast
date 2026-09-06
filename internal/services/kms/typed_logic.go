@@ -143,8 +143,20 @@ type decryptResponse struct {
 }
 
 type generateDataKeyRequest struct {
-	KeyId   string `json:"KeyId" cbor:"KeyId"`
-	KeySpec string `json:"KeySpec" cbor:"KeySpec"`
+	KeyId string `json:"KeyId" cbor:"KeyId"`
+	// KeySpec and NumberOfBytes are mutually exclusive and one is required;
+	// NumberOfBytes is a pointer so an explicit 0 is told apart from "absent"
+	// and reported as the range violation AWS reports.
+	KeySpec       string `json:"KeySpec" cbor:"KeySpec"`
+	NumberOfBytes *int   `json:"NumberOfBytes" cbor:"NumberOfBytes"`
+}
+
+type generateRandomRequest struct {
+	NumberOfBytes *int `json:"NumberOfBytes" cbor:"NumberOfBytes"`
+}
+
+type generateRandomResponse struct {
+	Plaintext []byte `json:"Plaintext" cbor:"Plaintext"`
 }
 
 type generateDataKeyResponse struct {
@@ -471,6 +483,26 @@ func (h *Handler) generateDataKeyWithoutPlaintextTyped(ctx context.Context, req 
 	return &generateDataKeyWithoutPlaintextResponse{CiphertextBlob: ciphertext, KeyId: k.ARN}, nil
 }
 
+// generateRandomTyped returns NumberOfBytes cryptographically secure random
+// bytes. GenerateRandom uses no KMS key at all, and NumberOfBytes has no
+// default: "You must use the NumberOfBytes parameter to specify the length of
+// the random byte string. There is no default value for string length."
+// https://docs.aws.amazon.com/kms/latest/APIReference/API_GenerateRandom.html
+func (h *Handler) generateRandomTyped(_ context.Context, req *generateRandomRequest) (*generateRandomResponse, *protocol.AWSError) {
+	n := 0
+	if req.NumberOfBytes != nil {
+		n = *req.NumberOfBytes
+	}
+	if aerr := validateNumberOfBytes(n); aerr != nil {
+		return nil, aerr
+	}
+	out := make([]byte, n)
+	if _, err := rand.Read(out); err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	return &generateRandomResponse{Plaintext: out}, nil
+}
+
 func (h *Handler) signTyped(ctx context.Context, req *signRequest) (*signResponse, *protocol.AWSError) {
 	k, aerr := h.resolveKeyForTyped(ctx, req.KeyId)
 	if aerr != nil {
@@ -594,13 +626,16 @@ func (h *Handler) resolveEnabledKeyForTyped(ctx context.Context, keyID string) (
 }
 
 func (h *Handler) generateDataKeyParts(ctx context.Context, req *generateDataKeyRequest) (*Key, []byte, []byte, *protocol.AWSError) {
-	k, aerr := h.resolveEnabledKeyForTyped(ctx, req.KeyId)
+	// Parameter constraints are checked before the key is resolved: AWS
+	// validates the request shape ahead of looking anything up, so a bad
+	// NumberOfBytes reports itself rather than hiding behind NotFoundException.
+	keyLen, aerr := dataKeyLength(req.KeySpec, req.NumberOfBytes)
 	if aerr != nil {
 		return nil, nil, nil, aerr
 	}
-	keyLen := 32
-	if req.KeySpec == "AES_128" {
-		keyLen = 16
+	k, aerr := h.resolveEnabledKeyForTyped(ctx, req.KeyId)
+	if aerr != nil {
+		return nil, nil, nil, aerr
 	}
 	dataKey := make([]byte, keyLen)
 	if _, err := rand.Read(dataKey); err != nil {

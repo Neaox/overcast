@@ -1,6 +1,6 @@
 ---
 title: "KMS operations"
-description: "Every KMS operation Overcast declares — 33 of 33 implemented — with status, behaviour notes and a link to the AWS API reference for each."
+description: "Every KMS operation Overcast declares — 34 of 34 implemented — with status, behaviour notes and a link to the AWS API reference for each."
 section: "Service Reference"
 tags:
   - docs
@@ -13,7 +13,7 @@ tags:
 
 # KMS operations
 
-All 33 listed operations are implemented. Back to [KMS](../kms.md).
+All 34 listed operations are implemented. Back to [KMS](../kms.md).
 
 ## Summary
 
@@ -21,7 +21,7 @@ All 33 listed operations are implemented. Back to [KMS](../kms.md).
 | ----------------- | ------------ | ---------- |
 | Key lifecycle     | 7            | 1          |
 | Aliases           | 4            |            |
-| Symmetric crypto  | 6            |            |
+| Symmetric crypto  | 6            | 1          |
 | Asymmetric crypto | 4            |            |
 | Tags              | 3            |            |
 | Key policies      | 3            |            |
@@ -55,14 +55,15 @@ All 33 listed operations are implemented. Back to [KMS](../kms.md).
 
 ### Symmetric crypto
 
-| Operation                         | Status       | Notes                                                        | AWS Docs                                                                                             |
-| --------------------------------- | ------------ | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `Encrypt`                         | ✅ Supported | AES-256-GCM; ciphertext envelope includes key ID             | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_Encrypt.html)                         |
-| `Decrypt`                         | ✅ Supported | Extracts key ID from ciphertext envelope                     | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_Decrypt.html)                         |
-| `GenerateDataKey`                 | ✅ Supported | `AES_256` and `AES_128` specs; returns plaintext + encrypted | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_GenerateDataKey.html)                 |
-| `GenerateDataKeyWithoutPlaintext` | ✅ Supported | Returns encrypted data key only                              | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_GenerateDataKeyWithoutPlaintext.html) |
-| `ReEncrypt`                       | ✅ Supported | Decrypts and re-encrypts ciphertext with destination key     | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ReEncrypt.html)                       |
-| `GenerateDataKeyPair`             | ✅ Supported | RSA_2048, RSA_3072, RSA_4096 key pair specs                  | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_GenerateDataKeyPair.html)             |
+| Operation                         | Status       | Notes                                                                                                     | AWS Docs                                                                                             |
+| --------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `Encrypt`                         | ✅ Supported | AES-256-GCM; ciphertext envelope includes key ID                                                          | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_Encrypt.html)                         |
+| `Decrypt`                         | ✅ Supported | Extracts key ID from ciphertext envelope                                                                  | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_Decrypt.html)                         |
+| `GenerateDataKey`                 | ✅ Supported | Exactly one of `KeySpec` (`AES_256`/`AES_128`) or `NumberOfBytes` (1-1024); returns plaintext + encrypted | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_GenerateDataKey.html)                 |
+| `GenerateDataKeyWithoutPlaintext` | ✅ Supported | Same `KeySpec`/`NumberOfBytes` rules as `GenerateDataKey`; returns encrypted data key only                | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_GenerateDataKeyWithoutPlaintext.html) |
+| `GenerateRandom`                  | ⚠️ Partial   | `NumberOfBytes` (1-1024) required; `CustomKeyStoreId` and `Recipient` are ignored (not emulated)          | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_GenerateRandom.html)                  |
+| `ReEncrypt`                       | ✅ Supported | Decrypts and re-encrypts ciphertext with destination key                                                  | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ReEncrypt.html)                       |
+| `GenerateDataKeyPair`             | ✅ Supported | RSA_2048, RSA_3072, RSA_4096 key pair specs                                                               | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_GenerateDataKeyPair.html)             |
 
 ### Asymmetric crypto
 

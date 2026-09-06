@@ -22,8 +22,9 @@ func init() {
 
 		capabilities.Capability{Service: "kms", Operation: "Encrypt", Category: "Symmetric crypto", Status: capabilities.StatusSupported, Notes: "AES-256-GCM; ciphertext envelope includes key ID"},
 		capabilities.Capability{Service: "kms", Operation: "Decrypt", Category: "Symmetric crypto", Status: capabilities.StatusSupported, Notes: "Extracts key ID from ciphertext envelope"},
-		capabilities.Capability{Service: "kms", Operation: "GenerateDataKey", Category: "Symmetric crypto", Status: capabilities.StatusSupported, Notes: "`AES_256` and `AES_128` specs; returns plaintext + encrypted"},
-		capabilities.Capability{Service: "kms", Operation: "GenerateDataKeyWithoutPlaintext", Category: "Symmetric crypto", Status: capabilities.StatusSupported, Notes: "Returns encrypted data key only"},
+		capabilities.Capability{Service: "kms", Operation: "GenerateDataKey", Category: "Symmetric crypto", Status: capabilities.StatusSupported, Notes: "Exactly one of `KeySpec` (`AES_256`/`AES_128`) or `NumberOfBytes` (1-1024); returns plaintext + encrypted"},
+		capabilities.Capability{Service: "kms", Operation: "GenerateDataKeyWithoutPlaintext", Category: "Symmetric crypto", Status: capabilities.StatusSupported, Notes: "Same `KeySpec`/`NumberOfBytes` rules as `GenerateDataKey`; returns encrypted data key only"},
+		capabilities.Capability{Service: "kms", Operation: "GenerateRandom", Category: "Symmetric crypto", Status: capabilities.StatusPartial, Notes: "`NumberOfBytes` (1-1024) required; `CustomKeyStoreId` and `Recipient` are ignored (not emulated)"},
 		capabilities.Capability{Service: "kms", Operation: "ReEncrypt", Category: "Symmetric crypto", Status: capabilities.StatusSupported, Notes: "Decrypts and re-encrypts ciphertext with destination key"},
 		capabilities.Capability{Service: "kms", Operation: "GenerateDataKeyPair", Category: "Symmetric crypto", Status: capabilities.StatusSupported, Notes: "RSA_2048, RSA_3072, RSA_4096 key pair specs"},
 

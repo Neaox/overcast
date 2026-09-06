@@ -39,7 +39,7 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 | ----------------- | --------------------------------------------------------------------------------------------- |
 | Key lifecycle     | `CreateKey` (symmetric and RSA specs), enable/disable, description updates, schedule/cancel deletion |
 | Aliases           | Create, update, delete and list; any operation taking `KeyId` accepts a UUID, an ARN or an alias |
-| Symmetric crypto  | `Encrypt`, `Decrypt`, `ReEncrypt`, `GenerateDataKey` (`AES_256`/`AES_128`), `GenerateDataKeyWithoutPlaintext`, `GenerateDataKeyPair` |
+| Symmetric crypto  | `Encrypt`, `Decrypt`, `ReEncrypt`, `GenerateDataKey` and `GenerateDataKeyWithoutPlaintext` (`KeySpec` or `NumberOfBytes`, never both), `GenerateDataKeyPair`, `GenerateRandom` |
 | Asymmetric crypto | `Sign` / `Verify` (RSA-2048, `RSASSA_PKCS1_V1_5_SHA_256`), `GetPublicKey` (DER), `VerifyMac` (HMAC-SHA-256/384/512) |
 | Key policies      | `PutKeyPolicy` validates structure, principals and caller-lockout safety before it mutates      |
 | Grants and tags   | Full CRUD, including `ListRetirableGrants`                                                     |
@@ -70,7 +70,7 @@ without being told which one to use — as on AWS.
 
 ## Operations
 
-All 33 listed operations are implemented.
+All 34 listed operations are implemented.
 Per-operation status, notes and AWS API links: [KMS operations](kms/operations.md).
 
 <!-- END overcast:capabilities -->
