@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -807,6 +808,57 @@ func subnetIDs(vpcZoneIdentifier string) []string {
 		}
 	}
 	return ids
+}
+
+// subnetZones asks EC2 for the zone of every subnet a VPCZoneIdentifier names
+// and returns them in the order the subnets were listed, without repeats — the
+// zone list AWS derives for a group that gives subnets.
+//
+// ok is false when EC2 could not resolve every one of them. A group naming a
+// subnet the store does not hold is then left exactly as it was rather than
+// refused or half-derived: an unknown subnet keeps the permissive fallback
+// RunInstances gives it (launchAvailabilityZone, #1839) instead of becoming a
+// new way for a group to fail.
+func (s *Service) subnetZones(ctx context.Context, vpcZoneIdentifier string) ([]string, bool) {
+	ids := subnetIDs(vpcZoneIdentifier)
+	if len(ids) == 0 {
+		return nil, false
+	}
+	params := url.Values{
+		"Action":  {"DescribeSubnets"},
+		"Version": {ec2QueryVersion},
+	}
+	for i, id := range ids {
+		params.Set(fmt.Sprintf("SubnetId.%d", i+1), id)
+	}
+	body, status, err := s.ec2CallRaw(ctx, params)
+	if err != nil || status >= 400 {
+		return nil, false
+	}
+	var resp struct {
+		Subnets []struct {
+			SubnetID         string `xml:"subnetId"`
+			AvailabilityZone string `xml:"availabilityZone"`
+		} `xml:"subnetSet>item"`
+	}
+	if err := xml.Unmarshal(body, &resp); err != nil {
+		return nil, false
+	}
+	zoneOf := make(map[string]string, len(resp.Subnets))
+	for _, sn := range resp.Subnets {
+		zoneOf[sn.SubnetID] = sn.AvailabilityZone
+	}
+	zones := make([]string, 0, len(ids))
+	for _, id := range ids {
+		zone := zoneOf[id]
+		if zone == "" {
+			return nil, false
+		}
+		if !slices.Contains(zones, zone) {
+			zones = append(zones, zone)
+		}
+	}
+	return zones, true
 }
 
 // ─── EventBridge notifications ────────────────────────────────────────────────

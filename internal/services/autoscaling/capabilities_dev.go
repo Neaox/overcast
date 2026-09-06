@@ -6,8 +6,8 @@ import "github.com/overcast-sh/overcast/internal/capabilities"
 
 func init() {
 	capabilities.Default.RegisterForService(serviceName,
-		capabilities.Capability{Operation: "CreateAutoScalingGroup", Status: capabilities.StatusSupported, Notes: "Reconciles: launches EC2 instances to DesiredCapacity from a LaunchConfiguration or a LaunchTemplate, resolved through EC2 at create time. MixedInstancesPolicy and InstanceId are refused with 501"},
-		capabilities.Capability{Operation: "UpdateAutoScalingGroup", Status: capabilities.StatusSupported, Notes: "Min/max/desired changes re-converge the group; desired outside min/max is AWS's ValidationError. Setting either launch source clears the other"},
+		capabilities.Capability{Operation: "CreateAutoScalingGroup", Status: capabilities.StatusSupported, Notes: "Reconciles: launches EC2 instances to DesiredCapacity from a LaunchConfiguration or a LaunchTemplate, resolved through EC2 at create time. VPCZoneIdentifier subnets outside AvailabilityZones are AWS's ValidationError; given only subnets, the zones are derived from them. MixedInstancesPolicy and InstanceId are refused with 501"},
+		capabilities.Capability{Operation: "UpdateAutoScalingGroup", Status: capabilities.StatusSupported, Notes: "Min/max/desired changes re-converge the group; desired outside min/max, and VPCZoneIdentifier subnets outside AvailabilityZones, are AWS's ValidationError. Setting either launch source clears the other"},
 		capabilities.Capability{Operation: "DescribeAutoScalingGroups", Status: capabilities.StatusSupported, Notes: "Reports the real converged instance set with LifecycleState, HealthStatus, AvailabilityZone and ProtectedFromScaleIn, and the group's LaunchTemplate when it has one"},
 		capabilities.Capability{Operation: "DeleteAutoScalingGroup", Status: capabilities.StatusSupported, Notes: "ResourceInUse while instances remain unless ForceDelete; ForceDelete terminates them"},
 		capabilities.Capability{Operation: "SetDesiredCapacity", Status: capabilities.StatusSupported, Notes: "Launches or terminates instances to converge; out-of-range values return AWS's ValidationError"},
