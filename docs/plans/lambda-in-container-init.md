@@ -383,10 +383,12 @@ So the delivery turns around, the way everything else here already runs:
   attempt budget is two seconds, so the init's timeout decides a slow
   destination rather than the two budgets racing.
 
-Not done, deliberately: `sandbox.localdomain` still does not resolve inside an
-Overcast sandbox, so a subscription using that spelling is accepted and never
-delivered — exactly as before this change, since the host could not resolve it
-either. Making it work is a container-DNS question and its own issue.
+Left for its own issue at the time and settled by #1837: `sandbox.localdomain`
+did not resolve inside an Overcast sandbox, so a subscription using that
+spelling was accepted and never delivered. The Lambda container is now created
+with an `/etc/hosts` entry pointing the name at `127.0.0.1`
+(`lambda.ContainerRuntime.extraHosts`), which is where the name lives on AWS —
+the init still dials the destination exactly as subscribed and parses nothing.
 
 ## 4. Everywhere Docker is used — what is shared, what is not
 
