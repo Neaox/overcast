@@ -20,6 +20,11 @@ const GROUP_SERVICEDISCOVERY_GEN_NAMESPACE: Group = Group {
     file: SCENARIO_FILE,
 };
 
+const GROUP_SERVICEDISCOVERY_GEN_SERVICE: Group = Group {
+    name: "servicediscovery-gen-service",
+    file: SCENARIO_FILE,
+};
+
 const GROUP_SERVICEDISCOVERY_GEN_INSTANCE: Group = Group {
     name: "servicediscovery-gen-instance",
     file: SCENARIO_FILE,
@@ -173,6 +178,202 @@ impl ServiceGroup for ScenariosServicediscovery {
         {
             let client = self.client.clone();
             impls.insert(
+                "servicediscovery-gen-service:CreateService".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_SERVICEDISCOVERY_GEN_SERVICE
+                            .run_test(&ctx, "CreateService", test_servicediscovery_gen_service_create_service(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "servicediscovery-gen-service:GetService".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_SERVICEDISCOVERY_GEN_SERVICE
+                            .run_test(&ctx, "GetService", test_servicediscovery_gen_service_get_service(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "servicediscovery-gen-service:UpdateService".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_SERVICEDISCOVERY_GEN_SERVICE
+                            .run_test(&ctx, "UpdateService", test_servicediscovery_gen_service_update_service(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "servicediscovery-gen-service:TagResource".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_SERVICEDISCOVERY_GEN_SERVICE
+                            .run_test(&ctx, "TagResource", test_servicediscovery_gen_service_tag_resource(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "servicediscovery-gen-service:ListTagsForResource".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_SERVICEDISCOVERY_GEN_SERVICE
+                            .run_test(&ctx, "ListTagsForResource", test_servicediscovery_gen_service_list_tags_for_resource(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "servicediscovery-gen-service:UntagResource".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_SERVICEDISCOVERY_GEN_SERVICE
+                            .run_test(&ctx, "UntagResource", test_servicediscovery_gen_service_untag_resource(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "servicediscovery-gen-service:UpdateServiceAttributes".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_SERVICEDISCOVERY_GEN_SERVICE
+                            .run_test(&ctx, "UpdateServiceAttributes", test_servicediscovery_gen_service_update_service_attributes(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "servicediscovery-gen-service:GetServiceAttributes".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_SERVICEDISCOVERY_GEN_SERVICE
+                            .run_test(&ctx, "GetServiceAttributes", test_servicediscovery_gen_service_get_service_attributes(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "servicediscovery-gen-service:DeleteServiceAttributes".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_SERVICEDISCOVERY_GEN_SERVICE
+                            .run_test(&ctx, "DeleteServiceAttributes", test_servicediscovery_gen_service_delete_service_attributes(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "servicediscovery-gen-service:ListInstances".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_SERVICEDISCOVERY_GEN_SERVICE
+                            .run_test(&ctx, "ListInstances", test_servicediscovery_gen_service_list_instances(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "servicediscovery-gen-service:DiscoverInstances".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_SERVICEDISCOVERY_GEN_SERVICE
+                            .run_test(&ctx, "DiscoverInstances", test_servicediscovery_gen_service_discover_instances(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "servicediscovery-gen-service:ListOperations".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_SERVICEDISCOVERY_GEN_SERVICE
+                            .run_test(&ctx, "ListOperations", test_servicediscovery_gen_service_list_operations(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "servicediscovery-gen-service:ListServices".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_SERVICEDISCOVERY_GEN_SERVICE
+                            .run_test(&ctx, "ListServices", test_servicediscovery_gen_service_list_services(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
+                "servicediscovery-gen-service:DeleteService".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_SERVICEDISCOVERY_GEN_SERVICE
+                            .run_test(&ctx, "DeleteService", test_servicediscovery_gen_service_delete_service(&client))
+                            .await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            impls.insert(
                 "servicediscovery-gen-instance:RegisterInstance".to_string(),
                 Arc::new(move |ctx: TestContext| {
                     let client = client.clone();
@@ -274,6 +475,18 @@ impl ServiceGroup for ScenariosServicediscovery {
         {
             let client = self.client.clone();
             setups.insert(
+                "servicediscovery-gen-service".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_SERVICEDISCOVERY_GEN_SERVICE.run_setup(&ctx, setup_servicediscovery_gen_service(&client)).await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            setups.insert(
                 "servicediscovery-gen-instance".to_string(),
                 Arc::new(move |ctx: TestContext| {
                     let client = client.clone();
@@ -308,6 +521,18 @@ impl ServiceGroup for ScenariosServicediscovery {
                     let client = client.clone();
                     Box::pin(async move {
                         GROUP_SERVICEDISCOVERY_GEN_NAMESPACE.run_teardown(&ctx, teardown_servicediscovery_gen_namespace(&client)).await
+                    })
+                }),
+            );
+        }
+        {
+            let client = self.client.clone();
+            teardowns.insert(
+                "servicediscovery-gen-service".to_string(),
+                Arc::new(move |ctx: TestContext| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        GROUP_SERVICEDISCOVERY_GEN_SERVICE.run_teardown(&ctx, teardown_servicediscovery_gen_service(&client)).await
                     })
                 }),
             );
@@ -837,6 +1062,816 @@ fn test_servicediscovery_gen_namespace_delete_namespace(client: &aws_sdk_service
                         },
                     },
                     scenario::error("NamespaceNotFound", "NamespaceNotFound"),
+                ),
+            ),
+        ],
+    }
+}
+
+fn setup_servicediscovery_gen_service(client: &aws_sdk_servicediscovery::Client) -> Vec<Call> {
+    vec![
+        Call {
+            op: "CreateHttpNamespace",
+            params: scenario::map(vec![
+                ("Description", scenario::lit(::serde_json::json!("compat scenario namespace"))),
+                ("Name", scenario::name("ns")),
+            ]),
+            export: vec![
+                ("namespace.operationId", "$.OperationId"),
+            ],
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .create_http_namespace()
+                            .description("compat scenario namespace")
+                            .name(b.string("Name")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        Call {
+            op: "GetOperation",
+            params: scenario::map(vec![
+                ("OperationId", scenario::context("namespace.operationId")),
+            ]),
+            export: vec![
+                ("namespace.id", "$.Operation.Targets.NAMESPACE"),
+            ],
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .get_operation()
+                            .operation_id(b.string("OperationId")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+    ]
+}
+
+fn teardown_servicediscovery_gen_service(client: &aws_sdk_servicediscovery::Client) -> Vec<Call> {
+    vec![
+        Call {
+            op: "DeleteService",
+            params: scenario::map(vec![("Id", scenario::context("service.id"))]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .delete_service()
+                            .id(b.string("Id")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        Call {
+            op: "DeleteNamespace",
+            params: scenario::map(vec![("Id", scenario::context("namespace.id"))]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .delete_namespace()
+                            .id(b.string("Id")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+    ]
+}
+
+fn test_servicediscovery_gen_service_create_service(client: &aws_sdk_servicediscovery::Client) -> Test {
+    Test {
+        call: Call {
+            op: "CreateService",
+            params: scenario::map(vec![
+                ("Description", scenario::lit(::serde_json::json!("compat scenario service"))),
+                ("Name", scenario::name("svc")),
+                ("NamespaceId", scenario::context("namespace.id")),
+                ("Type", scenario::lit(::serde_json::json!("HTTP"))),
+            ]),
+            export: vec![
+                ("service.arn", "$.Service.Arn"),
+                ("service.id", "$.Service.Id"),
+            ],
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .create_service()
+                            .description("compat scenario service")
+                            .name(b.string("Name")?)
+                            .namespace_id(b.string("NamespaceId")?)
+                            .r#type(aws_sdk_servicediscovery::types::ServiceTypeOption::from("HTTP"))
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::response_field(vec![
+                scenario::non_empty("$.Service.Arn"),
+                scenario::non_empty("$.Service.Id"),
+            ]),
+            scenario::eventually(15, 2000,
+                scenario::readback(
+                    Call {
+                        op: "GetService",
+                        params: scenario::map(vec![
+                            ("Id", scenario::context("service.id")),
+                        ]),
+                        export: Vec::new(),
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .get_service()
+                                        .id(b.string("Id")?)
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    },
+                    vec![
+                        scenario::equals("$.Service.Id", scenario::context("service.id")),
+                    ],
+                ),
+            ),
+            scenario::eventually(15, 2000,
+                scenario::list_contains(
+                    Some(Call {
+                        op: "ListServices",
+                        params: scenario::lit(::serde_json::json!({})),
+                        export: Vec::new(),
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |_b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .list_services()
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    }),
+                    "$.Services",
+                    vec![
+                        scenario::where_entry("$.Id", scenario::context("service.id")),
+                    ],
+                ),
+            ),
+        ],
+    }
+}
+
+fn test_servicediscovery_gen_service_get_service(client: &aws_sdk_servicediscovery::Client) -> Test {
+    Test {
+        call: Call {
+            op: "GetService",
+            params: scenario::map(vec![("Id", scenario::context("service.id"))]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .get_service()
+                            .id(b.string("Id")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::response_field(vec![
+                scenario::equals("$.Service.Id", scenario::context("service.id")),
+            ]),
+        ],
+    }
+}
+
+fn test_servicediscovery_gen_service_update_service(client: &aws_sdk_servicediscovery::Client) -> Test {
+    Test {
+        call: Call {
+            op: "UpdateService",
+            params: scenario::map(vec![
+                ("Id", scenario::context("service.id")),
+                ("Service", scenario::lit(::serde_json::json!({"Description": "compat scenario service, updated"}))),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .update_service()
+                            .id(b.string("Id")?)
+                            .service(
+                                aws_sdk_servicediscovery::types::ServiceChange::builder()
+                                    .description("compat scenario service, updated")
+                                    .build()
+                            )
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::eventually(15, 2000,
+                scenario::readback(
+                    Call {
+                        op: "GetService",
+                        params: scenario::map(vec![
+                            ("Id", scenario::context("service.id")),
+                        ]),
+                        export: Vec::new(),
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .get_service()
+                                        .id(b.string("Id")?)
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    },
+                    vec![
+                        scenario::equals("$.Service.Description", scenario::lit(::serde_json::json!("compat scenario service, updated"))),
+                    ],
+                ),
+            ),
+        ],
+    }
+}
+
+fn test_servicediscovery_gen_service_tag_resource(client: &aws_sdk_servicediscovery::Client) -> Test {
+    Test {
+        call: Call {
+            op: "TagResource",
+            params: scenario::map(vec![
+                ("ResourceARN", scenario::context("service.arn")),
+                ("Tags", scenario::lit(::serde_json::json!([{"Key": "compat", "Value": "scenario"}]))),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .tag_resource()
+                            .resource_arn(b.string("ResourceARN")?)
+                            .tags(
+                                aws_sdk_servicediscovery::types::Tag::builder()
+                                    .key("compat")
+                                    .value("scenario")
+                                    .build()
+                                    .map_err(|err| scenario::build_error("Tags[0]", err))?
+                            )
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::eventually(15, 2000,
+                scenario::list_contains(
+                    Some(Call {
+                        op: "ListTagsForResource",
+                        params: scenario::map(vec![
+                            ("ResourceARN", scenario::context("service.arn")),
+                        ]),
+                        export: Vec::new(),
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .list_tags_for_resource()
+                                        .resource_arn(b.string("ResourceARN")?)
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    }),
+                    "$.Tags",
+                    vec![
+                        scenario::where_entry("$.Key", scenario::lit(::serde_json::json!("compat"))),
+                        scenario::where_entry("$.Value", scenario::lit(::serde_json::json!("scenario"))),
+                    ],
+                ),
+            ),
+        ],
+    }
+}
+
+fn test_servicediscovery_gen_service_list_tags_for_resource(client: &aws_sdk_servicediscovery::Client) -> Test {
+    Test {
+        call: Call {
+            op: "ListTagsForResource",
+            params: scenario::map(vec![
+                ("ResourceARN", scenario::context("service.arn")),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .list_tags_for_resource()
+                            .resource_arn(b.string("ResourceARN")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::list_contains(
+                None,
+                "$.Tags",
+                vec![
+                    scenario::where_entry("$.Key", scenario::lit(::serde_json::json!("compat"))),
+                    scenario::where_entry("$.Value", scenario::lit(::serde_json::json!("scenario"))),
+                ],
+            ),
+        ],
+    }
+}
+
+fn test_servicediscovery_gen_service_untag_resource(client: &aws_sdk_servicediscovery::Client) -> Test {
+    Test {
+        call: Call {
+            op: "UntagResource",
+            params: scenario::map(vec![
+                ("ResourceARN", scenario::context("service.arn")),
+                ("TagKeys", scenario::lit(::serde_json::json!(["compat"]))),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .untag_resource()
+                            .resource_arn(b.string("ResourceARN")?)
+                            .tag_keys("compat")
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::eventually(15, 2000,
+                scenario::absent_from_list(
+                    Some(Call {
+                        op: "ListTagsForResource",
+                        params: scenario::map(vec![
+                            ("ResourceARN", scenario::context("service.arn")),
+                        ]),
+                        export: Vec::new(),
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .list_tags_for_resource()
+                                        .resource_arn(b.string("ResourceARN")?)
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    }),
+                    "$.Tags",
+                    vec![
+                        scenario::where_entry("$.Key", scenario::lit(::serde_json::json!("compat"))),
+                    ],
+                ),
+            ),
+        ],
+    }
+}
+
+fn test_servicediscovery_gen_service_update_service_attributes(client: &aws_sdk_servicediscovery::Client) -> Test {
+    Test {
+        call: Call {
+            op: "UpdateServiceAttributes",
+            params: scenario::map(vec![
+                ("Attributes", scenario::lit(::serde_json::json!({"compat": "scenario"}))),
+                ("ServiceId", scenario::context("service.id")),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .update_service_attributes()
+                            .attributes("compat", "scenario")
+                            .service_id(b.string("ServiceId")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::eventually(15, 2000,
+                scenario::readback(
+                    Call {
+                        op: "GetServiceAttributes",
+                        params: scenario::map(vec![
+                            ("ServiceId", scenario::context("service.id")),
+                        ]),
+                        export: Vec::new(),
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .get_service_attributes()
+                                        .service_id(b.string("ServiceId")?)
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    },
+                    vec![
+                        scenario::equals("$.ServiceAttributes.Attributes.compat", scenario::lit(::serde_json::json!("scenario"))),
+                    ],
+                ),
+            ),
+        ],
+    }
+}
+
+fn test_servicediscovery_gen_service_get_service_attributes(client: &aws_sdk_servicediscovery::Client) -> Test {
+    Test {
+        call: Call {
+            op: "GetServiceAttributes",
+            params: scenario::map(vec![
+                ("ServiceId", scenario::context("service.id")),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .get_service_attributes()
+                            .service_id(b.string("ServiceId")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::response_field(vec![
+                scenario::equals("$.ServiceAttributes.ServiceArn", scenario::context("service.arn")),
+            ]),
+        ],
+    }
+}
+
+fn test_servicediscovery_gen_service_delete_service_attributes(client: &aws_sdk_servicediscovery::Client) -> Test {
+    Test {
+        call: Call {
+            op: "DeleteServiceAttributes",
+            params: scenario::map(vec![
+                ("Attributes", scenario::lit(::serde_json::json!(["compat"]))),
+                ("ServiceId", scenario::context("service.id")),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .delete_service_attributes()
+                            .attributes("compat")
+                            .service_id(b.string("ServiceId")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::eventually(15, 2000,
+                scenario::readback(
+                    Call {
+                        op: "GetServiceAttributes",
+                        params: scenario::map(vec![
+                            ("ServiceId", scenario::context("service.id")),
+                        ]),
+                        export: Vec::new(),
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .get_service_attributes()
+                                        .service_id(b.string("ServiceId")?)
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    },
+                    vec![
+                        scenario::missing("$.ServiceAttributes.Attributes.compat"),
+                    ],
+                ),
+            ),
+        ],
+    }
+}
+
+fn test_servicediscovery_gen_service_list_instances(client: &aws_sdk_servicediscovery::Client) -> Test {
+    Test {
+        call: Call {
+            op: "ListInstances",
+            params: scenario::map(vec![
+                ("ServiceId", scenario::context("service.id")),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .list_instances()
+                            .service_id(b.string("ServiceId")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::response_field(vec![
+                scenario::is_list("$.Instances"),
+            ]),
+        ],
+    }
+}
+
+fn test_servicediscovery_gen_service_discover_instances(client: &aws_sdk_servicediscovery::Client) -> Test {
+    Test {
+        call: Call {
+            op: "DiscoverInstances",
+            params: scenario::map(vec![
+                ("NamespaceName", scenario::name("ns")),
+                ("ServiceName", scenario::name("svc")),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .discover_instances()
+                            .namespace_name(b.string("NamespaceName")?)
+                            .service_name(b.string("ServiceName")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::response_field(vec![
+                scenario::is_list("$.Instances"),
+            ]),
+        ],
+    }
+}
+
+fn test_servicediscovery_gen_service_list_operations(client: &aws_sdk_servicediscovery::Client) -> Test {
+    Test {
+        call: Call {
+            op: "ListOperations",
+            params: scenario::map(vec![
+                ("Filters", scenario::list(vec![
+                    scenario::map(vec![
+                        ("Condition", scenario::lit(::serde_json::json!("EQ"))),
+                        ("Name", scenario::lit(::serde_json::json!("SERVICE_ID"))),
+                        ("Values", scenario::list(vec![
+                            scenario::context("service.id"),
+                        ])),
+                    ]),
+                ])),
+            ]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .list_operations()
+                            .filters(
+                                aws_sdk_servicediscovery::types::OperationFilter::builder()
+                                    .condition(aws_sdk_servicediscovery::types::FilterCondition::from("EQ"))
+                                    .name(aws_sdk_servicediscovery::types::OperationFilterName::from("SERVICE_ID"))
+                                    .values(b.string("Filters[0].Values[0]")?)
+                                    .build()
+                                    .map_err(|err| scenario::build_error("Filters[0]", err))?
+                            )
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::response_field(vec![
+                scenario::is_list("$.Operations"),
+            ]),
+        ],
+    }
+}
+
+fn test_servicediscovery_gen_service_list_services(client: &aws_sdk_servicediscovery::Client) -> Test {
+    Test {
+        call: Call {
+            op: "ListServices",
+            params: scenario::lit(::serde_json::json!({})),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |_b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .list_services()
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::list_contains(
+                None,
+                "$.Services",
+                vec![
+                    scenario::where_entry("$.Id", scenario::context("service.id")),
+                ],
+            ),
+        ],
+    }
+}
+
+fn test_servicediscovery_gen_service_delete_service(client: &aws_sdk_servicediscovery::Client) -> Test {
+    Test {
+        call: Call {
+            op: "DeleteService",
+            params: scenario::map(vec![("Id", scenario::context("service.id"))]),
+            export: Vec::new(),
+            invoke: {
+                let client = client.clone();
+                scenario::invoker(move |b| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let capture = scenario::Capture::new();
+                        let request = client
+                            .delete_service()
+                            .id(b.string("Id")?)
+                            .customize()
+                            .interceptor(capture.clone());
+                        Ok(scenario::observe(request.send().await, &capture))
+                    })
+                })
+            },
+        },
+        assert: vec![
+            scenario::eventually(15, 2000,
+                scenario::absent_by_error(
+                    Call {
+                        op: "GetService",
+                        params: scenario::map(vec![
+                            ("Id", scenario::context("service.id")),
+                        ]),
+                        export: Vec::new(),
+                        invoke: {
+                            let client = client.clone();
+                            scenario::invoker(move |b| {
+                                let client = client.clone();
+                                Box::pin(async move {
+                                    let capture = scenario::Capture::new();
+                                    let request = client
+                                        .get_service()
+                                        .id(b.string("Id")?)
+                                        .customize()
+                                        .interceptor(capture.clone());
+                                    Ok(scenario::observe(request.send().await, &capture))
+                                })
+                            })
+                        },
+                    },
+                    scenario::error("ServiceNotFound", "ServiceNotFound"),
                 ),
             ),
         ],
