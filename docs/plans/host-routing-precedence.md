@@ -943,13 +943,20 @@ fixture that sets an explicit `Host` should be checked against the §4 matrix.
 - Path-style AppSync URIs remain registered and supported after H3 switches the
   *advertised* `uris` to host-routed form. Removing them would be a breaking
   change for existing clients and is not proposed.
-- **`CreateBucket` returns `InvalidArgument` where AWS returns
-  `InvalidBucketName`.** `serviceutil.BucketName` already produces the right
-  code; [handler_bucket.go:118](../../internal/services/s3/handler_bucket.go)
-  deliberately overrides it to satisfy existing tests. Noticed while correcting
-  the naming rules (§9.4) but not changed here — the error-code contract wants
-  its own verification against real AWS rather than being bundled into a
-  validation fix.
+- ~~**`CreateBucket` returns `InvalidArgument` where AWS returns
+  `InvalidBucketName`.**~~ **Done.**
+  [handler_bucket.go](../../internal/services/s3/handler_bucket.go) now writes
+  `serviceutil`'s error through unchanged instead of rewriting the code, and
+  the reserved `-an` suffix rejection follows the other reserved-suffix rules
+  onto `InvalidBucketName`. The verification this was gated on came from the
+  pinned models rather than from real AWS: S3's error codes are not modeled as
+  Smithy error shapes, but the documented error-responses list is carried as
+  the `com.amazonaws.s3#Error$Code` member's documentation, and it gives
+  `InvalidBucketName` / "The specified bucket is not valid." / 400. The same
+  list gives `InvalidArgument` / "Invalid Argument" / 400, which is why the
+  unrecognised `x-amz-bucket-namespace` rejection stayed where it was — the
+  bucket name is not what is wrong there. Messages keep Overcast's longer
+  wording; the reasoning is on `serviceutil.BucketName`.
 - **Every other service's name validation** should get the same treatment
   §9.4 gave buckets: checked rule-by-rule against the AWS documentation rather
   than approximated. `serviceutil` alone carries queue-name, table-name and

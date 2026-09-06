@@ -110,16 +110,66 @@ func TestCreateBucket_alreadyExistsOutsideUSEast1Conflicts(t *testing.T) {
 }
 
 func TestCreateBucket_nameTooShort(t *testing.T) {
+	// Given: a two-character name, one under S3's three-character minimum
 	srv := helpers.NewTestServer(t)
 
+	// When: it is created
 	resp, err := http.DefaultClient.Do(put(srv, "/ab", nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 
+	// Then: the code S3's documented error list gives for a name that breaks
+	// the naming rules. CreateBucket used to answer InvalidArgument here, and
+	// this assertion was the reason the handler overrode serviceutil's code.
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
-	helpers.AssertXMLError(t, resp, "InvalidArgument")
+	helpers.AssertXMLError(t, resp, "InvalidBucketName")
+}
+
+// TestCreateBucket_invalidName_returnsInvalidBucketName covers every branch of
+// serviceutil.BucketName over the wire, not just the length one the suite used
+// to reach: each has its own message, and each has to arrive with the code S3
+// documents rather than the InvalidArgument this handler once rewrote them to.
+// https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
+func TestCreateBucket_invalidName_returnsInvalidBucketName(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	for _, tc := range []struct {
+		name string
+		why  string
+	}{
+		{name: "ab", why: "shorter than the 3-character minimum"},
+		{name: strings.Repeat("a", 64), why: "longer than the 63-character maximum"},
+		{name: "MyBucket", why: "uppercase is outside the permitted charset"},
+		{name: "my_bucket", why: "underscore is outside the permitted charset"},
+		{name: "-my-bucket", why: "must begin with a letter or number"},
+		{name: "my-bucket-", why: "must end with a letter or number"},
+		{name: "example..com", why: "two adjacent periods"},
+		{name: "192.168.5.4", why: "formatted as an IP address"},
+		{name: "xn--my-bucket", why: "reserved prefix xn--"},
+		{name: "sthree-my-bucket", why: "reserved prefix sthree-"},
+		{name: "amzn-s3-demo-my-bucket", why: "reserved prefix amzn-s3-demo-"},
+		{name: "my-bucket-s3alias", why: "reserved suffix -s3alias"},
+		{name: "my-bucket--ol-s3", why: "reserved suffix --ol-s3"},
+		{name: "my-bucket.mrap", why: "reserved suffix .mrap"},
+		{name: "my-bucket--x-s3", why: "reserved suffix --x-s3"},
+		{name: "my-bucket--table-s3", why: "reserved suffix --table-s3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: a bucket name AWS rejects (tc.why)
+			// When: it is created in the default global namespace
+			resp, err := http.DefaultClient.Do(put(srv, "/"+tc.name, nil, nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+
+			// Then: 400 InvalidBucketName
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertXMLError(t, resp, "InvalidBucketName")
+		})
+	}
 }
 
 // ---- CreateBucket: account regional namespaces (issue #1471) --------------
@@ -186,9 +236,11 @@ func TestCreateBucket_global_reservedANSuffixRejected(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	// Then: rejected, the same way as the other reserved suffixes
+	// Then: rejected, the same way as the other reserved suffixes — which is
+	// also why it carries their code. The exact code AWS uses for this rule is
+	// unverified; see the CreateBucket comment.
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
-	helpers.AssertXMLError(t, resp, "InvalidArgument")
+	helpers.AssertXMLError(t, resp, "InvalidBucketName")
 }
 
 func TestCreateBucket_global_explicitHeaderSameAsAbsent(t *testing.T) {
@@ -205,7 +257,7 @@ func TestCreateBucket_global_explicitHeaderSameAsAbsent(t *testing.T) {
 	defer resp.Body.Close()
 
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
-	helpers.AssertXMLError(t, resp, "InvalidArgument")
+	helpers.AssertXMLError(t, resp, "InvalidBucketName")
 }
 
 func TestCreateBucket_accountRegional_wrongAccountRejected(t *testing.T) {
@@ -221,8 +273,11 @@ func TestCreateBucket_accountRegional_wrongAccountRejected(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
+	// The code for a mismatched account or region is unverified against real
+	// AWS (see ValidateAccountRegionalBucketName); it follows the base naming
+	// rules' InvalidBucketName rather than being given one of its own.
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
-	helpers.AssertXMLError(t, resp, "InvalidArgument")
+	helpers.AssertXMLError(t, resp, "InvalidBucketName")
 }
 
 func TestCreateBucket_accountRegional_wrongRegionRejected(t *testing.T) {
@@ -240,11 +295,14 @@ func TestCreateBucket_accountRegional_wrongRegionRejected(t *testing.T) {
 	defer resp.Body.Close()
 
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
-	helpers.AssertXMLError(t, resp, "InvalidArgument")
+	helpers.AssertXMLError(t, resp, "InvalidBucketName")
 }
 
 func TestCreateBucket_namespaceHeader_invalidValueRejected(t *testing.T) {
 	// Exact error code is unverified against real AWS — see CreateBucket.
+	// This one stays InvalidArgument while the name checks answer
+	// InvalidBucketName: the name here is well-formed and the bad input is a
+	// request header, which is what S3 documents InvalidArgument for.
 	srv := helpers.NewTestServer(t)
 
 	resp, err := http.DefaultClient.Do(put(srv, "/some-bucket", nil, map[string]string{

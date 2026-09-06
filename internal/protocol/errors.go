@@ -188,6 +188,20 @@ func ErrInvalidArgument(msg string) *AWSError {
 	return &AWSError{Code: "InvalidArgument", Message: msg, HTTPStatus: http.StatusBadRequest}
 }
 
+// ErrInvalidBucketName returns the 400 error S3 documents for a bucket name
+// that breaks the naming rules: code InvalidBucketName, "The specified bucket
+// is not valid.", HTTP 400 Bad Request. Evidenced by the error-responses list
+// AWS carries as documentation on the S3 model's Error$Code member — S3's
+// error codes are not modeled as Smithy error shapes, so that list is the
+// authority. https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
+//
+// msg carries the reason the name was rejected rather than AWS's one-line
+// description; see the note above serviceutil.BucketName for why the emulator
+// keeps the longer wording.
+func ErrInvalidBucketName(msg string) *AWSError {
+	return &AWSError{Code: "InvalidBucketName", Message: msg, HTTPStatus: http.StatusBadRequest}
+}
+
 // ErrSerialization returns the 400 error real AWS JSON-protocol services
 // use for a request body that cannot be parsed at all — DynamoDB and other
 // coral-framework services return __type

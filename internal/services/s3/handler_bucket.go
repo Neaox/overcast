@@ -143,9 +143,13 @@ func (h *Handler) CreateBucket(w http.ResponseWriter, r *http.Request) {
 		// recognised values
 	default:
 		// Unverified against real AWS: the exact error code for an
-		// unrecognised x-amz-bucket-namespace value. InvalidArgument matches
-		// the shape this handler already uses for its other malformed-input
-		// rejections.
+		// unrecognised x-amz-bucket-namespace value. This one stays
+		// InvalidArgument while the name checks below moved to
+		// InvalidBucketName, because the two reject different things: the
+		// bucket name may be perfectly valid here and the bad input is a
+		// request header. S3's documented error list gives InvalidArgument
+		// ("Invalid Argument", 400) for exactly that, and reserves
+		// InvalidBucketName for "the specified bucket is not valid".
 		protocol.WriteXMLError(w, r, protocol.ErrInvalidArgument(
 			"Invalid namespace type: "+namespace+". The value of x-amz-bucket-namespace must be global or account-regional."))
 		return
@@ -153,26 +157,33 @@ func (h *Handler) CreateBucket(w http.ResponseWriter, r *http.Request) {
 
 	region := middleware.RegionFromContext(r.Context(), h.cfg.Region)
 
+	// A name that breaks the naming rules is InvalidBucketName — "The
+	// specified bucket is not valid.", 400 — per S3's documented error list
+	// (see protocol.ErrInvalidBucketName). serviceutil already assigns that
+	// code, so its error is written through unchanged. This handler used to
+	// rewrite every one of them to InvalidArgument "to preserve the code
+	// expected by existing tests", which made the tests the wire contract
+	// instead of AWS; the swap was recorded as a deferred follow-up in
+	// docs/plans/host-routing-precedence.md §13 and is what this closes.
 	if namespace == bucketNamespaceAccountRegional {
 		if aerr := serviceutil.ValidateAccountRegionalBucketName(bucket, h.cfg.AccountID, region); aerr != nil {
-			protocol.WriteXMLError(w, r, protocol.ErrInvalidArgument(aerr.Message))
+			protocol.WriteXMLError(w, r, aerr)
 			return
 		}
 	} else {
 		if aerr := serviceutil.BucketName(bucket); aerr != nil {
-			// serviceutil returns "InvalidBucketName"; S3 historically uses
-			// "InvalidArgument" in some validation paths. Preserve the code
-			// expected by existing tests.
-			protocol.WriteXMLError(w, r, protocol.ErrInvalidArgument(aerr.Message))
+			protocol.WriteXMLError(w, r, aerr)
 			return
 		}
 		if serviceutil.HasAccountRegionalBucketSuffix(bucket) {
 			// AWS's 2026 naming-rules update reserves the "-an" suffix for
 			// account regional namespace buckets. Unverified against real
 			// AWS: the exact error code for a global-namespace CreateBucket
-			// that carries it; modeled the same as the other reserved-suffix
-			// rejections above.
-			protocol.WriteXMLError(w, r, protocol.ErrInvalidArgument(
+			// that carries it. It is a bucket-name rejection like the other
+			// reserved-suffix rules — which live in serviceutil.BucketName and
+			// answer InvalidBucketName — so it follows them rather than
+			// staying behind on InvalidArgument.
+			protocol.WriteXMLError(w, r, protocol.ErrInvalidBucketName(
 				"The specified bucket name is not valid. Bucket names must not end with the suffix -an unless created in your account regional namespace."))
 			return
 		}
