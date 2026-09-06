@@ -75,6 +75,8 @@ public final class Registry {
      * @param state    {@code candidate} or {@code gated} — generated groups only.
      * @param scenario Path to the scenario IR the group was generated from, for
      *                 a scenario backend to interpret. Generated groups only.
+     * @param parallel Whether the group's tests may run concurrently with one
+     *                 another; see {@link TestGroup#parallel()}.
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record RegistryGroup(
@@ -84,7 +86,8 @@ public final class Registry {
             List<String> suites,
             boolean generated,
             String state,
-            String scenario) {
+            String scenario,
+            boolean parallel) {
 
         public RegistryGroup {
             if (tests == null) tests = List.of();
@@ -93,7 +96,7 @@ public final class Registry {
 
         /** A hand-written group: in scope everywhere, no generated metadata. */
         public RegistryGroup(String service, String name, List<RegistryTest> tests) {
-            this(service, name, tests, List.of(), false, null, null);
+            this(service, name, tests, List.of(), false, null, null, false);
         }
 
         /**
@@ -270,7 +273,8 @@ public final class Registry {
                     rg.name(),
                     List.copyOf(tests),
                     setups.get(rg.name()),
-                    teardowns.get(rg.name())));
+                    teardowns.get(rg.name()),
+                    rg.parallel()));
         }
 
         return List.copyOf(groups);

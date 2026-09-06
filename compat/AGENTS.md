@@ -1407,8 +1407,14 @@ the same SDK a month later; the only variable is the emulator.
 ### Upgrade procedure
 
 1. **Do not upgrade unprompted.** SDK upgrades are rare — only trigger one when
-   a suite hits an SDK bug (fixed in a newer point release), or when a new
-   major version brings material API surface that the suite should exercise.
+   a suite hits an SDK bug (fixed in a newer point release), when a new major
+   version brings material API surface that the suite should exercise, or when
+   **the generated corpus needs operations the pin predates**: a typed backend
+   compiles the operations `cmd/compatgen` emits, so an operation newer than the
+   pin is a build failure rather than a test result. Split that bump into its
+   own PR too, unless the feature will not compile without it — in which case it
+   belongs in the feature's PR, with the before/after table of step 4 in the PR
+   body saying so.
 
 2. **Upgrade one suite at a time.** Open a separate PR for each suite's SDK
    bump so CI can isolate regressions.

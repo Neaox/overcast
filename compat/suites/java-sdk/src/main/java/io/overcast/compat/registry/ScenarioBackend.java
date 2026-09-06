@@ -12,9 +12,11 @@ import io.overcast.compat.harness.TestFn;
  * after the group-qualified and bare impl keys and before the not-implemented
  * sentinel.
  *
- * <p>Nothing implements it yet. Until one does, a generated group scoped to
- * this suite reports a failure rather than a skip — see
- * {@link Registry#buildGroups}.
+ * <p>{@code Main} implements it over the generated group classes
+ * {@code cmd/compatgen} writes into {@code io.overcast.compat.groups} — one
+ * method per generated test, resolved by {@code "<group>:<test>"}. A generated
+ * group this suite is scoped to but the backend cannot resolve still reports a
+ * failure rather than a skip — see {@link Registry#buildGroups}.
  */
 @FunctionalInterface
 public interface ScenarioBackend {

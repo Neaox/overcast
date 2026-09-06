@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -48,13 +49,7 @@ public final class Runner {
         int totalTests = groups.stream().mapToInt(g -> g.tests().size()).sum();
         emit(new RunStartEvent(suite, Instant.now().toString(), endpoint, "1", totalTests));
 
-        // Limit concurrent group execution to avoid overwhelming the emulator.
-        // OVERCAST_COMPAT_PARALLEL_SLOTS is injected by the Go runner; default 8.
-        int slots = 8;
-        String slotsEnv = System.getenv("OVERCAST_COMPAT_PARALLEL_SLOTS");
-        if (slotsEnv != null && !slotsEnv.isEmpty()) {
-            try { slots = Math.max(1, Integer.parseInt(slotsEnv)); } catch (NumberFormatException ignored) {}
-        }
+        int slots = parallelSlots();
 
         AtomicInteger passed = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
@@ -93,89 +88,232 @@ public final class Runner {
         emit(new RunEndEvent(suite, passed.get(), failed.get(), skipped.get(), unimplemented.get(), totalMs));
     }
 
-    /** Runs a single group synchronously; returns [passed, failed, skipped, unimplemented]. */
+    /** Runs a single group; returns [passed, failed, skipped, unimplemented]. */
     private static int[] runGroup(String suite, String endpoint, String region, String runId, TestGroup group) {
         TestContext ctx = new TestContext(endpoint, region, runId);
-        int passed = 0, failed = 0, skipped = 0, unimplemented = 0;
+        Counts counts = new Counts();
 
-            // Setup phase
-            boolean setupOk = true;
-            if (group.setup() != null) {
-                try {
-                    group.setup().run(ctx);
-                } catch (Throwable e) {
-                    String reason = "setup failed: " + e.getMessage();
-                    for (TestCase tc : group.tests()) {
-                        emit(new TestResultEvent(suite, group.service(), group.name(),
-                                tc.name(), SKIP, 0, reason));
-                        skipped++;
-                    }
-                    setupOk = false;
+        // Setup phase. A failure reports every test in the group as skipped
+        // with the reason, and teardown still runs: setup may have created
+        // something before the step that failed.
+        if (group.setup() != null) {
+            try {
+                group.setup().run(ctx);
+            } catch (Throwable e) {
+                String reason = "setup failed: " + e.getMessage();
+                for (TestCase tc : group.tests()) {
+                    counts.record(emitted(new TestResultEvent(suite, group.service(), group.name(),
+                            tc.name(), SKIP, 0, reason), SKIP));
                 }
-            }
-
-            if (!setupOk) {
                 runTeardown(group, ctx);
-                return new int[]{passed, failed, skipped, unimplemented};
+                return counts.toArray();
             }
+        }
 
-            // Test phase
-            Set<String> passedTests = new HashSet<>();
-            Set<String> failedOrSkipped = new HashSet<>();
+        // Test phase. A group marked parallel whose tests declare no
+        // dependencies runs them concurrently; everything else runs in
+        // declaration order. Both halves of that condition are load-bearing:
+        // the concurrent path cannot express the dependency gate — it would
+        // have to decide what to skip from outcomes that have not happened yet
+        // — so a group declaring one runs serially even where the registry says
+        // parallel. The IR never produces that combination (only a probe group
+        // is parallel, and a probe has no exports for a depends to consume),
+        // which is why this is a guard rather than a scheduler.
+        if (group.parallel() && !hasDependencies(group.tests())) {
+            runTestsConcurrently(suite, group, ctx, counts);
+        } else {
+            runTestsInOrder(suite, group, ctx, counts);
+        }
 
-            for (TestCase tc : group.tests()) {
-                if (tc.skip() != null && !tc.skip().isEmpty()) {
-                    emit(new TestResultEvent(suite, group.service(), group.name(),
-                            tc.name(), SKIP, 0, tc.skip()));
-                    skipped++;
-                    failedOrSkipped.add(tc.name());
-                    continue;
-                }
+        runTeardown(group, ctx);
+        return counts.toArray();
+    }
 
-                // Cascade-skip: if any dependency failed or was skipped, skip this test.
-                List<String> missingDeps = new ArrayList<>();
-                for (String dep : tc.depends()) {
-                    if (failedOrSkipped.contains(dep)) {
-                        missingDeps.add(dep);
-                    }
-                }
-                if (!missingDeps.isEmpty()) {
-                    String reason = "dependency failed: " + String.join(", ", missingDeps);
-                    emit(new TestResultEvent(suite, group.service(), group.name(),
-                            tc.name(), SKIP, 0, reason));
-                    skipped++;
-                    failedOrSkipped.add(tc.name());
-                    continue;
-                }
+    /**
+     * The serial path: one test at a time, in declaration order, each result
+     * emitted as it completes.
+     */
+    private static void runTestsInOrder(String suite, TestGroup group, TestContext ctx, Counts counts) {
+        // Tests that did not pass, so a test declaring one of them as a
+        // dependency is skipped rather than run against a prerequisite that
+        // never happened.
+        Set<String> failedOrSkipped = new HashSet<>();
 
-                long start = System.currentTimeMillis();
-                try {
-                    tc.fn().run(ctx);
-                    long ms = System.currentTimeMillis() - start;
-                    emit(new TestResultEvent(suite, group.service(), group.name(),
-                            tc.name(), PASS, ms, null));
-                    passed++;
-                    passedTests.add(tc.name());
-                } catch (Throwable e) {
-                    long ms = System.currentTimeMillis() - start;
-                    String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-                    String status = isUnimplemented(e) ? UNIMPLEMENTED : FAIL;
-                    emit(new TestResultEvent(suite, group.service(), group.name(),
-                            tc.name(), status, ms, msg));
-                    if (status.equals(UNIMPLEMENTED)) {
-                        unimplemented++;
-                    } else {
-                        failed++;
-                    }
-                    failedOrSkipped.add(tc.name());
-                }
+        for (TestCase tc : group.tests()) {
+            Outcome out = marker(suite, group, tc);
+            if (out == null) {
+                // Dependency gate — skip if any declared dependency failed or
+                // was skipped. Without it a single broken prerequisite reports
+                // as a cascade of unrelated failures, and "dependency failed:
+                // X" is what tells a reader the cause is elsewhere.
+                out = dependencyGate(suite, group, tc, failedOrSkipped);
             }
+            if (out == null) {
+                out = runOne(suite, group, ctx, tc);
+            }
+            counts.record(emitted(out));
+            if (!PASS.equals(out.status())) {
+                failedOrSkipped.add(tc.name());
+            }
+        }
+    }
 
-            runTeardown(group, ctx);
-        return new int[]{passed, failed, skipped, unimplemented};
+    /**
+     * The concurrent path: a group's tests through a bounded pool, their
+     * results emitted in declaration order once all of them are in.
+     *
+     * <p>Emitting in order rather than as each finishes is what keeps this
+     * stream identical to the serial path's, test for test. The dashboard, the
+     * baseline and the flake detector all read it, and a result order that
+     * depended on which call answered first would be a new source of diff noise
+     * for no benefit.
+     *
+     * <p>No dependency bookkeeping: this path is taken only when no test
+     * declares one, so the set the serial path maintains would be read by
+     * nobody.
+     */
+    private static void runTestsConcurrently(String suite, TestGroup group, TestContext ctx, Counts counts) {
+        List<TestCase> tests = group.tests();
+        List<Outcome> outcomes = new ArrayList<>(Collections.nCopies(tests.size(), null));
+        ExecutorService pool = Executors.newFixedThreadPool(Math.min(parallelSlots(), Math.max(1, tests.size())));
+        List<Future<?>> futures = new ArrayList<>(tests.size());
+        for (int i = 0; i < tests.size(); i++) {
+            final int index = i;
+            final TestCase tc = tests.get(i);
+            futures.add(pool.submit(() -> {
+                Outcome marked = marker(suite, group, tc);
+                outcomes.set(index, marked != null ? marked : runOne(suite, group, ctx, tc));
+            }));
+        }
+        for (Future<?> f : futures) {
+            try {
+                f.get(5, TimeUnit.MINUTES);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } catch (ExecutionException | TimeoutException ignored) {}
+        }
+        pool.shutdown();
+
+        for (int i = 0; i < tests.size(); i++) {
+            Outcome out = outcomes.get(i);
+            if (out == null) {
+                // The worker never produced one: it was interrupted, or it hit
+                // the per-test timeout. Reported as a failure rather than
+                // dropped — a test missing from the stream reads as a registry
+                // gap in every consumer of it.
+                out = new Outcome(new TestResultEvent(suite, group.service(), group.name(),
+                        tests.get(i).name(), FAIL, 0, "test did not complete"), FAIL);
+            }
+            counts.record(emitted(out));
+        }
+    }
+
+    /** One test's result, held rather than emitted, so a parallel group can emit in order. */
+    private record Outcome(TestResultEvent event, String status) {}
+
+    /** The running per-group tally, in the order runGroup returns it. */
+    private static final class Counts {
+        private int passed, failed, skipped, unimplemented;
+
+        void record(String status) {
+            switch (status) {
+                case PASS -> passed++;
+                case FAIL -> failed++;
+                case UNIMPLEMENTED -> unimplemented++;
+                default -> skipped++;
+            }
+        }
+
+        int[] toArray() {
+            return new int[]{passed, failed, skipped, unimplemented};
+        }
+    }
+
+    private static String emitted(Outcome out) {
+        emit(out.event());
+        return out.status();
+    }
+
+    private static String emitted(TestResultEvent event, String status) {
+        emit(event);
+        return status;
+    }
+
+    /**
+     * The registry's own reason for not running a test, or null when there is
+     * none. It outranks the dependency gate: a test the suite never intended to
+     * run here reports why it was marked, not what happened to something it
+     * does not depend on.
+     */
+    private static Outcome marker(String suite, TestGroup group, TestCase tc) {
+        if (tc.skip() == null || tc.skip().isEmpty()) {
+            return null;
+        }
+        return new Outcome(new TestResultEvent(suite, group.service(), group.name(),
+                tc.name(), SKIP, 0, tc.skip()), SKIP);
+    }
+
+    private static Outcome dependencyGate(String suite, TestGroup group, TestCase tc, Set<String> failedOrSkipped) {
+        List<String> missingDeps = new ArrayList<>();
+        for (String dep : tc.depends()) {
+            if (failedOrSkipped.contains(dep)) {
+                missingDeps.add(dep);
+            }
+        }
+        if (missingDeps.isEmpty()) {
+            return null;
+        }
+        String reason = "dependency failed: " + String.join(", ", missingDeps);
+        return new Outcome(new TestResultEvent(suite, group.service(), group.name(),
+                tc.name(), SKIP, 0, reason), SKIP);
+    }
+
+    /** Runs one test body and classifies whatever it threw. */
+    private static Outcome runOne(String suite, TestGroup group, TestContext ctx, TestCase tc) {
+        long start = System.currentTimeMillis();
+        try {
+            tc.fn().run(ctx);
+            long ms = System.currentTimeMillis() - start;
+            return new Outcome(new TestResultEvent(suite, group.service(), group.name(),
+                    tc.name(), PASS, ms, null), PASS);
+        } catch (Throwable e) {
+            long ms = System.currentTimeMillis() - start;
+            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            String status = isUnimplemented(e) ? UNIMPLEMENTED : FAIL;
+            return new Outcome(new TestResultEvent(suite, group.service(), group.name(),
+                    tc.name(), status, ms, msg), status);
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /** Whether any test in the group declares a dependency. */
+    static boolean hasDependencies(List<TestCase> tests) {
+        return tests.stream().anyMatch(tc -> !tc.depends().isEmpty());
+    }
+
+    /**
+     * How many things this suite may do at once — groups in
+     * {@link #runSuite}, and the tests of one parallel group in
+     * {@link #runTestsConcurrently}. OVERCAST_COMPAT_PARALLEL_SLOTS is injected
+     * by the Go runner; default 8.
+     *
+     * <p>One number bounds both because it answers one question — how much load
+     * this machine should put on the emulator at once — and a second knob would
+     * only let the two drift apart.
+     */
+    static int parallelSlots() {
+        String slotsEnv = System.getenv("OVERCAST_COMPAT_PARALLEL_SLOTS");
+        if (slotsEnv != null && !slotsEnv.isEmpty()) {
+            try {
+                return Math.max(1, Integer.parseInt(slotsEnv));
+            } catch (NumberFormatException ignored) {
+                // Fall through to the default: a malformed value is not worth
+                // failing a run over, and 8 is what an unset one gives.
+            }
+        }
+        return 8;
+    }
 
     private static void runTeardown(TestGroup group, TestContext ctx) {
         if (group.teardown() != null) {

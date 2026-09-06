@@ -356,7 +356,7 @@ semantics live once, by hand, in `io.overcast.compat.scenario`, and
 [compat/model/README.md](../../model/README.md) is normative for every rule in
 there.
 
-Three consequences are worth knowing before touching either half:
+Four consequences are worth knowing before touching either half:
 
 - **A generated group's setup and teardown are ordinary entries** in the maps
   `Main` passes to `Registry.buildGroups`; the backend hook resolves tests only.
@@ -367,6 +367,23 @@ Three consequences are worth knowing before touching either half:
   add the Maven dependency that puts them on the classpath, and a missing one is
   a compile failure naming the package.
 - **The BOM pin is a floor, not a preference** — see [Runtime](#runtime) above.
+- **An enum reaches the request as its wire value, not as the enum class.** The
+  emitter writes `.type("SERVICE_CONTROL_POLICY")` and
+  `.attributeNamesWithStrings(List.of("All"))` — the SDK's String overload for a
+  scalar enum, and its `<member>WithStrings` setter for a list of enums or a map
+  with an enum key or value. `Enum.fromValue` is deliberately not used: a value
+  the *pinned* SDK does not know becomes `UNKNOWN_TO_SDK_VERSION`, whose
+  `toString` is the four-character string `"null"`, and that is what would go on
+  the wire. `JavaSdkWireFactsTest` measures both halves. An enum nested deeper
+  than one list or map inside the setter's own argument has no String form in the
+  SDK at all and is refused (`java-emit-unsupported:<Member>`).
+- **A group the registry marks `parallel` runs its tests concurrently.** Only a
+  generated probe group is marked — a probe is one call that creates nothing,
+  exports nothing and reads no other test's resource. `Runner` bounds the
+  concurrency with the same `OVERCAST_COMPAT_PARALLEL_SLOTS` that bounds groups,
+  emits the results in declaration order so the NDJSON is identical to a serial
+  run's test for test, and falls back to serial if any test declares a
+  `depends`, which the concurrent path cannot gate on.
 
 A generated group scoped to `java-sdk` that the backend cannot resolve still
 reports as a hard **failure** naming the group (`generated group "<group>" is
@@ -406,11 +423,19 @@ not about this suite alone:
 - **`ErrorFixturesTest`** runs the shared conformance corpus,
   `compat/model/testdata/errors`, through this suite's matcher, so a rule only
   one backend implements fails here rather than being discovered when a
-  generated group disagrees with itself across suites. It **reports as skipped**
-  when that corpus is not above the working directory, which is the case inside
-  the Docker build — the image copies this suite's sources and the two registry
-  files, not the model directory. Run `mvn -B test` from this directory to check
-  it for real.
+  generated group disagrees with itself across suites. Every fixture and case it
+  cannot observe is a named node that **aborts with the reason**, never a silent
+  `continue`: a case missing from the tree is indistinguishable from one that
+  passed.
+
+  It is skipped whole when the corpus is not above the working directory, which
+  is the case **inside the Docker build** — the image's context is
+  `compat/suites/`, so the model directory is not in it. That is why CI runs this
+  suite's `mvn -B test` from *this directory* in the checkout, as the `java-sdk
+  suite` step of `Compat suite unit tests`
+  ([.github/workflows/test.yml](../../../.github/workflows/test.yml)), rather
+  than relying on the image build the way the rust-sdk suite does. The image
+  build still runs everything else here.
 - **`JavaSdkWireFactsTest`** measures, on the wire against a loopback server, the
   two SDK facts `cmd/compatgen` derives from the model instead of from the SDK: a
   builder setter takes the value whatever the member's optionality, and a boxed
@@ -419,7 +444,8 @@ not about this suite alone:
   fails first.
 
 Run all of these with `mvn -B test` from this directory — no live Overcast
-instance required.
+instance required. That is the same command CI runs, so a green run here is the
+whole of what that job checks.
 
 ---
 

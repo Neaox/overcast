@@ -54,10 +54,16 @@ public final class Main {
         Map<String, TestFn> setups    = new LinkedHashMap<>();
         Map<String, TestFn> teardowns = new LinkedHashMap<>();
 
-        for (ServiceGroup sg : serviceGroups(clients)) {
-            implSources.add(new Registry.ImplSource(sg.sourceName(), sg.impls()));
-            setups.putAll(sg.setups());
-            teardowns.putAll(sg.teardowns());
+        try {
+            for (ServiceGroup sg : serviceGroups(clients)) {
+                implSources.add(new Registry.ImplSource(sg.sourceName(), sg.impls()));
+                mergeHooks(setups, sg.setups(), "setup", sg.sourceName());
+                mergeHooks(teardowns, sg.teardowns(), "teardown", sg.sourceName());
+            }
+        } catch (IllegalStateException e) {
+            System.err.println(e.getMessage());
+            System.exit(1);
+            return;
         }
 
         // The generated groups resolve through the ScenarioBackend hook rather
@@ -74,9 +80,15 @@ public final class Main {
             System.exit(1);
             return;
         }
-        for (ServiceGroup sg : generated) {
-            setups.putAll(sg.setups());
-            teardowns.putAll(sg.teardowns());
+        try {
+            for (ServiceGroup sg : generated) {
+                mergeHooks(setups, sg.setups(), "setup", sg.sourceName());
+                mergeHooks(teardowns, sg.teardowns(), "teardown", sg.sourceName());
+            }
+        } catch (IllegalStateException e) {
+            System.err.println(e.getMessage());
+            System.exit(1);
+            return;
         }
         ScenarioBackend backend = (group, test) ->
                 generatedImpls.get(Registry.qualifiedKey(group.name(), test.name()));
@@ -140,7 +152,7 @@ public final class Main {
                                 .toList();
                         return tests.isEmpty() ? null
                                 : new TestGroup(g.suite(), g.service(), g.name(), tests,
-                                                g.setup(), g.teardown());
+                                                g.setup(), g.teardown(), g.parallel());
                     })
                     .filter(Objects::nonNull)
                     .toList();
@@ -210,6 +222,29 @@ public final class Main {
             sources.add(new Registry.ImplSource(sg.sourceName(), sg.impls()));
         }
         return Registry.mergeImpls(sources, SUITE);
+    }
+
+    /**
+     * Merges one service group's setup or teardown hooks into the suite's map,
+     * refusing a group name two of them both register.
+     *
+     * <p>{@code putAll} would keep the last registration silently, and the
+     * group whose hook was dropped would run without its setup — reporting a
+     * cascade of failures naming its tests rather than the collision that
+     * caused them. {@link Registry#mergeImpls} already refuses the same thing
+     * for test implementations; these two maps are what it does not see.
+     *
+     * @throws IllegalStateException if {@code group} is already registered.
+     */
+    static void mergeHooks(Map<String, TestFn> into, Map<String, TestFn> from,
+                           String phase, String source) {
+        from.forEach((group, fn) -> {
+            if (into.putIfAbsent(group, fn) != null) {
+                throw new IllegalStateException(String.format(
+                        "[%s] duplicate %s registration for group \"%s\" (%s); one of them would never run",
+                        SUITE, phase, group, source));
+            }
+        });
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────

@@ -3,10 +3,13 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/overcast-sh/overcast/internal/awsmodel"
 )
 
 // The Java emitter, over the same hermetic fixture the rest of the generator's
@@ -24,6 +27,63 @@ import (
 // .golden suffix so javac never sees it: it names an SDK package for a service
 // that does not exist.
 const javaGoldenPath = "testdata/golden/ScenariosWidgetsGen.java.golden"
+
+// javaFixtureSDKID is the fixture service's SDK id, which the speller needs in
+// order to write a colliding model class out in full.
+const javaFixtureSDKID = "Widgets"
+
+// withJavaTypeShapes adds one operation to the fixture model carrying a member
+// of every modeled type the widgets service does not otherwise have, so the
+// spelling table and its refusals can be read back row by row.
+//
+// It is added to the loaded model rather than to testdata/shapes/widgets.json
+// because the recipe does not name the operation: putting it in the file would
+// widen the probe group and rewrite both emitters' goldens for members no
+// scenario sends. Nothing here reaches generation — the caller has already
+// generated, or is only spelling values.
+func withJavaTypeShapes(model *serviceModel) *serviceModel {
+	member := func(target string) awsmodel.SnapshotMember {
+		return awsmodel.SnapshotMember{Target: target}
+	}
+	add := func(name string, shape awsmodel.SnapshotShape) {
+		model.Shapes[name] = shape
+	}
+	add("TuneWidget", awsmodel.SnapshotShape{Type: "operation", Input: "TuneWidgetRequest"})
+	// An operation the model gives no input at all: a scenario naming a member
+	// of it has nowhere to put one.
+	add("PulseWidget", awsmodel.SnapshotShape{Type: "operation"})
+	add("TuneWidgetRequest", awsmodel.SnapshotShape{Type: "structure", Members: map[string]awsmodel.SnapshotMember{
+		"Ticks":     member("smithy.api#Long"),
+		"Ratio":     member("smithy.api#Float"),
+		"Precision": member("smithy.api#Double"),
+		"Enabled":   member("smithy.api#Boolean"),
+		"Nudge":     member("smithy.api#Byte"),
+		"Offset":    member("smithy.api#Short"),
+		"Huge":      member("smithy.api#BigInteger"),
+		"Exact":     member("smithy.api#BigDecimal"),
+		"Spec":      member("TuneSpec"),
+		"Palette":   member("ColorMap"),
+		"Codes":     member("ColorList"),
+		"Layers":    member("ColorListList"),
+		"Weights":   member("WeightMap"),
+		"Marker":    member("Check"),
+	}})
+	add("TuneSpec", awsmodel.SnapshotShape{Type: "structure", Members: map[string]awsmodel.SnapshotMember{
+		"Label": member("smithy.api#String"),
+		"Shade": member("Color"),
+		"Tints": member("ColorList"),
+	}})
+	add("ColorMap", awsmodel.SnapshotShape{Type: "map", Key: "Color", Value: "smithy.api#String"})
+	add("ColorList", awsmodel.SnapshotShape{Type: "list", Member: "Color"})
+	add("ColorListList", awsmodel.SnapshotShape{Type: "list", Member: "ColorList"})
+	add("WeightMap", awsmodel.SnapshotShape{Type: "map", Key: "smithy.api#Integer", Value: "smithy.api#String"})
+	// A shape whose SDK class is named after something the emitted file already
+	// binds. IAM, Resource Groups and Greengrass all model a shape named Group.
+	add("Check", awsmodel.SnapshotShape{Type: "structure", Members: map[string]awsmodel.SnapshotMember{
+		"Key": member("smithy.api#String"),
+	}})
+	return model
+}
 
 func TestEmitJava_matchesTheGoldenSource(t *testing.T) {
 	// Given: the fixture service, generated.
@@ -177,10 +237,88 @@ func TestEmitJava_refusesWhatItCannotSpell(t *testing.T) {
 			wantMember: "Description",
 			wantDetail: "cannot send an explicit null",
 		},
+		{
+			// An operation the model gives no input at all. The scaffolder
+			// refuses one upstream; this is what the backstop says about it,
+			// and it is a different sentence from "no such member".
+			name:       "a member of an operation with a unit input",
+			op:         "PulseWidget",
+			params:     map[string]any{"WidgetId": "w-1"},
+			wantMember: "WidgetId",
+			wantDetail: "gives PulseWidget no input",
+		},
+		{
+			name:       "a non-whole number into an integer member",
+			op:         "RotateWidget",
+			params:     map[string]any{"Angle": json.Number("1.5"), "WidgetId": "w-1"},
+			wantMember: "Angle",
+			wantDetail: "wants a whole number, got 1.5",
+		},
+		{
+			// 2^31 does not fit an Integer, and the literal is reported as the
+			// scenario wrote it rather than as a float64 rounded it.
+			name:       "a number out of range for the member's Java type",
+			op:         "RotateWidget",
+			params:     map[string]any{"Angle": json.Number("2147483648"), "WidgetId": "w-1"},
+			wantMember: "Angle",
+			wantDetail: "2147483648 is out of range for integer",
+		},
+		{
+			// java.math.BigInteger has no literal; a long standing in for one
+			// would silently change a value chosen to be carried exactly.
+			name:       "a bigInteger member",
+			op:         "TuneWidget",
+			params:     map[string]any{"Huge": json.Number("170141183460469231731687303715884105728")},
+			wantMember: "Huge",
+			wantDetail: "no Java literal builds a bigInteger member",
+		},
+		{
+			name:       "a bigDecimal member",
+			op:         "TuneWidget",
+			params:     map[string]any{"Exact": json.Number("1.5")},
+			wantMember: "Exact",
+			wantDetail: "no Java literal builds a bigDecimal member",
+		},
+		{
+			// javac rejects a float literal outside the type's range outright,
+			// so it is refused here rather than emitted as 1e+300f.
+			name:       "a float literal out of range for the member's Java type",
+			op:         "TuneWidget",
+			params:     map[string]any{"Ratio": json.Number("1e300")},
+			wantMember: "Ratio",
+			wantDetail: "1e300 is out of range for float",
+		},
+		{
+			name:       "a literal of the wrong JSON type for an enum member",
+			op:         "CreateWidget",
+			params:     map[string]any{"Color": json.Number("1"), "Name": "w"},
+			wantMember: "Color",
+			wantDetail: "an enum member wants a string, got a number",
+		},
+		{
+			// The IR's objects have string keys, so there is no value that
+			// could fill a map the model keys by anything else.
+			name:       "a map the model does not key by a string",
+			op:         "TuneWidget",
+			params:     map[string]any{"Weights": map[string]any{"1": "heavy"}},
+			wantMember: "Weights",
+			wantDetail: "keyed by integer has no IR spelling",
+		},
+		{
+			// One list or map down is as far as the SDK's String form reaches;
+			// falling back to fromValue would put "null" on the wire for a
+			// value the pinned SDK does not know.
+			name:       "an enum nested deeper than the SDK spells with Strings",
+			op:         "TuneWidget",
+			params:     map[string]any{"Layers": []any{[]any{"blue"}}},
+			wantMember: "Layers",
+			wantDetail: "no String form for the enum Color nested this deep",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// Given: a group whose call carries that member.
 			_, gen := generateFixture(t)
+			withJavaTypeShapes(gen.model)
 			const name = "widgets-gen-refused"
 			gen.scenario.Groups = append(gen.scenario.Groups, group{
 				Name: name,
@@ -218,6 +356,78 @@ func TestEmitJava_refusesWhatItCannotSpell(t *testing.T) {
 	}
 }
 
+// TestBuildRegistry_scopesAJavaRefusedGroupAwayFromJavaSdk is the other half of
+// a Java refusal, and the reason a refusal is not merely cosmetic: `suites` is
+// derived from backend availability, so java-sdk must not be listed against a
+// group its emitter did not write a method for — the loader's
+// generated-no-backend rule would turn the refusal into a hard failure naming
+// the group.
+func TestBuildRegistry_scopesAJavaRefusedGroupAwayFromJavaSdk(t *testing.T) {
+	_, gen := generateFixture(t)
+	scenarios := []*scenario{gen.scenario}
+	backends := []string{"cli", "go-sdk", "java-sdk"}
+	refused := gen.scenario.Groups[0].Name
+
+	reg := buildRegistry(scenarios, backends, nil, unableSuites{refused: {"java-sdk": true}})
+	for _, g := range reg.Groups {
+		want := backends
+		if g.Name == refused {
+			want = []string{"cli", "go-sdk"}
+		}
+		if strings.Join(g.Suites, ",") != strings.Join(want, ",") {
+			t.Errorf("group %s suites = %v, want %v", g.Name, g.Suites, want)
+		}
+	}
+
+	// And a group no backend can execute is left out entirely rather than
+	// written with an empty `suites`, which the schema refuses.
+	none := unableSuites{refused: {"cli": true, "go-sdk": true, "java-sdk": true}}
+	for _, g := range buildRegistry(scenarios, backends, nil, none).Groups {
+		if g.Name == refused {
+			t.Error("a group no suite can execute was still registered")
+		}
+	}
+}
+
+// TestEmitJava_fullyQualifiesAModelClassWhoseNameIsAlreadyBound pins the
+// import-collision rule in a whole emitted file rather than in one spelling.
+// A service modelling a shape named Group, Call, Check or Values — IAM,
+// Resource Groups and Greengrass all model Group — would otherwise emit a
+// second import of that simple name beside io.overcast.compat.scenario's, which
+// does not compile.
+func TestEmitJava_fullyQualifiesAModelClassWhoseNameIsAlreadyBound(t *testing.T) {
+	// Given: a group calling an operation whose member targets a shape named
+	// after something the file already binds.
+	_, gen := generateFixture(t)
+	withJavaTypeShapes(gen.model)
+	gen.scenario.Groups = append(gen.scenario.Groups, group{
+		Name: "widgets-gen-marked",
+		Kind: groupLifecycle,
+		Tests: []test{newTest("TuneWidget", "TuneWidget",
+			call{Op: "TuneWidget", Params: map[string]any{"Marker": map[string]any{"Key": "k"}}},
+			responseField(checks("$.Widgets", isList())))},
+	})
+
+	// When: the service is emitted.
+	emission, err := emitJava(gen)
+	if err != nil {
+		t.Fatalf("emitJava: %v", err)
+	}
+	source := string(emission.Contents)
+
+	// Then: the model class is written out in full and never imported, and the
+	// scenario class of that name still is.
+	if !strings.Contains(source, "software.amazon.awssdk.services.widgets.model.Check.builder()") {
+		t.Errorf("the colliding model class was not fully qualified:\n%s", source)
+	}
+	if strings.Contains(source, "import software.amazon.awssdk.services.widgets.model.Check;") {
+		t.Error("the colliding model class was imported, which does not compile beside the scenario one")
+	}
+	if !strings.Contains(source, "import io.overcast.compat.scenario.Check;") {
+		t.Error("the scenario class lost its import to the model class")
+	}
+}
+
 // TestJavaSpeller_spellsEveryShapeOfMember is the type-spelling table read back,
 // one row at a time, against the fixture's modeled shapes. The golden file
 // proves what a whole service comes out as; this says which rule produced each
@@ -225,41 +435,79 @@ func TestEmitJava_refusesWhatItCannotSpell(t *testing.T) {
 func TestJavaSpeller_spellsEveryShapeOfMember(t *testing.T) {
 	f, _ := generateFixture(t)
 	for _, tc := range []struct {
-		name      string
-		op        string
-		member    string
-		value     string
-		want      string
-		wantTypes []string
+		name   string
+		op     string
+		member string
+		value  string
+		want   string
+		// wantSetter is the builder setter the value is passed to, which is the
+		// member's own name except where the SDK spells the String form of a
+		// composite of enums `<member>WithStrings`.
+		wantSetter string
+		wantTypes  []string
 	}{
-		{"a string", "CreateWidget", "Description", `"one"`, `"one"`, nil},
-		{"an enum", "CreateWidget", "Color", `"blue"`, `Color.fromValue("blue")`, []string{"Color"}},
-		{"an integer", "RotateWidget", "Angle", `45`, `45`, nil},
-		{"a string map", "TagWidget", "Tags", `{"compat":"scenario"}`, `Map.of("compat", "scenario")`, nil},
-		{"a list of strings", "UntagWidget", "TagKeys", `["compat"]`, `List.of("compat")`, nil},
+		{"a string", "CreateWidget", "Description", `"one"`, `"one"`, "description", nil},
 		{
-			// The structure's own builder, one setter per member, in member
-			// order — as a human would write it.
+			// The wire value, not Color.fromValue of it: the SDK declares
+			// color(String) beside color(Color), and the String overload cannot
+			// turn a value the pinned SDK does not know into "null".
+			"an enum", "CreateWidget", "Color", `"blue"`, `"blue"`, "color", nil,
+		},
+		{"an integer", "RotateWidget", "Angle", `45`, `45`, "angle", nil},
+		{"a long", "TuneWidget", "Ticks", `9007199254740993`, `9007199254740993L`, "ticks", nil},
+		{"a byte", "TuneWidget", "Nudge", `1`, `(byte) 1`, "nudge", nil},
+		{"a short", "TuneWidget", "Offset", `-2`, `(short) -2`, "offset", nil},
+		{"a float", "TuneWidget", "Ratio", `1.5`, `1.5f`, "ratio", nil},
+		{"a double", "TuneWidget", "Precision", `1.5`, `1.5`, "precision", nil},
+		{"a whole number into a double", "TuneWidget", "Precision", `2`, `2.0`, "precision", nil},
+		{"a boolean", "TuneWidget", "Enabled", `true`, `true`, "enabled", nil},
+		{"a string map", "TagWidget", "Tags", `{"compat":"scenario"}`, `Map.of("compat", "scenario")`, "tags", nil},
+		{"a list of strings", "UntagWidget", "TagKeys", `["compat"]`, `List.of("compat")`, "tagKeys", nil},
+		{
+			// The String form of a list of enums, which the SDK names after the
+			// member plus WithStrings.
+			"a list of enums", "TuneWidget", "Codes", `["blue","red"]`,
+			`List.of("blue", "red")`, "codesWithStrings", nil,
+		},
+		{
+			"an enum-keyed map", "TuneWidget", "Palette", `{"blue":"navy"}`,
+			`Map.of("blue", "navy")`, "paletteWithStrings", nil,
+		},
+		{
+			// A structure member on its own, not inside a list: its own builder,
+			// one setter per member, in member order — as a human would write
+			// it. The nested list of enums takes its own WithStrings setter.
+			"a nested structure", "TuneWidget", "Spec", `{"Label":"l","Shade":"red","Tints":["blue"]}`,
+			`TuneSpec.builder().label("l").shade("red").tintsWithStrings(List.of("blue")).build()`,
+			"spec", []string{"TuneSpec"},
+		},
+		{
 			"a list of structures", "TagSprocket", "Tags", `[{"Key":"k","Value":"v"}]`,
-			`List.of(SprocketTag.builder().key("k").value("v").build())`, []string{"SprocketTag"},
+			`List.of(SprocketTag.builder().key("k").value("v").build())`, "tags", []string{"SprocketTag"},
+		},
+		{
+			// A model class whose simple name the emitted file has already
+			// bound is written out in full rather than imported over.
+			"a structure whose class name is already bound", "TuneWidget", "Marker", `{"Key":"k"}`,
+			`software.amazon.awssdk.services.widgets.model.Check.builder().key("k").build()`, "marker", nil,
 		},
 		{
 			"an expression into a string", "GetWidget", "WidgetId", `{"$ref":"widget.id"}`,
-			`b.string("WidgetId", Values.ref("widget.id"))`, nil,
+			`b.string("WidgetId", Values.ref("widget.id"))`, "widgetId", nil,
 		},
 		{
-			// The Binder result is a String, not a Color, so the enum
-			// conversion is written around it.
+			// The Binder result is a String, which is what the enum member's
+			// String overload takes — so nothing is written around it.
 			"an expression into an enum", "CreateWidget", "Color", `{"$name":"c"}`,
-			`Color.fromValue(b.string("Color", Values.name("c")))`, []string{"Color"},
+			`b.string("Color", Values.name("c"))`, "color", nil,
 		},
 		{
 			"an expression inside a composite", "TagWidget", "Tags", `{"compat":{"$ref":"t"}}`,
-			`Map.of("compat", b.string("Tags", Values.ref("t")))`, nil,
+			`Map.of("compat", b.string("Tags", Values.ref("t")))`, "tags", nil,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			sp := newJavaSpeller(f.model)
+			sp := newJavaSpeller(withJavaTypeShapes(f.model), javaFixtureSDKID)
 			target, err := sp.memberTarget(tc.op, tc.member)
 			if err != nil {
 				t.Fatal(err)
@@ -274,6 +522,9 @@ func TestJavaSpeller_spellsEveryShapeOfMember(t *testing.T) {
 			}
 			if got != tc.want {
 				t.Errorf("%s.%s = %s, want %s", tc.op, tc.member, got, tc.want)
+			}
+			if setter := sp.setterFor(target, tc.member); setter != tc.wantSetter {
+				t.Errorf("%s.%s setter = %s, want %s", tc.op, tc.member, setter, tc.wantSetter)
 			}
 			// A model class is recorded only when the spelling actually named
 			// it, which is what keeps an emitted file free of unused imports.
@@ -299,6 +550,12 @@ func TestJavaPascalAndUnCapitalize(t *testing.T) {
 		{"ListAccounts", "ListAccounts", "listAccounts"},
 		{"ListAWSServiceAccessForOrganization", "ListAwsServiceAccessForOrganization", "listAWSServiceAccessForOrganization"},
 		{"MD5OfBody", "Md5OfBody", "md5OfBody"},
+		// The splitter does not split before a *trailing* single capital: the
+		// SDK's rule is `([a-z])([A-Z][a-zA-Z])`, so FooB is one word. A
+		// lookahead-free `([a-z])([A-Z])` would make it two and name a class
+		// that does not exist.
+		{"FooB", "Foob", "fooB"},
+		{"FooBar", "FooBar", "fooBar"},
 	} {
 		if got := javaPascal(tc.in); got != tc.pascal {
 			t.Errorf("javaPascal(%q) = %q, want %q", tc.in, got, tc.pascal)
@@ -312,6 +569,35 @@ func TestJavaPascalAndUnCapitalize(t *testing.T) {
 	}
 	if got := javaNamePackage("Cognito Identity Provider"); got != "software.amazon.awssdk.services.cognitoidentityprovider" {
 		t.Errorf("javaNamePackage = %q", got)
+	}
+}
+
+// TestJavaMethodName pins the SDK's rename of a name it cannot declare a method
+// under. A Java keyword is not an identifier at all — SSM models a `default`
+// member — and a request builder already declares `build` and `sdkFields`, so a
+// setter of either name is renamed too. A client method is not: nothing named
+// `build` is declared on a client, and renaming there would name a method that
+// does not exist.
+func TestJavaMethodName(t *testing.T) {
+	for _, tc := range []struct{ member, setter, method string }{
+		// A keyword is not an identifier in either position.
+		{"Default", "defaultValue", "defaultValue"},
+		{"Package", "packageValue", "packageValue"},
+		{"New", "newValue", "newValue"},
+		// A builder's own methods are only a collision on the builder.
+		{"Build", "buildValue", "build"},
+		{"SdkFields", "sdkFieldsValue", "sdkFields"},
+		// Everything else is unCapitalize and nothing more.
+		{"QueueUrl", "queueUrl", "queueUrl"},
+		{"Defaults", "defaults", "defaults"},
+		{"AWSServiceAccessPrincipals", "awsServiceAccessPrincipals", "awsServiceAccessPrincipals"},
+	} {
+		if got := javaSetter(tc.member); got != tc.setter {
+			t.Errorf("javaSetter(%q) = %q, want %q", tc.member, got, tc.setter)
+		}
+		if got := javaMethod(tc.member); got != tc.method {
+			t.Errorf("javaMethod(%q) = %q, want %q", tc.member, got, tc.method)
+		}
 	}
 }
 
@@ -405,7 +691,7 @@ func TestExplainJavaRendersTheEmittedCall(t *testing.T) {
 	if !ok {
 		t.Fatal("fixture has no CreateWidget")
 	}
-	e := &explainer{st: javaStyle(newJavaSpeller(f.model), nil)}
+	e := &explainer{st: javaStyle(newJavaSpeller(f.model, javaFixtureSDKID), nil)}
 	explained := e.test(gen.scenario, g, tc, func() {})
 
 	emission, err := emitJava(gen)
@@ -414,7 +700,7 @@ func TestExplainJavaRendersTheEmittedCall(t *testing.T) {
 	}
 	emitted := string(emission.Contents)
 
-	lines, err := javaRequestLines(newJavaSpeller(f.model), tc.Call.Op, tc.Call.Params)
+	lines, err := javaRequestLines(newJavaSpeller(f.model, javaFixtureSDKID), tc.Call.Op, tc.Call.Params)
 	if err != nil {
 		t.Fatal(err)
 	}

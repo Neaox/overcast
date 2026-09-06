@@ -387,6 +387,49 @@ class GroupExecutionTest {
     }
 
     /**
+     * An {@code eventually} that gave up on a 501 still reports as
+     * unimplemented. The classification belongs to the call, not to how many
+     * times it was retried, and a probe wrapped in a poll would otherwise
+     * report as a hard failure — which for a candidate group is the difference
+     * between "not implemented yet" and "this regressed".
+     */
+    @Test
+    void eventuallyKeepsAnInnerUnimplementedClassification() {
+        AwsServiceException notImplemented = AwsServiceException.builder()
+                .awsErrorDetails(AwsErrorDetails.builder()
+                        .errorCode("UnknownOperation")
+                        .sdkHttpResponse(SdkHttpResponse.builder().statusCode(501).build())
+                        .build())
+                .message("the operation is not supported").statusCode(501).build();
+
+        AssertionError e = assertThrows(AssertionError.class, () -> GROUP.runTest(ctx(), "ListMessageMoveTasks",
+                new Call("ListMessageMoveTasks", "{}",
+                        b -> ListQueuesRequest.builder().build(),
+                        ok(ListQueuesResponse.builder().build(), null)),
+                List.of(Clause.eventually(2, 1, Clause.readback(
+                        new Call("ListMessageMoveTasks", "{}",
+                                b -> ListQueuesRequest.builder().build(), fails(notImplemented)),
+                        Check.nonEmpty("$.Results"))))));
+
+        assertInstanceOf(UnimplementedFailure.class, e,
+                "the give-up must carry the inner call's classification");
+        assertTrue(Runner.isUnimplemented(e), "the harness must still classify this as unimplemented");
+        assertTrue(e.getMessage().startsWith("eventually gave up after 2 attempt(s) 1ms apart; last failure: "),
+                e.getMessage());
+
+        // And a give-up on an ordinary mismatch stays an ordinary failure.
+        AssertionError plain = assertThrows(AssertionError.class, () -> GROUP.runTest(ctx(), "ListQueues",
+                new Call("ListQueues", "{}", b -> ListQueuesRequest.builder().build(),
+                        ok(ListQueuesResponse.builder().build(), null)),
+                List.of(Clause.eventually(2, 1, Clause.readback(
+                        new Call("ListQueues", "{}", b -> ListQueuesRequest.builder().build(),
+                                ok(ListQueuesResponse.builder().build(), null)),
+                        Check.nonEmpty("$.QueueUrls"))))));
+        assertFalse(plain instanceof UnimplementedFailure);
+        assertFalse(Runner.isUnimplemented(plain));
+    }
+
+    /**
      * A composed failure message is never sniffed for "501": field 3 is the
      * params JSON, where a queue URL, a run id or a port can contain the string
      * while saying nothing about the status.

@@ -16,7 +16,6 @@ import java.util.List;
 import java.util.Map;
 import software.amazon.awssdk.services.widgets.WidgetsClient;
 import software.amazon.awssdk.services.widgets.model.CalibrateGaugeRequest;
-import software.amazon.awssdk.services.widgets.model.Color;
 import software.amazon.awssdk.services.widgets.model.CreateSprocketRequest;
 import software.amazon.awssdk.services.widgets.model.CreateWidgetRequest;
 import software.amazon.awssdk.services.widgets.model.DeleteSprocketRequest;
@@ -148,7 +147,7 @@ public final class ScenariosWidgetsGen implements ServiceGroup {
         GROUP_WIDGETS_GEN_WIDGET.runTest(t, "CreateWidget",
                 new Call("CreateWidget", "{\"Color\":\"blue\",\"Description\":\"one\",\"Name\":{\"$name\":\"w\"}}",
                         b -> CreateWidgetRequest.builder()
-                                .color(Color.fromValue("blue"))
+                                .color("blue")
                                 .description("one")
                                 .name(b.string("Name", Values.name("w")))
                                 .build(),
@@ -176,7 +175,8 @@ public final class ScenariosWidgetsGen implements ServiceGroup {
                                                 .build(),
                                         r -> cl().listWidgets((ListWidgetsRequest) r)),
                                 "$.Widgets",
-                                Where.of("$.WidgetId", Values.ref("widget.id")))
+                                Where.of("$.WidgetId", Values.ref("widget.id"))
+                        )
                 ));
     }
 
@@ -312,7 +312,8 @@ public final class ScenariosWidgetsGen implements ServiceGroup {
                         Clause.listContains(
                                 null,
                                 "$.Widgets",
-                                Where.of("$.WidgetId", Values.ref("widget.id")))
+                                Where.of("$.WidgetId", Values.ref("widget.id"))
+                        )
                 ));
     }
 
@@ -449,7 +450,8 @@ public final class ScenariosWidgetsGen implements ServiceGroup {
                                                 r -> cl().listSprocketTags((ListSprocketTagsRequest) r)),
                                         "$.Tags",
                                         Where.of("$.Key", "compat"),
-                                        Where.of("$.Value", "scenario")))
+                                        Where.of("$.Value", "scenario")
+                                ))
                 ));
     }
 
@@ -465,7 +467,8 @@ public final class ScenariosWidgetsGen implements ServiceGroup {
                                 null,
                                 "$.Tags",
                                 Where.of("$.Key", "compat"),
-                                Where.of("$.Value", "scenario"))
+                                Where.of("$.Value", "scenario")
+                        )
                 ));
     }
 
@@ -486,7 +489,8 @@ public final class ScenariosWidgetsGen implements ServiceGroup {
                                                         .build(),
                                                 r -> cl().listSprocketTags((ListSprocketTagsRequest) r)),
                                         "$.Tags",
-                                        Where.of("$.Key", "compat")))
+                                        Where.of("$.Key", "compat")
+                                ))
                 ));
     }
 

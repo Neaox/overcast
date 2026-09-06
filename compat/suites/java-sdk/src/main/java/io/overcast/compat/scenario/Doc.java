@@ -94,12 +94,15 @@ final class Doc {
             // the way the wire does still beats a list of 8-bit numbers.
             return Base64.getEncoder().encodeToString(bytes.asByteArray());
         }
-        if (v instanceof Enum<?> e) {
+        if (v instanceof Enum<?>) {
             // An enum member is stored as a string in every generated model
-            // class, so this is a belt to that braces. UNKNOWN_TO_SDK_VERSION
-            // stringifies to null, which is absence rather than a value.
-            String s = v.toString();
-            return s == null ? ABSENT : s;
+            // class, so this is a belt to that braces. The value is whatever
+            // the constant stringifies to, including the literal four
+            // characters "null" that UNKNOWN_TO_SDK_VERSION gives — which is a
+            // value the service sent and this suite could not name, not an
+            // absent member, and reporting it as absence would make a wrong
+            // response satisfy `missing`.
+            return v.toString();
         }
         if (v instanceof SdkAutoConstructList<?> || v instanceof SdkAutoConstructMap<?, ?>) {
             return ABSENT;

@@ -109,7 +109,7 @@ func emitJava(gen *generation) (*javaEmission, error) {
 	// turned out to need: which model classes a service reaches for depends on
 	// the member types its calls touch, and an unused import is noise in a file
 	// that is reviewed as a diff.
-	sp := newJavaSpeller(gen.model)
+	sp := newJavaSpeller(gen.model, s.Client.SDKID)
 	class := javaNameClass(s.Service)
 	body := &javaWriter{}
 	if err := javaWriteBody(body, gen, sp, class, groups); err != nil {
@@ -121,7 +121,7 @@ func emitJava(gen *generation) (*javaEmission, error) {
 	w.linef("")
 	w.linef("package io.overcast.compat.groups;")
 	w.linef("")
-	for _, path := range javaImports(sp, s.Client.SDKID, groups) {
+	for _, path := range javaImports(sp, groups) {
 		w.linef("import %s;", path)
 	}
 	w.linef("")
@@ -134,7 +134,8 @@ func emitJava(gen *generation) (*javaEmission, error) {
 // javaImports is the emitted file's import block, sorted. Java has no import
 // formatter the generator runs, so the order is produced rather than corrected;
 // one sorted block keeps the diff stable.
-func javaImports(sp *javaSpeller, sdkID string, groups []group) []string {
+func javaImports(sp *javaSpeller, groups []group) []string {
+	sdkID := sp.sdkID
 	paths := []string{
 		"io.overcast.compat.clients.AwsClients",
 		"io.overcast.compat.harness.TestContext",
@@ -160,7 +161,7 @@ func javaImports(sp *javaSpeller, sdkID string, groups []group) []string {
 	}
 	modelPackage := javaNameModelPackage(sdkID)
 	for _, g := range groups {
-		for _, c := range javaCallsOf(g) {
+		for _, c := range callsOf(g) {
 			paths = append(paths, modelPackage+"."+javaNameRequest(c.Op))
 		}
 	}
@@ -348,7 +349,11 @@ func javaWriteCall(w *javaWriter, sp *javaSpeller, c call, indent, suffix string
 	if err != nil {
 		return err
 	}
-	w.linef("%snew Call(%s, %s,", indent, javaQuote(c.Op), javaQuote(javaRawParams(c.Params)))
+	raw, err := javaRawParams(c.Params)
+	if err != nil {
+		return err
+	}
+	w.linef("%snew Call(%s, %s,", indent, javaQuote(c.Op), javaQuote(raw))
 	w.linef("%s        b -> %s", indent, lines[0])
 	for i, line := range lines[1:] {
 		end := ""
@@ -406,19 +411,20 @@ func javaWriteClause(w *javaWriter, sp *javaSpeller, a assertion, indent, suffix
 		} else if err := javaWriteCall(w, sp, *a.Call, indent+"        ", ","); err != nil {
 			return err
 		}
-		w.linef("%s        %s,", indent, javaQuote(a.ItemsPath))
+		// The closing parenthesis is written unconditionally, on a line of its
+		// own as goWriteClause does. Hanging it off the last Where — which is
+		// how this read until a clause carrying none was constructed — leaves
+		// the call unterminated when the where list is empty.
 		wheres := sortedValueKeys(a.Where)
+		w.linef("%s        %s%s", indent, javaQuote(a.ItemsPath), javaComma(len(wheres) > 0))
 		for i, path := range wheres {
 			value, err := javaValue(a.Where[path])
 			if err != nil {
 				return err
 			}
-			end := ","
-			if i == len(wheres)-1 {
-				end = ")" + suffix
-			}
-			w.linef("%s        Where.of(%s, %s)%s", indent, javaQuote(path), value, end)
+			w.linef("%s        Where.of(%s, %s)%s", indent, javaQuote(path), value, javaComma(i < len(wheres)-1))
 		}
+		w.linef("%s)%s", indent, suffix)
 	case assertErrorCode:
 		w.linef("%sClause.errorCode(ErrorSpec.of(%s, %s))%s", indent, javaQuote(a.Error.Shape), javaQuote(a.Error.Code), suffix)
 	case assertEventually:
@@ -505,17 +511,48 @@ func javaServiceName(sdkID string) string { return javaPascal(sdkID) }
 // javaSplitOnWordBoundaries reproduces the AWS SDK for Java v2 code generator's
 // splitter, which is what makes DynamoDB into DynamoDb and leaves Wafv2 alone.
 // The rules, in order: every non-alphanumeric run is a separator; a version
-// suffix behind an acronym splits off; a lower→upper transition is a boundary;
-// an acronym run followed by a capitalized word is a boundary; and a digit
-// followed by a letter is a boundary.
+// suffix behind an acronym splits off; a lower→upper transition *followed by
+// another letter* is a boundary; an acronym run followed by a capitalized word
+// is a boundary; and a digit followed by a letter is a boundary.
 func javaSplitOnWordBoundaries(s string) []string {
 	result := javaNonAlnum.ReplaceAllString(s, " ")
 	result = javaLowerAcronymVersion.ReplaceAllString(result, "$1 v$2 ")
 	result = javaUpperAcronymVersion.ReplaceAllString(result, "$1 V$2 ")
-	result = javaCamelBoundary.ReplaceAllString(result, "$1 $2")
+	result = javaSplitCamelBoundaries(result)
 	result = javaAcronymBoundary.ReplaceAllString(result, "$1 $2")
 	result = javaDigitBoundary.ReplaceAllString(result, "$1 $2")
 	return strings.Fields(result)
+}
+
+// javaSplitCamelBoundaries is the SDK splitter's camel-case rule, which it
+// spells `([a-z])([A-Z][a-zA-Z])` — a lower→upper transition is a boundary only
+// where a letter follows the capital.
+//
+// It is hand-rolled because RE2 has no lookahead and the third character is
+// what a Go replacement would consume, which changes where the *next* match can
+// start. The trailing letter is load-bearing rather than incidental: the SDK
+// reads a trailing single capital as part of the word before it, so `FooB` is
+// one word (`Foob`) and not two (`FooB`), and a class name spelled the second
+// way does not exist to import.
+//
+// The scan consumes three characters per match, which is what a non-overlapping
+// ReplaceAll does, so `aBcDe` splits once (`a BcDe`) rather than twice.
+func javaSplitCamelBoundaries(s string) string {
+	r := []rune(s)
+	var out strings.Builder
+	for i := 0; i < len(r); {
+		if i+2 < len(r) && isLowerRune(r[i]) && isUpperRune(r[i+1]) && isLetterRune(r[i+2]) {
+			out.WriteRune(r[i])
+			out.WriteRune(' ')
+			out.WriteRune(r[i+1])
+			out.WriteRune(r[i+2])
+			i += 3
+			continue
+		}
+		out.WriteRune(r[i])
+		i++
+	}
+	return out.String()
 }
 
 // javaNamePackage is the Java package for a service's client.
@@ -546,12 +583,57 @@ func javaNameClientCall(op string) string {
 
 // javaMethod is the client method for an operation, and javaSetter the builder
 // setter for a member. Both are the AWS SDK for Java v2 code generator's
-// unCapitalize: the leading run of capitals is lower-cased, except its last
-// letter when a lowercase letter follows — so ListAccounts → listAccounts and
-// AWSServiceAccessPrincipals → awsServiceAccessPrincipals.
-func javaMethod(op string) string { return javaUnCapitalize(op) }
+// unCapitalize — the leading run of capitals is lower-cased, except its last
+// letter when a lowercase letter follows, so ListAccounts → listAccounts and
+// AWSServiceAccessPrincipals → awsServiceAccessPrincipals — plus the rename a
+// name it cannot declare a method under gets; see javaMethodName.
+func javaMethod(op string) string { return javaMethodName(op, false) }
 
-func javaSetter(member string) string { return javaUnCapitalize(member) }
+func javaSetter(member string) string { return javaMethodName(member, true) }
+
+// javaMethodName is unCapitalize plus the SDK's rename of a name it cannot
+// declare a method under: it appends "Value".
+//
+// Two kinds of name need it, and the table holds only names where the rename is
+// certain. A Java keyword or literal is not an identifier at all — SSM models a
+// `default` member. `build` and `sdkFields` are declared on every request
+// builder by SdkBuilder and SdkPojo, so a *setter* of either name is renamed
+// too; a client method is not, which is why onBuilder says which of the two
+// this name is. Anything else the SDK happens to rename is a `mvn package`
+// failure naming the class, which is the same channel the version pin reports
+// through; guessing wider here would emit `<name>Value` for a setter that is
+// really called `<name>`.
+func javaMethodName(name string, onBuilder bool) string {
+	out := javaUnCapitalize(name)
+	if javaReservedNames[out] || (onBuilder && javaBuilderOwnMethods[out]) {
+		return out + "Value"
+	}
+	return out
+}
+
+// javaBuilderOwnMethods are the methods a request builder already declares, so
+// a member of the same name cannot be a setter.
+var javaBuilderOwnMethods = map[string]bool{"build": true, "sdkFields": true}
+
+// javaReservedNames are the Java keywords and literals, which are not
+// identifiers at all. See javaMethodName for why the list stops here.
+var javaReservedNames = map[string]bool{
+	// JLS 3.9, 3.10.3 and 3.10.7.
+	"abstract": true, "assert": true, "boolean": true, "break": true,
+	"byte": true, "case": true, "catch": true, "char": true,
+	"class": true, "const": true, "continue": true, "default": true,
+	"do": true, "double": true, "else": true, "enum": true,
+	"extends": true, "final": true, "finally": true, "float": true,
+	"for": true, "goto": true, "if": true, "implements": true,
+	"import": true, "instanceof": true, "int": true, "interface": true,
+	"long": true, "native": true, "new": true, "package": true,
+	"private": true, "protected": true, "public": true, "return": true,
+	"short": true, "static": true, "strictfp": true, "super": true,
+	"switch": true, "synchronized": true, "this": true, "throw": true,
+	"throws": true, "transient": true, "try": true, "void": true,
+	"volatile": true, "while": true,
+	"true": true, "false": true, "null": true,
+}
 
 func javaUnCapitalize(name string) string {
 	if name == "" {
@@ -574,8 +656,9 @@ func javaUnCapitalize(name string) string {
 	return out.String()
 }
 
-func isUpperRune(r rune) bool { return r >= 'A' && r <= 'Z' }
-func isLowerRune(r rune) bool { return r >= 'a' && r <= 'z' }
+func isUpperRune(r rune) bool  { return r >= 'A' && r <= 'Z' }
+func isLowerRune(r rune) bool  { return r >= 'a' && r <= 'z' }
+func isLetterRune(r rune) bool { return isUpperRune(r) || isLowerRune(r) }
 func toLowerRune(r rune) rune {
 	if isUpperRune(r) {
 		return r + ('a' - 'A')
@@ -602,7 +685,7 @@ func javaRequestLines(sp *javaSpeller, op string, params map[string]any) ([]stri
 		if err != nil {
 			return nil, fmt.Errorf("%s.%s: %w", op, member, err)
 		}
-		lines = append(lines, "."+javaSetter(member)+"("+value+")")
+		lines = append(lines, "."+sp.setterFor(target, member)+"("+value+")")
 	}
 	return append(lines, ".build()"), nil
 }
@@ -705,7 +788,7 @@ func javaUntypedNumber(rendered string) string {
 // expressions unevaluated — for failure-message field 3 when a value could not
 // be evaluated and nothing was sent. It is the same canonical JSON the
 // interpreters print in that case.
-func javaRawParams(params map[string]any) string {
+func javaRawParams(params map[string]any) (string, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
@@ -713,11 +796,9 @@ func javaRawParams(params map[string]any) string {
 		params = map[string]any{}
 	}
 	if err := enc.Encode(params); err != nil {
-		// Unreachable: params come from a scenario file that was decoded from
-		// JSON, so they re-encode.
-		return "{}"
+		return "", err
 	}
-	return strings.TrimRight(buf.String(), "\n")
+	return strings.TrimRight(buf.String(), "\n"), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -745,32 +826,21 @@ func javaNameTestMethod(group, test string) string { return "test" + goCamel(gro
 // once folded into Java identifiers. Two names differing only in where their
 // hyphens fall would otherwise emit two methods of the same name, and the suite
 // would fail to build with no indication of which pair caused it.
+//
+// Detecting the collision is uniqueNames (emit_shared.go); what is Java's own
+// is which identifiers a group claims — the static Group constant included.
 func javaMethodNamesAreUnique(service string, groups []group) error {
-	seen := map[string]string{}
-	claim := func(name, owner string) error {
-		if first, dup := seen[name]; dup {
-			return fmt.Errorf("%s: %s and %s both emit the Java method %s; rename one", service, first, owner, name)
-		}
-		seen[name] = owner
-		return nil
-	}
+	var claims []nameClaim
 	for _, g := range groups {
-		if err := claim(javaNameGroupConst(g.Name), g.Name+" constant"); err != nil {
-			return err
-		}
-		if err := claim(javaNameSetupMethod(g.Name), g.Name+" setup"); err != nil {
-			return err
-		}
-		if err := claim(javaNameTeardownMethod(g.Name), g.Name+" teardown"); err != nil {
-			return err
-		}
+		claims = append(claims,
+			nameClaim{javaNameGroupConst(g.Name), g.Name + " constant"},
+			nameClaim{javaNameSetupMethod(g.Name), g.Name + " setup"},
+			nameClaim{javaNameTeardownMethod(g.Name), g.Name + " teardown"})
 		for _, t := range g.Tests {
-			if err := claim(javaNameTestMethod(g.Name, t.Name), g.Name+"/"+t.Name); err != nil {
-				return err
-			}
+			claims = append(claims, nameClaim{javaNameTestMethod(g.Name, t.Name), g.Name + "/" + t.Name})
 		}
 	}
-	return nil
+	return uniqueNames(service, "Java", claims)
 }
 
 // ---------------------------------------------------------------------------
@@ -784,61 +854,19 @@ func javaMethodNamesAreUnique(service string, groups []group) error {
 // speller: one code path decides "can this be emitted" and "how", so the two
 // cannot drift, and a group that is refused leaves no import behind.
 func javaRefusals(gen *generation, g group) []gap {
-	var out []gap
-	seen := map[string]bool{}
-	record := func(op, member, detail string) {
-		key := op + "." + member
-		if seen[key] {
-			return
-		}
-		seen[key] = true
-		out = append(out, gap{
-			Service:   gen.scenario.Service,
-			Operation: op,
-			Group:     g.Name,
-			Reason:    javaEmitReason + ":" + member,
-			Detail:    detail,
-		})
-	}
-	probe := newJavaSpeller(gen.model)
-	for _, c := range javaCallsOf(g) {
-		for _, member := range sortedValueKeys(c.Params) {
-			target, err := probe.memberTarget(c.Op, member)
+	probe := newJavaSpeller(gen.model, gen.scenario.Client.SDKID)
+	return refusals(gen, g, javaEmitReason, refusalChecks{
+		member: func(op, member string, v any) error {
+			target, err := probe.memberTarget(op, member)
 			if err != nil {
-				record(c.Op, member, err.Error())
-				continue
+				return err
 			}
-			if _, err := probe.value(target, c.Params[member], member); err != nil {
-				record(c.Op, member, fmt.Sprintf("%s.%s cannot be spelled as Java: %v", c.Op, member, err))
+			if _, err := probe.value(target, v, member); err != nil {
+				return fmt.Errorf("%s.%s cannot be spelled as Java: %v", op, member, err)
 			}
-		}
-	}
-	sortGaps(out)
-	return out
-}
-
-// javaCallsOf collects every call a group makes: setup, each test's primary
-// call, every clause's call however deeply an eventually nests it, and teardown.
-func javaCallsOf(g group) []call {
-	var out []call
-	out = append(out, g.Setup...)
-	var fromClause func(a assertion)
-	fromClause = func(a assertion) {
-		if a.Call != nil {
-			out = append(out, *a.Call)
-		}
-		if a.Assert != nil {
-			fromClause(*a.Assert)
-		}
-	}
-	for _, t := range g.Tests {
-		out = append(out, t.Call)
-		for _, a := range t.Assert {
-			fromClause(a)
-		}
-	}
-	out = append(out, g.Teardown...)
-	return out
+			return nil
+		},
+	})
 }
 
 // javaUsesClauses and its siblings report which parts of the scenario
@@ -857,31 +885,12 @@ func javaUsesWhere(groups []group) bool {
 }
 
 // javaUsesValues asks whether any value expression is emitted anywhere: in a
-// call's params, or in an assertion's expected value or where entry.
+// call's params, or in an assertion's expected value or where entry. The search
+// is expr.go's own walk, so "is this an expression" is answered in one place
+// for the validator and every emitter alike.
 func javaUsesValues(groups []group) bool {
-	var hasExpr func(v any) bool
-	hasExpr = func(v any) bool {
-		if _, _, ok := exprOf(v); ok {
-			return true
-		}
-		switch value := v.(type) {
-		case []any:
-			for _, item := range value {
-				if hasExpr(item) {
-					return true
-				}
-			}
-		case map[string]any:
-			for _, item := range value {
-				if hasExpr(item) {
-					return true
-				}
-			}
-		}
-		return false
-	}
 	for _, g := range groups {
-		for _, c := range javaCallsOf(g) {
+		for _, c := range callsOf(g) {
 			for _, v := range c.Params {
 				if hasExpr(v) {
 					return true
@@ -992,6 +1001,15 @@ func (w *javaWriter) linef(format string, args ...any) {
 
 func (w *javaWriter) String() string { return strings.Join(w.lines, "\n") + "\n" }
 
+// javaComma is the separator between two arguments of an emitted call, and
+// nothing after the last one: Java has no trailing comma in an argument list.
+func javaComma(more bool) string {
+	if more {
+		return ","
+	}
+	return ""
+}
+
 func dedupeStrings(sorted []string) []string {
 	out := sorted[:0]
 	var last string
@@ -1010,7 +1028,6 @@ var (
 	javaNonAlnum            = regexp.MustCompile(`[^A-Za-z0-9]+`)
 	javaLowerAcronymVersion = regexp.MustCompile(`([^a-z]{2,})v([0-9]+)`)
 	javaUpperAcronymVersion = regexp.MustCompile(`([^A-Z]{2,})V([0-9]+)`)
-	javaCamelBoundary       = regexp.MustCompile(`([a-z])([A-Z])`)
 	javaAcronymBoundary     = regexp.MustCompile(`([A-Z]+)([A-Z][a-z])`)
 	javaDigitBoundary       = regexp.MustCompile(`([0-9])([a-zA-Z])`)
 )

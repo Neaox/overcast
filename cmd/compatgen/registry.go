@@ -87,11 +87,11 @@ type generatedTest struct {
 func scenarioPath(service string) string { return scenarioDir + "/" + service + ".json" }
 
 // unableSuites names, per group, the suites whose backend exists but cannot
-// execute that group — today only the Go emitter, which refuses a group whose
-// input members it has no Go expression for (emit_go.go). Such a group is
-// scoped to the suites that can run it, so a backend is never listed as able to
-// execute something it will not compile; a group no suite can run is left out
-// of the registry entirely, as one with no backends at all already is.
+// execute that group. Each source emitter reports its own — a group whose input
+// members it has no expression for in that language. Such a group is scoped to
+// the suites that can run it, so a backend is never listed as able to execute
+// something it will not compile; a group no suite can run is left out of the
+// registry entirely, as one with no backends at all already is.
 type unableSuites map[string]map[string]bool
 
 func (u unableSuites) suitesFor(backends []string, group string) []string {

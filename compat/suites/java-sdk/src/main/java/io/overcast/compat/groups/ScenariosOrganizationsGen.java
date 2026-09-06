@@ -15,7 +15,6 @@ import io.overcast.compat.scenario.Where;
 import java.util.List;
 import java.util.Map;
 import software.amazon.awssdk.services.organizations.OrganizationsClient;
-import software.amazon.awssdk.services.organizations.model.ChildType;
 import software.amazon.awssdk.services.organizations.model.CreateOrganizationalUnitRequest;
 import software.amazon.awssdk.services.organizations.model.CreatePolicyRequest;
 import software.amazon.awssdk.services.organizations.model.DeleteOrganizationalUnitRequest;
@@ -29,7 +28,6 @@ import software.amazon.awssdk.services.organizations.model.DescribeOrganizationa
 import software.amazon.awssdk.services.organizations.model.DescribePolicyRequest;
 import software.amazon.awssdk.services.organizations.model.DescribeResourcePolicyRequest;
 import software.amazon.awssdk.services.organizations.model.DescribeResponsibilityTransferRequest;
-import software.amazon.awssdk.services.organizations.model.EffectivePolicyType;
 import software.amazon.awssdk.services.organizations.model.ListAccountsForParentRequest;
 import software.amazon.awssdk.services.organizations.model.ListAccountsRequest;
 import software.amazon.awssdk.services.organizations.model.ListAccountsWithInvalidEffectivePolicyRequest;
@@ -50,8 +48,6 @@ import software.amazon.awssdk.services.organizations.model.ListPoliciesRequest;
 import software.amazon.awssdk.services.organizations.model.ListRootsRequest;
 import software.amazon.awssdk.services.organizations.model.ListTagsForResourceRequest;
 import software.amazon.awssdk.services.organizations.model.ListTargetsForPolicyRequest;
-import software.amazon.awssdk.services.organizations.model.PolicyType;
-import software.amazon.awssdk.services.organizations.model.ResponsibilityTransferType;
 import software.amazon.awssdk.services.organizations.model.Tag;
 import software.amazon.awssdk.services.organizations.model.TagResourceRequest;
 import software.amazon.awssdk.services.organizations.model.UntagResourceRequest;
@@ -193,7 +189,7 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
                                 .content("{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}]}")
                                 .description("compat scenario policy")
                                 .name(b.string("Name", Values.name("policy")))
-                                .type(PolicyType.fromValue("SERVICE_CONTROL_POLICY"))
+                                .type("SERVICE_CONTROL_POLICY")
                                 .build(),
                         r -> cl().createPolicy((CreatePolicyRequest) r))
                         .export("policy.arn", "$.Policy.PolicySummary.Arn")
@@ -215,11 +211,12 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
                         Clause.listContains(
                                 new Call("ListPolicies", "{\"Filter\":\"SERVICE_CONTROL_POLICY\"}",
                                         b -> ListPoliciesRequest.builder()
-                                                .filter(PolicyType.fromValue("SERVICE_CONTROL_POLICY"))
+                                                .filter("SERVICE_CONTROL_POLICY")
                                                 .build(),
                                         r -> cl().listPolicies((ListPoliciesRequest) r)),
                                 "$.Policies",
-                                Where.of("$.Id", Values.ref("policy.id")))
+                                Where.of("$.Id", Values.ref("policy.id"))
+                        )
                 ));
     }
 
@@ -274,7 +271,8 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
                                         r -> cl().listTagsForResource((ListTagsForResourceRequest) r)),
                                 "$.Tags",
                                 Where.of("$.Key", "compat"),
-                                Where.of("$.Value", "scenario"))
+                                Where.of("$.Value", "scenario")
+                        )
                 ));
     }
 
@@ -290,7 +288,8 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
                                 null,
                                 "$.Tags",
                                 Where.of("$.Key", "compat"),
-                                Where.of("$.Value", "scenario"))
+                                Where.of("$.Value", "scenario")
+                        )
                 ));
     }
 
@@ -310,7 +309,8 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
                                                 .build(),
                                         r -> cl().listTagsForResource((ListTagsForResourceRequest) r)),
                                 "$.Tags",
-                                Where.of("$.Key", "compat"))
+                                Where.of("$.Key", "compat")
+                        )
                 ));
     }
 
@@ -318,14 +318,15 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
         GROUP_ORGANIZATIONS_GEN_POLICY.runTest(t, "ListPolicies",
                 new Call("ListPolicies", "{\"Filter\":\"SERVICE_CONTROL_POLICY\"}",
                         b -> ListPoliciesRequest.builder()
-                                .filter(PolicyType.fromValue("SERVICE_CONTROL_POLICY"))
+                                .filter("SERVICE_CONTROL_POLICY")
                                 .build(),
                         r -> cl().listPolicies((ListPoliciesRequest) r)),
                 List.of(
                         Clause.listContains(
                                 null,
                                 "$.Policies",
-                                Where.of("$.Id", Values.ref("policy.id")))
+                                Where.of("$.Id", Values.ref("policy.id"))
+                        )
                 ));
     }
 
@@ -445,7 +446,8 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
                                                 .build(),
                                         r -> cl().listOrganizationalUnitsForParent((ListOrganizationalUnitsForParentRequest) r)),
                                 "$.OrganizationalUnits",
-                                Where.of("$.Id", Values.ref("ou.id")))
+                                Where.of("$.Id", Values.ref("ou.id"))
+                        )
                 ));
     }
 
@@ -500,7 +502,8 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
                                         r -> cl().listTagsForResource((ListTagsForResourceRequest) r)),
                                 "$.Tags",
                                 Where.of("$.Key", "compat"),
-                                Where.of("$.Value", "scenario"))
+                                Where.of("$.Value", "scenario")
+                        )
                 ));
     }
 
@@ -516,7 +519,8 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
                                 null,
                                 "$.Tags",
                                 Where.of("$.Key", "compat"),
-                                Where.of("$.Value", "scenario"))
+                                Where.of("$.Value", "scenario")
+                        )
                 ));
     }
 
@@ -536,7 +540,8 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
                                                 .build(),
                                         r -> cl().listTagsForResource((ListTagsForResourceRequest) r)),
                                 "$.Tags",
-                                Where.of("$.Key", "compat"))
+                                Where.of("$.Key", "compat")
+                        )
                 ));
     }
 
@@ -551,7 +556,8 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
                         Clause.listContains(
                                 null,
                                 "$.OrganizationalUnits",
-                                Where.of("$.Id", Values.ref("ou.id")))
+                                Where.of("$.Id", Values.ref("ou.id"))
+                        )
                 ));
     }
 
@@ -615,7 +621,7 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
         GROUP_ORGANIZATIONS_GEN_PROBE.runTest(t, "DescribeEffectivePolicy",
                 new Call("DescribeEffectivePolicy", "{\"PolicyType\":\"AISERVICES_OPT_OUT_POLICY\"}",
                         b -> DescribeEffectivePolicyRequest.builder()
-                                .policyType(EffectivePolicyType.fromValue("AISERVICES_OPT_OUT_POLICY"))
+                                .policyType("AISERVICES_OPT_OUT_POLICY")
                                 .build(),
                         r -> cl().describeEffectivePolicy((DescribeEffectivePolicyRequest) r)),
                 List.of(
@@ -710,7 +716,7 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
         GROUP_ORGANIZATIONS_GEN_PROBE.runTest(t, "ListAccountsWithInvalidEffectivePolicy",
                 new Call("ListAccountsWithInvalidEffectivePolicy", "{\"PolicyType\":\"AISERVICES_OPT_OUT_POLICY\"}",
                         b -> ListAccountsWithInvalidEffectivePolicyRequest.builder()
-                                .policyType(EffectivePolicyType.fromValue("AISERVICES_OPT_OUT_POLICY"))
+                                .policyType("AISERVICES_OPT_OUT_POLICY")
                                 .build(),
                         r -> cl().listAccountsWithInvalidEffectivePolicy((ListAccountsWithInvalidEffectivePolicyRequest) r)),
                 List.of(
@@ -724,7 +730,7 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
         GROUP_ORGANIZATIONS_GEN_PROBE.runTest(t, "ListChildren",
                 new Call("ListChildren", "{\"ChildType\":\"ACCOUNT\",\"ParentId\":\"r-abcd\"}",
                         b -> ListChildrenRequest.builder()
-                                .childType(ChildType.fromValue("ACCOUNT"))
+                                .childType("ACCOUNT")
                                 .parentId("r-abcd")
                                 .build(),
                         r -> cl().listChildren((ListChildrenRequest) r)),
@@ -780,7 +786,7 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
                 new Call("ListEffectivePolicyValidationErrors", "{\"AccountId\":\"123456789012\",\"PolicyType\":\"AISERVICES_OPT_OUT_POLICY\"}",
                         b -> ListEffectivePolicyValidationErrorsRequest.builder()
                                 .accountId("123456789012")
-                                .policyType(EffectivePolicyType.fromValue("AISERVICES_OPT_OUT_POLICY"))
+                                .policyType("AISERVICES_OPT_OUT_POLICY")
                                 .build(),
                         r -> cl().listEffectivePolicyValidationErrors((ListEffectivePolicyValidationErrorsRequest) r)),
                 List.of(
@@ -820,7 +826,7 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
         GROUP_ORGANIZATIONS_GEN_PROBE.runTest(t, "ListInboundResponsibilityTransfers",
                 new Call("ListInboundResponsibilityTransfers", "{\"Type\":\"BILLING\"}",
                         b -> ListInboundResponsibilityTransfersRequest.builder()
-                                .type(ResponsibilityTransferType.fromValue("BILLING"))
+                                .type("BILLING")
                                 .build(),
                         r -> cl().listInboundResponsibilityTransfers((ListInboundResponsibilityTransfersRequest) r)),
                 List.of(
@@ -834,7 +840,7 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
         GROUP_ORGANIZATIONS_GEN_PROBE.runTest(t, "ListOutboundResponsibilityTransfers",
                 new Call("ListOutboundResponsibilityTransfers", "{\"Type\":\"BILLING\"}",
                         b -> ListOutboundResponsibilityTransfersRequest.builder()
-                                .type(ResponsibilityTransferType.fromValue("BILLING"))
+                                .type("BILLING")
                                 .build(),
                         r -> cl().listOutboundResponsibilityTransfers((ListOutboundResponsibilityTransfersRequest) r)),
                 List.of(
@@ -862,7 +868,7 @@ public final class ScenariosOrganizationsGen implements ServiceGroup {
         GROUP_ORGANIZATIONS_GEN_PROBE.runTest(t, "ListPoliciesForTarget",
                 new Call("ListPoliciesForTarget", "{\"Filter\":\"AISERVICES_OPT_OUT_POLICY\",\"TargetId\":\"r-abcd\"}",
                         b -> ListPoliciesForTargetRequest.builder()
-                                .filter(PolicyType.fromValue("AISERVICES_OPT_OUT_POLICY"))
+                                .filter("AISERVICES_OPT_OUT_POLICY")
                                 .targetId("r-abcd")
                                 .build(),
                         r -> cl().listPoliciesForTarget((ListPoliciesForTargetRequest) r)),

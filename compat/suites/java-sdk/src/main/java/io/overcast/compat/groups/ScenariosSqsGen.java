@@ -30,7 +30,6 @@ import software.amazon.awssdk.services.sqs.model.ListMessageMoveTasksRequest;
 import software.amazon.awssdk.services.sqs.model.ListQueueTagsRequest;
 import software.amazon.awssdk.services.sqs.model.ListQueuesRequest;
 import software.amazon.awssdk.services.sqs.model.PurgeQueueRequest;
-import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 import software.amazon.awssdk.services.sqs.model.SendMessageBatchRequest;
 import software.amazon.awssdk.services.sqs.model.SendMessageBatchRequestEntry;
@@ -142,7 +141,7 @@ public final class ScenariosSqsGen implements ServiceGroup {
                         .export("dlq.url", "$.QueueUrl"),
                 new Call("GetQueueAttributes", "{\"AttributeNames\":[\"QueueArn\"],\"QueueUrl\":{\"$ref\":\"dlq.url\"}}",
                         b -> GetQueueAttributesRequest.builder()
-                                .attributeNames(List.of(QueueAttributeName.fromValue("QueueArn")))
+                                .attributeNamesWithStrings(List.of("QueueArn"))
                                 .queueUrl(b.string("QueueUrl", Values.ref("dlq.url")))
                                 .build(),
                         r -> cl().getQueueAttributes((GetQueueAttributesRequest) r))
@@ -167,7 +166,7 @@ public final class ScenariosSqsGen implements ServiceGroup {
         GROUP_SQS_GEN_QUEUE.runTest(t, "CreateQueue",
                 new Call("CreateQueue", "{\"Attributes\":{\"RedrivePolicy\":{\"$concat\":[\"{\\\"deadLetterTargetArn\\\":\\\"\",{\"$ref\":\"dlq.arn\"},\"\\\",\\\"maxReceiveCount\\\":\\\"5\\\"}\"]},\"VisibilityTimeout\":\"30\"},\"QueueName\":{\"$name\":\"q\"}}",
                         b -> CreateQueueRequest.builder()
-                                .attributes(Map.of(QueueAttributeName.fromValue("RedrivePolicy"), b.string("Attributes", Values.concat("{\"deadLetterTargetArn\":\"", Values.ref("dlq.arn"), "\",\"maxReceiveCount\":\"5\"}")), QueueAttributeName.fromValue("VisibilityTimeout"), "30"))
+                                .attributesWithStrings(Map.of("RedrivePolicy", b.string("Attributes", Values.concat("{\"deadLetterTargetArn\":\"", Values.ref("dlq.arn"), "\",\"maxReceiveCount\":\"5\"}")), "VisibilityTimeout", "30"))
                                 .queueName(b.string("QueueName", Values.name("q")))
                                 .build(),
                         r -> cl().createQueue((CreateQueueRequest) r))
@@ -180,7 +179,7 @@ public final class ScenariosSqsGen implements ServiceGroup {
                                 Clause.readback(
                                         new Call("GetQueueAttributes", "{\"AttributeNames\":[\"QueueArn\"],\"QueueUrl\":{\"$ref\":\"queue.url\"}}",
                                                 b -> GetQueueAttributesRequest.builder()
-                                                        .attributeNames(List.of(QueueAttributeName.fromValue("QueueArn")))
+                                                        .attributeNamesWithStrings(List.of("QueueArn"))
                                                         .queueUrl(b.string("QueueUrl", Values.ref("queue.url")))
                                                         .build(),
                                                 r -> cl().getQueueAttributes((GetQueueAttributesRequest) r))
@@ -191,7 +190,7 @@ public final class ScenariosSqsGen implements ServiceGroup {
                                 Clause.readback(
                                         new Call("GetQueueAttributes", "{\"AttributeNames\":[\"All\"],\"QueueUrl\":{\"$ref\":\"queue.url\"}}",
                                                 b -> GetQueueAttributesRequest.builder()
-                                                        .attributeNames(List.of(QueueAttributeName.fromValue("All")))
+                                                        .attributeNamesWithStrings(List.of("All"))
                                                         .queueUrl(b.string("QueueUrl", Values.ref("queue.url")))
                                                         .build(),
                                                 r -> cl().getQueueAttributes((GetQueueAttributesRequest) r)),
@@ -206,7 +205,8 @@ public final class ScenariosSqsGen implements ServiceGroup {
                                                         .build(),
                                                 r -> cl().listQueues((ListQueuesRequest) r)),
                                         "$.QueueUrls",
-                                        Where.of("$", Values.ref("queue.url"))))
+                                        Where.of("$", Values.ref("queue.url"))
+                                ))
                 ));
     }
 
@@ -214,7 +214,7 @@ public final class ScenariosSqsGen implements ServiceGroup {
         GROUP_SQS_GEN_QUEUE.runTest(t, "GetQueueAttributes",
                 new Call("GetQueueAttributes", "{\"AttributeNames\":[\"All\"],\"QueueUrl\":{\"$ref\":\"queue.url\"}}",
                         b -> GetQueueAttributesRequest.builder()
-                                .attributeNames(List.of(QueueAttributeName.fromValue("All")))
+                                .attributeNamesWithStrings(List.of("All"))
                                 .queueUrl(b.string("QueueUrl", Values.ref("queue.url")))
                                 .build(),
                         r -> cl().getQueueAttributes((GetQueueAttributesRequest) r)),
@@ -243,7 +243,7 @@ public final class ScenariosSqsGen implements ServiceGroup {
         GROUP_SQS_GEN_QUEUE.runTest(t, "SetQueueAttributes",
                 new Call("SetQueueAttributes", "{\"Attributes\":{\"VisibilityTimeout\":\"60\"},\"QueueUrl\":{\"$ref\":\"queue.url\"}}",
                         b -> SetQueueAttributesRequest.builder()
-                                .attributes(Map.of(QueueAttributeName.fromValue("VisibilityTimeout"), "60"))
+                                .attributesWithStrings(Map.of("VisibilityTimeout", "60"))
                                 .queueUrl(b.string("QueueUrl", Values.ref("queue.url")))
                                 .build(),
                         r -> cl().setQueueAttributes((SetQueueAttributesRequest) r)),
@@ -252,7 +252,7 @@ public final class ScenariosSqsGen implements ServiceGroup {
                                 Clause.readback(
                                         new Call("GetQueueAttributes", "{\"AttributeNames\":[\"All\"],\"QueueUrl\":{\"$ref\":\"queue.url\"}}",
                                                 b -> GetQueueAttributesRequest.builder()
-                                                        .attributeNames(List.of(QueueAttributeName.fromValue("All")))
+                                                        .attributeNamesWithStrings(List.of("All"))
                                                         .queueUrl(b.string("QueueUrl", Values.ref("queue.url")))
                                                         .build(),
                                                 r -> cl().getQueueAttributes((GetQueueAttributesRequest) r)),
@@ -328,7 +328,8 @@ public final class ScenariosSqsGen implements ServiceGroup {
                         Clause.listContains(
                                 null,
                                 "$.queueUrls",
-                                Where.of("$", Values.ref("queue.url")))
+                                Where.of("$", Values.ref("queue.url"))
+                        )
                 ));
     }
 
@@ -363,7 +364,7 @@ public final class ScenariosSqsGen implements ServiceGroup {
                                 Clause.readback(
                                         new Call("GetQueueAttributes", "{\"AttributeNames\":[\"ApproximateNumberOfMessages\"],\"QueueUrl\":{\"$ref\":\"queue.url\"}}",
                                                 b -> GetQueueAttributesRequest.builder()
-                                                        .attributeNames(List.of(QueueAttributeName.fromValue("ApproximateNumberOfMessages")))
+                                                        .attributeNamesWithStrings(List.of("ApproximateNumberOfMessages"))
                                                         .queueUrl(b.string("QueueUrl", Values.ref("queue.url")))
                                                         .build(),
                                                 r -> cl().getQueueAttributes((GetQueueAttributesRequest) r)),
@@ -384,7 +385,7 @@ public final class ScenariosSqsGen implements ServiceGroup {
                                 Clause.readback(
                                         new Call("GetQueueAttributes", "{\"AttributeNames\":[\"ApproximateNumberOfMessages\",\"ApproximateNumberOfMessagesNotVisible\"],\"QueueUrl\":{\"$ref\":\"queue.url\"}}",
                                                 b -> GetQueueAttributesRequest.builder()
-                                                        .attributeNames(List.of(QueueAttributeName.fromValue("ApproximateNumberOfMessages"), QueueAttributeName.fromValue("ApproximateNumberOfMessagesNotVisible")))
+                                                        .attributeNamesWithStrings(List.of("ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible"))
                                                         .queueUrl(b.string("QueueUrl", Values.ref("queue.url")))
                                                         .build(),
                                                 r -> cl().getQueueAttributes((GetQueueAttributesRequest) r)),
@@ -405,7 +406,8 @@ public final class ScenariosSqsGen implements ServiceGroup {
                         Clause.listContains(
                                 null,
                                 "$.QueueUrls",
-                                Where.of("$", Values.ref("queue.url")))
+                                Where.of("$", Values.ref("queue.url"))
+                        )
                 ));
     }
 
@@ -421,7 +423,7 @@ public final class ScenariosSqsGen implements ServiceGroup {
                                 Clause.absentByError(
                                         new Call("GetQueueAttributes", "{\"AttributeNames\":[\"All\"],\"QueueUrl\":{\"$ref\":\"queue.url\"}}",
                                                 b -> GetQueueAttributesRequest.builder()
-                                                        .attributeNames(List.of(QueueAttributeName.fromValue("All")))
+                                                        .attributeNamesWithStrings(List.of("All"))
                                                         .queueUrl(b.string("QueueUrl", Values.ref("queue.url")))
                                                         .build(),
                                                 r -> cl().getQueueAttributes((GetQueueAttributesRequest) r)),
@@ -439,21 +441,21 @@ public final class ScenariosSqsGen implements ServiceGroup {
                         .export("dlq.url", "$.QueueUrl"),
                 new Call("GetQueueAttributes", "{\"AttributeNames\":[\"QueueArn\"],\"QueueUrl\":{\"$ref\":\"dlq.url\"}}",
                         b -> GetQueueAttributesRequest.builder()
-                                .attributeNames(List.of(QueueAttributeName.fromValue("QueueArn")))
+                                .attributeNamesWithStrings(List.of("QueueArn"))
                                 .queueUrl(b.string("QueueUrl", Values.ref("dlq.url")))
                                 .build(),
                         r -> cl().getQueueAttributes((GetQueueAttributesRequest) r))
                         .export("dlq.arn", "$.Attributes.QueueArn"),
                 new Call("CreateQueue", "{\"Attributes\":{\"RedrivePolicy\":{\"$concat\":[\"{\\\"deadLetterTargetArn\\\":\\\"\",{\"$ref\":\"dlq.arn\"},\"\\\",\\\"maxReceiveCount\\\":\\\"5\\\"}\"]},\"VisibilityTimeout\":\"30\"},\"QueueName\":{\"$name\":\"q\"}}",
                         b -> CreateQueueRequest.builder()
-                                .attributes(Map.of(QueueAttributeName.fromValue("RedrivePolicy"), b.string("Attributes", Values.concat("{\"deadLetterTargetArn\":\"", Values.ref("dlq.arn"), "\",\"maxReceiveCount\":\"5\"}")), QueueAttributeName.fromValue("VisibilityTimeout"), "30"))
+                                .attributesWithStrings(Map.of("RedrivePolicy", b.string("Attributes", Values.concat("{\"deadLetterTargetArn\":\"", Values.ref("dlq.arn"), "\",\"maxReceiveCount\":\"5\"}")), "VisibilityTimeout", "30"))
                                 .queueName(b.string("QueueName", Values.name("q")))
                                 .build(),
                         r -> cl().createQueue((CreateQueueRequest) r))
                         .export("queue.url", "$.QueueUrl"),
                 new Call("GetQueueAttributes", "{\"AttributeNames\":[\"QueueArn\"],\"QueueUrl\":{\"$ref\":\"queue.url\"}}",
                         b -> GetQueueAttributesRequest.builder()
-                                .attributeNames(List.of(QueueAttributeName.fromValue("QueueArn")))
+                                .attributeNamesWithStrings(List.of("QueueArn"))
                                 .queueUrl(b.string("QueueUrl", Values.ref("queue.url")))
                                 .build(),
                         r -> cl().getQueueAttributes((GetQueueAttributesRequest) r))
@@ -574,7 +576,8 @@ public final class ScenariosSqsGen implements ServiceGroup {
                                                         .build(),
                                                 r -> cl().receiveMessage((ReceiveMessageRequest) r)),
                                         "$.Messages",
-                                        Where.of("$.MessageId", Values.ref("message.id"))))
+                                        Where.of("$.MessageId", Values.ref("message.id"))
+                                ))
                 ));
     }
 
@@ -588,21 +591,21 @@ public final class ScenariosSqsGen implements ServiceGroup {
                         .export("dlq.url", "$.QueueUrl"),
                 new Call("GetQueueAttributes", "{\"AttributeNames\":[\"QueueArn\"],\"QueueUrl\":{\"$ref\":\"dlq.url\"}}",
                         b -> GetQueueAttributesRequest.builder()
-                                .attributeNames(List.of(QueueAttributeName.fromValue("QueueArn")))
+                                .attributeNamesWithStrings(List.of("QueueArn"))
                                 .queueUrl(b.string("QueueUrl", Values.ref("dlq.url")))
                                 .build(),
                         r -> cl().getQueueAttributes((GetQueueAttributesRequest) r))
                         .export("dlq.arn", "$.Attributes.QueueArn"),
                 new Call("CreateQueue", "{\"Attributes\":{\"RedrivePolicy\":{\"$concat\":[\"{\\\"deadLetterTargetArn\\\":\\\"\",{\"$ref\":\"dlq.arn\"},\"\\\",\\\"maxReceiveCount\\\":\\\"5\\\"}\"]},\"VisibilityTimeout\":\"30\"},\"QueueName\":{\"$name\":\"q\"}}",
                         b -> CreateQueueRequest.builder()
-                                .attributes(Map.of(QueueAttributeName.fromValue("RedrivePolicy"), b.string("Attributes", Values.concat("{\"deadLetterTargetArn\":\"", Values.ref("dlq.arn"), "\",\"maxReceiveCount\":\"5\"}")), QueueAttributeName.fromValue("VisibilityTimeout"), "30"))
+                                .attributesWithStrings(Map.of("RedrivePolicy", b.string("Attributes", Values.concat("{\"deadLetterTargetArn\":\"", Values.ref("dlq.arn"), "\",\"maxReceiveCount\":\"5\"}")), "VisibilityTimeout", "30"))
                                 .queueName(b.string("QueueName", Values.name("q")))
                                 .build(),
                         r -> cl().createQueue((CreateQueueRequest) r))
                         .export("queue.url", "$.QueueUrl"),
                 new Call("GetQueueAttributes", "{\"AttributeNames\":[\"QueueArn\"],\"QueueUrl\":{\"$ref\":\"queue.url\"}}",
                         b -> GetQueueAttributesRequest.builder()
-                                .attributeNames(List.of(QueueAttributeName.fromValue("QueueArn")))
+                                .attributeNamesWithStrings(List.of("QueueArn"))
                                 .queueUrl(b.string("QueueUrl", Values.ref("queue.url")))
                                 .build(),
                         r -> cl().getQueueAttributes((GetQueueAttributesRequest) r))
@@ -703,7 +706,8 @@ public final class ScenariosSqsGen implements ServiceGroup {
                         Clause.listContains(
                                 null,
                                 "$.Messages",
-                                Where.of("$.MessageId", Values.ref("batch.id")))
+                                Where.of("$.MessageId", Values.ref("batch.id"))
+                        )
                 ));
     }
 
@@ -727,7 +731,8 @@ public final class ScenariosSqsGen implements ServiceGroup {
                                                         .build(),
                                                 r -> cl().receiveMessage((ReceiveMessageRequest) r)),
                                         "$.Messages",
-                                        Where.of("$.MessageId", Values.ref("batch.id"))))
+                                        Where.of("$.MessageId", Values.ref("batch.id"))
+                                ))
                 ));
     }
 

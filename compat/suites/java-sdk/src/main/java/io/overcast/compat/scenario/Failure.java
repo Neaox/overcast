@@ -2,6 +2,7 @@ package io.overcast.compat.scenario;
 
 import io.overcast.compat.harness.ComposedFailure;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
@@ -85,7 +86,13 @@ public class Failure extends AssertionError implements ComposedFailure {
         if (Character.isLowSurrogate(s.charAt(cut))) {
             cut--;
         }
-        return s.substring(0, cut) + "… (" + (s.length() - cut) + " characters elided)";
+        // Bytes, and the same word the Go and CLI suites use: a generated
+        // failure is read across suites, and one of them saying "characters"
+        // where the others say "bytes" reads as a different measurement rather
+        // than the same one. The count is of what was dropped, encoded the way
+        // the message will be.
+        int elided = s.substring(cut).getBytes(StandardCharsets.UTF_8).length;
+        return s.substring(0, cut) + "… (" + elided + " bytes elided)";
     }
 
     /**

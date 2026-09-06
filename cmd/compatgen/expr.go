@@ -195,6 +195,16 @@ func walkValue(v any, visit func(key string, arg any)) {
 	}
 }
 
+// hasExpr reports whether a value is, or contains, a value expression. It is
+// walkValue asked the shortest question there is, which is what an emitter
+// needs in order to decide whether its file references the run-time value
+// vocabulary at all.
+func hasExpr(v any) bool {
+	found := false
+	walkValue(v, func(string, any) { found = true })
+	return found
+}
+
 // literalKind classifies a structural (non-expression) JSON value the way the
 // model classifies shapes, so a literal can be checked against the member it
 // is sent as. Expressions report the kind they evaluate to where that is

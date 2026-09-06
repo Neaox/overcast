@@ -499,14 +499,20 @@ capitals: the client method for that same operation is
 `listAWSServiceAccessForOrganization`. Organizations declares both spellings on
 one line.
 
+An **enum** is spelled as its wire value rather than as the enum class. The SDK
+gives every enum-typed member a String form — a scalar enum's is an overload of
+the same name, a list of enums or a map with an enum key or value gets a second
+setter named `<member>WithStrings` — and both send the model's own value
+unchanged, which is what `go-sdk`'s `types.PolicyType("…")` does too. Spelling
+it `Type.fromValue("…")` would not: a value the pinned SDK does not know becomes
+`UNKNOWN_TO_SDK_VERSION`, whose `toString` is the four-character string `"null"`,
+and that reaches the wire.
+
 The one thing the model cannot answer is whether the *pinned* SDK is new enough
 to have the operation at all — the shape snapshot is generated from a newer
 revision of the AWS model than any released SDK. That axis is answered by the
 suite's own `mvn package`, which fails naming the missing class, and the fix is
-the version pin in `compat/suites/java-sdk/pom.xml`. The same pin bounds the one
-hazard of spelling an enum as `Type.fromValue("…")`: a value the pinned SDK does
-not know becomes `UNKNOWN_TO_SDK_VERSION`, which serializes as the literal
-string `"null"` rather than as itself.
+the version pin in `compat/suites/java-sdk/pom.xml`.
 
 Where a derivation is known to break, the interpreter needs a small override
 table of its own, and the plan asks for those to be recorded as follow-ups

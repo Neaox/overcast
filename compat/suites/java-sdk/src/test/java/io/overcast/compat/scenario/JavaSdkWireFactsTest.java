@@ -8,7 +8,6 @@ import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.organizations.model.PolicyType;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 
@@ -107,45 +106,53 @@ class JavaSdkWireFactsTest {
     }
 
     /**
-     * An enum member accepts {@code fromValue} of the wire value the model
-     * carries, and the wire value is what goes out — for a plain enum member, an
-     * enum-keyed map and a list of enums alike. Those are the three shapes the
-     * emitter spells through {@code javaSpeller.enumOf}.
+     * The String form of an enum member sends the value it was given, unchanged
+     * — for a list of enums and an enum-keyed map alike. Those, plus the
+     * same-named overload a scalar enum has, are the three shapes the emitter
+     * spells; {@code javaSpeller.setterFor} chooses between them.
      */
     @Test
     void enumsAreSentAsTheirWireValues() {
         sqs.getQueueAttributes(r -> r.queueUrl("http://q/x")
-                .attributeNames(List.of(QueueAttributeName.fromValue("QueueArn"))));
+                .attributeNamesWithStrings(List.of("QueueArn")));
         assertTrue(body.get().contains("\"AttributeNames\":[\"QueueArn\"]"), body.get());
 
         body.set("");
         sqs.setQueueAttributes(r -> r.queueUrl("http://q/x")
-                .attributes(Map.of(QueueAttributeName.fromValue("VisibilityTimeout"), "30")));
+                .attributesWithStrings(Map.of("VisibilityTimeout", "30")));
         assertTrue(body.get().contains("\"VisibilityTimeout\":\"30\""), body.get());
-
-        // A scalar enum member, off the wire: PolicyType is what
-        // organizations-gen-policy/CreatePolicy sends.
-        assertEquals("SERVICE_CONTROL_POLICY",
-                PolicyType.fromValue("SERVICE_CONTROL_POLICY").toString());
     }
 
     /**
-     * The hazard {@code fromValue} carries, stated rather than discovered: a
-     * value the <em>pinned</em> SDK does not know becomes
-     * {@code UNKNOWN_TO_SDK_VERSION}, which serializes as the literal string
-     * {@code "null"}. That is loud — the request goes out with a value no
-     * service accepts and the generated test fails — but it is not a compile
-     * error, so the SDK pin in {@code pom.xml} has to stay at least as new as
-     * the shape snapshot the emitter reads.
+     * Why the emitter spells an enum as its wire value rather than through
+     * {@code Enum.fromValue}: a value the <em>pinned</em> SDK does not know
+     * becomes {@code UNKNOWN_TO_SDK_VERSION}, whose {@code toString} is the
+     * four-character string {@code "null"} — and that is what reaches the wire.
+     * It is not a compile error, so nothing but this measurement stands between
+     * a shape snapshot newer than the pin and a request carrying "null" where
+     * the scenario asked for a value.
+     *
+     * <p>The String form has no such failure mode, which the second half
+     * asserts against the same unknown value: the SDK is not consulted about
+     * it at all.
      */
     @Test
-    void anEnumValueThePinnedSdkDoesNotKnowHasNoWireValue() {
+    void fromValueLosesAnEnumValueThePinnedSdkDoesNotKnow() {
         assertEquals(QueueAttributeName.UNKNOWN_TO_SDK_VERSION,
                 QueueAttributeName.fromValue("NoSuchAttributeInThisSdk"));
+        assertEquals("null", QueueAttributeName.UNKNOWN_TO_SDK_VERSION.toString(),
+                "the unknown constant stringifies to the four characters \"null\", not to a Java null");
 
         sqs.getQueueAttributes(r -> r.queueUrl("http://q/x")
                 .attributeNames(List.of(QueueAttributeName.fromValue("NoSuchAttributeInThisSdk"))));
         assertTrue(body.get().contains("\"AttributeNames\":[\"null\"]"),
-                "an unknown enum value reaches the wire as \"null\", not as itself: " + body.get());
+                "through fromValue an unknown enum value reaches the wire as \"null\": " + body.get());
+
+        // The spelling the emitter actually writes, given the same value.
+        body.set("");
+        sqs.getQueueAttributes(r -> r.queueUrl("http://q/x")
+                .attributeNamesWithStrings(List.of("NoSuchAttributeInThisSdk")));
+        assertTrue(body.get().contains("\"AttributeNames\":[\"NoSuchAttributeInThisSdk\"]"),
+                "the String form must pass the modeled value straight through: " + body.get());
     }
 }

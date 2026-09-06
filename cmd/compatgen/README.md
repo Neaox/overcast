@@ -235,11 +235,26 @@ value-typed-zero refusal: the two backends genuinely differ there.
 | `string` | `"blue"` | `"blue"` |
 | `integer` | `30` | `30` |
 | `long` | `30` | `30L` |
-| enum `Color` | `"blue"` | `Color.fromValue("blue")` |
-| `list<QueueAttributeName>` | `["All"]` | `List.of(QueueAttributeName.fromValue("All"))` |
-| `map<QueueAttributeName,string>` | `{"a":"b"}` | `Map.of(QueueAttributeName.fromValue("a"), "b")` |
+| `byte` | `1` | `(byte) 1` |
+| `float` | `1.5` | `1.5f` |
+| `boolean` | `false` | `false` |
+| enum `Color` | `"blue"` | `"blue"`, into `.color(String)` |
+| `list<QueueAttributeName>` | `["All"]` | `List.of("All")`, into `.…WithStrings` |
+| `map<QueueAttributeName,string>` | `{"a":"b"}` | `Map.of("a", "b")`, into `.…WithStrings` |
 | `list<structure Tag>` | `[{"Key":"k"}]` | `List.of(Tag.builder().key("k").build())` |
 | `string` | `{"$ref":"q"}` | `b.string("M", Values.ref("q"))` |
+
+**An enum is spelled as its wire value, never as the enum class.** The SDK gives
+every enum-typed member a String form — a scalar enum's is an overload of the
+same name, and a list of enums or a map with an enum key or value gets a second
+setter named `<member>WithStrings` — and both send the model's own value
+unchanged. `Enum.fromValue` would not: a value the **pinned** SDK does not know
+becomes `UNKNOWN_TO_SDK_VERSION`, whose `toString` is the four-character string
+`"null"`, and that is what goes on the wire. `JavaSdkWireFactsTest` measures both
+halves. It also puts this backend where the Go one already is —
+`types.QueueAttributeName("All")` passes the model's value straight through too.
+One list or map down is as far as the String form reaches; an enum nested deeper
+is refused.
 
 Two things keep it honest, and they are the same two the Go emitter has:
 
@@ -247,13 +262,16 @@ Two things keep it honest, and they are the same two the Go emitter has:
   `emit_java.go`'s `javaName*` functions and `emit_java_spell.go`'s
   `javaSpeller`, and `-explain -lang java` renders through the same
   `javaRequestLines`. `TestExplainJavaRendersTheEmittedCall` asserts it.
-- **It refuses rather than guesses.** Five things produce
+- **It refuses rather than guesses.** These produce
   `java-emit-unsupported:<Member>` in `gaps.json`, and the group is then scoped
   away from `java-sdk`: a modeled kind with no IR literal; a member the model
-  does not give the operation; a literal of the wrong JSON type; a value
-  expression bound to a composite member; and an explicit `null`, which the SDK
-  spells as "unset" and so cannot send. Nothing in the pilot corpus reaches any
-  of them.
+  does not give the operation, an operation with a unit input included; a
+  literal of the wrong JSON type; a number that is not whole, or is out of range
+  for the member's Java type; a modeled type with no Java literal at all
+  (`bigInteger`, `bigDecimal`); a map the model does not key by a string; an
+  enum nested deeper than the SDK's String form reaches; a value expression
+  bound to a composite member; and an explicit `null`, which the SDK spells as
+  "unset" and so cannot send. Nothing in the pilot corpus reaches any of them.
 
 What the model cannot answer is whether the **pinned** SDK has the operation at
 all — the shape snapshot is generated from a newer revision of the AWS model
@@ -261,9 +279,9 @@ than any released SDK, and for the pilot corpus five Organizations operations
 are newer than `2.31.7`. That axis is answered by the compiler: an operation the
 pinned SDK does not declare is a `mvn package` failure naming the class, not a
 wrong request, and the fix is the version pin in
-`compat/suites/java-sdk/pom.xml`. The same pin bounds the one hazard of
-`Type.fromValue("…")`: a value the pinned SDK does not know becomes
-`UNKNOWN_TO_SDK_VERSION`, which serializes as the literal string `"null"`.
+`compat/suites/java-sdk/pom.xml`. It is the one axis the compiler answers and
+the model cannot; spelling enums as their wire values takes the *other* pin
+hazard — a value the pinned SDK does not know — out of the emitter entirely.
 
 The emitted bytes go through `go/format` before they are written, and
 generation fails if they will not parse. A golden file under

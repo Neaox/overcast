@@ -125,15 +125,28 @@ class ErrorFixturesTest {
                 nodes.add(DynamicTest.dynamicTest(f.id() + " (skipped)", () -> {
                     // The java-sdk suite reads none of this fixture's surfaces:
                     // the AWS CLI's stderr banner never reaches an SDK caller.
+                    // Which carrier that is, is still asserted — a fixture this
+                    // suite silently declined to read for some other reason
+                    // would be a hole in the conformance set.
                     assertEquals(List.of("cliBanner"), f.carriers(),
                             "the only unobservable carrier is the CLI banner");
+                    Assumptions.abort("java-sdk observes none of " + f.id() + "'s carriers: "
+                            + String.join(", ", f.carriers()));
                 }));
                 continue;
             }
             Throwable observed = asSdkError(f);
             for (Case c : f.expect()) {
                 if (c.matches() && !OBSERVED_CARRIERS.contains(c.via())) {
-                    continue; // matched through a carrier this suite does not observe
+                    // Matched through a carrier this suite does not observe.
+                    // Reported by name and with the reason rather than dropped:
+                    // a case that is simply absent from the tree is
+                    // indistinguishable from one that passed, which is the
+                    // whole reason the corpus is shared.
+                    nodes.add(DynamicTest.dynamicTest(f.id() + " — " + c.name() + " (skipped)",
+                            () -> Assumptions.abort("matched through " + c.via()
+                                    + ", which java-sdk does not observe")));
+                    continue;
                 }
                 checked++;
                 nodes.add(DynamicTest.dynamicTest(f.id() + " — " + c.name(), () -> {

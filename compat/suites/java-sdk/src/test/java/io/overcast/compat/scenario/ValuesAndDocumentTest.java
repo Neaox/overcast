@@ -3,6 +3,7 @@ package io.overcast.compat.scenario;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.sqs.model.CreateQueueRequest;
 import software.amazon.awssdk.services.sqs.model.GetQueueAttributesResponse;
+import software.amazon.awssdk.services.sqs.model.ListDeadLetterSourceQueuesResponse;
 import software.amazon.awssdk.services.sqs.model.ListQueuesResponse;
 import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
@@ -173,6 +174,43 @@ class ValuesAndDocumentTest {
         for (String path : List.of("QueueUrls", "$.", "$.QueueUrls[", "$.QueueUrls[x]", "$/QueueUrls")) {
             assertThrows(ValueException.class, () -> Paths.resolve(doc, path), path);
         }
+    }
+
+    /**
+     * A scenario path spells the <b>modeled</b> member name, and a handful of
+     * AWS members really are modeled lowercase: SQS models
+     * {@code ListDeadLetterSourceQueues}' page as {@code queueUrls} while
+     * modelling {@code ListQueues}' as {@code QueueUrls}, and the generated
+     * scenario carries both spellings for that reason.
+     *
+     * <p>The SDK reports the modeled name on the {@code SdkField}, so such a
+     * path resolves exactly — which is asserted here against the real response
+     * class rather than assumed. The resolver's capitalized retry is the
+     * tolerance behind that, for a document whose key was capitalized on the
+     * way in, and it is a fallback rather than a mapping: an exact key always
+     * wins, and a capitalized path never reaches for a lowercase key.
+     */
+    @Test
+    void aLowercaseModeledMemberResolvesUnderItsOwnSpelling() {
+        Object response = Doc.of(ListDeadLetterSourceQueuesResponse.builder()
+                .queueUrls("http://q/dlq")
+                .build());
+        assertTrue(response instanceof Map<?, ?> m && m.containsKey("queueUrls"),
+                "the SDK reports the modeled member name: " + response);
+        assertEquals(List.of("http://q/dlq"), Paths.resolve(response, "$.queueUrls").value());
+
+        // The tolerance: the same path against a document that capitalized it.
+        Object capitalized = Values.map("QueueUrls", Values.list("http://q/dlq"));
+        assertEquals(List.of("http://q/dlq"), Paths.resolve(capitalized, "$.queueUrls").value());
+
+        // One-way: a capitalized path never reaches for a lowercase key, so
+        // ListQueues' own $.QueueUrls cannot be satisfied by this member.
+        assertFalse(Paths.resolve(response, "$.QueueUrls").ok());
+
+        // And an exact key wins over the fallback.
+        Object both = Values.map("queueUrls", Values.list("exact"), "QueueUrls", Values.list("bridged"));
+        assertEquals(List.of("exact"), Paths.resolve(both, "$.queueUrls").value());
+        assertEquals(List.of("bridged"), Paths.resolve(both, "$.QueueUrls").value());
     }
 
     // ── Canonical JSON ───────────────────────────────────────────────────────

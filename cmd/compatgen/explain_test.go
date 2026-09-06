@@ -17,8 +17,8 @@ func TestExplain_rendersEveryLanguage(t *testing.T) {
 	for _, lang := range rendererNames() {
 		t.Run(lang, func(t *testing.T) {
 			env := renderEnv{
-				goTypes:   fixtureGoTypes(),
-				javaModel: func(string) (*serviceModel, error) { return f.model, nil },
+				goTypes: fixtureGoTypes(),
+				model:   func(string) (*serviceModel, error) { return f.model, nil },
 			}
 			out := renderers[lang](env, gen.scenario, g, tc)
 			// Operation names are spelled per language (get_widget, getWidget,

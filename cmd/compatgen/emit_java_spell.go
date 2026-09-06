@@ -3,7 +3,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -25,14 +24,37 @@ import (
 //	string                  "blue"             "blue"
 //	integer                 30                 30
 //	long                    30                 30L
+//	byte                    1                  (byte) 1
+//	double                  1.5                1.5
+//	float                   1.5                1.5f
 //	boolean                 false              false
-//	enum Color              "blue"             Color.fromValue("blue")
-//	list<QueueAttributeName> ["All"]           List.of(QueueAttributeName.fromValue("All"))
+//	enum Color              "blue"             "blue"          → .color(String)
+//	list<QueueAttributeName> ["All"]           List.of("All")  → .…WithStrings
 //	map<string,string>      {"a":"b"}          Map.of("a", "b")
-//	map<QueueAttributeName,string> {"a":"b"}   Map.of(QueueAttributeName.fromValue("a"), "b")
+//	map<QueueAttributeName,string> {"a":"b"}   Map.of("a", "b") → .…WithStrings
 //	list<structure Tag>     [{"Key":"k"}]      List.of(Tag.builder().key("k").build())
 //	string                  {"$ref":"q"}       b.string("M", Values.ref("q"))
-//	enum Color              {"$ref":"c"}       Color.fromValue(b.string("M", Values.ref("c")))
+//	enum Color              {"$ref":"c"}       b.string("M", Values.ref("c"))
+//
+// # An enum is spelled as its wire value, never as the enum class
+//
+// The AWS SDK for Java v2 gives every enum-typed member a String form: a scalar
+// enum's is an overload of the same name, and a list of enums or a map with an
+// enum key or value gets a second setter named `<member>WithStrings`, spelled
+// with String in the enum's place. Both send the modeled wire value unchanged.
+//
+// `Enum.fromValue` would not. A value the *pinned* SDK does not know resolves to
+// `UNKNOWN_TO_SDK_VERSION`, whose `toString` is the four-character string
+// "null" — so the request goes out carrying "null" rather than the value the
+// scenario asked for, which JavaSdkWireFactsTest measures on the wire. The
+// String form takes that hazard out of the emitter, and with it the enum-class
+// import and the pascalCase-of-an-enum-shape rule. It also puts this backend
+// where the Go one already is: `types.QueueAttributeName("All")` passes the
+// model's own value straight through too.
+//
+// One list or map down is as far as the String form reaches. An enum nested
+// deeper has no String spelling in the SDK at all, and is refused rather than
+// emitted through `fromValue`.
 //
 // # Why the model is the authority here, and the Go emitter's SDK is not
 //
@@ -58,13 +80,43 @@ import (
 // is refused must not leave its import behind.
 type javaSpeller struct {
 	model *serviceModel
-	// modelTypes is the set of `…​.model.<Name>` classes some spelled value
-	// named. An emitted file imports each of them, and nothing else.
+	// sdkID names the SDK package a spelled class comes from, which is needed
+	// in full whenever the class's simple name is one the emitted file has
+	// already bound — see className.
+	sdkID string
+	// modelTypes is the set of `….model.<Name>` classes some spelled value
+	// named and the file may import. An emitted file imports each of them, and
+	// nothing else.
 	modelTypes map[string]bool
 }
 
-func newJavaSpeller(model *serviceModel) *javaSpeller {
-	return &javaSpeller{model: model, modelTypes: map[string]bool{}}
+func newJavaSpeller(model *serviceModel, sdkID string) *javaSpeller {
+	return &javaSpeller{model: model, sdkID: sdkID, modelTypes: map[string]bool{}}
+}
+
+// javaSlot says where a value sits relative to the builder setter that will
+// take it, which is what decides whether an enum in it has a String form.
+type javaSlot int
+
+const (
+	// slotSetter is a setter's own argument. A scalar enum here is spelled by
+	// the String overload of the same name; a structure here opens a builder of
+	// its own, whose members are setter slots again.
+	slotSetter javaSlot = iota
+	// slotElement is one level inside the setter's own list or map, which the
+	// SDK's `<member>WithStrings` setter spells with String in the enum's
+	// place.
+	slotElement
+	// slotDeep is anywhere further in, where the SDK offers no String form.
+	slotDeep
+)
+
+// inside is the slot a value's list elements or map entries sit in.
+func (s javaSlot) inside() javaSlot {
+	if s == slotSetter {
+		return slotElement
+	}
+	return slotDeep
 }
 
 // javaScalarBinders maps a Smithy scalar shape type to the Binder accessor that
@@ -95,6 +147,31 @@ var javaUnsupportedKinds = map[string]bool{
 	"union":     true,
 }
 
+// javaFileBoundNames are the simple names an emitted file already binds: the
+// scenario vocabulary and java.util types it imports, the harness types it
+// names, and the interface it implements — which is in the same package, and a
+// single-type import of the same name shadows it rather than overloading it.
+//
+// A model class of any of these names is written out fully qualified. IAM,
+// Resource Groups and Greengrass all model a shape named `Group`, and a second
+// `import ….model.Group;` in a file that already imports
+// `io.overcast.compat.scenario.Group` does not compile.
+var javaFileBoundNames = map[string]bool{
+	"AwsClients":   true,
+	"ServiceGroup": true,
+	"TestContext":  true,
+	"TestFn":       true,
+	"Call":         true,
+	"Check":        true,
+	"Clause":       true,
+	"ErrorSpec":    true,
+	"Group":        true,
+	"Values":       true,
+	"Where":        true,
+	"List":         true,
+	"Map":          true,
+}
+
 // memberTarget resolves the shape a call's input member targets, refusing a
 // member the model does not give the operation. An operation with a unit input
 // has no members at all, which is the same refusal with a different sentence.
@@ -110,17 +187,47 @@ func (sp *javaSpeller) memberTarget(op, member string) (string, error) {
 	return target, nil
 }
 
-// value renders one IR value as a Java expression of the member's modeled type.
+// setterFor is the builder setter a member's value is passed to: javaSetter,
+// plus the SDK's `WithStrings` suffix wherever the member is a list of enums or
+// a map with an enum key or value.
+func (sp *javaSpeller) setterFor(target, member string) string {
+	if sp.wantsStringOverload(target) {
+		return javaSetter(member) + "WithStrings"
+	}
+	return javaSetter(member)
+}
+
+// wantsStringOverload reports whether the SDK spells this member's setter
+// `<member>WithStrings` — which it does for exactly the composites that carry
+// an enum directly. A scalar enum's String form is an overload of the setter's
+// own name, so it needs no suffix.
+func (sp *javaSpeller) wantsStringOverload(target string) bool {
+	shape := sp.model.Shapes[target]
+	switch sp.shapeType(target) {
+	case "list":
+		return sp.model.Kind(shape.Member) == "enum"
+	case "map":
+		return sp.model.Kind(shape.Key) == "enum" || sp.model.Kind(shape.Value) == "enum"
+	}
+	return false
+}
+
+// value renders one IR value as a Java expression of the member's modeled type,
+// in the slot a builder setter's own argument sits in.
 //
 // member is the modeled member name the value belongs to, which a deferred
 // expression carries into its failure message.
 func (sp *javaSpeller) value(target string, v any, member string) (string, error) {
+	return sp.valueIn(target, v, member, slotSetter)
+}
+
+func (sp *javaSpeller) valueIn(target string, v any, member string, slot javaSlot) (string, error) {
 	kind := sp.model.Kind(target)
 	if javaUnsupportedKinds[kind] {
 		return "", fmt.Errorf("the java-sdk emitter has no Java value expression for a %s member (%s)", kind, bareShapeName(target))
 	}
 	if _, _, isExpr := exprOf(v); isExpr {
-		return sp.expr(target, kind, v, member)
+		return sp.expr(target, kind, v, member, slot)
 	}
 	if v == nil {
 		// The AWS SDK for Java v2 uses null for "unset", so there is no
@@ -130,54 +237,59 @@ func (sp *javaSpeller) value(target string, v any, member string) (string, error
 	}
 	switch kind {
 	case "string", "boolean", "integer", "float", "enum":
-		return sp.scalar(target, kind, v)
+		return sp.scalar(target, kind, v, slot)
 	case "list":
-		return sp.list(target, v, member)
+		return sp.list(target, v, member, slot)
 	case "map":
-		return sp.mapping(target, v, member)
+		return sp.mapping(target, v, member, slot)
 	case "structure":
 		return sp.structure(target, v, member)
 	}
 	return "", fmt.Errorf("no Java literal builds a %s member (%s)", kind, bareShapeName(target))
 }
 
-// scalar renders a literal into a scalar member, converting through the enum's
-// own fromValue where the model says the member is an enum.
-func (sp *javaSpeller) scalar(target, kind string, v any) (string, error) {
+// scalar renders a literal into a scalar member. An enum is its wire value: the
+// model already checked the literal is one of the shape's values (binder.go's
+// checkString), and the SDK's String form sends it unchanged.
+func (sp *javaSpeller) scalar(target, kind string, v any, slot javaSlot) (string, error) {
 	if kind == "enum" {
 		s, ok := v.(string)
 		if !ok {
-			return "", fmt.Errorf("an enum member wants a string, got %s", javaValueKind(v))
+			return "", fmt.Errorf("an enum member wants a string, got %s", valueKind(v))
 		}
-		return sp.enumOf(target, javaQuote(s)), nil
+		if err := sp.enumHasStringForm(target, slot); err != nil {
+			return "", err
+		}
+		return javaQuote(s), nil
 	}
 	return javaLiteral(sp.shapeType(target), kind, v)
 }
 
-// enumOf spells one enum value and records the class the file must import.
+// enumHasStringForm refuses an enum the SDK gives no String spelling.
 //
-// `fromValue` rather than the constant: the constant's Java identifier is the
-// SCREAMING_SNAKE of the wire value under a naming rule this generator would
-// have to reproduce, while `fromValue` takes the wire value the model already
-// carries. The cost is that a value the *pinned* SDK does not know resolves to
-// UNKNOWN_TO_SDK_VERSION, whose toString is null — a loud wrong request rather
-// than a compile error. That is the pin's job, not this table's: see
-// compat/suites/java-sdk/AGENTS.md § Generated groups.
-func (sp *javaSpeller) enumOf(target, argument string) string {
-	class := javaClassOf(target)
-	sp.modelTypes[class] = true
-	return class + ".fromValue(" + argument + ")"
+// The String form reaches a setter's own argument and one list or map inside
+// it, and no further: there is no `WithStrings` for a list of lists of enums or
+// a map of string to list of enums. Falling back to `Enum.fromValue` there
+// would reintroduce the "null" wire value this backend spells enums as strings
+// to avoid, so the group is scoped away from java-sdk instead.
+func (sp *javaSpeller) enumHasStringForm(target string, slot javaSlot) error {
+	if slot != slotDeep {
+		return nil
+	}
+	return fmt.Errorf("the AWS SDK for Java v2 has no String form for the enum %s nested this deep in a member, "+
+		"and this emitter will not spell the enum class: fromValue sends \"null\" for a value the pinned SDK does not know",
+		bareShapeName(target))
 }
 
-func (sp *javaSpeller) list(target string, v any, member string) (string, error) {
+func (sp *javaSpeller) list(target string, v any, member string, slot javaSlot) (string, error) {
 	items, ok := v.([]any)
 	if !ok {
-		return "", fmt.Errorf("a list member wants a JSON array, got %s", javaValueKind(v))
+		return "", fmt.Errorf("a list member wants a JSON array, got %s", valueKind(v))
 	}
 	elem := sp.model.Shapes[target].Member
 	rendered := make([]string, 0, len(items))
 	for _, item := range items {
-		out, err := sp.value(elem, item, member)
+		out, err := sp.valueIn(elem, item, member, slot.inside())
 		if err != nil {
 			return "", err
 		}
@@ -186,27 +298,28 @@ func (sp *javaSpeller) list(target string, v any, member string) (string, error)
 	return "List.of(" + strings.Join(rendered, ", ") + ")", nil
 }
 
-func (sp *javaSpeller) mapping(target string, v any, member string) (string, error) {
+func (sp *javaSpeller) mapping(target string, v any, member string, slot javaSlot) (string, error) {
 	entries, ok := v.(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("a map member wants a JSON object, got %s", javaValueKind(v))
+		return "", fmt.Errorf("a map member wants a JSON object, got %s", valueKind(v))
 	}
 	shape := sp.model.Shapes[target]
 	keyKind := sp.model.Kind(shape.Key)
 	if keyKind != "string" && keyKind != "enum" {
 		return "", fmt.Errorf("a map member keyed by %s has no IR spelling; the IR's objects have string keys", keyKind)
 	}
+	if keyKind == "enum" {
+		if err := sp.enumHasStringForm(shape.Key, slot.inside()); err != nil {
+			return "", err
+		}
+	}
 	pairs := make([][2]string, 0, len(entries))
 	for _, k := range sortedKeys(entries) {
-		key := javaQuote(k)
-		if keyKind == "enum" {
-			key = sp.enumOf(shape.Key, key)
-		}
-		out, err := sp.value(shape.Value, entries[k], member)
+		out, err := sp.valueIn(shape.Value, entries[k], member, slot.inside())
 		if err != nil {
 			return "", err
 		}
-		pairs = append(pairs, [2]string{key, out})
+		pairs = append(pairs, [2]string{javaQuote(k), out})
 	}
 	return javaMapLiteral(pairs), nil
 }
@@ -228,25 +341,26 @@ func javaMapLiteral(pairs [][2]string) string {
 	return "Map.ofEntries(" + strings.Join(parts, ", ") + ")"
 }
 
+// structure opens a builder of its own, so its members are setter slots again —
+// the nested builder declares the same String forms the outer one does.
 func (sp *javaSpeller) structure(target string, v any, member string) (string, error) {
 	members, ok := v.(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("a structure member wants a JSON object, got %s", javaValueKind(v))
+		return "", fmt.Errorf("a structure member wants a JSON object, got %s", valueKind(v))
 	}
-	class := javaClassOf(target)
-	sp.modelTypes[class] = true
+	class := sp.className(target)
 	var out strings.Builder
 	out.WriteString(class + ".builder()")
 	for _, k := range sortedKeys(members) {
 		field, ok := sp.model.MemberTarget(target, k)
 		if !ok {
-			return "", fmt.Errorf("the model gives %s no member %q", class, k)
+			return "", fmt.Errorf("the model gives %s no member %q", bareShapeName(target), k)
 		}
-		rendered, err := sp.value(field, members[k], member)
+		rendered, err := sp.valueIn(field, members[k], member, slotSetter)
 		if err != nil {
 			return "", err
 		}
-		out.WriteString("." + javaSetter(k) + "(" + rendered + ")")
+		out.WriteString("." + sp.setterFor(field, k) + "(" + rendered + ")")
 	}
 	out.WriteString(".build()")
 	return out.String(), nil
@@ -257,11 +371,14 @@ func (sp *javaSpeller) structure(target string, v any, member string) (string, e
 // The expression itself is still the IR's — Values.ref, Values.name and the
 // rest, rendered by javaValue — and it still resolves through the run's context
 // bag. What changes is where the result lands: a Binder accessor converts it to
-// the one Java box this member wants, chosen here from the model, and the enum
-// conversion is written in the source rather than discovered at run time.
-func (sp *javaSpeller) expr(target, kind string, v any, member string) (string, error) {
+// the one Java box this member wants, chosen here from the model. An enum takes
+// the String box, which is what its String form accepts.
+func (sp *javaSpeller) expr(target, kind string, v any, member string, slot javaSlot) (string, error) {
 	shapeType := sp.shapeType(target)
 	if kind == "enum" {
+		if err := sp.enumHasStringForm(target, slot); err != nil {
+			return "", err
+		}
 		shapeType = "string"
 	}
 	accessor, known := javaScalarBinders[shapeType]
@@ -275,11 +392,7 @@ func (sp *javaSpeller) expr(target, kind string, v any, member string) (string, 
 	if err != nil {
 		return "", err
 	}
-	out := fmt.Sprintf("b.%s(%s, %s)", accessor, javaQuote(member), rendered)
-	if kind == "enum" {
-		out = sp.enumOf(target, out)
-	}
-	return out, nil
+	return fmt.Sprintf("b.%s(%s, %s)", accessor, javaQuote(member), rendered), nil
 }
 
 // shapeType is the member's Smithy shape type — the distinction Kind collapses,
@@ -297,6 +410,18 @@ func (sp *javaSpeller) shapeType(target string) string {
 		return "list"
 	}
 	return shape.Type
+}
+
+// className is the Java class the SDK generates for a modeled shape, as the
+// emitted file must write it: the simple name, recorded so the file imports it,
+// or the fully qualified name when the simple one is already bound.
+func (sp *javaSpeller) className(target string) string {
+	name := javaClassOf(target)
+	if javaFileBoundNames[name] || name == javaNameClientClass(sp.sdkID) {
+		return javaNameModelPackage(sp.sdkID) + "." + name
+	}
+	sp.modelTypes[name] = true
+	return name
 }
 
 // preludeJavaTypes names the Smithy prelude targets, which the snapshot never
@@ -322,7 +447,7 @@ var preludeJavaTypes = map[string]string{
 	"smithy.api#Unit":             "unit",
 }
 
-// modelImports is the sorted set of `…​.model.<Name>` classes the spelled values
+// modelImports is the sorted set of `….model.<Name>` classes the spelled values
 // named, for the emitted file's import block.
 func (sp *javaSpeller) modelImports() []string {
 	out := make([]string, 0, len(sp.modelTypes))
@@ -345,52 +470,88 @@ func javaLiteral(shapeType, kind string, v any) (string, error) {
 	case "string":
 		s, ok := v.(string)
 		if !ok {
-			return "", fmt.Errorf("a string member wants a string, got %s", javaValueKind(v))
+			return "", fmt.Errorf("a string member wants a string, got %s", valueKind(v))
 		}
 		return javaQuote(s), nil
 	case "boolean":
 		b, ok := v.(bool)
 		if !ok {
-			return "", fmt.Errorf("a boolean member wants a boolean, got %s", javaValueKind(v))
+			return "", fmt.Errorf("a boolean member wants a boolean, got %s", valueKind(v))
 		}
 		return strconv.FormatBool(b), nil
 	case "integer":
-		n, ok := javaNumberOf(v)
-		if !ok {
-			return "", fmt.Errorf("a %s member wants a number, got %s", shapeType, javaValueKind(v))
-		}
-		if n != math.Trunc(n) {
-			return "", fmt.Errorf("a %s member wants a whole number, got %v", shapeType, n)
-		}
-		min, max, known := javaIntRange(shapeType)
-		if !known {
-			return "", fmt.Errorf("no Java literal builds a %s member", shapeType)
-		}
-		if n < min || n > max {
-			return "", fmt.Errorf("%v is out of range for %s", n, shapeType)
-		}
-		if shapeType == "long" {
-			return strconv.FormatInt(int64(n), 10) + "L", nil
-		}
-		return strconv.FormatInt(int64(n), 10), nil
+		return javaIntegerLiteral(shapeType, v)
 	case "float":
-		n, ok := javaNumberOf(v)
-		if !ok {
-			return "", fmt.Errorf("a %s member wants a number, got %s", shapeType, javaValueKind(v))
-		}
-		rendered := strconv.FormatFloat(n, 'g', -1, 64)
-		if !strings.ContainsAny(rendered, ".eE") {
-			rendered += ".0"
-		}
-		if shapeType == "float" {
-			return rendered + "f", nil
-		}
-		return rendered, nil
+		return javaFloatLiteral(shapeType, v)
 	}
 	return "", fmt.Errorf("no Java literal builds a %s member", kind)
 }
 
-func javaIntRange(shapeType string) (min, max float64, known bool) {
+// javaIntegerLiteral renders a whole number as a constant of the member's own
+// Java integer type.
+//
+// The cast on a byte or a short is not decoration: an `int` literal does not
+// convert to a `Byte` or a `Short` on the way into a builder setter — narrowing
+// happens only in an assignment context, not in an invocation one — so
+// `.foo(1)` against a `Byte` member is a compile error and `.foo((byte) 1)` is
+// the spelling that boxes.
+func javaIntegerLiteral(shapeType string, v any) (string, error) {
+	n, ok := numberOf(v)
+	if !ok {
+		return "", fmt.Errorf("a %s member wants a number, got %s", shapeType, valueKind(v))
+	}
+	if !n.Whole {
+		return "", fmt.Errorf("a %s member wants a whole number, got %s", shapeType, n.Text)
+	}
+	min, max, known := javaIntRange(shapeType)
+	if !known {
+		return "", fmt.Errorf("no Java literal builds a %s member", shapeType)
+	}
+	// A whole number wider than an int64 is out of range for every Java integer
+	// type, and is refused before the type's own range is consulted rather than
+	// being folded to one that fits.
+	if !n.Fits || n.Int < min || n.Int > max {
+		return "", fmt.Errorf("%s is out of range for %s", n.Text, shapeType)
+	}
+	digits := strconv.FormatInt(n.Int, 10)
+	switch shapeType {
+	case "byte":
+		return "(byte) " + digits, nil
+	case "short":
+		return "(short) " + digits, nil
+	case "long":
+		return digits + "L", nil
+	}
+	return digits, nil
+}
+
+// javaFloatLiteral renders a number as a constant of the member's own Java
+// floating-point type. A literal outside that type's range is refused: javac
+// rejects `1e+300f` outright, and a double a float64 cannot carry would compile
+// to infinity.
+func javaFloatLiteral(shapeType string, v any) (string, error) {
+	n, ok := numberOf(v)
+	if !ok {
+		return "", fmt.Errorf("a %s member wants a number, got %s", shapeType, valueKind(v))
+	}
+	suffix, known := javaFloatSuffix(shapeType)
+	if !known {
+		return "", fmt.Errorf("no Java literal builds a %s member", shapeType)
+	}
+	if !n.Representable || (shapeType == "float" && math.Abs(n.Float) > math.MaxFloat32) {
+		return "", fmt.Errorf("%s is out of range for %s", n.Text, shapeType)
+	}
+	rendered := strconv.FormatFloat(n.Float, 'g', -1, 64)
+	if !strings.ContainsAny(rendered, ".eE") {
+		rendered += ".0"
+	}
+	return rendered + suffix, nil
+}
+
+// javaIntRange is the range of the Java integer type a Smithy shape type maps
+// to, and whether one exists: bigInteger is java.math.BigInteger, which has no
+// literal at all.
+func javaIntRange(shapeType string) (min, max int64, known bool) {
 	switch shapeType {
 	case "byte":
 		return math.MinInt8, math.MaxInt8, true
@@ -404,17 +565,20 @@ func javaIntRange(shapeType string) (min, max float64, known bool) {
 	return 0, 0, false
 }
 
-func javaNumberOf(v any) (float64, bool) {
-	switch n := v.(type) {
-	case json.Number:
-		f, err := n.Float64()
-		return f, err == nil
-	case float64:
-		return n, true
-	case int:
-		return float64(n), true
+// javaFloatSuffix is javaIntRange's mirror for the floating-point types: the
+// suffix the literal carries, and whether the shape type has a Java literal at
+// all. A float takes `f` and a double takes nothing; bigDecimal is
+// java.math.BigDecimal and is refused for the same reason bigInteger is — a
+// double standing in for one would silently change the value it was chosen to
+// carry exactly.
+func javaFloatSuffix(shapeType string) (suffix string, known bool) {
+	switch shapeType {
+	case "float":
+		return "f", true
+	case "double":
+		return "", true
 	}
-	return 0, false
+	return "", false
 }
 
 // javaQuote renders a Go string as a Java string literal. Java accepts \uXXXX
@@ -451,25 +615,3 @@ func javaQuote(s string) string {
 // shape: its bare name run through the code generator's pascalCase, which is
 // what turns AWSOrganizationsNotInUse into AwsOrganizationsNotInUse.
 func javaClassOf(shapeID string) string { return javaPascal(bareShapeName(shapeID)) }
-
-// javaValueKind names an IR value's JSON type for an error message.
-func javaValueKind(v any) string {
-	switch value := v.(type) {
-	case nil:
-		return "null"
-	case string:
-		return "a string"
-	case bool:
-		return "a boolean"
-	case json.Number, float64, int:
-		return "a number"
-	case []any:
-		return "a list"
-	case map[string]any:
-		if len(value) == 0 {
-			return "an object"
-		}
-		return "an object (" + strings.Join(sortedKeys(value), ", ") + ")"
-	}
-	return fmt.Sprintf("a %T", v)
-}

@@ -158,7 +158,7 @@ class RegistryTest {
                         new Registry.RegistryTest("CreateBucket", null, null, null, null))),
                 new Registry.RegistryGroup("cdk", "cdk-lifecycle", List.of(
                         new Registry.RegistryTest("Deploy", null, null, null, null)),
-                        List.of("cdk"), false, null, null)));
+                        List.of("cdk"), false, null, null, false)));
 
         List<TestGroup> groups = Registry.buildGroups("java-sdk",
                 root, Map.of(), Map.of(), Map.of(), Set.of());
@@ -172,7 +172,7 @@ class RegistryTest {
         Registry.RegistryRoot root = new Registry.RegistryRoot(List.of(
                 new Registry.RegistryGroup("cdk", "cdk-lifecycle", List.of(
                         new Registry.RegistryTest("Deploy", null, null, null, null)),
-                        List.of("cdk"), false, null, null)));
+                        List.of("cdk"), false, null, null, false)));
 
         List<TestGroup> groups = Registry.buildGroups("cdk",
                 root, Map.of(), Map.of(), Map.of(), Set.of());

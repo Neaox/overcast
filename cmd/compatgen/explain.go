@@ -37,12 +37,14 @@ type renderer func(env renderEnv, s *scenario, g *group, t *test) string
 // the IR alone.
 type renderEnv struct {
 	goTypes *goSDKTypes
-	// javaModel resolves a service's pinned shapes, which is what the Java
-	// emitter spells a member against. runExplain reads them from the
+	// model resolves a service's pinned shapes. It is not the Java backend's
+	// own: every emitter that spells a member from the model rather than from
+	// its SDK reads it here, which is why it is named after what it returns
+	// and not after the first backend to ask for it. runExplain reads the
 	// repository; the generator's own tests hand over the fixture model they
 	// already hold, which is what keeps them hermetic and off the committed
 	// snapshot.
-	javaModel func(service string) (*serviceModel, error)
+	model func(service string) (*serviceModel, error)
 }
 
 // speller resolves one service's SDK types for the Go rendering. The error is
@@ -64,15 +66,15 @@ func (env renderEnv) speller(sdkID string) (*goSpeller, error) {
 // error is returned rather than fatal, for the same reason speller's is:
 // `-explain` is a reader's tool and must still say something useful on a
 // checkout whose shape snapshot does not cover the service.
-func (env renderEnv) javaSpeller(service string) (*javaSpeller, error) {
-	if env.javaModel == nil {
+func (env renderEnv) javaSpeller(service, sdkID string) (*javaSpeller, error) {
+	if env.model == nil {
 		return nil, fmt.Errorf("internal: no shape source was configured")
 	}
-	model, err := env.javaModel(service)
+	model, err := env.model(service)
 	if err != nil {
 		return nil, err
 	}
-	return newJavaSpeller(model), nil
+	return newJavaSpeller(model, sdkID), nil
 }
 
 // repoShapes reads a service's pinned shape snapshot from the repository.
@@ -135,8 +137,8 @@ func runExplain(opts options, stdout io.Writer) error {
 		return fmt.Errorf("no test %s in %s", opts.explain, scenarioPath(service))
 	}
 	env := renderEnv{
-		goTypes:   newGoSDKTypes(filepath.Join(opts.root, filepath.FromSlash(goSDKModuleDir))),
-		javaModel: repoShapes(opts.root),
+		goTypes: newGoSDKTypes(filepath.Join(opts.root, filepath.FromSlash(goSDKModuleDir))),
+		model:   repoShapes(opts.root),
 	}
 	_, err = io.WriteString(stdout, render(env, s, g, t))
 	return err

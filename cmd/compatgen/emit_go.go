@@ -679,29 +679,20 @@ func goLowerCamel(name string) string {
 // once folded into Go identifiers. Two names differing only in where their
 // hyphens fall would otherwise emit two methods of the same name, and the
 // suite would fail to build with no indication of which pair caused it.
+//
+// The collision itself is uniqueNames (emit_shared.go); what is Go's own is
+// which identifiers a group claims.
 func goMethodNamesAreUnique(service string, groups []group) error {
-	seen := map[string]string{}
-	claim := func(name, owner string) error {
-		if first, dup := seen[name]; dup {
-			return fmt.Errorf("%s: %s and %s both emit the Go method %s; rename one", service, first, owner, name)
-		}
-		seen[name] = owner
-		return nil
-	}
+	var claims []nameClaim
 	for _, g := range groups {
-		if err := claim(goNameSetupMethod(g.Name), g.Name+" setup"); err != nil {
-			return err
-		}
-		if err := claim(goNameTeardownMethod(g.Name), g.Name+" teardown"); err != nil {
-			return err
-		}
+		claims = append(claims,
+			nameClaim{goNameSetupMethod(g.Name), g.Name + " setup"},
+			nameClaim{goNameTeardownMethod(g.Name), g.Name + " teardown"})
 		for _, t := range g.Tests {
-			if err := claim(goNameTestMethod(g.Name, t.Name), g.Name+"/"+t.Name); err != nil {
-				return err
-			}
+			claims = append(claims, nameClaim{goNameTestMethod(g.Name, t.Name), g.Name + "/" + t.Name})
 		}
 	}
-	return nil
+	return uniqueNames(service, "Go", claims)
 }
 
 // ---------------------------------------------------------------------------
@@ -722,75 +713,32 @@ func goMethodNamesAreUnique(service string, groups []group) error {
 // vocabulary is more use to a recipe author than naming the Go type it happens
 // to have.
 func goRefusals(gen *generation, svc *goSDKService, g group) []gap {
-	var out []gap
-	seen := map[string]bool{}
-	record := func(op, member, detail string) {
-		key := op + "." + member
-		if seen[key] {
-			return
-		}
-		seen[key] = true
-		out = append(out, gap{
-			Service:   gen.scenario.Service,
-			Operation: op,
-			Group:     g.Name,
-			Reason:    goEmitReason + ":" + member,
-			Detail:    detail,
-		})
-	}
 	probe := &goSpeller{svc: svc}
-	for _, c := range goCallsOf(g) {
-		if _, err := svc.Input(c.Op); err != nil {
-			record(c.Op, c.Op+"Input", err.Error())
-			continue
-		}
-		input := gen.model.InputShape(c.Op)
-		for _, member := range sortedValueKeys(c.Params) {
-			if input != "" {
+	return refusals(gen, g, goEmitReason, refusalChecks{
+		call: func(op string) (string, error) {
+			if _, err := svc.Input(op); err != nil {
+				return op + "Input", err
+			}
+			return "", nil
+		},
+		member: func(op, member string, v any) error {
+			if input := gen.model.InputShape(op); input != "" {
 				if target, ok := gen.model.MemberTarget(input, member); ok {
 					if kind := gen.model.Kind(target); goUnsupportedKinds[kind] {
-						record(c.Op, member, fmt.Sprintf("the go-sdk emitter has no Go value expression for a %s member (%s.%s)", kind, input, member))
-						continue
+						return fmt.Errorf("the go-sdk emitter has no Go value expression for a %s member (%s.%s)", kind, input, member)
 					}
 				}
 			}
-			field, err := probe.field(c.Op, member)
+			field, err := probe.field(op, member)
 			if err != nil {
-				record(c.Op, member, err.Error())
-				continue
+				return err
 			}
-			if _, err := probe.value(field.Type(), c.Params[member], member, "", false); err != nil {
-				record(c.Op, member, fmt.Sprintf("%s.%s cannot be spelled as Go: %v", c.Op, member, err))
+			if _, err := probe.value(field.Type(), v, member, "", false); err != nil {
+				return fmt.Errorf("%s.%s cannot be spelled as Go: %v", op, member, err)
 			}
-		}
-	}
-	sortGaps(out)
-	return out
-}
-
-// goCallsOf collects every call a group makes: setup, each test's primary
-// call, every clause's call however deeply an eventually nests it, and
-// teardown.
-func goCallsOf(g group) []call {
-	var out []call
-	out = append(out, g.Setup...)
-	var fromClause func(a assertion)
-	fromClause = func(a assertion) {
-		if a.Call != nil {
-			out = append(out, *a.Call)
-		}
-		if a.Assert != nil {
-			fromClause(*a.Assert)
-		}
-	}
-	for _, t := range g.Tests {
-		out = append(out, t.Call)
-		for _, a := range t.Assert {
-			fromClause(a)
-		}
-	}
-	out = append(out, g.Teardown...)
-	return out
+			return nil
+		},
+	})
 }
 
 // ---------------------------------------------------------------------------

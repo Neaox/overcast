@@ -1,5 +1,6 @@
 package io.overcast.compat.harness;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -15,7 +16,9 @@ public final class TestContext {
     private final String region;
     private final String runId;
 
-    private final Map<String, Object> state = new HashMap<>();
+    // Synchronized because the runner may execute one group's tests
+    // concurrently (TestGroup#parallel), and they share this context.
+    private final Map<String, Object> state = Collections.synchronizedMap(new HashMap<>());
 
     public TestContext(String endpoint, String region, String runId) {
         this.endpoint = endpoint;

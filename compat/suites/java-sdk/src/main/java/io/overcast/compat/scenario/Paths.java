@@ -100,11 +100,14 @@ final class Paths {
             }
             Object v = obj.get(s.member());
             if (v == null && !obj.containsKey(s.member())) {
-                // The document's keys are the member names the SDK reports,
-                // which it capitalizes; a scenario path spells the modeled name,
-                // and a handful of AWS members are modeled lowercase (SQS models
-                // ListDeadLetterSourceQueues' page as `queueUrls`). See
-                // Doc#memberName.
+                // The document's keys are the member names the SDK reports
+                // on each SdkField, which is the modeled name — so a path
+                // spelling a member the model writes lowercase (SQS models
+                // ListDeadLetterSourceQueues' page as `queueUrls`) resolves
+                // exactly. This retry is the tolerance behind that, for a
+                // document whose key was capitalized on the way in, and it is
+                // a fallback rather than a mapping: an exact key wins, and a
+                // capitalized path never reaches for a lowercase one.
                 String capitalized = capitalize(s.member());
                 if (!obj.containsKey(capitalized)) {
                     return new Resolved(null, false);

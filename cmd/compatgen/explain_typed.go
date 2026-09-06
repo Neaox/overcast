@@ -127,7 +127,7 @@ func javaStyle(sp *javaSpeller, loadErr error) style {
 }
 
 func renderJava(env renderEnv, s *scenario, g *group, t *test) string {
-	sp, loadErr := env.javaSpeller(s.Service)
+	sp, loadErr := env.javaSpeller(s.Service, s.Client.SDKID)
 	e := &explainer{st: javaStyle(sp, loadErr)}
 	return e.test(s, g, t, func() {
 		client := javaNameClientClass(s.Client.SDKID)
