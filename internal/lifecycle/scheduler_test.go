@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -377,4 +378,220 @@ func TestScheduler_multipleKeys(t *testing.T) {
 	if s.PendingCount() != 0 {
 		t.Fatalf("expected 0 pending, got %d", s.PendingCount())
 	}
+}
+
+// fireRace drives one scheduler key as hard as a mock clock allows: the test
+// advances the clock through a stream of transitions on that key while a
+// contending goroutine keeps arming it — and, depending on the test, cancels
+// it, re-arms it, or stops the scheduler underneath it.
+//
+// The window all three aim at is the one the mock clock opens between choosing
+// a timer and running it: Mock.runNextTimer picks the next timer, releases the
+// clock's lock, and only then calls Tick, which re-takes that lock before it
+// launches the callback goroutine. A Timer.Stop landing in between reports
+// true — the timer is still registered and not yet marked stopped — for a timer
+// that is nevertheless about to run its function. Every cancelling path in the
+// Scheduler calls Timer.Stop while holding s.mu, so a contending goroutine
+// waiting on the clock's lock is handed it exactly when that window opens.
+type fireRace struct {
+	s    *Scheduler
+	mock *clock.Mock
+	// witness is set by an uncontended transition halfway through the advance,
+	// so a test can say the advance really did drive the scheduler rather than
+	// finding nothing due and returning at once.
+	witness atomic.Bool
+	// ranAfterCancel counts callbacks that ran even though a Cancel had
+	// already reported cancelling that very transition.
+	ranAfterCancel atomic.Int64
+}
+
+// armedTransition is one scheduled transition, so its callback can catch
+// itself running after the Cancel that claimed to have stopped it.
+type armedTransition struct{ cancelled atomic.Bool }
+
+const (
+	fireRaceKey        = "fire-race"
+	fireRaceWitnessKey = "fire-race-witness"
+	// fireRaceMillis is how many mock milliseconds each race advances
+	// through, and so roughly how many fire windows it opens.
+	fireRaceMillis = 50
+)
+
+// newFireRace builds the scheduler and paces the advance. The pacing timers
+// belong to the clock rather than the scheduler and do nothing: they are there
+// because a mock advance stops as soon as nothing is due before its target,
+// which — with a contended key that is unarmed for an instant on every round —
+// can happen before the key has fired even once.
+func newFireRace() *fireRace {
+	mock := clock.NewMock()
+	for i := 1; i <= fireRaceMillis; i++ {
+		mock.AfterFunc(time.Duration(i)*time.Millisecond, func() {})
+	}
+	r := &fireRace{s: NewScheduler(mock), mock: mock}
+	r.s.After(fireRaceWitnessKey, fireRaceMillis/2*time.Millisecond, func() {
+		r.witness.Store(true)
+	})
+	return r
+}
+
+// arm schedules one transition on the contended key, one mock millisecond out.
+func (r *fireRace) arm() *armedTransition {
+	a := &armedTransition{}
+	r.s.After(fireRaceKey, time.Millisecond, func() {
+		if a.cancelled.Load() {
+			r.ranAfterCancel.Add(1)
+		}
+	})
+	return a
+}
+
+// contendUntilStopped runs contend on another goroutine until the returned
+// function is called. It returns only once contend has run at least once, so
+// an advance started straight after it has something to fire.
+func (r *fireRace) contendUntilStopped(contend func()) (stop func()) {
+	var stopped atomic.Bool
+	var wg sync.WaitGroup
+	ready := make(chan struct{})
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		contend()
+		close(ready)
+		for !stopped.Load() {
+			contend()
+		}
+	}()
+
+	<-ready
+	return func() {
+		stopped.Store(true)
+		wg.Wait()
+	}
+}
+
+// advanceWhileContending advances the mock clock through the whole race while
+// contend runs alongside it.
+func (r *fireRace) advanceWhileContending(contend func()) {
+	stop := r.contendUntilStopped(contend)
+	r.mock.Add(fireRaceMillis * time.Millisecond)
+	stop()
+}
+
+// assertExercised fails if the uncontended witness transition never ran, which
+// would mean the advance drove no transition at all and the rest of the test
+// is vacuous. It has to be called after the scheduler has been stopped, which
+// is what waits for a callback already in flight.
+//
+// The contended key cannot serve as the witness: a cancel that wins the claim
+// stands its callback down, so on a correct scheduler that key can legitimately
+// never run fn at all.
+func (r *fireRace) assertExercised(t *testing.T) {
+	t.Helper()
+	if !r.witness.Load() {
+		t.Fatal("the witness transition never ran — the advance drove no transitions")
+	}
+}
+
+// assertStoppedCleanly fails if Stop did not finish before its deadline —
+// which is what an entry dropped without balancing its wg.Add looks like from
+// the outside — or if it left work behind.
+func (r *fireRace) assertStoppedCleanly(t *testing.T, timedOut bool) {
+	t.Helper()
+	if timedOut {
+		t.Fatal("Stop() did not complete before its deadline — an entry was dropped without balancing its wg.Add")
+	}
+	if n := r.s.PendingCount(); n != 0 {
+		t.Fatalf("PendingCount = %d after Stop, want 0", n)
+	}
+}
+
+// stop stops the scheduler and asserts it did so cleanly.
+func (r *fireRace) stop(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	r.s.Stop(ctx)
+	r.assertStoppedCleanly(t, ctx.Err() != nil)
+}
+
+// TestScheduler_Cancel_racesTheFiringTimer reproduces the crash in CI run
+// 34003824983 (job 101407402629, `Test suite (-tags slim)`), where the
+// dynamodb package's test binary died with `panic: close of closed channel` in
+// Scheduler.After's callback — with no `--- FAIL` line, because a panic takes
+// the binary down rather than failing a test.
+//
+// A Cancel that lands in the mock clock's fire window (see fireRace) sees
+// Timer.Stop report true and takes that as proof the callback will never run,
+// so it closes the entry's done channel and balances the WaitGroup — while the
+// callback, already launched, closes the same channel again on its way out.
+// Under the fix the two cannot both settle one entry: whichever claims it first
+// finishes it, and a Cancel that wins the claim really does cancel, so the
+// callback stands down instead of running fn.
+func TestScheduler_Cancel_racesTheFiringTimer(t *testing.T) {
+	// Given a key that is armed a mock millisecond out over and over
+	r := newFireRace()
+
+	// When the clock is advanced through that stream of transitions while
+	// another goroutine cancels the same key
+	r.advanceWhileContending(func() {
+		a := r.arm()
+		if r.s.Cancel(fireRaceKey) {
+			a.cancelled.Store(true)
+		}
+	})
+
+	// Then the scheduler stops cleanly, and no transition ran after a Cancel
+	// reported cancelling it
+	r.stop(t)
+	r.assertExercised(t)
+	if n := r.ranAfterCancel.Load(); n != 0 {
+		t.Fatalf("%d transition(s) ran after Cancel reported cancelling them", n)
+	}
+}
+
+// TestScheduler_After_reArmRacesTheFiringTimer is the same race reached
+// through After's cancel-the-existing-entry path: a key rescheduled at the
+// moment its current transition fires. A callback that finds itself superseded
+// must not settle — or take out of pending — the entry that replaced it, or the
+// replacement is orphaned: still armed, no longer cancellable, and holding a
+// wg.Add that Stop then waits on forever.
+func TestScheduler_After_reArmRacesTheFiringTimer(t *testing.T) {
+	// Given a key that is armed a mock millisecond out over and over
+	r := newFireRace()
+
+	// When the clock is advanced through that stream of transitions while
+	// another goroutine keeps rescheduling the same key
+	r.advanceWhileContending(func() { r.arm() })
+
+	// Then nothing was orphaned or settled twice
+	r.stop(t)
+	r.assertExercised(t)
+}
+
+// TestScheduler_Stop_racesTheFiringTimer is the same race reached through
+// Stop, which cancels every pending entry at once.
+func TestScheduler_Stop_racesTheFiringTimer(t *testing.T) {
+	// Given a key that is armed a mock millisecond out over and over
+	r := newFireRace()
+	stopContending := r.contendUntilStopped(func() { r.arm() })
+
+	// When the clock is advanced through that stream of transitions while the
+	// scheduler is stopped underneath it
+	advanced := make(chan struct{})
+	go func() {
+		defer close(advanced)
+		r.mock.Add(fireRaceMillis * time.Millisecond)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	r.s.Stop(ctx)
+	timedOut := ctx.Err() != nil
+	<-advanced
+	stopContending()
+
+	// Then Stop completed rather than waiting on an entry nobody will finish,
+	// and left nothing pending
+	r.assertStoppedCleanly(t, timedOut)
 }
