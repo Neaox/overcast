@@ -366,7 +366,6 @@ export function StackDetail({ stackName, initialStackId }: Props) {
                   query={{ data: stack.Parameters ?? [], isLoading: false }}
                   noun="parameters"
                   rowKey={(p) => p.ParameterKey ?? ""}
-                  columnToggle={false}
                   columns={[
                     {
                       id: "key",
@@ -391,7 +390,6 @@ export function StackDetail({ stackName, initialStackId }: Props) {
                   query={{ data: stack.Outputs ?? [], isLoading: false }}
                   noun="outputs"
                   rowKey={(o) => o.OutputKey ?? ""}
-                  columnToggle={false}
                   columns={[
                     {
                       id: "key",
@@ -429,7 +427,6 @@ export function StackDetail({ stackName, initialStackId }: Props) {
                   query={{ data: stack.Tags ?? [], isLoading: false }}
                   noun="tags"
                   rowKey={(t) => t.Key ?? ""}
-                  columnToggle={false}
                   columns={[
                     { id: "key", header: "Key", sortValue: (t) => t.Key, cell: (t) => t.Key },
                     { id: "value", header: "Value", cell: (t) => t.Value },
@@ -470,7 +467,6 @@ export function StackDetail({ stackName, initialStackId }: Props) {
                   query={{ data: resources.slice(0, 5), isLoading: false }}
                   noun="resources"
                   rowKey={(r) => r.LogicalResourceId ?? ""}
-                  columnToggle={false}
                   columns={[
                     {
                       id: "logical-id",
@@ -552,11 +548,6 @@ export function StackDetail({ stackName, initialStackId }: Props) {
                   query={{ data: resources, isLoading: false }}
                   noun="resources"
                   rowKey={(r) => r.LogicalResourceId ?? ""}
-                  // Five columns, but this table lives inside its own bordered
-                  // panel: the columns menu would render above the table and
-                  // inside that border, reading as a header strip that is not
-                  // one. The Resources tab is short enough to scan whole.
-                  columnToggle={false}
                   columns={[
                     {
                       id: "logical-id",
@@ -652,7 +643,6 @@ export function StackDetail({ stackName, initialStackId }: Props) {
                   query={{ data: events, isLoading: eventsFetching && events.length === 0 }}
                   noun="events"
                   rowKey={(e) => e.EventId ?? ""}
-                  columnToggle={false}
                   columns={[
                     {
                       id: "timestamp",

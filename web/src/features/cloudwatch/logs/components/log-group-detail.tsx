@@ -476,8 +476,6 @@ export function LogGroupDetail({ groupName }: Props) {
             cell: (s) => formatLogDate(s.lastIngestionTime),
           },
         ]}
-        // Sub-table on a detail page: no columns menu, no deep-linked sort.
-        columnToggle={false}
         rowActions={(s) => (
           <RowAction
             label={`Delete ${s.logStreamName ?? ""}`}

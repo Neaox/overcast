@@ -34,8 +34,6 @@ export function KeyGroupList({ sort, onSortChange }: KeyGroupListProps) {
         errorTitle="Failed to load key groups"
         sort={sort}
         onSortChange={onSortChange}
-        // Four columns, none of them noise on a page this small.
-        columnToggle={false}
         rowKey={(keyGroup) => keyGroup.id}
         columns={[
           {

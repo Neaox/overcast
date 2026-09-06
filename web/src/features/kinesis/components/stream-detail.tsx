@@ -193,7 +193,6 @@ export function StreamDetail({ streamName }: Props) {
           noun="shards"
           emptyIcon={Boxes}
           emptyTitle="No shards"
-          columnToggle={false}
           // Shards come back in hash-key order; `shardId-000…1` before
           // `shardId-000…10` is what the alphanumeric comparison gives.
           defaultSort={{ id: "shard-id", desc: false }}
@@ -234,7 +233,6 @@ export function StreamDetail({ streamName }: Props) {
             noun="tags"
             emptyIcon={Tag}
             emptyTitle="No tags"
-            columnToggle={false}
             // `Object.entries` follows insertion order, which is whatever the
             // emulator happened to store; a key column reads A→Z.
             defaultSort={{ id: "key", desc: false }}

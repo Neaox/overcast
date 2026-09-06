@@ -142,8 +142,6 @@ export function StateMachineDetail({ name }: Props) {
           // reader arriving here is looking for the last one, so the table says
           // so rather than relying on the order happening to hold.
           defaultSort={{ id: "started", desc: true }}
-          // Four columns on a sub-table, all of them load-bearing.
-          columnToggle={false}
           columns={[
             {
               id: "name",

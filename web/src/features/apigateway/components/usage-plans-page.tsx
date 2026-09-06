@@ -369,7 +369,7 @@ export function UsagePlansPage({
           onRequest: setDeleteTarget,
           onOpenChange: (open) => !open && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (plan) => plan.id,
+          getVars: (plan) => plan.id,
           label: (plan) => plan.name,
           noun: "usage plan",
           title: "Delete Usage Plan",

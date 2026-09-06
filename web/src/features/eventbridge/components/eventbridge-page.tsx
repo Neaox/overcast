@@ -255,7 +255,7 @@ function RulesTab({ filter, onFilterChange }: FilterProps) {
           onRequest: (rule) => setDeleteTarget(rule.Name),
           onOpenChange: (open) => !open && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (rule) => rule.Name ?? "",
+          getVars: (rule) => rule.Name ?? "",
           label: (rule) => rule.Name ?? "",
           noun: "rule",
           title: "Delete Rule",

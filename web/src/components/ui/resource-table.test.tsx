@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Bell } from "lucide-react"
 import { useNavigate, useSearch } from "@tanstack/react-router"
 import { render, renderWithRouter, screen, waitFor, within } from "@/test/render"
+import type * as React from "react"
 import { useSortSearchParam } from "@/hooks/use-sort-search-param"
 import { ResourceTable, type ResourceTableColumn, type ResourceTableSort } from "./resource-table"
 
@@ -24,13 +25,18 @@ function TopicsTable(props: {
   isDeletePending?: boolean
   isFiltered?: boolean
   onClearFilter?: () => void
+  canDelete?: (t: Topic) => boolean
+  getVars?: (t: Topic) => string | Promise<string>
+  emptyExtra?: React.ReactNode
+  rowClassName?: (t: Topic, index: number) => string | undefined
+  columns?: ResourceTableColumn<Topic>[]
 }) {
   const [deleteTarget, setDeleteTarget] = useState<Topic>()
 
   return (
     <ResourceTable
       query={{ data: props.data, isLoading: props.isLoading ?? false, error: props.error }}
-      columns={columns}
+      columns={props.columns ?? columns}
       rowKey={(t) => t.arn}
       noun="topics"
       emptyIcon={Bell}
@@ -39,6 +45,8 @@ function TopicsTable(props: {
       isFiltered={props.isFiltered}
       onClearFilter={props.onClearFilter}
       onRowClick={props.onRowClick}
+      rowClassName={props.rowClassName}
+      emptyExtra={props.emptyExtra}
       onDelete={
         props.onDeleteMutate
           ? {
@@ -52,7 +60,8 @@ function TopicsTable(props: {
                 },
                 isPending: props.isDeletePending ?? false,
               },
-              getId: (t) => t.arn,
+              getVars: props.getVars ?? ((t) => t.arn),
+              canDelete: props.canDelete,
               label: (t) => t.name,
               noun: "topic",
             }
@@ -180,6 +189,142 @@ describe("ResourceTable > delete flow", () => {
   })
 })
 
+describe("ResourceTable > empty-state extras", () => {
+  it("renders emptyExtra beneath the empty state", () => {
+    render(<TopicsTable data={[]} emptyExtra={<p>There are 3 in ap-southeast-2.</p>} />)
+    expect(screen.getByText("No topics yet")).toBeInTheDocument()
+    expect(screen.getByText("There are 3 in ap-southeast-2.")).toBeInTheDocument()
+  })
+
+  it("leaves it out once the list has rows", () => {
+    render(<TopicsTable data={topics} emptyExtra={<p>There are 3 in ap-southeast-2.</p>} />)
+    expect(screen.queryByText("There are 3 in ap-southeast-2.")).not.toBeInTheDocument()
+  })
+
+  // A filter turning up nothing says nothing about other regions, and a failed
+  // fetch says nothing about anything — neither is the fact this explains.
+  it("leaves it out on the filtered-empty state and on an error", () => {
+    const { unmount } = render(
+      <TopicsTable
+        data={[]}
+        isFiltered
+        onClearFilter={() => {}}
+        emptyExtra={<p>There are 3 in ap-southeast-2.</p>}
+      />,
+    )
+    expect(screen.getByText("No matching topics")).toBeInTheDocument()
+    expect(screen.queryByText("There are 3 in ap-southeast-2.")).not.toBeInTheDocument()
+    unmount()
+
+    render(
+      <TopicsTable
+        data={[]}
+        error={new Error("network down")}
+        emptyExtra={<p>There are 3 in ap-southeast-2.</p>}
+      />,
+    )
+    expect(screen.getByText("Failed to load topics")).toBeInTheDocument()
+    expect(screen.queryByText("There are 3 in ap-southeast-2.")).not.toBeInTheDocument()
+  })
+})
+
+describe("ResourceTable > row appearance and identity", () => {
+  it("puts rowClassName on the row itself, not on a cell", () => {
+    render(
+      <TopicsTable
+        data={topics}
+        rowClassName={(t) => (t.name === "billing" ? "bg-danger-muted" : undefined)}
+      />,
+    )
+    expect(screen.getByRole("row", { name: /billing/ })).toHaveClass("bg-danger-muted")
+    expect(screen.getByRole("row", { name: /alerts/ })).not.toHaveClass("bg-danger-muted")
+  })
+
+  // A feed's entries can be identical — two log lines, two RDS events sharing a
+  // timestamp and a message — so the index has to be reachable from `rowKey`.
+  it("keys rows by index when the rows themselves are indistinguishable", () => {
+    const duplicates: Topic[] = [
+      { arn: "", name: "alerts" },
+      { arn: "", name: "alerts" },
+    ]
+    render(
+      <ResourceTable
+        query={{ data: duplicates, isLoading: false }}
+        noun="topics"
+        columns={columns}
+        rowKey={(_t, index) => index}
+      />,
+    )
+    expect(screen.getAllByRole("row", { name: /alerts/ })).toHaveLength(2)
+  })
+
+  it("stops a click inside an interactive cell before it reaches onRowClick", async () => {
+    const onRowClick = vi.fn()
+    const { user } = render(
+      <TopicsTable
+        data={topics}
+        onRowClick={onRowClick}
+        columns={[
+          { header: "Name", cell: (t) => t.name },
+          { header: "URL", interactive: true, cell: () => <button type="button">Copy</button> },
+        ]}
+      />,
+    )
+
+    await user.click(screen.getAllByRole("button", { name: "Copy" })[0])
+    expect(onRowClick).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole("row", { name: /alerts/ }))
+    expect(onRowClick).toHaveBeenCalledWith(topics[0])
+  })
+})
+
+describe("ResourceTable > delete variables and enablement", () => {
+  it("hands the mutation whatever getVars builds, not just an id", async () => {
+    const mutate = vi.fn()
+    const { user } = render(
+      <TopicsTable data={topics} onDeleteMutate={mutate} getVars={(t) => `${t.name}:${t.arn}`} />,
+    )
+
+    await user.click(screen.getByRole("button", { name: "Delete alerts" }))
+    await user.click(screen.getByRole("button", { name: "Delete" }))
+    expect(mutate).toHaveBeenCalledWith("alerts:arn:aws:sns:us-east-1:1:a")
+  })
+
+  it("keeps the confirm button busy while an async getVars resolves", async () => {
+    const mutate = vi.fn()
+    let release: ((value: string) => void) | undefined
+    const { user } = render(
+      <TopicsTable
+        data={topics}
+        onDeleteMutate={mutate}
+        getVars={() => new Promise<string>((resolve) => (release = resolve))}
+      />,
+    )
+
+    await user.click(screen.getByRole("button", { name: "Delete alerts" }))
+    await user.click(screen.getByRole("button", { name: "Delete" }))
+
+    expect(screen.getByRole("button", { name: "Delete" })).toHaveAttribute("aria-busy", "true")
+    expect(mutate).not.toHaveBeenCalled()
+
+    release?.("etag-42")
+    await waitFor(() => expect(mutate).toHaveBeenCalledWith("etag-42"))
+  })
+
+  it("offers no delete action on a row canDelete refuses", () => {
+    render(
+      <TopicsTable
+        data={topics}
+        onDeleteMutate={() => {}}
+        canDelete={(t) => t.name !== "billing"}
+      />,
+    )
+    expect(screen.getByRole("button", { name: "Delete alerts" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Delete billing" })).not.toBeInTheDocument()
+  })
+})
+
 // ─── TanStack engine: sorting, visibility, pagination ─────────────────────
 
 interface Stream {
@@ -240,6 +385,26 @@ function StreamsTable(props: {
           sortValue: props.sortable === false ? undefined : (s) => s.retention,
           cell: (s) => `${s.retention}d`,
         },
+      ]}
+    />
+  )
+}
+
+/** Five columns — the width at which the columns menu appears on its own. */
+function WideTable(props: { variant?: "card" | "embedded"; columnToggle?: boolean }) {
+  return (
+    <ResourceTable
+      query={{ data: streams, isLoading: false }}
+      noun="streams"
+      rowKey={(s) => s.name}
+      variant={props.variant}
+      columnToggle={props.columnToggle}
+      columns={[
+        { header: "Name", cell: (s) => s.name },
+        { header: "Created", cell: (s) => s.createdAt.toISOString().slice(0, 10) },
+        { header: "Retention", cell: (s) => `${s.retention}d` },
+        { header: "Shards", cell: () => "1" },
+        { header: "Status", cell: () => "ACTIVE" },
       ]}
     />
   )
@@ -311,6 +476,27 @@ describe("ResourceTable > sorting", () => {
       "descending",
     )
   })
+
+  // The header button is a full-bleed flex child, which `text-align` does not
+  // reach — so the column's own alignment class has to reach the button.
+  it("aligns the sort button with the column", () => {
+    render(
+      <TopicsTable
+        data={topics}
+        columns={[
+          { header: "Name", sortValue: (t) => t.name, cell: (t) => t.name },
+          {
+            header: "Size",
+            headerClassName: "text-right",
+            sortValue: (t) => t.arn.length,
+            cell: (t) => t.arn.length,
+          },
+        ]}
+      />,
+    )
+    expect(screen.getByRole("button", { name: "Size" })).toHaveClass("justify-end")
+    expect(screen.getByRole("button", { name: "Name" })).toHaveClass("justify-start")
+  })
 })
 
 describe("ResourceTable > controlled sort", () => {
@@ -347,7 +533,7 @@ describe("ResourceTable > controlled sort", () => {
 
 describe("ResourceTable > column visibility", () => {
   it("offers every column but the first, which identifies the row", async () => {
-    const { user } = render(<StreamsTable />)
+    const { user } = render(<StreamsTable columnToggle />)
     await user.click(screen.getByRole("button", { name: /Columns/ }))
 
     expect(screen.getByRole("checkbox", { name: /Created/ })).toBeInTheDocument()
@@ -356,7 +542,7 @@ describe("ResourceTable > column visibility", () => {
   })
 
   it("hides the column's header and cells when it is toggled off", async () => {
-    const { user } = render(<StreamsTable />)
+    const { user } = render(<StreamsTable columnToggle />)
     await user.click(screen.getByRole("button", { name: /Columns/ }))
     await user.click(screen.getByRole("checkbox", { name: /Created/ }))
 
@@ -366,21 +552,40 @@ describe("ResourceTable > column visibility", () => {
   })
 
   it("starts a defaultHidden column hidden and lets the menu bring it back", async () => {
-    const { user } = render(<StreamsTable hideRetention />)
+    const { user } = render(<StreamsTable hideRetention columnToggle />)
     expect(screen.queryByRole("columnheader", { name: "Retention" })).not.toBeInTheDocument()
 
     await user.click(screen.getByRole("button", { name: /Columns/ }))
     await user.click(screen.getByRole("checkbox", { name: /Retention/ }))
     expect(screen.getByRole("columnheader", { name: "Retention" })).toBeInTheDocument()
   })
+})
 
-  it("does not show the menu when only one column can be hidden", () => {
-    render(<TopicsTable data={topics} />)
+// Six conversion waves turned the menu off by hand at 70 call sites, so the
+// bar for showing one unasked is a wide card table — not "more than one column
+// could be hidden", which was nearly every list in the app (#1327).
+describe("ResourceTable > columns menu default", () => {
+  it("offers no menu on a card table narrower than five columns", () => {
+    render(<StreamsTable />)
     expect(screen.queryByRole("button", { name: /Columns/ })).not.toBeInTheDocument()
   })
 
-  it("can be forced off", () => {
-    render(<StreamsTable columnToggle={false} />)
+  it("offers one unasked on a five-column card table", () => {
+    render(<WideTable />)
+    expect(screen.getByRole("button", { name: /Columns/ })).toBeInTheDocument()
+  })
+
+  it("offers none on an embedded sub-table, however wide", () => {
+    render(<WideTable variant="embedded" />)
+    expect(screen.queryByRole("button", { name: /Columns/ })).not.toBeInTheDocument()
+  })
+
+  it("can be forced on below the threshold and off above it", () => {
+    const { unmount } = render(<StreamsTable columnToggle />)
+    expect(screen.getByRole("button", { name: /Columns/ })).toBeInTheDocument()
+    unmount()
+
+    render(<WideTable columnToggle={false} />)
     expect(screen.queryByRole("button", { name: /Columns/ })).not.toBeInTheDocument()
   })
 })

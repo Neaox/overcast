@@ -117,8 +117,6 @@ export function RepositoryDetail({ repositoryName }: { repositoryName: string })
           emptyIcon={Boxes}
           emptyTitle="No images yet"
           emptyDescription="Push a tag into this repository and refresh to reconcile digest metadata from the local registry."
-          // Three columns on a detail sub-table — nothing worth hiding.
-          columnToggle={false}
           rowKey={(image) => `${image.digest}:${image.tags.join(",")}`}
           columns={[
             {

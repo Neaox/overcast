@@ -300,8 +300,10 @@ bordered block below the table — the same pattern `usage-plans-page`'s plan-ke
 used. Functionally identical (toggle, membership list), position differs (bottom of the list rather
 than inline under the clicked row). Two conditional-delete cases (EventBridge's undeletable
 `default` bus, EC2's undeletable default VPC) kept a hand-rolled `rowActions` button instead of
-`ResourceTable`'s `onDelete`, which has no per-row-disable hook — extending the shared kernel for a
-two-instance edge case was judged worse than the small duplication.
+`ResourceTable`'s `onDelete`, which had no per-row-disable hook — extending the shared kernel for a
+two-instance edge case was judged worse than the small duplication. `canDelete` exists now
+(2026-09-06, see P3), so both are convertible; `cloudformation/stack-list` was the case that earned
+it.
 
 ### Archetype D — Create/edit dialog (14 bespoke + 1 shared, used 4×)
 
@@ -500,7 +502,7 @@ the grid back into the page fails CI rather than only lint-warning.
   `onRowClick?`, `noun`, `emptyIcon?/emptyTitle?/emptyDescription?/emptyAction?`, `errorTitle?`,
   `rowActions?`, `variant?: "card" | "embedded"`. One deliberate deviation from the plan's original
   sketch: `onDelete` is **caller-controlled** (`target`, `onRequest`, `onOpenChange`, `mutation`,
-  `getId`, `label`, `noun`, plus `title?`/`description?`/`confirmLabel?`/`actionLabel?` overrides)
+  `getVars`, `label`, `noun`, plus `title?`/`description?`/`confirmLabel?`/`actionLabel?` overrides)
   rather than owning `deleteTarget` state itself — `useResourceMutation`'s `onSuccess` is what
   clears the target today, and that callback lives on the page. `rowTo`/`select?`/`filter?` from
   the original sketch were **not** built: no converted page needed row-level `<Link>` typing
@@ -543,6 +545,22 @@ the grid back into the page fails CI rather than only lint-warning.
     windows `getRowModel().rows` with the `@tanstack/react-virtual` Archetype E's kernel already
     uses, using spacer rows so the real `<table>` keeps laying out the columns. That is what lets
     #1327's Wave D evaluate `log-search-results.tsx` without the two virtualizers competing.
+- **2026-09-06 — the engine follow-up the six conversion waves asked for** (#1327). Each item
+  was reported by a wave that had to work around it, and lands with the call sites it unblocks:
+  `rowClassName` (RDS instance-detail's Events feed is a `ResourceTable` again, failure rows still
+  tinted, and it picks up the shared skeleton/error states it never had); `rowKey: (item, index) =>
+  string | number` for a feed whose entries carry no id; `emptyExtra`, a slot under the empty state
+  that ends the `RegionElsewhereNotice` workarounds on six lists — `lambda/function-list` is back
+  to `variant="card"` and has a columns menu again rather than being embedded in a card of its own;
+  `onDelete` generic in its mutation variables (`getId` → `getVars`, which may be async), which
+  deletes the string-round-trip adapters in `waf/web-acl-list`, `apigateway/http-api-detail` (3),
+  `rest-api-detail`, `cognito-pool-detail`, `lambda/function-list` and `layer-detail`; `canDelete`
+  for a conditional delete, which puts `cloudformation/stack-list` back on the shared confirm flow;
+  `interactive` on a column, so a click in a cell that holds a control cannot navigate the row; and
+  the sort button now inherits the column's alignment (`[&>button]:justify-end` deleted from both
+  DynamoDB tables). The columns menu's default is now "a card table with five or more columns" —
+  the old "more than one hideable column" put one on nearly every list and had been turned off by
+  hand at **70** call sites, all of which this removes.
   - **Still not built:** `rowTo`, `select?`, `filter?`. Selection is now one feature import
     (`rowSelectionFeature`) away rather than a rewrite, but nothing needs it yet; filtering stays
     at the page level, where `q` already lives.

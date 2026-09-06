@@ -90,7 +90,6 @@ export function LayerList() {
       }
     >
       <ResourceTable
-        columnToggle={false}
         query={{ data: layers, isLoading, error }}
         noun="layers"
         emptyIcon={Layers}

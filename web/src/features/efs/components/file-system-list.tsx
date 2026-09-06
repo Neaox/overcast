@@ -148,7 +148,7 @@ export function FileSystemList({ sort, onSortChange }: FileSystemListProps = {})
           onRequest: setDeleteTarget,
           onOpenChange: (v) => !v && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (fs) => fs.FileSystemId ?? "",
+          getVars: (fs) => fs.FileSystemId ?? "",
           label: (fs) => fs.FileSystemId ?? "",
           noun: "file system",
           title: "Delete File System",

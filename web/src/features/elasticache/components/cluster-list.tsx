@@ -136,7 +136,7 @@ export function ClusterList({ sort, onSortChange }: ClusterListProps = {}) {
           onRequest: setDeleteTarget,
           onOpenChange: (v) => !v && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (c) => c.CacheClusterId ?? "",
+          getVars: (c) => c.CacheClusterId ?? "",
           label: (c) => c.CacheClusterId ?? "",
           noun: "cache cluster",
           title: "Delete Cache Cluster",

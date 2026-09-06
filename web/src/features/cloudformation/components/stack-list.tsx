@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Eye, Layers, Trash2, Loader2 } from "lucide-react"
+import { Eye, Layers, Loader2 } from "lucide-react"
 import {
   cfnStacksQueryOptions,
   cfnKeys,
@@ -26,8 +26,8 @@ import {
   RowAction,
 } from "@/components/ui/resource-list-page"
 import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { RegionElsewhereNotice } from "@/features/preflight/components/region-elsewhere-notice"
+import type { CfnStackSummary } from "@/types/cloudformation"
 import { CreateStackDialog } from "./create-stack-dialog"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 
@@ -41,7 +41,7 @@ export function StackList({ sort, onSortChange }: StackListProps = {}) {
   const navigate = useNavigate()
 
   const [showCreate, setShowCreate] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<string>()
+  const [deleteTarget, setDeleteTarget] = useState<CfnStackSummary>()
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   const {
@@ -98,24 +98,9 @@ export function StackList({ sort, onSortChange }: StackListProps = {}) {
         emptyIcon={Layers}
         emptyTitle="No stacks yet"
         emptyDescription="Deploy infrastructure by creating a CloudFormation stack from a template."
-        emptyAction={
-          <div className="flex flex-col items-center gap-4">
-            <CreateAction onClick={() => setShowCreate(true)}>Create stack</CreateAction>
-            {/* `ResourceTable` builds the empty state itself and has no slot for
-                content beside the CTA, so the cross-region notice rides in the
-                action slot. `[&>div]:mt-0` drops the negative top margin it uses
-                to hug an `EmptyState` it follows as a sibling, and `empty:hidden`
-                stops the wrapper reserving space on the ordinary "nothing
-                anywhere" empty state, where the notice renders nothing at all. */}
-            <div className="empty:hidden [&>div]:mt-0 [&>div]:mb-0">
-              <RegionElsewhereNotice kind="cloudformation-stacks" noun="stacks" />
-            </div>
-          </div>
-        }
+        emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create stack</CreateAction>}
+        emptyExtra={<RegionElsewhereNotice kind="cloudformation-stacks" noun="stacks" />}
         errorTitle="Failed to load stacks"
-        // Four columns, none of them secondary — a columns menu here would
-        // offer to hide things every row is read by.
-        columnToggle={false}
         sort={sort}
         onSortChange={onSortChange}
         rowKey={(stack) => stack.StackName ?? ""}
@@ -182,48 +167,36 @@ export function StackList({ sort, onSortChange }: StackListProps = {}) {
             cell: (stack) => (stack.LastUpdatedTime ? stack.LastUpdatedTime.toLocaleString() : "—"),
           },
         ]}
-        // Not `onDelete`: only some statuses can be deleted, and
-        // `ResourceTable`'s delete config renders its action on every row.
-        rowActions={(stack) => {
-          const stackName = stack.StackName ?? ""
-          return (
+        rowActions={(stack) => (
+          <RowAction
+            label={`View ${stack.StackName ?? ""}`}
+            onClick={() => openStack(stack.StackName ?? "", stack.StackId)}
+          >
+            <Eye className="h-3.5 w-3.5" />
+          </RowAction>
+        )}
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getVars: (stack) => stack.StackName ?? "",
+          // A stack mid-update or mid-delete has no delete to offer; the action
+          // is absent on those rows rather than present and refused.
+          canDelete: (stack) => canDeleteStack(stack.StackStatus ?? ""),
+          label: (stack) => stack.StackName ?? "",
+          noun: "stack",
+          title: "Delete stack",
+          confirmLabel: "Delete stack",
+          description: (stack) => (
             <>
-              <RowAction
-                label={`View ${stackName}`}
-                onClick={() => openStack(stackName, stack.StackId)}
-              >
-                <Eye className="h-3.5 w-3.5" />
-              </RowAction>
-              {canDeleteStack(stack.StackStatus ?? "") && (
-                <RowAction
-                  label={`Delete ${stackName}`}
-                  tone="danger"
-                  onClick={() => setDeleteTarget(stackName)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </RowAction>
-              )}
+              Permanently delete <strong>{stack.StackName}</strong> and all its resources?
             </>
-          )
+          ),
         }}
       />
 
       <CreateStackDialog open={showCreate} onOpenChange={setShowCreate} />
-
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(v) => !v && setDeleteTarget(undefined)}
-        title="Delete stack"
-        description={
-          <>
-            Permanently delete <strong>{deleteTarget}</strong> and all its resources?
-          </>
-        }
-        confirmLabel="Delete stack"
-        variant="danger"
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
-      />
     </ResourceListPage>
   )
 }

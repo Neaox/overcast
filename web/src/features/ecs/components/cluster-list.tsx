@@ -141,7 +141,7 @@ export function ClusterList() {
           onRequest: setDeleteTarget,
           onOpenChange: (open) => !open && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (c) => c.clusterName,
+          getVars: (c) => c.clusterName,
           label: (c) => c.clusterName,
           noun: "cluster",
           title: "Delete Cluster",

@@ -1211,11 +1211,8 @@ function UsersTab({
           target: deleteTarget,
           onRequest: setDeleteTarget,
           onOpenChange: (open) => !open && setDeleteTarget(undefined),
-          mutation: {
-            mutate: (username: string) => deleteMut.mutate({ poolId, username }),
-            isPending: deleteMut.isPending,
-          },
-          getId: (user) => user.username,
+          mutation: deleteMut,
+          getVars: (user) => ({ poolId, username: user.username }),
           label: (user) => user.username,
           noun: "user",
           title: "Delete User",
@@ -1421,7 +1418,6 @@ function GroupRow({
         <div className="border-t border-border px-4 pb-3">
           <ResourceTable
             variant="embedded"
-            columnToggle={false}
             className="pt-3"
             query={{ data: members, isLoading: membersLoading, error: membersError }}
             noun="members"

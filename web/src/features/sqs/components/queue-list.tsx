@@ -145,6 +145,7 @@ export function QueueList() {
         emptyTitle="No queues yet"
         errorTitle="Failed to load queues"
         emptyAction={<CreateAction onClick={openCreate}>Create queue</CreateAction>}
+        emptyExtra={<RegionElsewhereNotice kind="sqs-queues" noun="queues" />}
         emptyIcon={MessagesSquare}
         emptyDescription="Create a queue to start sending and receiving messages."
         // ListQueues returns the emulator's storage order; A→Z is what a name
@@ -240,7 +241,7 @@ export function QueueList() {
           onRequest: setDeleteTarget,
           onOpenChange: (v) => !v && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (q) => q.name,
+          getVars: (q) => q.name,
           label: (q) => q.name,
           noun: "queue",
           title: "Delete Queue",
@@ -251,22 +252,6 @@ export function QueueList() {
           ),
         }}
       />
-
-      {/*
-        The region notice belongs to the empty state — it explains an empty
-        list and nothing else — but `ResourceTable` composes its own
-        `EmptyState` and exposes only `emptyAction`, which renders *inside*
-        that block where this banner's own `-mt-8` would overlap the create
-        button. So it is rendered under the card on the same condition, with
-        `mt-8` cancelling the pull-up the banner applies for its in-card
-        placement. Filed against #1327: `ResourceTable` has no slot for
-        "extra content below the empty state".
-      */}
-      {!isLoading && !error && queues.length === 0 && (
-        <div className="mt-8">
-          <RegionElsewhereNotice kind="sqs-queues" noun="queues" />
-        </div>
-      )}
 
       {/* ── Create queue dialog ── */}
       <CreateQueueDialog

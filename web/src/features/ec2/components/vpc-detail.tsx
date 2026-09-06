@@ -186,7 +186,6 @@ function SubnetsPanel({ vpcId }: { vpcId: string }) {
   return (
     <ResourceTable
       variant="embedded"
-      columnToggle={false}
       query={{ data: subnets, isLoading }}
       noun="subnets"
       emptyTitle="No subnets"
@@ -233,7 +232,6 @@ function RouteTablesPanel({ vpcId }: { vpcId: string }) {
           </div>
           <ResourceTable
             variant="embedded"
-            columnToggle={false}
             query={{ data: rt.routes, isLoading: false }}
             noun="routes"
             emptyTitle="No routes"
@@ -372,7 +370,6 @@ function InternetGatewaysPanel({ vpcId }: { vpcId: string }) {
 
       <ResourceTable
         variant="embedded"
-        columnToggle={false}
         query={{ data: igws, isLoading }}
         noun="internet gateways"
         emptyTitle="No internet gateways"
@@ -513,7 +510,6 @@ function PeeringPanel({ vpcId }: { vpcId: string }) {
 
       <ResourceTable
         variant="embedded"
-        columnToggle={false}
         query={{ data: peerings, isLoading }}
         noun="peering connections"
         emptyTitle="No peering connections"
@@ -614,7 +610,6 @@ function EndpointsPanel({ vpcId }: { vpcId: string }) {
   return (
     <ResourceTable
       variant="embedded"
-      columnToggle={false}
       query={{ data: endpoints, isLoading }}
       noun="endpoints"
       emptyTitle="No endpoints"
@@ -653,10 +648,6 @@ function SecurityGroupsPanel({ vpcId }: { vpcId: string }) {
   return (
     <ResourceTable
       variant="embedded"
-      // Five columns, but the two rule counts and the description are all worth
-      // reading side by side on a security-group audit — nothing here is
-      // secondary enough to hide by default.
-      columnToggle={false}
       query={{ data: groups, isLoading }}
       noun="security groups"
       emptyTitle="No security groups"
@@ -798,7 +789,6 @@ function TagsPanel({ tags }: { tags?: Array<{ key: string; value: string }> }) {
   return (
     <ResourceTable
       variant="embedded"
-      columnToggle={false}
       query={{ data: tags ?? [], isLoading: false }}
       noun="tags"
       emptyTitle="No tags"

@@ -189,7 +189,7 @@ export function InstanceList({ sort, onSortChange }: InstanceListProps = {}) {
           onRequest: setDeleteTarget,
           onOpenChange: (v) => !v && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (db) => db.DBInstanceIdentifier ?? "",
+          getVars: (db) => db.DBInstanceIdentifier ?? "",
           label: (db) => db.DBInstanceIdentifier ?? "",
           noun: "DB instance",
           title: "Delete DB Instance",

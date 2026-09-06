@@ -193,7 +193,6 @@ export function PipeDetail({ pipeName }: Props) {
               emptyIcon={GitBranch}
               emptyTitle="No executions yet"
               emptyDescription="Executions are kept in memory only, so this is empty after a restart."
-              columnToggle={false}
               // The feed arrives newest-first; the default sort says so
               // explicitly rather than relying on the server's order.
               defaultSort={{ id: "time", desc: true }}

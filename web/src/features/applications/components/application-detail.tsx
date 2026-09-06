@@ -59,7 +59,6 @@ export function ApplicationDetail({ applicationId }: Props) {
       <h2 className="font-mono text-lg font-medium">Associated resources ({resources.length})</h2>
       <ResourceTable
         variant="embedded"
-        columnToggle={false}
         query={{ data: resources, isLoading: false }}
         noun="associated resources"
         emptyTitle="No associated resources"

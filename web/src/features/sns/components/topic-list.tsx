@@ -74,18 +74,8 @@ export function TopicList() {
         emptyIcon={Bell}
         emptyTitle="No topics yet"
         emptyDescription="Create a topic to get started."
-        emptyAction={
-          <div className="flex flex-col items-center gap-4">
-            <CreateAction onClick={() => setShowCreate(true)}>Create topic</CreateAction>
-            {/* Same arrangement as the CloudFormation stack list: `ResourceTable`
-                owns its empty state, so the cross-region notice rides in the
-                action slot, with its sibling margins dropped and the wrapper
-                collapsed when the notice has nothing to say. */}
-            <div className="empty:hidden [&>div]:mt-0 [&>div]:mb-0">
-              <RegionElsewhereNotice kind="sns-topics" noun="topics" />
-            </div>
-          </div>
-        }
+        emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create topic</CreateAction>}
+        emptyExtra={<RegionElsewhereNotice kind="sns-topics" noun="topics" />}
         errorTitle="Failed to load topics"
         // ListTopics returns the emulator's own storage order, which is not
         // stable across refetches; A→Z is the order a name column implies.
@@ -120,7 +110,7 @@ export function TopicList() {
           onRequest: setDeleteTarget,
           onOpenChange: (open) => !open && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (topic) => topicNameOf(topic),
+          getVars: (topic) => topicNameOf(topic),
           label: (topic) => topicNameOf(topic),
           noun: "topic",
           title: "Delete topic?",

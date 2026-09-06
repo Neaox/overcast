@@ -40,7 +40,6 @@ export function ApplicationList() {
       }
     >
       <ResourceTable
-        columnToggle={false}
         query={{ data: apps, isLoading, error }}
         noun="applications"
         emptyIcon={Boxes}

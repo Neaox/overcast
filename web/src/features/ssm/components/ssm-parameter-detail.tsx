@@ -187,8 +187,6 @@ export function SsmParameterDetail({ name }: Props) {
             // Newest version first is what a history is read for, and the
             // API's order does not guarantee it.
             defaultSort={{ id: "version", desc: true }}
-            // Four columns on a sub-table, all of them load-bearing.
-            columnToggle={false}
             columns={[
               {
                 id: "version",

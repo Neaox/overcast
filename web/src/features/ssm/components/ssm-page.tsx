@@ -168,7 +168,7 @@ export function SsmPage({ filter, onFilterChange, sort, onSortChange }: SsmPageP
           onRequest: setDeleteTarget,
           onOpenChange: (open) => !open && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (param) => param.Name ?? "",
+          getVars: (param) => param.Name ?? "",
           label: (param) => param.Name ?? "",
           noun: "parameter",
           title: "Delete Parameter",

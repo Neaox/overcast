@@ -318,7 +318,6 @@ function RulesTable({
   return (
     <ResourceTable
       variant="embedded"
-      columnToggle={false}
       query={{ data: rules, isLoading: false }}
       noun="rules"
       // The caller renders its own one-line "No inbound rules." above this, so
@@ -399,7 +398,6 @@ function TagsPanel({ tags }: { tags?: Array<{ key: string; value: string }> }) {
   return (
     <ResourceTable
       variant="embedded"
-      columnToggle={false}
       query={{ data: tags, isLoading: false }}
       noun="tags"
       emptyTitle="No tags configured"

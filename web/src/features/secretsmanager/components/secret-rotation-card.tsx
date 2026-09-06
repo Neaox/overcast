@@ -104,7 +104,6 @@ export function SecretRotationCard({ status }: Props) {
           emptyTitle="No versions"
           rowKey={(v) => v.versionId}
           defaultSort={{ id: "created", desc: true }}
-          columnToggle={false}
           columns={[
             {
               id: "version",

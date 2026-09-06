@@ -113,7 +113,7 @@ export function ApiKeysPage() {
           onRequest: setDeleteTarget,
           onOpenChange: (open) => !open && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (key) => key.id,
+          getVars: (key) => key.id,
           label: (key) => key.name,
           noun: "API key",
           title: "Delete API Key",

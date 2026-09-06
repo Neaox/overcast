@@ -137,7 +137,7 @@ export function SecretsManagerPage() {
           onRequest: setDeleteTarget,
           onOpenChange: (open) => !open && setDeleteTarget(undefined),
           mutation: deleteMut,
-          getId: (sec) => sec.Name ?? "",
+          getVars: (sec) => sec.Name ?? "",
           label: (sec) => sec.Name ?? "",
           noun: "secret",
           title: "Delete secret",
