@@ -103,8 +103,8 @@ can be applied mechanically rather than reconstructed from memory.
   detects OS and CPU, verifies the download against SHA256SUMS and installs to a per-user directory without sudo; flags and variables in docs/install.md.
   each release carries a copy of both scripts pinned to that release, and CI installs from the published assets on Linux, macOS and Windows.
 
-- [cloudformation] a resource property no handler acts on is reported on the resource instead of dropped in silence.
-  it becomes the resource's `ResourceStatusReason`, so it appears in `cdk deploy` output beside the resource it was dropped from.
+- [cloudformation/eks/msk] an EKS cluster, nodegroup or MSK cluster property the handler does not act on is reported instead of dropped in silence.
+  it becomes the resource's `ResourceStatusReason` (`Overcast: AWS::MSK::Cluster properties not applied: …`), so it appears in `cdk deploy` output beside the resource it was dropped from.
 
 - [acm] `ListCertificateDomainValidations` returns one synthesized SUCCESS summary per domain on a certificate.
   covers the base `DomainName` plus each `SubjectAlternativeNames` entry, `MaxItems`/`NextToken` paginated.
@@ -152,7 +152,7 @@ can be applied mechanically rather than reconstructed from memory.
   a Columns menu now needs five columns or more and never appears on a sub-table; the old rule put one on nearly every list, and 70 tables had turned it off by hand.
 
 - [web] a sorted list is a shareable link on every index page, and Back out of a request trace returns to where you were in the list.
-  the sorted view lives in the URL as `?sort=name` / `?sort=-name`, so it survives a reload and Back restores it; Lambda, ECS, Auto Scaling, Applications, SQS, SNS, Kinesis, MSK and Pipes join the rest.
+  the sorted view lives in the URL as `?sort=<column>` / `?sort=-<column>`, surviving a reload and Back; Lambda, ECS, Auto Scaling, Applications, SQS, SNS, Kinesis, MSK and Pipes join the rest.
   scroll offsets are cached per history entry, so a fresh navigation to the same page still starts at the top.
   the cross-region notice — "No queues in us-east-1. There are 3 in ap-southeast-2." — now sits under the empty state, inside the list card, on every page that shows one.
 
