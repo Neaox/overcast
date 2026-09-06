@@ -126,6 +126,13 @@ fn fixture_dir() -> PathBuf {
         .join("errors")
 }
 
+/// Set to "1" only by test.yml's compat-suite-unit-tests job, which runs
+/// `cargo test` from a full checkout where the corpus is always reachable.
+/// Its absence there would mean the shared conformance set silently stopped
+/// being checked anywhere — see compat/AGENTS.md § Where the shared error
+/// corpus runs.
+const FIXTURES_REQUIRED_ENV_VAR: &str = "OVERCAST_COMPAT_FIXTURES_REQUIRED";
+
 #[test]
 fn shared_error_fixtures() {
     let dir = fixture_dir();
@@ -133,9 +140,15 @@ fn shared_error_fixtures() {
         // The Docker build stage copies only this suite's sources, so the shared
         // fixtures are not there. Say so rather than reporting a pass; the
         // checkout-based CI job is where this really runs.
+        assert!(
+            std::env::var(FIXTURES_REQUIRED_ENV_VAR).as_deref() != Ok("1"),
+            "{FIXTURES_REQUIRED_ENV_VAR}=1 but shared error fixtures not found at {} — this suite's \
+             fixture test must run from a full checkout (test.yml's compat-suite-unit-tests job)",
+            dir.display()
+        );
         eprintln!(
-            "[rust-sdk] shared error fixtures not found at {} — this build cannot run them; \
-             they run in test.yml's compat-suite-unit-tests job, from a full checkout",
+            "[rust-sdk] shared error fixtures not found at {} — skipping (set {FIXTURES_REQUIRED_ENV_VAR}=1 \
+             to make this fatal); they run for real in test.yml's compat-suite-unit-tests job, from a full checkout",
             dir.display()
         );
         return;

@@ -774,35 +774,27 @@ jobs:
   # Cheap by construction: no emulator, no Overcast binary, no Docker. Each
   # test either builds a registry in memory or reads registry.json off disk.
   #
-  # One suite is deliberately absent:
-  #
-  #   dotnet-sdk  already covered, and for the reason java-sdk and rust-sdk
-  #               are not. Its Dockerfile runs `dotnet test` between the
-  #               restore and the publish, and its build context is compat/
-  #               rather than compat/suites/, so the shared error-matching
-  #               corpus is reachable there and its fixture case really runs.
-  #               See that suite's run.sh for why the context is wider.
-  #
-  # java-sdk and rust-sdk are here even though each suite's Dockerfile already
-  # runs its tests — `mvn package` runs surefire, and `cargo test` runs beside
-  # the `cargo build` — because those are not the same run. Both images are
-  # built from the compat/suites context, which does not contain
-  # `compat/model/testdata/errors` — the shared error-matching conformance
-  # corpus every backend must agree about — so those fixtures cannot be
-  # answered there, and each suite's fixture case reports what it could not run
-  # and returns. Nothing else in CI ran them, so the tests written to catch a
-  # matcher rule only one backend implements were asserting nothing on every
-  # push. This job has the whole checkout, so it is the only place that corpus
-  # is ever answered; each suite's registration tests come along with it.
+  # This is also the one place every suite answers the shared error-fixture
+  # corpus (compat/model/testdata/errors) — see compat/AGENTS.md § Where the
+  # shared error corpus runs for the rule and why every suite's fixture step
+  # is here rather than in an image build. OVERCAST_COMPAT_FIXTURES_REQUIRED=1
+  # is set for the whole job below so a suite that cannot see the corpus here
+  # fails loudly, naming the reason, instead of reporting green.
   compat-suite-unit-tests:
     name: Compat suite unit tests
     needs: changes
     runs-on: ubuntu-latest
-    # Raised from 10 when the java-sdk and rust-sdk suites joined: Maven
-    # resolves the AWS SDK BOM and cargo compiles a dozen aws-sdk crates, which
-    # between them are this job's whole conversation with a package registry —
-    # minutes on a cold cache, seconds on a warm one.
-    timeout-minutes: 25
+    # Raised from 10 when the java-sdk and rust-sdk suites joined, and again
+    # for dotnet-sdk: each brings its own conversation with a package registry
+    # — Maven resolves the AWS SDK BOM, cargo compiles a dozen aws-sdk crates,
+    # NuGet resolves AWSSDK.* — minutes on a cold cache, seconds on a warm one.
+    timeout-minutes: 30
+    env:
+      # Set only in this job. Every suite's fixture test checks for it and, if
+      # set, fails loudly naming the reason instead of skipping when the
+      # corpus is not where it expects — see compat/AGENTS.md § Where the
+      # shared error corpus runs.
+      OVERCAST_COMPAT_FIXTURES_REQUIRED: "1"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -850,6 +842,23 @@ jobs:
           java-version: "17"
           cache: maven
 
+      # setup-dotnet's own `cache` input needs a packages.lock.json, which this
+      # project does not generate (no RestorePackagesWithLockFile), so this
+      # keys a plain NuGet cache on the csproj files directly — the same shape
+      # a lockfile-less restore actually varies with.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: needs.changes.outputs.code == 'true'
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('compat/suites/dotnet-sdk/**/*.csproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        if: needs.changes.outputs.code == 'true'
+        with:
+          dotnet-version: "8.0.x"
+
       # `npm ci` rather than a bare `node --test`: the last case in
       # registry.test.ts imports the suite's real group files, and those import
       # the AWS SDK clients they drive. The `test:unit` script is what
@@ -893,8 +902,7 @@ jobs:
         run: go test -count=1 ./...
 
       # From the suite directory, not from the repository root: ErrorFixturesTest
-      # walks up from the working directory to find compat/model/testdata/errors,
-      # and `mvn -B test` here is the only place in CI that corpus is reachable
+      # walks up from the working directory to find compat/model/testdata/errors
       # (see the note above this job). It also runs the registry loader tests,
       # the scenario runtime tests and JavaSdkWireFactsTest — no emulator, no
       # Docker, no live AWS.
@@ -923,6 +931,17 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         working-directory: compat/suites/rust-sdk
         run: cargo test
+
+      # This suite's own `dotnet test` already runs inside its Docker image
+      # build, but only to prove the registrations compile and resolve — the
+      # build context there is compat/suites/, which does not reach the shared
+      # corpus (see the Dockerfile and compat/AGENTS.md § Where the shared
+      # error corpus runs). Here, from the full checkout, ScenarioErrorFixtureTests
+      # finds the corpus and really answers it.
+      - name: dotnet-sdk suite
+        if: needs.changes.outputs.code == 'true'
+        working-directory: compat/suites/dotnet-sdk
+        run: dotnet test Tests/OvercastCompat.Tests.csproj -c Release
 
       # compat/ui (the compat dashboard) is a separate Vite/React app from web/
       # (see compat/AGENTS.md § Separation boundary) and had no CI coverage at
