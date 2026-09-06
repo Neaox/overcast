@@ -655,7 +655,7 @@ The pruner is `cmd/awsmodelgen -shapes-out -shapes-services`; the snapshot is
 `models/aws/shapes/<service>.json`, digested as `shapes-sha256` in
 `models/aws/VERSION` and verified offline — and held to its size budget — by
 `internal/awsapi/shapes_provenance_test.go`. Committed for the I4 pilot trio plus
-I2's smoke-test service, against revision `66e973ca`:
+I2's smoke-test service, against revision `06544fdc`:
 
 | Service | Protocol | Ops | Shapes | Pruned | Upstream | Bytes/op |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
@@ -702,6 +702,25 @@ CI enforcement is `maxShapeSnapshotBytes` in
 current service set without a reviewer touching it. Raising it is a reviewer's
 decision about how much fleet budget a wave spends, never an automatic
 consequence of adding a line to `models/aws/shapes-services.txt`.
+
+#### 2026-09-07 — wave 2 raise
+
+`secrets-manager`, `sns`, `kms` and `iam` were added to
+`models/aws/shapes-services.txt` for compat-coverage-modelgen G4 wave 2
+(#1883), selected by implemented-operations-per-byte rather than by operation
+count. The committed snapshot went 307,535 → 650,833 bytes across 9 services,
+2.6% of the 24 MiB fleet ceiling, and `maxShapeSnapshotBytes` was raised to
+800 KiB — ~1.26× the new total, the same headroom factor used above for
+336 KiB.
+
+The measurement behind the selection (#1883) surfaced two findings for this
+plan, neither a blocker for wave 2: **s3** is the only service measured so far
+over the 1,608 B/op gate (2,200 B/op), so it needs structural pruning or a
+compact encoding before any wave can include it; and the ten smallest Tier-0
+JSON-family services (4–19 ops) **all** exceed the 1,608 B/op gate, several by
+30–90%, because fixed per-service shape overhead dominates at tiny op counts.
+Smallest-op-count is the wrong selector for an inert-tier wave —
+implemented-ops-per-byte is the one that worked.
 
 ## 5. The CloudFormation / CDK path
 

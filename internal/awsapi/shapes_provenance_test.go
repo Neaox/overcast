@@ -23,10 +23,13 @@ import (
 
 // maxShapeSnapshotBytes caps the total size of the committed snapshot.
 //
-// The measurement this is set from: 4 services / 167 operations / 268,548
-// bytes, so ~1,608 bytes per operation (inert-tier-rollout.md §4.6). The cap is
-// that total plus roughly 25% headroom, which absorbs an upstream model refresh
-// on the current service set without a reviewer touching this line.
+// Wave 2 (#1883) added secrets-manager, sns, kms and iam to the pilot four,
+// bringing the committed snapshot to 9 services / 650,833 bytes — 2.6% of the
+// 24 MiB fleet ceiling (inert-tier-rollout.md §4.6). The cap is raised to
+// 800 KiB, ~1.26x that total, the same headroom factor §4.6 used for the
+// original 336 KiB. s3 was also measured for this wave and excluded: at
+// 2,200 bytes/op it is the only service over the 1,608 B/op gate, so it needs
+// structural pruning or a compact encoding before it can join a wave.
 //
 // **Raise this constant deliberately, as a reviewer, never automatically.** It
 // is the enforcement half of §4.6's size gate: growing it is how the fleet
@@ -34,7 +37,7 @@ import (
 // failure here means the snapshot grew — decide whether the growth is scope
 // (a service was added to models/aws/shapes-services.txt, which is a review
 // decision) or encoding drift (which is a bug), and say which in the PR.
-const maxShapeSnapshotBytes = 336 * 1024
+const maxShapeSnapshotBytes = 800 * 1024
 
 // shapeSnapshotDir is the committed snapshot, relative to this package.
 var shapeSnapshotDir = filepath.Join("..", "..", "models", "aws", "shapes")
