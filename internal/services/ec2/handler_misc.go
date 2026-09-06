@@ -374,6 +374,9 @@ func (h *Handler) describeNetworkInterfaces(ctx context.Context, q describeQuery
 	if aerr != nil {
 		return nil, aerr
 	}
+	if aerr := resolveIDs(networkInterfaceIDScope, requested, all, func(eni *NetworkInterface) string { return eni.NetworkInterfaceID }); aerr != nil {
+		return nil, aerr
+	}
 
 	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {

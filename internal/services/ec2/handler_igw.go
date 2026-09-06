@@ -111,6 +111,9 @@ func (h *Handler) describeInternetGateways(ctx context.Context, q describeQuery)
 	if aerr != nil {
 		return nil, aerr
 	}
+	if aerr := resolveIDs(internetGatewayIDScope, requested, all, func(igw *InternetGateway) string { return igw.InternetGatewayID }); aerr != nil {
+		return nil, aerr
+	}
 
 	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {

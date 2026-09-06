@@ -345,6 +345,9 @@ func (h *Handler) describeSecurityGroups(ctx context.Context, q describeQuery) (
 	if aerr != nil {
 		return nil, aerr
 	}
+	if aerr := resolveIDs(securityGroupIDScope, requested, all, func(sg *SecurityGroup) string { return sg.GroupID }); aerr != nil {
+		return nil, aerr
+	}
 
 	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {
@@ -429,6 +432,9 @@ func (h *Handler) describeSubnets(ctx context.Context, q describeQuery) (*xmlDes
 
 	all, aerr := h.store.listSubnets(ctx)
 	if aerr != nil {
+		return nil, aerr
+	}
+	if aerr := resolveIDs(subnetIDScope, requested, all, func(sub *Subnet) string { return sub.SubnetID }); aerr != nil {
 		return nil, aerr
 	}
 

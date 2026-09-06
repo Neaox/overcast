@@ -69,12 +69,14 @@ func parityCases() map[string][]parityCase {
 		"DescribeInstances": {
 			{name: "all", params: url.Values{}},
 			{name: "by-state", params: filterParams("instance-state-name", "running")},
-			{name: "by-id", params: indexedParams("InstanceId", "i-parity-running")},
-			{name: "by-vpc", params: filterParams("vpc-id", "vpc-parity-a")},
+			{name: "by-id", params: indexedParams("InstanceId", instanceParityRunning)},
+			{name: "by-vpc", params: filterParams("vpc-id", vpcParityA)},
 			{name: "by-tag", params: filterParams("tag:Role", "web")},
 			{name: "tag-key", params: filterParams("tag-key", "Role")},
 			{name: "no-match", params: filterParams("instance-state-name", "terminated")},
 			{name: "unknown-filter", params: unknown},
+			{name: "unknown-id", params: indexedParams("InstanceId", "i-00000000000000000")},
+			{name: "malformed-id", params: indexedParams("InstanceId", "not-an-id")},
 		},
 		"DescribeInstanceTypes": {
 			{name: "none-requested", params: url.Values{}},
@@ -84,25 +86,31 @@ func parityCases() map[string][]parityCase {
 		},
 		"DescribeVpcs": {
 			{name: "all", params: url.Values{}},
-			{name: "by-id", params: indexedParams("VpcId", "vpc-parity-a")},
+			{name: "by-id", params: indexedParams("VpcId", vpcParityA)},
 			{name: "by-cidr", params: filterParams("cidr", "10.0.0.0/16")},
 			{name: "is-default", params: filterParams("isDefault", "true")},
 			{name: "by-tag", params: filterParams("tag:Name", "parity-*")},
 			{name: "unknown-filter", params: unknown},
+			{name: "unknown-id", params: indexedParams("VpcId", "vpc-00000000")},
+			{name: "malformed-id", params: indexedParams("VpcId", "not-an-id")},
 		},
 		"DescribeSubnets": {
 			{name: "all", params: url.Values{}},
-			{name: "by-vpc", params: filterParams("vpc-id", "vpc-parity-a")},
-			{name: "by-id", params: indexedParams("SubnetId", "subnet-parity-a")},
+			{name: "by-vpc", params: filterParams("vpc-id", vpcParityA)},
+			{name: "by-id", params: indexedParams("SubnetId", subnetParityA)},
 			{name: "by-az", params: filterParams("availability-zone", "us-east-1b")},
 			{name: "unknown-filter", params: unknown},
+			{name: "unknown-id", params: indexedParams("SubnetId", "subnet-00000000")},
+			{name: "malformed-id", params: indexedParams("SubnetId", "not-an-id")},
 		},
 		"DescribeSecurityGroups": {
 			{name: "all", params: url.Values{}},
-			{name: "by-vpc", params: filterParams("vpc-id", "vpc-parity-a")},
-			{name: "by-id", params: indexedParams("GroupId", "sg-parity-a")},
+			{name: "by-vpc", params: filterParams("vpc-id", vpcParityA)},
+			{name: "by-id", params: indexedParams("GroupId", sgParityA)},
 			{name: "by-name", params: filterParams("group-name", "parity-web")},
 			{name: "unknown-filter", params: unknown},
+			{name: "unknown-id", params: indexedParams("GroupId", "sg-00000000")},
+			{name: "malformed-id", params: indexedParams("GroupId", "not-an-id")},
 		},
 		"DescribeImages": {
 			{name: "all", params: url.Values{}},
@@ -119,15 +127,19 @@ func parityCases() map[string][]parityCase {
 		},
 		"DescribeRouteTables": {
 			{name: "all", params: url.Values{}},
-			{name: "by-vpc", params: filterParams("vpc-id", "vpc-parity-a")},
+			{name: "by-vpc", params: filterParams("vpc-id", vpcParityA)},
 			{name: "main", params: filterParams("association.main", "true")},
 			{name: "unknown-filter", params: unknown},
+			{name: "unknown-id", params: indexedParams("RouteTableId", "rtb-00000000")},
+			{name: "malformed-id", params: indexedParams("RouteTableId", "not-an-id")},
 		},
 		"DescribeInternetGateways": {
 			{name: "all", params: url.Values{}},
-			{name: "by-id", params: indexedParams("InternetGatewayId", "igw-parity")},
-			{name: "by-attachment", params: filterParams("attachment.vpc-id", "vpc-parity-a")},
+			{name: "by-id", params: indexedParams("InternetGatewayId", igwParity)},
+			{name: "by-attachment", params: filterParams("attachment.vpc-id", vpcParityA)},
 			{name: "unknown-filter", params: unknown},
+			{name: "unknown-id", params: indexedParams("InternetGatewayId", "igw-00000000")},
+			{name: "malformed-id", params: indexedParams("InternetGatewayId", "not-an-id")},
 		},
 		"DescribeVpcPeeringConnections": {
 			{name: "all", params: url.Values{}},
@@ -137,7 +149,7 @@ func parityCases() map[string][]parityCase {
 		},
 		"DescribeTags": {
 			{name: "all", params: url.Values{}},
-			{name: "by-resource", params: filterParams("resource-id", "vpc-parity-a")},
+			{name: "by-resource", params: filterParams("resource-id", vpcParityA)},
 			{name: "by-key", params: filterParams("key", "Name")},
 			{name: "unknown-filter", params: unknown},
 		},
@@ -150,14 +162,16 @@ func parityCases() map[string][]parityCase {
 		"DescribeNatGateways": {
 			{name: "all", params: url.Values{}},
 			{name: "by-id", params: indexedParams("NatGatewayId", "nat-parity")},
-			{name: "by-vpc", params: filterParams("vpc-id", "vpc-parity-a")},
+			{name: "by-vpc", params: filterParams("vpc-id", vpcParityA)},
 			{name: "unknown-filter", params: unknown},
 		},
 		"DescribeNetworkInterfaces": {
 			{name: "all", params: url.Values{}},
-			{name: "by-id", params: indexedParams("NetworkInterfaceId", "eni-parity")},
-			{name: "by-subnet", params: filterParams("subnet-id", "subnet-parity-a")},
+			{name: "by-id", params: indexedParams("NetworkInterfaceId", eniParity)},
+			{name: "by-subnet", params: filterParams("subnet-id", subnetParityA)},
 			{name: "unknown-filter", params: unknown},
+			{name: "unknown-id", params: indexedParams("NetworkInterfaceId", "eni-00000000")},
+			{name: "malformed-id", params: indexedParams("NetworkInterfaceId", "not-an-id")},
 		},
 		"DescribeVpnGateways": {
 			{name: "all", params: url.Values{}},
@@ -182,8 +196,8 @@ func parityCases() map[string][]parityCase {
 			{name: "all", params: url.Values{}},
 		},
 		"DescribeVpcAttribute": {
-			{name: "dns-support", params: attributeParams("vpc-parity-a", "enableDnsSupport")},
-			{name: "dns-hostnames", params: attributeParams("vpc-parity-a", "enableDnsHostnames")},
+			{name: "dns-support", params: attributeParams(vpcParityA, "enableDnsSupport")},
+			{name: "dns-hostnames", params: attributeParams(vpcParityA, "enableDnsHostnames")},
 			{name: "unknown-vpc", params: attributeParams("vpc-nope", "enableDnsSupport")},
 			{name: "missing-vpc-id", params: attributeParams("", "enableDnsSupport")},
 		},
@@ -207,6 +221,38 @@ func attributeParams(vpcID, attribute string) url.Values {
 	return p
 }
 
+// ── The fixture's identifiers ───────────────────────────────────────────────
+
+// A resource a case names in a Describe*'s explicit `<Resource>Id.N` list has
+// to carry an ID AWS would accept, because those lists are now held to AWS's
+// shape (describe_ids.go): eight or seventeen hex characters, the two
+// shortID/longID mint. A readable word in the ID would make every such row
+// answer InvalidVpcID.Malformed instead of selecting anything — identically on
+// both dispatch paths, so the comparison would still pass while checking
+// nothing.
+//
+// Only the resource types #1708 covers are spelled this way. The rest
+// (rtb-parity, vgw-parity, nat-parity, …) keep readable IDs, because their
+// describes do not resolve an ID list yet; when one does, its fixture moves
+// here.
+const (
+	vpcParityA = "vpc-000000a0"
+	vpcParityB = "vpc-000000b0"
+
+	subnetParityA = "subnet-000000a0"
+	subnetParityB = "subnet-000000b0"
+
+	sgParityA = "sg-000000a0"
+	sgParityB = "sg-000000b0"
+
+	instanceParityRunning = "i-000000a0"
+	instanceParityStopped = "i-000000b0"
+
+	igwParity = "igw-000000a0"
+
+	eniParity = "eni-000000a0"
+)
+
 // ── The fixture ─────────────────────────────────────────────────────────────
 
 // seedParityFixture fills a region with two of everything the routed describes
@@ -222,41 +268,41 @@ func seedParityFixture(t *testing.T, h *Handler) {
 	}
 
 	fail("putVPC a", h.store.putVPC(ctx, &VPC{
-		VpcID: "vpc-parity-a", CidrBlock: "10.0.0.0/16", State: "available",
+		VpcID: vpcParityA, CidrBlock: "10.0.0.0/16", State: "available",
 		EnableDnsSupport: true, EnableDnsHostnames: false,
 	}))
 	fail("putVPC b", h.store.putVPC(ctx, &VPC{
-		VpcID: "vpc-parity-b", CidrBlock: "10.1.0.0/16", State: "available",
+		VpcID: vpcParityB, CidrBlock: "10.1.0.0/16", State: "available",
 	}))
 
 	fail("putSubnet a", h.store.putSubnet(ctx, &Subnet{
-		SubnetID: "subnet-parity-a", VpcID: "vpc-parity-a", CidrBlock: "10.0.1.0/24",
+		SubnetID: subnetParityA, VpcID: vpcParityA, CidrBlock: "10.0.1.0/24",
 		AvailabilityZone: "us-east-1a", State: "available", MapPublicIpOnLaunch: true,
 	}))
 	fail("putSubnet b", h.store.putSubnet(ctx, &Subnet{
-		SubnetID: "subnet-parity-b", VpcID: "vpc-parity-b", CidrBlock: "10.1.1.0/24",
+		SubnetID: subnetParityB, VpcID: vpcParityB, CidrBlock: "10.1.1.0/24",
 		AvailabilityZone: "us-east-1b", State: "available",
 	}))
 
 	fail("putSG a", h.store.putSecurityGroup(ctx, &SecurityGroup{
-		GroupID: "sg-parity-a", GroupName: "parity-web", Description: "parity web", VpcID: "vpc-parity-a",
+		GroupID: sgParityA, GroupName: "parity-web", Description: "parity web", VpcID: vpcParityA,
 		IpPermissions:       []IpPermission{{IpProtocol: "tcp", FromPort: 443, ToPort: 443, IpRanges: []IpRange{{CidrIp: "0.0.0.0/0"}}}},
 		IpPermissionsEgress: []IpPermission{{IpProtocol: "-1", IpRanges: []IpRange{{CidrIp: "0.0.0.0/0"}}}},
 	}))
 	fail("putSG b", h.store.putSecurityGroup(ctx, &SecurityGroup{
-		GroupID: "sg-parity-b", GroupName: "parity-db", Description: "parity db", VpcID: "vpc-parity-b",
+		GroupID: sgParityB, GroupName: "parity-db", Description: "parity db", VpcID: vpcParityB,
 	}))
 
 	fail("putInstance running", h.store.putInstance(ctx, &Instance{
-		InstanceID: "i-parity-running", ImageID: "ami-12345678", InstanceType: "t3.micro",
+		InstanceID: instanceParityRunning, ImageID: "ami-12345678", InstanceType: "t3.micro",
 		State: InstanceState{Code: 16, Name: "running"}, LaunchTime: "2026-01-01T00:00:00Z",
-		SubnetID: "subnet-parity-a", VpcID: "vpc-parity-a", PrivateIPAddress: "10.0.1.10",
+		SubnetID: subnetParityA, VpcID: vpcParityA, PrivateIPAddress: "10.0.1.10",
 		Placement: Placement{AvailabilityZone: "us-east-1a"},
 	}))
 	fail("putInstance stopped", h.store.putInstance(ctx, &Instance{
-		InstanceID: "i-parity-stopped", ImageID: "ami-12345678", InstanceType: "t3.small",
+		InstanceID: instanceParityStopped, ImageID: "ami-12345678", InstanceType: "t3.small",
 		State: InstanceState{Code: 80, Name: "stopped"}, LaunchTime: "2026-01-01T00:00:00Z",
-		SubnetID: "subnet-parity-b", VpcID: "vpc-parity-b", PrivateIPAddress: "10.1.1.10",
+		SubnetID: subnetParityB, VpcID: vpcParityB, PrivateIPAddress: "10.1.1.10",
 		Placement: Placement{AvailabilityZone: "us-east-1b"},
 	}))
 
@@ -268,21 +314,21 @@ func seedParityFixture(t *testing.T, h *Handler) {
 	}))
 
 	fail("putRouteTable", h.store.putRouteTable(ctx, &RouteTable{
-		RouteTableID: "rtb-parity", VpcID: "vpc-parity-a",
+		RouteTableID: "rtb-parity", VpcID: vpcParityA,
 		Routes:       []Route{{DestinationCidrBlock: "10.0.0.0/16", GatewayID: "local", Origin: "CreateRouteTable"}},
 		Associations: []RouteTableAssociation{{AssociationID: "rtbassoc-parity", RouteTableID: "rtb-parity", Main: true}},
 	}))
 
 	fail("putIGW", h.store.putInternetGateway(ctx, &InternetGateway{
-		InternetGatewayID: "igw-parity",
-		Attachments:       []IGWAttachment{{VpcID: "vpc-parity-a", State: "attached"}},
+		InternetGatewayID: igwParity,
+		Attachments:       []IGWAttachment{{VpcID: vpcParityA, State: "attached"}},
 	}))
 	fail("putIGW other", h.store.putInternetGateway(ctx, &InternetGateway{InternetGatewayID: "igw-parity-detached"}))
 
 	fail("putPeering", h.store.putVpcPeeringConnection(ctx, &VpcPeeringConnection{
 		VpcPeeringConnectionID: "pcx-parity",
-		RequesterVpcInfo:       VpcPeeringConnectionVpcInfo{VpcID: "vpc-parity-a", CidrBlock: "10.0.0.0/16", Region: "us-east-1"},
-		AccepterVpcInfo:        VpcPeeringConnectionVpcInfo{VpcID: "vpc-parity-b", CidrBlock: "10.1.0.0/16", Region: "us-east-1"},
+		RequesterVpcInfo:       VpcPeeringConnectionVpcInfo{VpcID: vpcParityA, CidrBlock: "10.0.0.0/16", Region: "us-east-1"},
+		AccepterVpcInfo:        VpcPeeringConnectionVpcInfo{VpcID: vpcParityB, CidrBlock: "10.1.0.0/16", Region: "us-east-1"},
 		Status:                 VpcPeeringConnectionStatus{Code: "active", Message: "Active"},
 	}))
 
@@ -294,13 +340,13 @@ func seedParityFixture(t *testing.T, h *Handler) {
 	}))
 
 	fail("putNatGateway", h.store.putNatGateway(ctx, &NatGateway{
-		NatGatewayID: "nat-parity", SubnetID: "subnet-parity-a", VpcID: "vpc-parity-a",
+		NatGatewayID: "nat-parity", SubnetID: subnetParityA, VpcID: vpcParityA,
 		State: "available", CreateTime: "2026-01-01T00:00:00Z",
 		AllocationID: "eipalloc-parity", PublicIP: "203.0.113.7", PrivateIP: "10.0.1.20",
 	}))
 
 	fail("putENI", h.store.putNetworkInterface(ctx, &NetworkInterface{
-		NetworkInterfaceID: "eni-parity", SubnetID: "subnet-parity-a", VpcID: "vpc-parity-a",
+		NetworkInterfaceID: eniParity, SubnetID: subnetParityA, VpcID: vpcParityA,
 		AvailabilityZone: "us-east-1a", Description: "parity", PrivateIPAddress: "10.0.1.30",
 		Status: "available", MacAddress: "02:aa:bb:cc:dd:ee",
 	}))
@@ -308,11 +354,11 @@ func seedParityFixture(t *testing.T, h *Handler) {
 	fail("putVpnGateway", h.store.putVpnGateway(ctx, &VpnGateway{
 		VpnGatewayID: "vgw-parity", State: "available", Type: "ipsec.1",
 		AvailabilityZone: "us-east-1a", AmazonSideAsn: 64512,
-		Attachments: []VpnGatewayAttachment{{VpcID: "vpc-parity-a", State: "attached"}},
+		Attachments: []VpnGatewayAttachment{{VpcID: vpcParityA, State: "attached"}},
 	}))
 
 	fail("putVpcEndpoint", h.store.putVpcEndpoint(ctx, &VpcEndpoint{
-		VpcEndpointID: "vpce-parity", VpcID: "vpc-parity-a",
+		VpcEndpointID: "vpce-parity", VpcID: vpcParityA,
 		ServiceName: "com.amazonaws.us-east-1.s3", State: "available", VpcEndpointType: "Gateway",
 	}))
 
@@ -321,10 +367,10 @@ func seedParityFixture(t *testing.T, h *Handler) {
 	// the same one, identifiers included.
 	h.ensureDefaultVPCQuietly(ctx)
 
-	fail("tag vpc a", h.putResourceTags(ctx, "vpc-parity-a", []Tag{{Key: "Name", Value: "parity-a"}}))
-	fail("tag vpc b", h.putResourceTags(ctx, "vpc-parity-b", []Tag{{Key: "Name", Value: "other-b"}}))
-	fail("tag instance", h.putResourceTags(ctx, "i-parity-running", []Tag{{Key: "Role", Value: "web"}}))
-	fail("tag subnet", h.putResourceTags(ctx, "subnet-parity-a", []Tag{{Key: "Tier", Value: "public"}}))
+	fail("tag vpc a", h.putResourceTags(ctx, vpcParityA, []Tag{{Key: "Name", Value: "parity-a"}}))
+	fail("tag vpc b", h.putResourceTags(ctx, vpcParityB, []Tag{{Key: "Name", Value: "other-b"}}))
+	fail("tag instance", h.putResourceTags(ctx, instanceParityRunning, []Tag{{Key: "Role", Value: "web"}}))
+	fail("tag subnet", h.putResourceTags(ctx, subnetParityA, []Tag{{Key: "Tier", Value: "public"}}))
 }
 
 // ── The comparison ──────────────────────────────────────────────────────────
@@ -444,6 +490,35 @@ func TestTypedParity_coversEveryRoutedOp(t *testing.T) {
 	for action := range cases {
 		if !ec2TypedOps[action] {
 			t.Errorf("parityCases has a row for %s, which is not routed — drop the row or route the operation", action)
+		}
+	}
+}
+
+// Every operation that resolves an explicit ID list is checked both ways it
+// can refuse one.
+//
+// #1708's two codes are easy to lose in the same way #1032's filter rule was:
+// the wrong one still answers 400, and both dispatch paths still agree,
+// because there is one shared body. What a missing row costs is the *content*
+// — the code and the message a client matches on — going unchecked on the
+// operation whose casing is the odd one out.
+func TestTypedParity_everyResolvedIDListIsCheckedBothWays(t *testing.T) {
+	cases := parityCases()
+	for action := range describeIDScopes {
+		unknown, malformed := false, false
+		for _, row := range cases[action] {
+			switch row.name {
+			case "unknown-id":
+				unknown = true
+			case "malformed-id":
+				malformed = true
+			}
+		}
+		if !unknown {
+			t.Errorf("%s resolves an ID list but has no parity row naming an ID the region does not hold", action)
+		}
+		if !malformed {
+			t.Errorf("%s resolves an ID list but has no parity row naming a malformed ID", action)
 		}
 	}
 }

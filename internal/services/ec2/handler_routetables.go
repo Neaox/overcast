@@ -157,6 +157,9 @@ func (h *Handler) describeRouteTables(ctx context.Context, q describeQuery) (*xm
 	if aerr != nil {
 		return nil, aerr
 	}
+	if aerr := resolveIDs(routeTableIDScope, requested, all, func(rt *RouteTable) string { return rt.RouteTableID }); aerr != nil {
+		return nil, aerr
+	}
 
 	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {

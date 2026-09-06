@@ -322,6 +322,9 @@ func (h *Handler) describeInstances(ctx context.Context, q describeQuery) (*xmlD
 	if aerr != nil {
 		return nil, aerr
 	}
+	if aerr := resolveIDs(instanceIDScope, requested, all, func(inst *Instance) string { return inst.InstanceID }); aerr != nil {
+		return nil, aerr
+	}
 
 	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {

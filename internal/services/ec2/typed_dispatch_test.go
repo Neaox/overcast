@@ -366,11 +366,21 @@ func TestEachDecodedFilter_stopsAtAnUnnamedFilter(t *testing.T) {
 
 func TestSelectedIDs_stopsAtAnEmptyEntry(t *testing.T) {
 	sel := selectedIDs([]string{"subnet-1", "", "subnet-3"})
-	if len(sel) != 1 || !sel["subnet-1"] {
-		t.Fatalf("selection = %v, want just subnet-1", sel)
+	if fmt.Sprint(sel.all()) != "[subnet-1]" {
+		t.Fatalf("selection = %v, want just subnet-1", sel.all())
 	}
 	if sel.has("subnet-3") {
 		t.Fatalf("subnet-3 was selected past the gap")
+	}
+}
+
+// The order the caller sent them is what resolveIDs walks to decide which ID
+// an error names, so a repeat must not disturb it and duplicates must not
+// make the same ID answer twice.
+func TestSelectedIDs_keepsTheCallersOrder(t *testing.T) {
+	sel := selectedIDs([]string{"subnet-3", "subnet-1", "subnet-3"})
+	if fmt.Sprint(sel.all()) != "[subnet-3 subnet-1]" {
+		t.Fatalf("selection = %v, want [subnet-3 subnet-1]", sel.all())
 	}
 }
 
