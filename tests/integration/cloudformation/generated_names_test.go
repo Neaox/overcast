@@ -37,7 +37,7 @@ import (
 // resource.
 const (
 	depLoadBalancer = `"DepLoadBalancer": {"Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
-		"Properties": {"Name": "dep-lb"}},`
+		"Properties": {"Name": "dep-lb", "Subnets": ["subnet-1"]}},`
 	depEKSCluster = `"DepEksCluster": {"Type": "AWS::EKS::Cluster", "Properties": {
 		"Name": "dep-cluster", "RoleArn": "arn:aws:iam::000000000000:role/eks",
 		"ResourcesVpcConfig": {"SubnetIds": ["subnet-1"]}}},`
@@ -406,9 +406,10 @@ func TestCreateStack_resourcesWithoutNames_areNamedByCloudFormation(t *testing.T
 			constraint: &nameConstraint{maxLen: 40, charset: charsetNoUppercase},
 		},
 		{
-			name:       "AWS::ElasticLoadBalancingV2::LoadBalancer",
-			logicalID:  "LoadBalancer",
-			properties: `{"Type": "AWS::ElasticLoadBalancingV2::LoadBalancer", "Properties": {}}`,
+			name:      "AWS::ElasticLoadBalancingV2::LoadBalancer",
+			logicalID: "LoadBalancer",
+			properties: `{"Type": "AWS::ElasticLoadBalancingV2::LoadBalancer", "Properties": {
+        "Subnets": ["subnet-1"]}}`,
 			constraint: &nameConstraint{
 				nameOf: func(id string) string { return nthSegment(id, "/", 2) },
 				maxLen: 32, charset: charsetELBv2,
@@ -697,8 +698,9 @@ func TestCreateStack_twoUnnamedResourcesOfOneType_doNotCollide(t *testing.T) {
 			resource: `{"Type": "AWS::ElastiCache::ServerlessCache", "Properties": {"Engine": "redis"}}`,
 		},
 		{
-			name:     "AWS::ElasticLoadBalancingV2::LoadBalancer",
-			resource: `{"Type": "AWS::ElasticLoadBalancingV2::LoadBalancer", "Properties": {}}`,
+			name: "AWS::ElasticLoadBalancingV2::LoadBalancer",
+			resource: `{"Type": "AWS::ElasticLoadBalancingV2::LoadBalancer", "Properties": {
+				"Subnets": ["subnet-1"]}}`,
 		},
 		{
 			name:     "AWS::ElasticLoadBalancingV2::TargetGroup",

@@ -148,11 +148,38 @@ func lbARNTypeSegment(lbType string) string {
 	}
 }
 
+// arnResourceIDLength is how many hex characters AWS puts at the end of a load
+// balancer, target group or listener ARN.
+const arnResourceIDLength = 16
+
+// arnResourceID mints that id.
+//
+// AWS's form is sixteen lowercase hex characters —
+// `.../targetgroup/web/73e2d6bc24d8a067`, `.../loadbalancer/app/web/50dc6c495c0c9188`
+// — and this minted a truncated UUID instead, which for target groups and
+// listeners came out twelve characters long with a "-" in the middle (#1718).
+// ARNs are compared literally and parsed by segment all over IaC, so the shape
+// is part of the wire contract even though the value is arbitrary.
+//
+// The digits come from a UUID rather than crypto/rand directly: uuid.NewString
+// is already this package's source of randomness, and dropping its dashes
+// leaves thirty-two hex characters to take the first sixteen of.
+func arnResourceID() string {
+	return strings.ReplaceAll(uuid.NewString(), "-", "")[:arnResourceIDLength]
+}
+
 // loadBalancerARN builds a load balancer's ARN:
 // arn:aws:elasticloadbalancing:{region}:{account}:loadbalancer/{app|net|gwy}/{name}/{id}
 func loadBalancerARN(region, account, lbType, name, lbID string) string {
 	return fmt.Sprintf("arn:aws:elasticloadbalancing:%s:%s:loadbalancer/%s/%s/%s",
 		region, account, lbARNTypeSegment(lbType), name, lbID)
+}
+
+// targetGroupARN builds a target group's ARN:
+// arn:aws:elasticloadbalancing:{region}:{account}:targetgroup/{name}/{id}
+func targetGroupARN(region, account, name, tgID string) string {
+	return fmt.Sprintf("arn:aws:elasticloadbalancing:%s:%s:targetgroup/%s/%s",
+		region, account, name, tgID)
 }
 
 // listenerARN builds a listener's ARN from the load balancer it belongs to:
@@ -455,28 +482,24 @@ func toListenerXML(l *Listener) xmlListener {
 }
 
 func errMissingParam(param string) *protocol.AWSError {
+	return errValidation(param + " is required")
+}
+
+// errValidation is ELBv2's ValidationError — the code it answers for a request
+// it rejects before looking anything up: a missing required parameter, a value
+// outside an enum or a range, an identifier that is not an ARN.
+func errValidation(message string) *protocol.AWSError {
 	return &protocol.AWSError{
 		Code:       "ValidationError",
-		Message:    param + " is required",
+		Message:    message,
 		HTTPStatus: http.StatusBadRequest,
 	}
 }
 
-func errNotFound(resourceType, arn string) *protocol.AWSError {
-	return &protocol.AWSError{
-		Code:       "LoadBalancerNotFound",
-		Message:    fmt.Sprintf("%s not found: %s", resourceType, arn),
-		HTTPStatus: http.StatusNotFound,
-	}
-}
-
-func errTGNotFound(arn string) *protocol.AWSError {
-	return &protocol.AWSError{
-		Code:       "TargetGroupNotFound",
-		Message:    "Target group not found: " + arn,
-		HTTPStatus: http.StatusNotFound,
-	}
-}
+// The not-found errors this package answers with live on identifierScope
+// (describe_identifiers.go), so a resource's code, message and status are
+// written once and every operation that resolves an identifier — Describe,
+// Delete, Modify and the tag calls alike — answers the same thing.
 
 var _ = chi.NewRouter
 var _ = uuid.NewString

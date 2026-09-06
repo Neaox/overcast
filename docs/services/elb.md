@@ -65,9 +65,18 @@ the zone excludes it.
 | ECS integration | A service with a `loadBalancers` configuration registers and deregisters its tasks as it places and stops them, so scaling the service changes what the load balancer forwards to |
 | Target groups | CRUD, attributes, and registration or deregistration by target |
 | Tags | `AddTags`, `RemoveTags`, `DescribeTags` |
+| Naming a resource | A `Describe*` given an ARN or name that does not resolve raises `LoadBalancerNotFound`, `TargetGroupNotFound` or `ListenerNotFound`; naming none still lists the region |
 
 `DNSName` is `{name}-{id}.{region}.elb.{hostname}`, minted on the host you
-reached Overcast on.
+reached Overcast on. Load balancer, target group and listener ARNs end in
+sixteen lowercase hex characters, as AWS's do.
+
+A `Describe*` that names an identifier asserts the resource exists, so an
+unresolvable ARN or name raises that resource's not-found error, and a value
+that is not an ARN for it — a bare name, an ARN for a different resource —
+raises `ValidationError`. `CreateLoadBalancer` requires at least one subnet,
+and `CreateTargetGroup` checks `Protocol` against the documented enum and
+`Port` against 1–65535.
 
 ## Differences from AWS
 
@@ -77,7 +86,7 @@ reached Overcast on.
 | Listener actions                                                                                                  | `forward`, `redirect`, `fixed-response` and the authenticate actions | Only `forward` reaches the data plane                                                                                                               |
 | `RedirectConfig`, `FixedResponseConfig`                                                                           | Applied to matching requests                                         | Round-trip through `DescribeListeners`, never applied — a listener carrying only one of these has no target group, so a request to it gets `503`    |
 | Listener rules                                                                                                    | Route by path, host, header and more                                 | `CreateRule` and `DescribeRules` return `501`; only the listener's `DefaultActions` route                                                           |
-| `ModifyLoadBalancerAttributes`                                                                                    | Sets idle timeout, access logs and the rest                          | Returns `501`                                                                                                                                       |
+| `ModifyLoadBalancerAttributes`                                                                                    | Sets idle timeout, access logs and the rest                          | Attributes are stored and echoed back, never enforced by the data plane                                                                             |
 | Weighted `ForwardConfig`, `Certificates`, `SslPolicy`, `AlpnPolicy`, `MutualAuthentication`, Cognito/OIDC actions | Full API                                                             | Not modelled                                                                                                                                        |
 | Listener selection                                                                                                | The port the connection arrived on picks the listener                | The port in the `Host` header picks one, defaulting to 80; otherwise the first listener is used                                                     |
 
