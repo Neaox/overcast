@@ -22,7 +22,7 @@ type iamPolicyHandler struct{}
 func (h *iamPolicyHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	policyName, _ := props["PolicyName"].(string)
 	if policyName == "" {
-		policyName = rCtx.generatedName()
+		policyName = rCtx.generatedNameWithin(maxNameLenIAMPolicy)
 	}
 
 	policyDoc, _ := props["PolicyDocument"].(map[string]any)
@@ -214,7 +214,7 @@ func (h *iamManagedPolicyHandler) Create(ctx context.Context, router http.Handle
 	}
 	policyName, _ := props["ManagedPolicyName"].(string)
 	if policyName == "" {
-		policyName = rCtx.generatedName()
+		policyName = rCtx.generatedNameWithin(maxNameLenIAMPolicy)
 	}
 	policyDoc, _ := props["PolicyDocument"].(map[string]any)
 	policyJSON, _ := json.Marshal(policyDoc)
@@ -375,7 +375,7 @@ type iamInstanceProfileHandler struct{}
 func (h *iamInstanceProfileHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	profileName, _ := props["InstanceProfileName"].(string)
 	if profileName == "" {
-		profileName = rCtx.generatedName()
+		profileName = rCtx.generatedNameWithin(maxNameLenIAMPolicy)
 	}
 	path := "/"
 	if v, _ := props["Path"].(string); v != "" {
@@ -1468,7 +1468,7 @@ type lambdaLayerVersionHandler struct{}
 func (h *lambdaLayerVersionHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	layerName, _ := props["LayerName"].(string)
 	if layerName == "" {
-		layerName = rCtx.generatedName()
+		layerName = rCtx.generatedNameWithin(maxNameLenLambdaLayer)
 	}
 
 	body := map[string]any{}
