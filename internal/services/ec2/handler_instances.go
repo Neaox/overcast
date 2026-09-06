@@ -98,13 +98,14 @@ type xmlStateChangeItem struct {
 
 // ── RunInstances ─────────────────────────────────────────────────────────────
 
-// launchAvailabilityZone resolves the zone a RunInstances launch lands in: an
-// explicit Placement.AvailabilityZone, else the zone the named subnet sits in,
-// else the region's first zone. It is called from both dispatch bodies — the
-// legacy one below and the typed one in typed_logic.go — so the rule lives in
-// one place rather than in two copies that can drift apart (#1722 was exactly
-// that drift: the typed body stopped honouring the parameter Auto Scaling's
-// zone-spreading reconciler sends on every launch).
+// launchAvailabilityZone resolves the zone a RunInstances launch lands in: the
+// zone the named subnet sits in, else an explicit Placement.AvailabilityZone,
+// else the region's first zone — and an error when the request names both and
+// they disagree. It is called from both dispatch bodies — the legacy one below
+// and the typed one in typed_logic.go — so the rule lives in one place rather
+// than in two copies that can drift apart (#1722 was exactly that drift: the
+// typed body stopped honouring the parameter Auto Scaling's zone-spreading
+// reconciler sends on every launch).
 //
 // Per the RunInstances reference SubnetId is "The ID of the subnet to launch
 // the instance into", and Placement.AvailabilityZone is optional — "If you
@@ -113,17 +114,36 @@ type xmlStateChangeItem struct {
 // naming a subnet is naming a zone, and an instance whose placement
 // contradicts its own subnetId is not a shape real EC2 can produce (#1743).
 //
+// The conflict is not in the API reference — neither RunInstances nor the EC2
+// error-code list documents an error for it — so the wire shape below is taken
+// from a reported real-AWS response (hashicorp/terraform-provider-aws#13999,
+// launching an instance whose availability_zone disagreed with its subnet):
+//
+//	InvalidParameterValue: Value (us-east-1c) for parameter availabilityZone is
+//	invalid. Subnet 'subnet-aff9fe92' is in the availability zone us-east-1b
+//	status code: 400
+//
+// The generic code matches the error list's description of InvalidParameterValue
+// ("A value specified in a parameter is not valid ... The returned message
+// provides an explanation of the error value"), and the message names both
+// zones so a caller can see which half to change.
+//
 // subnet is nil when the request named none, or named one this store does not
 // hold: an unknown subnet keeps the previous, permissive fallback rather than
 // becoming a new failure mode.
-func launchAvailabilityZone(region, requested string, subnet *Subnet) string {
-	if requested != "" {
-		return requested
+func launchAvailabilityZone(region, requested string, subnet *Subnet) (string, *protocol.AWSError) {
+	if subnet == nil || subnet.AvailabilityZone == "" {
+		if requested != "" {
+			return requested, nil
+		}
+		return region + "a", nil
 	}
-	if subnet != nil && subnet.AvailabilityZone != "" {
-		return subnet.AvailabilityZone
+	if requested != "" && requested != subnet.AvailabilityZone {
+		return "", ec2err("InvalidParameterValue", fmt.Sprintf(
+			"Value (%s) for parameter availabilityZone is invalid. Subnet '%s' is in the availability zone %s",
+			requested, subnet.SubnetID, subnet.AvailabilityZone), http.StatusBadRequest)
 	}
-	return region + "a"
+	return subnet.AvailabilityZone, nil
 }
 
 // RunInstances launches one or more new EC2 instances.
@@ -200,7 +220,11 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	az := launchAvailabilityZone(h.cfg.Region, r.FormValue("Placement.AvailabilityZone"), subnet)
+	az, aerr := launchAvailabilityZone(h.cfg.Region, r.FormValue("Placement.AvailabilityZone"), subnet)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 
 	instances := make([]xmlInstance, 0, maxCount)
 	for i := 0; i < maxCount; i++ {

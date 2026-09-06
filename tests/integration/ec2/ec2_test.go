@@ -869,6 +869,43 @@ func TestRunInstances_derivesAvailabilityZoneFromSubnet(t *testing.T) {
 	}
 }
 
+// TestRunInstances_rejectsPlacementZoneConflictingWithSubnet covers the other
+// half of #1743: when the request names both a subnet and a zone, and they
+// disagree, EC2 refuses the launch rather than silently preferring one. The
+// message names the rejected value, the subnet, and the zone that subnet is
+// actually in.
+func TestRunInstances_rejectsPlacementZoneConflictingWithSubnet(t *testing.T) {
+	// Given: a subnet in us-east-1b
+	srv := helpers.NewTestServer(t)
+	subnetID := runInstancesZoneSubnet(t, srv, "us-east-1b")
+
+	// When: RunInstances asks for us-east-1c while launching into it
+	resp := ec2Query(t, srv, "RunInstances", url.Values{
+		"ImageId":                    []string{"ami-12345678"},
+		"MinCount":                   []string{"1"},
+		"MaxCount":                   []string{"1"},
+		"SubnetId":                   []string{subnetID},
+		"Placement.AvailabilityZone": []string{"us-east-1c"},
+	})
+	defer resp.Body.Close()
+
+	// Then: 400 InvalidParameterValue naming both zones and the subnet
+	result := assertEC2QueryError(t, resp, http.StatusBadRequest, "InvalidParameterValue")
+	want := "Value (us-east-1c) for parameter availabilityZone is invalid. Subnet '" +
+		subnetID + "' is in the availability zone us-east-1b"
+	if result.Errors[0].Message != want {
+		t.Errorf("error message = %q, want %q", result.Errors[0].Message, want)
+	}
+
+	// And: nothing was launched
+	descResp := ec2Query(t, srv, "DescribeInstances", nil)
+	defer descResp.Body.Close()
+	helpers.AssertStatus(t, descResp, http.StatusOK)
+	if body := string(readBody(t, descResp)); strings.Contains(body, "<instanceId>") {
+		t.Errorf("expected no instances after a rejected launch, got: %s", body)
+	}
+}
+
 // ─── DescribeInstances (with instances) ───────────────────────────────────────
 
 func TestDescribeInstances_withInstances(t *testing.T) {

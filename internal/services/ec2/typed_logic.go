@@ -1355,7 +1355,10 @@ func (h *Handler) runInstancesTyped(ctx context.Context, req *runInstancesReq) (
 	}
 	// Shared with the legacy body (handler_instances.go), so the two dispatch
 	// paths cannot drift on where the zone comes from.
-	az := launchAvailabilityZone(h.cfg.Region, req.Placement.AvailabilityZone, subnet)
+	az, aerr := launchAvailabilityZone(h.cfg.Region, req.Placement.AvailabilityZone, subnet)
+	if aerr != nil {
+		return nil, aerr
+	}
 	instances := make([]typedInstanceXML, 0, maxCount)
 	for i := 0; i < maxCount; i++ {
 		instID := fmt.Sprintf("i-%s", shortID())

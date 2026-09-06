@@ -697,6 +697,18 @@ func mutationCases() map[string][]mutationCase {
 				},
 				params: url.Values{"ImageId": {"ami-12345678"}, "MinCount": {"1"}, "MaxCount": {"1"}, "SubnetId": {"subnet-mut-run-zone"}},
 			},
+			{
+				// #1743: a request naming both a subnet and a zone that
+				// disagree is refused, and the message names the subnet and
+				// both zones — so this row compares the error text, not just
+				// the code, between the two bodies.
+				name: "availability-zone-conflicts-with-subnet",
+				seed: func(t *testing.T, h *Handler) {
+					seedVPC(t, h, "vpc-mut-run-zone")
+					seedSubnetInZone(t, h, "subnet-mut-run-zone", "vpc-mut-run-zone", "us-east-1b")
+				},
+				params: url.Values{"ImageId": {"ami-12345678"}, "MinCount": {"1"}, "MaxCount": {"1"}, "SubnetId": {"subnet-mut-run-zone"}, "Placement.AvailabilityZone": {"us-east-1c"}},
+			},
 		},
 		"TerminateInstances": {
 			{
