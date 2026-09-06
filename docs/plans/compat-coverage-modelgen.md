@@ -477,16 +477,34 @@ Debuggability is the interpreter approach's real cost, and it is paid explicitly
   greppable by construction — which also serves as a cross-check that the IR
   means what the interpreters think it means.
 
-**Typed-backend binding decision (2026-09, #1830/#1831):** the go-sdk emitter
-binds every input member through a runtime helper
-(`b.Set("Member", &in.Member, v)`) rather than the typed spelling, because the
-pinned model cannot say whether the vendored Go SDK models a member as a value
-or a pointer (`sqs`'s `VisibilityTimeout` is a value `int32` where the model
-says `NullableInteger`). #1831 replaces this with emit-time type resolution
-from the vendored SDK itself, which is the rule the java/dotnet/rust emitters
-must also follow where their SDK's nullability is not derivable from the
-model (dotnet nullable value types), and need not follow where it is (java
-builders, Rust `Option<T>`).
+**Typed-backend binding decision (2026-09, #1830/#1831): a typed backend
+resolves its SDK's field types at emit time, from the vendored SDK — never from
+the model's nullability.** #1830 shipped `go-sdk` binding every input member
+through a runtime helper (`b.Set("Member", &in.Member, v)`) for a real reason:
+the pinned model cannot say whether the vendored Go SDK models a member as a
+value or a pointer, and for the pilot service the two already disagree —
+`ReceiveMessage`'s `MaxNumberOfMessages`, `VisibilityTimeout` and
+`WaitTimeSeconds` target `NullableInteger` in `models/aws/shapes/sqs.json`,
+which says pointer, and are plain `int32` fields in
+`aws-sdk-go-v2/service/sqs`. An emitter deriving `aws.Int32` from the model
+would not have compiled in the first service it was pointed at.
+
+#1831 settled it the other way: **ask the SDK.** `cmd/compatgen` loads
+`aws-sdk-go-v2/service/<pkg>` from the `go-sdk` suite's own module — the module
+the emitted source is compiled in — with `golang.org/x/tools/go/packages`, and
+writes each member as that field's declared type. What that buys is the
+property a typed backend exists for: the emitted call is checked by a compiler,
+which the three interpreters cannot offer. It also turns three run-time
+failures into generation-time refusals (`go-emit-unsupported:<Member>`) — a
+member smithy-go renamed or dropped, a field of a type no literal builds, and a
+value-typed member set to its zero value, which the SDK omits from the request
+entirely.
+
+`dotnet-sdk` needs the same lookup when it lands: the .NET SDK decides per
+member whether a value-typed property is nullable, and the model does not say.
+`java-sdk` and `rust-sdk` do not — a Java builder setter takes the value
+whatever the member's optionality, and Rust's `Option<T>` follows the model's
+own required-ness — so both are derivable from what is already pinned.
 
 ### 3.3 D2 — Passing constructs between tests: recipes, exports, bindings
 

@@ -6,7 +6,9 @@ import (
 	"context"
 	"sync"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
+	"github.com/aws/aws-sdk-go-v2/service/organizations/types"
 	"github.com/overcast-sh/overcast-compat-go-sdk/internal/clients"
 	"github.com/overcast-sh/overcast-compat-go-sdk/internal/harness"
 	"github.com/overcast-sh/overcast-compat-go-sdk/internal/scenario"
@@ -109,7 +111,7 @@ func (g *organizationsScenarios) teardownOrganizationsGenPolicy(ctx context.Cont
 			Params: `{"PolicyId":{"$ref":"policy.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.DeletePolicyInput{}
-				b.Set("PolicyId", &in.PolicyId, scenario.Ref("policy.id"))
+				in.PolicyId = aws.String(scenario.Bind[string](b, "PolicyId", scenario.Ref("policy.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -126,10 +128,10 @@ func (g *organizationsScenarios) testOrganizationsGenPolicyCreatePolicy(ctx cont
 			Params: `{"Content":"{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}]}","Description":"compat scenario policy","Name":{"$name":"policy"},"Type":"SERVICE_CONTROL_POLICY"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.CreatePolicyInput{}
-				b.Set("Content", &in.Content, "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}]}")
-				b.Set("Description", &in.Description, "compat scenario policy")
-				b.Set("Name", &in.Name, scenario.Name("policy"))
-				b.Set("Type", &in.Type, "SERVICE_CONTROL_POLICY")
+				in.Content = aws.String("{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}]}")
+				in.Description = aws.String("compat scenario policy")
+				in.Name = aws.String(scenario.Bind[string](b, "Name", scenario.Name("policy")))
+				in.Type = types.PolicyType("SERVICE_CONTROL_POLICY")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -151,7 +153,7 @@ func (g *organizationsScenarios) testOrganizationsGenPolicyCreatePolicy(ctx cont
 					Params: `{"PolicyId":{"$ref":"policy.id"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &organizations.DescribePolicyInput{}
-						b.Set("PolicyId", &in.PolicyId, scenario.Ref("policy.id"))
+						in.PolicyId = aws.String(scenario.Bind[string](b, "PolicyId", scenario.Ref("policy.id")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -167,7 +169,7 @@ func (g *organizationsScenarios) testOrganizationsGenPolicyCreatePolicy(ctx cont
 					Params: `{"Filter":"SERVICE_CONTROL_POLICY"}`,
 					Build: func(b *scenario.Binder) any {
 						in := &organizations.ListPoliciesInput{}
-						b.Set("Filter", &in.Filter, "SERVICE_CONTROL_POLICY")
+						in.Filter = types.PolicyType("SERVICE_CONTROL_POLICY")
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -188,7 +190,7 @@ func (g *organizationsScenarios) testOrganizationsGenPolicyDescribePolicy(ctx co
 			Params: `{"PolicyId":{"$ref":"policy.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.DescribePolicyInput{}
-				b.Set("PolicyId", &in.PolicyId, scenario.Ref("policy.id"))
+				in.PolicyId = aws.String(scenario.Bind[string](b, "PolicyId", scenario.Ref("policy.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -210,8 +212,8 @@ func (g *organizationsScenarios) testOrganizationsGenPolicyUpdatePolicy(ctx cont
 			Params: `{"Description":"compat scenario policy, updated","PolicyId":{"$ref":"policy.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.UpdatePolicyInput{}
-				b.Set("Description", &in.Description, "compat scenario policy, updated")
-				b.Set("PolicyId", &in.PolicyId, scenario.Ref("policy.id"))
+				in.Description = aws.String("compat scenario policy, updated")
+				in.PolicyId = aws.String(scenario.Bind[string](b, "PolicyId", scenario.Ref("policy.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -225,7 +227,7 @@ func (g *organizationsScenarios) testOrganizationsGenPolicyUpdatePolicy(ctx cont
 					Params: `{"PolicyId":{"$ref":"policy.id"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &organizations.DescribePolicyInput{}
-						b.Set("PolicyId", &in.PolicyId, scenario.Ref("policy.id"))
+						in.PolicyId = aws.String(scenario.Bind[string](b, "PolicyId", scenario.Ref("policy.id")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -245,8 +247,8 @@ func (g *organizationsScenarios) testOrganizationsGenPolicyTagResource(ctx conte
 			Params: `{"ResourceId":{"$ref":"policy.id"},"Tags":[{"Key":"compat","Value":"scenario"}]}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.TagResourceInput{}
-				b.Set("ResourceId", &in.ResourceId, scenario.Ref("policy.id"))
-				b.Set("Tags", &in.Tags, []any{map[string]any{"Key": "compat", "Value": "scenario"}})
+				in.ResourceId = aws.String(scenario.Bind[string](b, "ResourceId", scenario.Ref("policy.id")))
+				in.Tags = []types.Tag{{Key: aws.String("compat"), Value: aws.String("scenario")}}
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -260,7 +262,7 @@ func (g *organizationsScenarios) testOrganizationsGenPolicyTagResource(ctx conte
 					Params: `{"ResourceId":{"$ref":"policy.id"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &organizations.ListTagsForResourceInput{}
-						b.Set("ResourceId", &in.ResourceId, scenario.Ref("policy.id"))
+						in.ResourceId = aws.String(scenario.Bind[string](b, "ResourceId", scenario.Ref("policy.id")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -282,7 +284,7 @@ func (g *organizationsScenarios) testOrganizationsGenPolicyListTagsForResource(c
 			Params: `{"ResourceId":{"$ref":"policy.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.ListTagsForResourceInput{}
-				b.Set("ResourceId", &in.ResourceId, scenario.Ref("policy.id"))
+				in.ResourceId = aws.String(scenario.Bind[string](b, "ResourceId", scenario.Ref("policy.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -307,8 +309,8 @@ func (g *organizationsScenarios) testOrganizationsGenPolicyUntagResource(ctx con
 			Params: `{"ResourceId":{"$ref":"policy.id"},"TagKeys":["compat"]}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.UntagResourceInput{}
-				b.Set("ResourceId", &in.ResourceId, scenario.Ref("policy.id"))
-				b.Set("TagKeys", &in.TagKeys, []any{"compat"})
+				in.ResourceId = aws.String(scenario.Bind[string](b, "ResourceId", scenario.Ref("policy.id")))
+				in.TagKeys = []string{"compat"}
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -322,7 +324,7 @@ func (g *organizationsScenarios) testOrganizationsGenPolicyUntagResource(ctx con
 					Params: `{"ResourceId":{"$ref":"policy.id"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &organizations.ListTagsForResourceInput{}
-						b.Set("ResourceId", &in.ResourceId, scenario.Ref("policy.id"))
+						in.ResourceId = aws.String(scenario.Bind[string](b, "ResourceId", scenario.Ref("policy.id")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -343,7 +345,7 @@ func (g *organizationsScenarios) testOrganizationsGenPolicyListPolicies(ctx cont
 			Params: `{"Filter":"SERVICE_CONTROL_POLICY"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.ListPoliciesInput{}
-				b.Set("Filter", &in.Filter, "SERVICE_CONTROL_POLICY")
+				in.Filter = types.PolicyType("SERVICE_CONTROL_POLICY")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -367,7 +369,7 @@ func (g *organizationsScenarios) testOrganizationsGenPolicyDeletePolicy(ctx cont
 			Params: `{"PolicyId":{"$ref":"policy.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.DeletePolicyInput{}
-				b.Set("PolicyId", &in.PolicyId, scenario.Ref("policy.id"))
+				in.PolicyId = aws.String(scenario.Bind[string](b, "PolicyId", scenario.Ref("policy.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -381,7 +383,7 @@ func (g *organizationsScenarios) testOrganizationsGenPolicyDeletePolicy(ctx cont
 					Params: `{"PolicyId":{"$ref":"policy.id"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &organizations.DescribePolicyInput{}
-						b.Set("PolicyId", &in.PolicyId, scenario.Ref("policy.id"))
+						in.PolicyId = aws.String(scenario.Bind[string](b, "PolicyId", scenario.Ref("policy.id")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -495,7 +497,7 @@ func (g *organizationsScenarios) teardownOrganizationsGenOu(ctx context.Context,
 			Params: `{"OrganizationalUnitId":{"$ref":"ou.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.DeleteOrganizationalUnitInput{}
-				b.Set("OrganizationalUnitId", &in.OrganizationalUnitId, scenario.Ref("ou.id"))
+				in.OrganizationalUnitId = aws.String(scenario.Bind[string](b, "OrganizationalUnitId", scenario.Ref("ou.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -512,8 +514,8 @@ func (g *organizationsScenarios) testOrganizationsGenOuCreateOrganizationalUnit(
 			Params: `{"Name":{"$name":"ou"},"ParentId":{"$ref":"root.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.CreateOrganizationalUnitInput{}
-				b.Set("Name", &in.Name, scenario.Name("ou"))
-				b.Set("ParentId", &in.ParentId, scenario.Ref("root.id"))
+				in.Name = aws.String(scenario.Bind[string](b, "Name", scenario.Name("ou")))
+				in.ParentId = aws.String(scenario.Bind[string](b, "ParentId", scenario.Ref("root.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -535,7 +537,7 @@ func (g *organizationsScenarios) testOrganizationsGenOuCreateOrganizationalUnit(
 					Params: `{"OrganizationalUnitId":{"$ref":"ou.id"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &organizations.DescribeOrganizationalUnitInput{}
-						b.Set("OrganizationalUnitId", &in.OrganizationalUnitId, scenario.Ref("ou.id"))
+						in.OrganizationalUnitId = aws.String(scenario.Bind[string](b, "OrganizationalUnitId", scenario.Ref("ou.id")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -551,7 +553,7 @@ func (g *organizationsScenarios) testOrganizationsGenOuCreateOrganizationalUnit(
 					Params: `{"ParentId":{"$ref":"root.id"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &organizations.ListOrganizationalUnitsForParentInput{}
-						b.Set("ParentId", &in.ParentId, scenario.Ref("root.id"))
+						in.ParentId = aws.String(scenario.Bind[string](b, "ParentId", scenario.Ref("root.id")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -572,7 +574,7 @@ func (g *organizationsScenarios) testOrganizationsGenOuDescribeOrganizationalUni
 			Params: `{"OrganizationalUnitId":{"$ref":"ou.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.DescribeOrganizationalUnitInput{}
-				b.Set("OrganizationalUnitId", &in.OrganizationalUnitId, scenario.Ref("ou.id"))
+				in.OrganizationalUnitId = aws.String(scenario.Bind[string](b, "OrganizationalUnitId", scenario.Ref("ou.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -594,8 +596,8 @@ func (g *organizationsScenarios) testOrganizationsGenOuUpdateOrganizationalUnit(
 			Params: `{"Name":{"$name":"ou-renamed"},"OrganizationalUnitId":{"$ref":"ou.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.UpdateOrganizationalUnitInput{}
-				b.Set("Name", &in.Name, scenario.Name("ou-renamed"))
-				b.Set("OrganizationalUnitId", &in.OrganizationalUnitId, scenario.Ref("ou.id"))
+				in.Name = aws.String(scenario.Bind[string](b, "Name", scenario.Name("ou-renamed")))
+				in.OrganizationalUnitId = aws.String(scenario.Bind[string](b, "OrganizationalUnitId", scenario.Ref("ou.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -609,7 +611,7 @@ func (g *organizationsScenarios) testOrganizationsGenOuUpdateOrganizationalUnit(
 					Params: `{"OrganizationalUnitId":{"$ref":"ou.id"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &organizations.DescribeOrganizationalUnitInput{}
-						b.Set("OrganizationalUnitId", &in.OrganizationalUnitId, scenario.Ref("ou.id"))
+						in.OrganizationalUnitId = aws.String(scenario.Bind[string](b, "OrganizationalUnitId", scenario.Ref("ou.id")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -629,8 +631,8 @@ func (g *organizationsScenarios) testOrganizationsGenOuTagResource(ctx context.C
 			Params: `{"ResourceId":{"$ref":"ou.id"},"Tags":[{"Key":"compat","Value":"scenario"}]}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.TagResourceInput{}
-				b.Set("ResourceId", &in.ResourceId, scenario.Ref("ou.id"))
-				b.Set("Tags", &in.Tags, []any{map[string]any{"Key": "compat", "Value": "scenario"}})
+				in.ResourceId = aws.String(scenario.Bind[string](b, "ResourceId", scenario.Ref("ou.id")))
+				in.Tags = []types.Tag{{Key: aws.String("compat"), Value: aws.String("scenario")}}
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -644,7 +646,7 @@ func (g *organizationsScenarios) testOrganizationsGenOuTagResource(ctx context.C
 					Params: `{"ResourceId":{"$ref":"ou.id"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &organizations.ListTagsForResourceInput{}
-						b.Set("ResourceId", &in.ResourceId, scenario.Ref("ou.id"))
+						in.ResourceId = aws.String(scenario.Bind[string](b, "ResourceId", scenario.Ref("ou.id")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -666,7 +668,7 @@ func (g *organizationsScenarios) testOrganizationsGenOuListTagsForResource(ctx c
 			Params: `{"ResourceId":{"$ref":"ou.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.ListTagsForResourceInput{}
-				b.Set("ResourceId", &in.ResourceId, scenario.Ref("ou.id"))
+				in.ResourceId = aws.String(scenario.Bind[string](b, "ResourceId", scenario.Ref("ou.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -691,8 +693,8 @@ func (g *organizationsScenarios) testOrganizationsGenOuUntagResource(ctx context
 			Params: `{"ResourceId":{"$ref":"ou.id"},"TagKeys":["compat"]}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.UntagResourceInput{}
-				b.Set("ResourceId", &in.ResourceId, scenario.Ref("ou.id"))
-				b.Set("TagKeys", &in.TagKeys, []any{"compat"})
+				in.ResourceId = aws.String(scenario.Bind[string](b, "ResourceId", scenario.Ref("ou.id")))
+				in.TagKeys = []string{"compat"}
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -706,7 +708,7 @@ func (g *organizationsScenarios) testOrganizationsGenOuUntagResource(ctx context
 					Params: `{"ResourceId":{"$ref":"ou.id"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &organizations.ListTagsForResourceInput{}
-						b.Set("ResourceId", &in.ResourceId, scenario.Ref("ou.id"))
+						in.ResourceId = aws.String(scenario.Bind[string](b, "ResourceId", scenario.Ref("ou.id")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -727,7 +729,7 @@ func (g *organizationsScenarios) testOrganizationsGenOuListOrganizationalUnitsFo
 			Params: `{"ParentId":{"$ref":"root.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.ListOrganizationalUnitsForParentInput{}
-				b.Set("ParentId", &in.ParentId, scenario.Ref("root.id"))
+				in.ParentId = aws.String(scenario.Bind[string](b, "ParentId", scenario.Ref("root.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -751,7 +753,7 @@ func (g *organizationsScenarios) testOrganizationsGenOuDeleteOrganizationalUnit(
 			Params: `{"OrganizationalUnitId":{"$ref":"ou.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.DeleteOrganizationalUnitInput{}
-				b.Set("OrganizationalUnitId", &in.OrganizationalUnitId, scenario.Ref("ou.id"))
+				in.OrganizationalUnitId = aws.String(scenario.Bind[string](b, "OrganizationalUnitId", scenario.Ref("ou.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -765,7 +767,7 @@ func (g *organizationsScenarios) testOrganizationsGenOuDeleteOrganizationalUnit(
 					Params: `{"OrganizationalUnitId":{"$ref":"ou.id"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &organizations.DescribeOrganizationalUnitInput{}
-						b.Set("OrganizationalUnitId", &in.OrganizationalUnitId, scenario.Ref("ou.id"))
+						in.OrganizationalUnitId = aws.String(scenario.Bind[string](b, "OrganizationalUnitId", scenario.Ref("ou.id")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -797,7 +799,7 @@ func (g *organizationsScenarios) testOrganizationsGenProbeDescribeAccount(ctx co
 			Params: `{"AccountId":"123456789012"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.DescribeAccountInput{}
-				b.Set("AccountId", &in.AccountId, "123456789012")
+				in.AccountId = aws.String("123456789012")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -819,7 +821,7 @@ func (g *organizationsScenarios) testOrganizationsGenProbeDescribeCreateAccountS
 			Params: `{"CreateAccountRequestId":"car-abcdefgh12345678"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.DescribeCreateAccountStatusInput{}
-				b.Set("CreateAccountRequestId", &in.CreateAccountRequestId, "car-abcdefgh12345678")
+				in.CreateAccountRequestId = aws.String("car-abcdefgh12345678")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -841,7 +843,7 @@ func (g *organizationsScenarios) testOrganizationsGenProbeDescribeEffectivePolic
 			Params: `{"PolicyType":"AISERVICES_OPT_OUT_POLICY"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.DescribeEffectivePolicyInput{}
-				b.Set("PolicyType", &in.PolicyType, "AISERVICES_OPT_OUT_POLICY")
+				in.PolicyType = types.EffectivePolicyType("AISERVICES_OPT_OUT_POLICY")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -863,7 +865,7 @@ func (g *organizationsScenarios) testOrganizationsGenProbeDescribeHandshake(ctx 
 			Params: `{"HandshakeId":"h-abcdefgh12345678"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.DescribeHandshakeInput{}
-				b.Set("HandshakeId", &in.HandshakeId, "h-abcdefgh12345678")
+				in.HandshakeId = aws.String("h-abcdefgh12345678")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -906,7 +908,7 @@ func (g *organizationsScenarios) testOrganizationsGenProbeDescribeResponsibility
 			Params: `{"Id":"rt-abcdefgh12345678"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.DescribeResponsibilityTransferInput{}
-				b.Set("Id", &in.Id, "rt-abcdefgh12345678")
+				in.Id = aws.String("rt-abcdefgh12345678")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -970,7 +972,7 @@ func (g *organizationsScenarios) testOrganizationsGenProbeListAccountsForParent(
 			Params: `{"ParentId":"r-abcd"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.ListAccountsForParentInput{}
-				b.Set("ParentId", &in.ParentId, "r-abcd")
+				in.ParentId = aws.String("r-abcd")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -992,7 +994,7 @@ func (g *organizationsScenarios) testOrganizationsGenProbeListAccountsWithInvali
 			Params: `{"PolicyType":"AISERVICES_OPT_OUT_POLICY"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.ListAccountsWithInvalidEffectivePolicyInput{}
-				b.Set("PolicyType", &in.PolicyType, "AISERVICES_OPT_OUT_POLICY")
+				in.PolicyType = types.EffectivePolicyType("AISERVICES_OPT_OUT_POLICY")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -1014,8 +1016,8 @@ func (g *organizationsScenarios) testOrganizationsGenProbeListChildren(ctx conte
 			Params: `{"ChildType":"ACCOUNT","ParentId":"r-abcd"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.ListChildrenInput{}
-				b.Set("ChildType", &in.ChildType, "ACCOUNT")
-				b.Set("ParentId", &in.ParentId, "r-abcd")
+				in.ChildType = types.ChildType("ACCOUNT")
+				in.ParentId = aws.String("r-abcd")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -1079,7 +1081,7 @@ func (g *organizationsScenarios) testOrganizationsGenProbeListDelegatedServicesF
 			Params: `{"AccountId":"123456789012"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.ListDelegatedServicesForAccountInput{}
-				b.Set("AccountId", &in.AccountId, "123456789012")
+				in.AccountId = aws.String("123456789012")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -1101,8 +1103,8 @@ func (g *organizationsScenarios) testOrganizationsGenProbeListEffectivePolicyVal
 			Params: `{"AccountId":"123456789012","PolicyType":"AISERVICES_OPT_OUT_POLICY"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.ListEffectivePolicyValidationErrorsInput{}
-				b.Set("AccountId", &in.AccountId, "123456789012")
-				b.Set("PolicyType", &in.PolicyType, "AISERVICES_OPT_OUT_POLICY")
+				in.AccountId = aws.String("123456789012")
+				in.PolicyType = types.EffectivePolicyType("AISERVICES_OPT_OUT_POLICY")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -1166,7 +1168,7 @@ func (g *organizationsScenarios) testOrganizationsGenProbeListInboundResponsibil
 			Params: `{"Type":"BILLING"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.ListInboundResponsibilityTransfersInput{}
-				b.Set("Type", &in.Type, "BILLING")
+				in.Type = types.ResponsibilityTransferType("BILLING")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -1188,7 +1190,7 @@ func (g *organizationsScenarios) testOrganizationsGenProbeListOutboundResponsibi
 			Params: `{"Type":"BILLING"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.ListOutboundResponsibilityTransfersInput{}
-				b.Set("Type", &in.Type, "BILLING")
+				in.Type = types.ResponsibilityTransferType("BILLING")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -1210,7 +1212,7 @@ func (g *organizationsScenarios) testOrganizationsGenProbeListParents(ctx contex
 			Params: `{"ChildId":"ou-abcd-12345678"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.ListParentsInput{}
-				b.Set("ChildId", &in.ChildId, "ou-abcd-12345678")
+				in.ChildId = aws.String("ou-abcd-12345678")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -1232,8 +1234,8 @@ func (g *organizationsScenarios) testOrganizationsGenProbeListPoliciesForTarget(
 			Params: `{"Filter":"AISERVICES_OPT_OUT_POLICY","TargetId":"r-abcd"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.ListPoliciesForTargetInput{}
-				b.Set("Filter", &in.Filter, "AISERVICES_OPT_OUT_POLICY")
-				b.Set("TargetId", &in.TargetId, "r-abcd")
+				in.Filter = types.PolicyType("AISERVICES_OPT_OUT_POLICY")
+				in.TargetId = aws.String("r-abcd")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -1255,7 +1257,7 @@ func (g *organizationsScenarios) testOrganizationsGenProbeListTargetsForPolicy(c
 			Params: `{"PolicyId":"p-abcd1234"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &organizations.ListTargetsForPolicyInput{}
-				b.Set("PolicyId", &in.PolicyId, "p-abcd1234")
+				in.PolicyId = aws.String("p-abcd1234")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {

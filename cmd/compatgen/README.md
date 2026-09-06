@@ -162,17 +162,55 @@ context bag, `$name`/`$ref`, the closed check set, error matching,
 `eventually`, the six-field failure message — are written once by hand in
 `compat/suites/go-sdk/internal/scenario` and never re-emitted.
 
+### Where the types come from
+
+A member's Go spelling depends on what smithy-go made of it, and the pinned
+shape snapshot cannot say: the snapshot and the vendored SDK are generated from
+different revisions of the same AWS model, and for the pilot service they
+already disagree — `ReceiveMessage`'s `MaxNumberOfMessages`,
+`VisibilityTimeout` and `WaitTimeSeconds` target `NullableInteger` in
+`models/aws/shapes/sqs.json`, which says pointer, and are plain `int32` fields
+in `aws-sdk-go-v2/service/sqs`.
+
+So `gosdktypes.go` asks the SDK, with `golang.org/x/tools/go/packages`, loading
+`github.com/aws/aws-sdk-go-v2/service/<pkg>` from **the `go-sdk` suite's own
+module** — the module the emitted source is compiled in, so the answer is the
+one the compiler will give. `emit_go_spell.go` turns each `<Op>Input` field's
+declared type into source:
+
+| field type | value | emitted |
+| --- | --- | --- |
+| `*string` | `"blue"` | `aws.String("blue")` |
+| `int32` | `30` | `30` |
+| `types.PolicyType` | `"SCP"` | `types.PolicyType("SCP")` |
+| `map[string]string` | `{"a":"b"}` | `map[string]string{"a": "b"}` |
+| `[]types.Tag` | `[{"Key":"k"}]` | `[]types.Tag{{Key: aws.String("k")}}` |
+| `*string` | `{"$ref":"q"}` | `aws.String(scenario.Bind[string](b, "M", scenario.Ref("q")))` |
+
+Only the last row leaves anything to run time, and only because a `$ref` cannot
+be known before the run: `scenario.Bind` converts the evaluated value to the
+one scalar type the field wants. Nothing reflects.
+
 Two things keep the emitter honest:
 
-- **One naming table.** Everything it knows about spelling Go is in the
-  `goName*` functions in `emit_go.go`, and `-explain -lang go` renders through
-  the same ones, so the pseudo-code a reader reproduces a failure with is the
-  source the emitter wrote. `TestExplainGoRendersTheEmittedCall` asserts it.
-- **It refuses rather than guesses.** A member whose modeled kind has no Go
-  value expression — a timestamp, blob, document or union — is recorded in
-  `gaps.json` as `go-emit-unsupported:<Member>`, and the group is scoped away
-  from `go-sdk` rather than emitted as a guess or silently dropped. Nothing in
-  the pilot corpus reaches it: those kinds are refused upstream already.
+- **One naming table.** Everything it knows about spelling Go is in
+  `emit_go.go`'s `goName*` functions and `emit_go_spell.go`'s `goSpeller`, and
+  `-explain -lang go` renders through the same `goInputLines`, so the
+  pseudo-code a reader reproduces a failure with is the source the emitter
+  wrote — pointers and all. `TestExplainGoRendersTheEmittedCall` asserts it.
+- **It refuses rather than guesses.** Five things produce
+  `go-emit-unsupported:<Member>` in `gaps.json`, and the group is then scoped
+  away from `go-sdk` rather than emitted as a guess or silently dropped:
+
+  | refusal | what it means |
+  | --- | --- |
+  | the modeled kind has no IR literal | a timestamp, blob, document or union |
+  | `<Op>Input` is not declared | the vendored SDK is older than the pinned model |
+  | the SDK has no field for the member | smithy-go renamed or dropped it |
+  | the field's type has no Go literal | a union, or a type from a third package |
+  | a value-typed member is set to its zero value | the SDK would not serialize it (`compat/model/README.md` § Values) |
+
+  Nothing in the pilot corpus reaches any of them.
 
 The emitted bytes go through `go/format` before they are written, and
 generation fails if they will not parse. A golden file under
@@ -192,10 +230,25 @@ check from the command line. CI runs both.
 ## Tests
 
 `go test -tags dev ./cmd/compatgen` runs unit tests over a fixture service
-under `testdata/` (shapes, recipe and values). It is hermetic and sub-second:
-nothing opens a network connection, and the emitted Go is proved to parse and
-to be gofmt-clean here, while the proof that it *compiles* is the `go-sdk`
-suite's own build.
+under `testdata/` (shapes, recipe and values). The emitted Go is proved to
+parse and to be gofmt-clean here, while the proof that it *compiles* is the
+`go-sdk` suite's own build.
+
+**Which tests read which SDK.** The emitter needs real Go types, so
+`testdata/awssdk` is a checked-in stand-in for the AWS SDK for Go v2: a module
+of its own, under the SDK's own module path, declaring the fixture service's
+input structs and nothing else. Every test of the emitter — the golden file,
+the spelling table, each refusal, the `-explain` agreement — resolves against
+it, so it type-checks real Go with no module cache and no network.
+
+The four tests that regenerate the *committed* corpus need the real vendored
+SDK instead, out of `compat/suites/go-sdk/go.mod`. They skip when its
+dependencies cannot be resolved, which keeps `go test` runnable offline; the
+unconditional gate is `make compat-model-check`, whose second command is
+`go run -tags dev ./cmd/compatgen -check` and which fails outright. That is
+also the only place a real fetch can happen — the first run in a fresh
+environment downloads what type-checking the two pilot services needs, and the
+module cache serves every run after it.
 
 `OVERCAST_UPDATE_GOLDEN=1 go test -tags dev -run TestEmitGo ./cmd/compatgen`
 rewrites `testdata/golden/scenarios_widgets_gen.go.golden`. Read the diff

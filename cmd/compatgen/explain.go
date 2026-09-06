@@ -27,7 +27,31 @@ import (
 // cli), explain_typed.go for the ones that take request types (go, java,
 // dotnet, rust).
 
-type renderer func(s *scenario, g *group, t *test) string
+type renderer func(env renderEnv, s *scenario, g *group, t *test) string
+
+// renderEnv is what a rendering needs from outside the scenario file. Only the
+// Go backend uses it: it is the one rendering that reproduces real emitted
+// source, so it spells each member as the vendored SDK declares that member
+// and has to read those declarations. The other six are pseudo-code derived
+// from the IR alone.
+type renderEnv struct {
+	goTypes *goSDKTypes
+}
+
+// speller resolves one service's SDK types for the Go rendering. The error is
+// returned rather than fatal: `-explain` is a reader's tool and must still say
+// something useful on a checkout that has never fetched the go-sdk suite
+// module's dependencies. See goStyle.
+func (env renderEnv) speller(sdkID string) (*goSpeller, error) {
+	if env.goTypes == nil {
+		return nil, fmt.Errorf("internal: no SDK module directory was configured")
+	}
+	svc, err := env.goTypes.service(sdkID)
+	if err != nil {
+		return nil, err
+	}
+	return &goSpeller{svc: svc}, nil
+}
 
 var renderers = map[string]renderer{
 	"python": renderPython,
@@ -60,7 +84,8 @@ func runExplain(opts options, stdout io.Writer) error {
 	if !ok {
 		return fmt.Errorf("no test %s in %s", opts.explain, scenarioPath(service))
 	}
-	_, err = io.WriteString(stdout, render(s, g, t))
+	env := renderEnv{goTypes: newGoSDKTypes(filepath.Join(opts.root, filepath.FromSlash(goSDKModuleDir)))}
+	_, err = io.WriteString(stdout, render(env, s, g, t))
 	return err
 }
 

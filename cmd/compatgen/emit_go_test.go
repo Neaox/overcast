@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -21,6 +22,20 @@ import (
 // .golden suffix so the Go tool never treats it as part of any package: it
 // imports an SDK package for a service that does not exist.
 const goldenPath = "testdata/golden/scenarios_widgets_gen.go.golden"
+
+// fixtureGoTypes resolves field types from testdata/awssdk, a checked-in
+// stand-in for the AWS SDK for Go v2 that declares the fixture service's input
+// structs under the SDK's own module path. That is what makes these tests
+// hermetic: they type-check real Go, from a module inside the repository, with
+// no module cache and no network. Only `make generate-compat-model` and
+// `make compat-model-check` read the vendored SDK itself, out of the go-sdk
+// suite's go.mod.
+//
+// One loader serves the whole test binary because a load starts a `go list`
+// subprocess, and the loader is safe to share.
+var fixtureGoTypes = sync.OnceValue(func() *goSDKTypes {
+	return newGoSDKTypes(filepath.Join("testdata", "awssdk"))
+})
 
 // updateGolden rewrites the golden file instead of comparing against it:
 //
@@ -36,7 +51,7 @@ func TestEmitGo_matchesTheGoldenSource(t *testing.T) {
 	_, gen := generateFixture(t)
 
 	// When: it is emitted as Go.
-	emission, err := emitGo(gen)
+	emission, err := emitGo(gen, fixtureGoTypes())
 	if err != nil {
 		t.Fatalf("emitGo: %v", err)
 	}
@@ -66,11 +81,11 @@ func TestEmitGo_matchesTheGoldenSource(t *testing.T) {
 func TestEmitGo_isDeterministicAndGofmtClean(t *testing.T) {
 	_, gen := generateFixture(t)
 
-	first, err := emitGo(gen)
+	first, err := emitGo(gen, fixtureGoTypes())
 	if err != nil {
 		t.Fatalf("emitGo: %v", err)
 	}
-	second, err := emitGo(gen)
+	second, err := emitGo(gen, fixtureGoTypes())
 	if err != nil {
 		t.Fatalf("emitGo: %v", err)
 	}
@@ -94,7 +109,7 @@ func TestEmitGo_isDeterministicAndGofmtClean(t *testing.T) {
 // late.
 func TestEmitGo_emitsEveryGroupAndTest(t *testing.T) {
 	_, gen := generateFixture(t)
-	emission, err := emitGo(gen)
+	emission, err := emitGo(gen, fixtureGoTypes())
 	if err != nil {
 		t.Fatalf("emitGo: %v", err)
 	}
@@ -122,50 +137,203 @@ func TestEmitGo_emitsEveryGroupAndTest(t *testing.T) {
 	}
 }
 
-// TestEmitGo_refusesAMemberItCannotSpell pins the one refusal this backend
-// introduces, and what it costs: the group leaves the go-sdk column rather
+// TestEmitGo_refusesWhatItCannotSpell pins every refusal this backend
+// introduces, and what each costs: the group leaves the go-sdk column rather
 // than being emitted as a guess or dropped silently.
-func TestEmitGo_refusesAMemberItCannotSpell(t *testing.T) {
-	f, gen := generateFixture(t)
-	_ = f
+//
+// None of these arises from a committed scenario — the recipes and the
+// upstream refusals see to that — so each is constructed against
+// testdata/awssdk, whose api.go declares the field types that produce them.
+// Three of the five are only reachable at all because the emitter now reads
+// the SDK: under the reflective binder a renamed member and a union-typed
+// field compiled and failed on the wire, and a value-typed zero was sent as
+// nothing at all.
+func TestEmitGo_refusesWhatItCannotSpell(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		op         string
+		params     map[string]any
+		wantMember string
+		wantDetail string
+	}{
+		{
+			// The fixture models ListWidgets with an optional CreatedAfter and
+			// the SDK gives it a *time.Time. The modeled kind answers first,
+			// because "a timestamp" is what a recipe author needs to read.
+			name:       "a member whose modeled kind has no IR literal",
+			op:         "ListWidgets",
+			params:     map[string]any{"CreatedAfter": "2026-09-06T00:00:00Z"},
+			wantMember: "CreatedAfter",
+			wantDetail: "timestamp",
+		},
+		{
+			// PurgeWidgets is modeled and the fixture SDK does not declare its
+			// input, which is what an SDK older than the pinned model looks
+			// like.
+			name:       "an operation the vendored SDK does not have",
+			op:         "PurgeWidgets",
+			params:     nil,
+			wantMember: "PurgeWidgetsInput",
+			wantDetail: "older than the pinned model",
+		},
+		{
+			// smithy-go's rename rule is capitalization plus reserved-word and
+			// collision handling. Reproducing only half of it is what made this
+			// case a run-time "has no settable member" and a red compat result.
+			name:       "a member the SDK has no field for",
+			op:         "FreezeWidget",
+			params:     map[string]any{"WidgetId": "w-1"},
+			wantMember: "WidgetId",
+			wantDetail: "has no field for member",
+		},
+		{
+			// The pinned snapshot calls ListGauges' Cursor a string; the
+			// fixture SDK makes it a union, as a service really can. The SDK's
+			// declaration is the authority, and no literal builds an interface.
+			name:       "a field type no Go literal builds",
+			op:         "ListGauges",
+			params:     map[string]any{"Cursor": "page-2"},
+			wantMember: "Cursor",
+			wantDetail: "no Go literal builds a types.GaugeCursor",
+		},
+		{
+			// compat/model/README.md § Values: the SDK serializes a value-typed
+			// member only when it differs from the zero value, so a scenario
+			// asking for 0 silently asks for the service's own default and the
+			// backends stop agreeing about what was sent.
+			name:       "a value-typed member set to its zero value",
+			op:         "RotateWidget",
+			params:     map[string]any{"Angle": 0, "WidgetId": "w-1"},
+			wantMember: "Angle",
+			wantDetail: "§ Values",
+		},
+		{
+			// A deferred expression resolves into one scalar slot. A whole list
+			// from a $ref has no typed slot to land in, and inventing one would
+			// mean converting []any to []string at run time — reflection, by
+			// another name.
+			name:       "an expression bound to a composite member",
+			op:         "UntagWidget",
+			params:     map[string]any{"TagKeys": map[string]any{"$ref": "tags.keys"}},
+			wantMember: "TagKeys",
+			wantDetail: "can only be bound to a scalar member",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: a group whose call carries that member.
+			_, gen := generateFixture(t)
+			const name = "widgets-gen-refused"
+			gen.scenario.Groups = append(gen.scenario.Groups, group{
+				Name: name,
+				Kind: groupLifecycle,
+				Tests: []test{newTest(tc.op, tc.op, call{Op: tc.op, Params: tc.params},
+					responseField(checks("$.Widgets", isList())))},
+			})
 
-	// Given: a group whose call names a timestamp member. The fixture models
-	// ListWidgets with an optional CreatedAfter, which the recipe never binds
-	// — no committed scenario reaches this, because timestamps are refused
-	// upstream, so the case is constructed rather than generated.
-	timestamped := group{
-		Name: "widgets-gen-timestamped",
-		Kind: groupLifecycle,
-		Tests: []test{newTest("ListWidgets", "ListWidgets", call{
-			Op:     "ListWidgets",
-			Params: map[string]any{"CreatedAfter": "2026-09-06T00:00:00Z"},
-		}, responseField(checks("$.Widgets", isList())))},
+			// When: the service is emitted.
+			emission, err := emitGo(gen, fixtureGoTypes())
+			if err != nil {
+				t.Fatalf("emitGo: %v", err)
+			}
+
+			// Then: the group is not in the emitted source, it is reported as
+			// unable so the registry scopes it away from go-sdk, and the
+			// refusal names the member and says why.
+			if strings.Contains(string(emission.Contents), name) {
+				t.Error("a group the emitter cannot spell was emitted anyway")
+			}
+			if !emission.Refused[name] {
+				t.Fatal("the refused group was not reported as unable")
+			}
+			if len(emission.Gaps) != 1 {
+				t.Fatalf("gaps = %+v, want one", emission.Gaps)
+			}
+			got := emission.Gaps[0]
+			if got.Reason != goEmitReason+":"+tc.wantMember || got.Operation != tc.op || got.Group != name {
+				t.Errorf("gap = %+v", got)
+			}
+			if !strings.Contains(got.Detail, tc.wantDetail) {
+				t.Errorf("gap detail does not say why: %q, want it to mention %q", got.Detail, tc.wantDetail)
+			}
+
+			// And: the emitted file still carries no import it stopped needing
+			// when the group was dropped.
+			if strings.Contains(string(emission.Contents), `"github.com/aws/aws-sdk-go-v2/service/widgets/types"`) &&
+				!strings.Contains(string(emission.Contents), "types.") {
+				t.Error("the refused group left an unused import behind")
+			}
+		})
 	}
-	gen.scenario.Groups = append(gen.scenario.Groups, timestamped)
+}
 
-	// When: the service is emitted.
-	emission, err := emitGo(gen)
+// TestGoSpeller_spellsEveryShapeOfField is the type-spelling table read back,
+// one row at a time, against the fixture SDK's real Go types. The golden file
+// proves what a whole service comes out as; this says which rule produced each
+// piece of it, and it is where a new rule is added with its own row.
+func TestGoSpeller_spellsEveryShapeOfField(t *testing.T) {
+	svc, err := fixtureGoTypes().service("Widgets")
 	if err != nil {
-		t.Fatalf("emitGo: %v", err)
+		t.Fatal(err)
 	}
-
-	// Then: the group is not in the emitted source, and the refusal names the
-	// member and the reason.
-	if strings.Contains(string(emission.Contents), "widgets-gen-timestamped") {
-		t.Error("a group the emitter cannot spell was emitted anyway")
-	}
-	if !emission.Refused["widgets-gen-timestamped"] {
-		t.Fatal("the refused group was not reported as unable")
-	}
-	if len(emission.Gaps) != 1 {
-		t.Fatalf("gaps = %+v, want one", emission.Gaps)
-	}
-	got := emission.Gaps[0]
-	if got.Reason != "go-emit-unsupported:CreatedAfter" || got.Operation != "ListWidgets" || got.Group != "widgets-gen-timestamped" {
-		t.Errorf("gap = %+v", got)
-	}
-	if !strings.Contains(got.Detail, "timestamp") {
-		t.Errorf("gap detail does not say what kind of member it was: %q", got.Detail)
+	for _, tc := range []struct {
+		name   string
+		op     string
+		member string
+		value  string
+		want   string
+	}{
+		{"a pointer scalar", "CreateWidget", "Description", `"one"`, `aws.String("one")`},
+		{"an enum", "CreateWidget", "Color", `"blue"`, `types.Color("blue")`},
+		{"a value-typed number", "RotateWidget", "Angle", `45`, `45`},
+		{"a string map", "TagWidget", "Tags", `{"compat":"scenario"}`, `map[string]string{"compat": "scenario"}`},
+		{"a list of strings", "UntagWidget", "TagKeys", `["compat"]`, `[]string{"compat"}`},
+		{
+			// The element type is stated by the composite, so the struct
+			// literal drops its own name — as a human would write it.
+			"a list of structures", "TagSprocket", "Tags", `[{"Key":"k","Value":"v"}]`,
+			`[]types.SprocketTag{{Key: aws.String("k"), Value: aws.String("v")}}`,
+		},
+		{
+			"an expression into a pointer", "GetWidget", "WidgetId", `{"$ref":"widget.id"}`,
+			`aws.String(scenario.Bind[string](b, "WidgetId", scenario.Ref("widget.id")))`,
+		},
+		{
+			// The Bind result is a string, not a types.Color, so the
+			// conversion stays even though the enum's own type is named.
+			"an expression into an enum", "CreateWidget", "Color", `{"$name":"c"}`,
+			`types.Color(scenario.Bind[string](b, "Color", scenario.Name("c")))`,
+		},
+		{
+			"an expression inside a composite", "TagWidget", "Tags", `{"compat":{"$ref":"t"}}`,
+			`map[string]string{"compat": scenario.Bind[string](b, "Tags", scenario.Ref("t"))}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sp := &goSpeller{svc: svc}
+			field, err := sp.field(tc.op, tc.member)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var v any
+			if err := decodeStrict([]byte(tc.value), &v); err != nil {
+				t.Fatal(err)
+			}
+			got, err := sp.value(field.Type(), v, tc.member, "", false)
+			if err != nil {
+				t.Fatalf("spelling %s.%s: %v", tc.op, tc.member, err)
+			}
+			if got != tc.want {
+				t.Errorf("%s.%s = %s, want %s", tc.op, tc.member, got, tc.want)
+			}
+			// An import is recorded only when the spelling actually named it,
+			// which is what keeps an emitted file free of unused imports.
+			if sp.usesAWS != strings.Contains(tc.want, "aws.") {
+				t.Errorf("usesAWS = %v for %s", sp.usesAWS, got)
+			}
+			if sp.usesTypes != strings.Contains(tc.want, "types.") {
+				t.Errorf("usesTypes = %v for %s", sp.usesTypes, got)
+			}
+		})
 	}
 }
 
@@ -305,22 +473,29 @@ func TestGoMethodNamesAreUnique(t *testing.T) {
 
 // TestExplainGoRendersTheEmittedCall is the definition-of-done item that there
 // is one naming table: `-explain -lang go` must print the statements the
-// emitter writes, not a second description of them.
+// emitter writes, not a second description of them. It holds through the typed
+// spelling too — both go through goInputLines, over the same resolved SDK
+// types — which is what stops the explanation claiming a pointer where the
+// vendored SDK gave a value.
 func TestExplainGoRendersTheEmittedCall(t *testing.T) {
 	_, gen := generateFixture(t)
 	g, tc, ok := gen.scenario.findTest("widgets-gen-widget", "CreateWidget")
 	if !ok {
 		t.Fatal("fixture has no CreateWidget")
 	}
-	explained := renderGo(gen.scenario, g, tc)
+	explained := renderGo(renderEnv{goTypes: fixtureGoTypes()}, gen.scenario, g, tc)
 
-	emission, err := emitGo(gen)
+	emission, err := emitGo(gen, fixtureGoTypes())
 	if err != nil {
 		t.Fatalf("emitGo: %v", err)
 	}
 	emitted := string(emission.Contents)
 
-	lines, err := goInputLines(goNamePackage(gen.scenario.Client.SDKID), tc.Call.Op, tc.Call.Params, "")
+	svc, err := fixtureGoTypes().service(gen.scenario.Client.SDKID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := goInputLines(&goSpeller{svc: svc}, tc.Call.Op, tc.Call.Params, "")
 	if err != nil {
 		t.Fatal(err)
 	}

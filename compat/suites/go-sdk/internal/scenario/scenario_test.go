@@ -52,7 +52,7 @@ func createQueue(out any, seen *any) Call {
 		Params: `{"QueueName":{"$name":"q"}}`,
 		Build: func(b *Binder) any {
 			in := &sqs.CreateQueueInput{}
-			b.Set("QueueName", &in.QueueName, Name("q"))
+			in.QueueName = aws.String(Bind[string](b, "QueueName", Name("q")))
 			return in
 		},
 		Send:   sendOK(out, seen),
@@ -74,8 +74,8 @@ func TestRunTest_callExportsAndEveryClauseHolds(t *testing.T) {
 				Params: `{}`,
 				Build: func(b *Binder) any {
 					in := &sqs.GetQueueAttributesInput{}
-					b.Set("QueueUrl", &in.QueueUrl, Ref("queue.url"))
-					b.Set("AttributeNames", &in.AttributeNames, []any{"All"})
+					in.QueueUrl = aws.String(Bind[string](b, "QueueUrl", Ref("queue.url")))
+					in.AttributeNames = []sqstypes.QueueAttributeName{"All"}
 					return in
 				},
 				Send: sendOK(&sqs.GetQueueAttributesOutput{
@@ -122,7 +122,7 @@ func TestRunTest_failureCarriesTheSixFields(t *testing.T) {
 				Params: `{"QueueUrl":{"$ref":"queue.url"}}`,
 				Build: func(b *Binder) any {
 					in := &sqs.GetQueueAttributesInput{}
-					b.Set("QueueUrl", &in.QueueUrl, Ref("queue.url"))
+					in.QueueUrl = aws.String(Bind[string](b, "QueueUrl", Ref("queue.url")))
 					return in
 				},
 				Send: sendOK(&sqs.GetQueueAttributesOutput{Attributes: map[string]string{"VisibilityTimeout": "30"}}, nil),
@@ -162,7 +162,7 @@ func TestRunTest_unresolvableRefNamesThePathAndSendsNothing(t *testing.T) {
 			Params: `{"QueueUrl":{"$ref":"queue.url"}}`,
 			Build: func(b *Binder) any {
 				in := &sqs.DeleteQueueInput{}
-				b.Set("QueueUrl", &in.QueueUrl, Ref("queue.url"))
+				in.QueueUrl = aws.String(Bind[string](b, "QueueUrl", Ref("queue.url")))
 				return in
 			},
 			Send: func(context.Context, any) (any, error) { sent = true; return &sqs.DeleteQueueOutput{}, nil },
@@ -542,7 +542,7 @@ func TestAComposedFailureIsNeverSniffedFor501(t *testing.T) {
 			Params: `{"QueueName":"q-501"}`,
 			Build: func(b *Binder) any {
 				in := &sqs.GetQueueUrlInput{}
-				b.Set("QueueName", &in.QueueName, "q-501")
+				in.QueueName = aws.String("q-501")
 				return in
 			},
 			Send: sendOK(&sqs.GetQueueUrlOutput{}, nil),

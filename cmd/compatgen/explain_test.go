@@ -16,7 +16,7 @@ func TestExplain_rendersEveryLanguage(t *testing.T) {
 	}
 	for _, lang := range rendererNames() {
 		t.Run(lang, func(t *testing.T) {
-			out := renderers[lang](gen.scenario, g, tc)
+			out := renderers[lang](renderEnv{goTypes: fixtureGoTypes()}, gen.scenario, g, tc)
 			// Operation names are spelled per language (get_widget, getWidget,
 			// GetWidget), so compare with case and separators folded.
 			folded := strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(out))

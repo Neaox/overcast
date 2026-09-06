@@ -142,6 +142,7 @@ func TestPromotions_regenerationIsStillByteIdentical(t *testing.T) {
 // renamed group is not inert: the next group to be given that name would be
 // born gated without ever soaking.
 func TestPromotions_refuseAnEntryForAnUnknownGroup(t *testing.T) {
+	skipWithoutVendoredSDK(t)
 	root := copyCorpus(t)
 	writeFile(t, filepath.Join(root, filepath.FromSlash(promotionsPath)), `{
   "version": 1,

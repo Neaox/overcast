@@ -34,19 +34,27 @@ func typedStyle() style {
 	return st
 }
 
-// goStyle renders a call through the emitter's own naming table (emit_go.go),
-// so `-explain -lang go` prints the statements cmd/compatgen writes into
+// goStyle renders a call through the emitter's own spelling table
+// (goInputLines, over emit_go_spell.go), so `-explain -lang go` prints the
+// statements cmd/compatgen writes into
 // compat/suites/go-sdk/internal/groups/scenarios_*_gen.go rather than a second
 // description of them. The definition of done for the Go backend asks for one
-// naming table; this is how there comes to be only one.
+// naming table; this is how there comes to be only one — and now that the
+// spelling is typed, it is also what keeps the explanation honest about which
+// members the vendored SDK made pointers.
 //
-// The pkg it renders against is the scenario's own, so the reader can paste
-// the lines under the client the header line builds.
-func goStyle(sdkID string) style {
+// loadErr is non-nil when the SDK's own types could not be read. That must
+// never happen to generation, but it can happen to `-explain`: the loader
+// needs the go-sdk suite module's dependencies, and a reader may be on a
+// checkout that has never fetched them. Saying so beats printing a spelling
+// that would be a guess.
+func goStyle(sp *goSpeller, loadErr error) style {
 	st := typedStyle()
-	pkg := goNamePackage(sdkID)
 	st.callLines = func(op string, params map[string]any) []string {
-		lines, err := goInputLines(pkg, op, params, "")
+		if loadErr != nil {
+			return []string{fmt.Sprintf("// the vendored SDK's field types could not be read: %v", loadErr)}
+		}
+		lines, err := goInputLines(sp, op, params, "")
 		if err != nil {
 			// Unreachable for a committed scenario: the emitter refuses at
 			// generation time what it cannot render, so a value this cannot
@@ -58,8 +66,9 @@ func goStyle(sdkID string) style {
 	return st
 }
 
-func renderGo(s *scenario, g *group, t *test) string {
-	e := &explainer{st: goStyle(s.Client.SDKID)}
+func renderGo(env renderEnv, s *scenario, g *group, t *test) string {
+	sp, loadErr := env.speller(s.Client.SDKID)
+	e := &explainer{st: goStyle(sp, loadErr)}
 	return e.test(s, g, t, func() {
 		e.linef("client := %s.NewFromConfig(cfg)  // %s", goNamePackage(s.Client.SDKID), goNameModule(s.Client.SDKID))
 		e.linef("group := %s", quote(g.Name))
@@ -89,7 +98,7 @@ func javaStyle() style {
 	return st
 }
 
-func renderJava(s *scenario, g *group, t *test) string {
+func renderJava(_ renderEnv, s *scenario, g *group, t *test) string {
 	e := &explainer{st: javaStyle()}
 	return e.test(s, g, t, func() {
 		e.linef("%sClient client = %sClient.builder().endpointOverride(endpoint).build();", pascalSDK(s.Client.SDKID), pascalSDK(s.Client.SDKID))
@@ -118,7 +127,7 @@ func dotnetStyle() style {
 	return st
 }
 
-func renderDotnet(s *scenario, g *group, t *test) string {
+func renderDotnet(_ renderEnv, s *scenario, g *group, t *test) string {
 	e := &explainer{st: dotnetStyle()}
 	return e.test(s, g, t, func() {
 		e.linef("var client = new Amazon%sClient(new Amazon%sConfig { ServiceURL = endpoint });", pascalSDK(s.Client.SDKID), pascalSDK(s.Client.SDKID))
@@ -148,7 +157,7 @@ func rustStyle() style {
 	return st
 }
 
-func renderRust(s *scenario, g *group, t *test) string {
+func renderRust(_ renderEnv, s *scenario, g *group, t *test) string {
 	e := &explainer{st: rustStyle()}
 	return e.test(s, g, t, func() {
 		e.linef("let client = aws_sdk_%s::Client::new(&config);  // endpoint_url set on the config", strings.ReplaceAll(kebab(s.Client.SDKID), "-", "_"))

@@ -151,6 +151,22 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 	// emitter refused, which decides each group's `suites` below.
 	var goServices []string
 	unable := unableSuites{}
+	// The Go emitter spells each member as the vendored SDK declares it, so it
+	// reads that SDK's own types out of the go-sdk suite's module — the one the
+	// emitted source is compiled in. The loader caches per service, so a run
+	// pays for each service's packages once however many calls it emits.
+	goTypes := newGoSDKTypes(filepath.Join(root, filepath.FromSlash(goSDKModuleDir)))
+	// Reading every model first, rather than one per iteration, is what lets
+	// the SDK packages be loaded in a single `go list`: that command's cost is
+	// dominated by reading the suite module's dependency graph, which is paid
+	// per invocation and not per package.
+	type work struct {
+		recipe recipe
+		model  *serviceModel
+		client clientInfo
+	}
+	planned := make([]work, 0, len(c.recipes))
+	var sdkIDs []string
 	for _, r := range c.recipes {
 		model, err := loadModel(filepath.Join(root, filepath.FromSlash(shapesDir)), r.modelService())
 		if err != nil {
@@ -160,6 +176,16 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 		if err != nil {
 			return nil, nil, err
 		}
+		planned = append(planned, work{recipe: r, model: model, client: client})
+		sdkIDs = append(sdkIDs, client.SDKID)
+	}
+	if hasBackend(goSDKSuite) {
+		if err := goTypes.prime(sdkIDs); err != nil {
+			return nil, nil, err
+		}
+	}
+	for _, w := range planned {
+		r, model, client := w.recipe, w.model, w.client
 		gen, err := generate(model, r, c.values, capabilitiesFor(r.Service), client)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s: %w", r.Service, err)
@@ -173,7 +199,7 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 		}
 		outputs[scenarioPath(r.Service)] = contents
 		if hasBackend(goSDKSuite) {
-			emission, err := emitGo(gen)
+			emission, err := emitGo(gen, goTypes)
 			if err != nil {
 				return nil, nil, fmt.Errorf("%s: %w", r.Service, err)
 			}
