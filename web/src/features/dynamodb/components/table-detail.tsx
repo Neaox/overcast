@@ -1116,16 +1116,13 @@ interface ItemsTableProps {
 }
 
 /*
- * ResourceTable didn't fit because this table needs three things it
- * deliberately does not have (see `resource-table.tsx` — row selection is one
- * of the v9 features the shared component does not register):
+ * ResourceTable didn't fit because this table needs two things it deliberately
+ * does not have (see `resource-table.tsx` — row selection is one of the v9
+ * features the shared component does not register):
  *
  *   1. Row selection — the checkbox column, the header's tri-state
  *      select-all, and the selected-row tint that drives bulk delete.
- *   2. Row expansion — an expanded item renders a *second* `<TableRow>`
- *      carrying the raw JSON across a `colSpan`; `ResourceTable` renders
- *      exactly one row per item.
- *   3. Server-side paging — the rows arrive from Scan/Query through
+ *   2. Server-side paging — the rows arrive from Scan/Query through
  *      `useInfiniteQuery` a page at a time (`LastEvaluatedKey`), so a
  *      client-side sort over `items` would silently reorder only the pages
  *      fetched so far and present it as the table's order. Sorting here has

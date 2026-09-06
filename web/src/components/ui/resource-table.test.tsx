@@ -279,6 +279,90 @@ describe("ResourceTable > row appearance and identity", () => {
   })
 })
 
+describe("ResourceTable > expanding a row", () => {
+  function ExpandableTopics(props: {
+    onRowClick?: (t: Topic) => void
+    canExpand?: (t: Topic) => boolean
+    defaultExpanded?: (t: Topic) => boolean
+  }) {
+    return (
+      <ResourceTable
+        query={{ data: topics, isLoading: false }}
+        noun="topics"
+        columns={columns}
+        rowKey={(t) => t.arn}
+        onRowClick={props.onRowClick}
+        canExpand={props.canExpand}
+        defaultExpanded={props.defaultExpanded}
+        expandedContent={(t) => <p>Detail for {t.name}</p>}
+      />
+    )
+  }
+
+  it("renders the panel under the row the chevron belongs to", async () => {
+    const { user } = render(<ExpandableTopics />)
+    expect(screen.queryByText("Detail for alerts")).not.toBeInTheDocument()
+
+    const row = screen.getByRole("row", { name: /alerts/ })
+    await user.click(within(row).getByRole("button", { name: "Expand row" }))
+    expect(screen.getByText("Detail for alerts")).toBeInTheDocument()
+
+    await user.click(within(row).getByRole("button", { name: "Collapse row" }))
+    expect(screen.queryByText("Detail for alerts")).not.toBeInTheDocument()
+  })
+
+  // Reading two events side by side is the reason this is a row rather than a
+  // detail pane below the table.
+  it("keeps several rows open at once", async () => {
+    const { user } = render(<ExpandableTopics />)
+    for (const name of ["alerts", "billing"]) {
+      const row = screen.getByRole("row", { name: new RegExp(name) })
+      await user.click(within(row).getByRole("button", { name: "Expand row" }))
+    }
+    expect(screen.getByText("Detail for alerts")).toBeInTheDocument()
+    expect(screen.getByText("Detail for billing")).toBeInTheDocument()
+  })
+
+  it("toggles on a row click when the row does not navigate", async () => {
+    const { user } = render(<ExpandableTopics />)
+    await user.click(screen.getByRole("row", { name: /alerts/ }))
+    expect(screen.getByText("Detail for alerts")).toBeInTheDocument()
+  })
+
+  // A row that navigates keeps its click: the chevron is then the only opener,
+  // or a reader could never reach the detail page.
+  it("leaves the row click alone when the page navigates, and the chevron does not navigate", async () => {
+    const onRowClick = vi.fn()
+    const { user } = render(<ExpandableTopics onRowClick={onRowClick} />)
+
+    const row = screen.getByRole("row", { name: /alerts/ })
+    await user.click(within(row).getByRole("button", { name: "Expand row" }))
+    expect(screen.getByText("Detail for alerts")).toBeInTheDocument()
+    expect(onRowClick).not.toHaveBeenCalled()
+
+    await user.click(within(row).getAllByRole("cell")[0])
+    expect(onRowClick).toHaveBeenCalledWith(topics[0])
+  })
+
+  it("offers no chevron on a row canExpand refuses", () => {
+    render(<ExpandableTopics canExpand={(t) => t.name !== "billing"} />)
+    const billing = screen.getByRole("row", { name: /billing/ })
+    expect(within(billing).queryByRole("button", { name: /Expand row/ })).not.toBeInTheDocument()
+    const alerts = screen.getByRole("row", { name: /alerts/ })
+    expect(within(alerts).getByRole("button", { name: "Expand row" })).toBeInTheDocument()
+  })
+
+  it("opens the rows defaultExpanded names on first paint", async () => {
+    const { user } = render(<ExpandableTopics defaultExpanded={(t) => t.name === "billing"} />)
+    await waitFor(() => expect(screen.getByText("Detail for billing")).toBeInTheDocument())
+    expect(screen.queryByText("Detail for alerts")).not.toBeInTheDocument()
+
+    // Closing it stays closed — the seed runs once, not on every render.
+    await user.click(screen.getByRole("button", { name: "Collapse row" }))
+    expect(screen.queryByText("Detail for billing")).not.toBeInTheDocument()
+  })
+})
+
 describe("ResourceTable > delete variables and enablement", () => {
   it("hands the mutation whatever getVars builds, not just an id", async () => {
     const mutate = vi.fn()

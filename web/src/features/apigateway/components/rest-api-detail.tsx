@@ -533,12 +533,13 @@ export function RestApiDetail({ apiId }: Props) {
             ResourceTable didn't fit because this table expands a row into
             extra <TableRow>s of its own (`MethodDetails` renders one row per
             method under the resource it belongs to, sharing the parent's
-            column widths). `ResourceTable` has no row-expansion concept — its
-            row model maps one row per item — so forcing it here would mean
-            either dropping the inline method list or lifting it out of the
-            table, both of which lose the indented parent/child reading. See
-            #1327; the same limitation is recorded for EC2 in
-            docs/plans/web-ui-dry-refactor.md.
+            column widths). `ResourceTable`'s `expandedContent` (#1327) renders
+            one full-width panel per expanded row, which is the wrong shape
+            here: the methods read as indented children *in the same columns*
+            as their resource, and a panel would either drop that alignment or
+            rebuild it inside a nested table. Revisit if the shared table ever
+            grows real sub-rows (v9's `createExpandedRowModel` plus
+            `getSubRows`), which is what this actually wants.
           */}
           <Table>
             <TableHeader>

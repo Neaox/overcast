@@ -167,7 +167,6 @@ function TasksPanel({
   onClearServiceFilter: () => void
 }) {
   const [showRunTask, setShowRunTask] = useState(false)
-  const [expandedTask, setExpandedTask] = useState<string>()
   const runningQuery = useQuery(ecsTasksQueryOptions(clusterName, "RUNNING"))
   const stoppedQuery = useQuery(ecsTasksQueryOptions(clusterName, "STOPPED"))
   const tasks = [...(runningQuery.data ?? []), ...(stoppedQuery.data ?? [])]
@@ -176,7 +175,6 @@ function TasksPanel({
   const refetch = () => Promise.all([runningQuery.refetch(), stoppedQuery.refetch()])
   const { data: taskDefs = [] } = useQuery(ecsTaskDefinitionsQueryOptions())
   const selection = selectTasksForView(tasks, view, serviceFilter)
-  const expandedTaskRow = selection.tasks.find((t) => t.taskArn === expandedTask)
 
   const runMut = useResourceMutation({
     options: runTaskMutationOptions(),
@@ -247,13 +245,6 @@ function TasksPanel({
         </p>
       )}
 
-      {/*
-       * The expanded task's containers render in a block below the table rather
-       * than as an inserted row: `ResourceTable` has no row-expansion concept,
-       * and IAM's Groups tab and `usage-plans-page` already settled on this
-       * shape for the same reason (#1200 wave 2). Same toggle, same content,
-       * bottom of the list rather than under the clicked row.
-       */}
       <ResourceTable
         variant="embedded"
         query={{ data: selection.tasks, isLoading }}
@@ -265,7 +256,6 @@ function TasksPanel({
             : "No tasks are currently running."
         }
         rowKey={(t) => t.taskArn}
-        onRowClick={(t) => setExpandedTask(expandedTask === t.taskArn ? undefined : t.taskArn)}
         defaultSort={{ id: "time", desc: true }}
         columns={[
           {
@@ -312,13 +302,11 @@ function TasksPanel({
             </Button>
           ) : null
         }
+        // The containers belong under the task they are in, not at the bottom of
+        // the list — which is where they had to go until `ResourceTable` grew
+        // row expansion (#1327).
+        expandedContent={(t) => <ContainersList clusterName={clusterName} task={t} />}
       />
-
-      {expandedTaskRow && (
-        <div className="rounded border border-border bg-bg-muted p-4">
-          <ContainersList clusterName={clusterName} task={expandedTaskRow} />
-        </div>
-      )}
 
       <RunTaskDialog
         open={showRunTask}
@@ -580,7 +568,6 @@ function ServicesPanel({
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string>()
   const [updateTarget, setUpdateTarget] = useState<EcsService>()
-  const [expandedService, setExpandedService] = useState<string | undefined>(initialService)
 
   const {
     data: services = [],
@@ -590,7 +577,6 @@ function ServicesPanel({
   } = useQuery(ecsServicesQueryOptions(clusterName))
   const { data: taskDefs = [] } = useQuery(ecsTaskDefinitionsQueryOptions())
   const { data: tasks = [] } = useQuery(ecsTasksQueryOptions(clusterName, "STOPPED"))
-  const expandedServiceRow = services.find((svc) => svc.serviceName === expandedService)
 
   const createMut = useResourceMutation({
     options: createServiceMutationOptions(),
@@ -641,9 +627,17 @@ function ServicesPanel({
           </Button>
         }
         rowKey={(svc) => svc.serviceArn}
-        onRowClick={(svc) =>
-          setExpandedService(expandedService === svc.serviceName ? undefined : svc.serviceName)
-        }
+        // A row opens its own detail under itself; `initialService` is the deep
+        // link from the Tasks tab's "back to the service" affordance.
+        expandedContent={(svc) => (
+          <ServiceDetailPanel
+            clusterName={clusterName}
+            service={svc}
+            tasks={tasks}
+            onViewTasks={(view) => onViewTasks(svc.serviceName, view)}
+          />
+        )}
+        defaultExpanded={(svc) => svc.serviceName === initialService}
         columns={[
           {
             header: "Service Name",
@@ -715,17 +709,6 @@ function ServicesPanel({
           </>
         )}
       />
-
-      {expandedServiceRow && (
-        <div className="rounded border border-border bg-bg-muted p-4">
-          <ServiceDetailPanel
-            clusterName={clusterName}
-            service={expandedServiceRow}
-            tasks={tasks}
-            onViewTasks={(view) => onViewTasks(expandedServiceRow.serviceName, view)}
-          />
-        </div>
-      )}
 
       <CreateServiceDialog
         open={showCreate}
