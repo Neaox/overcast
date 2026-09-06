@@ -155,6 +155,29 @@ func runOneTest(t *testing.T, b *Backend, rg registry.RegistryGroup, name string
 // own subcommand names (`aws sqs help`, `aws organizations help` under
 // aws-cli 2.36), so this is a check against the tool, not against the algorithm
 // restated.
+// TestAwsCommandUsesTheCLIsOwnNameForTheFourServicesThatDiffer pins
+// compat/model/README.md § Naming's cli row. The scenario file carries an
+// endpoint prefix and no command name, and for four services the CLI's own
+// command is not it — `aws elasticloadbalancing` is not a command at all, so a
+// generated group for elastic-load-balancing would report every test as a
+// failure of the service rather than of the derivation.
+func TestAwsCommandUsesTheCLIsOwnNameForTheFourServicesThatDiffer(t *testing.T) {
+	for prefix, want := range map[string]string{
+		"elasticloadbalancing": "elb",
+		"monitoring":           "cloudwatch",
+		"email":                "ses",
+		"states":               "stepfunctions",
+		// Everything else is the endpoint prefix, unchanged.
+		"sqs":           "sqs",
+		"organizations": "organizations",
+		"batch":         "batch",
+	} {
+		if got := awsCommand(prefix); got != want {
+			t.Errorf("awsCommand(%q) = %q, want %q", prefix, got, want)
+		}
+	}
+}
+
 func TestKebabOpMatchesTheCLI(t *testing.T) {
 	cases := map[string]string{
 		// sqs

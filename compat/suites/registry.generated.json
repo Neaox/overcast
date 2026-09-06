@@ -346,6 +346,138 @@
       ]
     },
     {
+      "service": "elastic-load-balancing",
+      "name": "elastic-load-balancing-gen-loadbalancer",
+      "generated": true,
+      "scenario": "compat/model/scenarios/elastic-load-balancing.json",
+      "state": "candidate",
+      "suites": [
+        "cli",
+        "dotnet-sdk",
+        "go-sdk",
+        "java-sdk",
+        "node-js-sdk",
+        "python-sdk"
+      ],
+      "tests": [
+        {
+          "name": "CreateLoadBalancer"
+        },
+        {
+          "name": "DescribeLoadBalancers",
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        },
+        {
+          "name": "ConfigureHealthCheck",
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        },
+        {
+          "name": "CreateLoadBalancerListeners",
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        },
+        {
+          "name": "DeleteLoadBalancerListeners",
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        },
+        {
+          "name": "ModifyLoadBalancerAttributes",
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        },
+        {
+          "name": "DescribeInstanceHealth",
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        },
+        {
+          "name": "CreateLBCookieStickinessPolicy",
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        },
+        {
+          "name": "CreateAppCookieStickinessPolicy",
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        },
+        {
+          "name": "DeleteLoadBalancer",
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "elastic-load-balancing",
+      "name": "elastic-load-balancing-gen-loadbalancerpolicy",
+      "generated": true,
+      "scenario": "compat/model/scenarios/elastic-load-balancing.json",
+      "state": "candidate",
+      "suites": [
+        "cli",
+        "dotnet-sdk",
+        "go-sdk",
+        "java-sdk",
+        "node-js-sdk",
+        "python-sdk",
+        "rust-sdk"
+      ],
+      "tests": [
+        {
+          "name": "CreateLoadBalancerPolicy"
+        },
+        {
+          "name": "DescribeLoadBalancerPolicies"
+        },
+        {
+          "name": "DeleteLoadBalancerPolicy"
+        }
+      ]
+    },
+    {
+      "service": "elastic-load-balancing",
+      "name": "elastic-load-balancing-gen-probe",
+      "generated": true,
+      "scenario": "compat/model/scenarios/elastic-load-balancing.json",
+      "state": "candidate",
+      "parallel": true,
+      "suites": [
+        "cli",
+        "dotnet-sdk",
+        "go-sdk",
+        "java-sdk",
+        "node-js-sdk",
+        "python-sdk",
+        "rust-sdk"
+      ],
+      "tests": [
+        {
+          "name": "DescribeAccountLimits"
+        },
+        {
+          "name": "DescribeLoadBalancerAttributes"
+        },
+        {
+          "name": "DescribeLoadBalancerPolicyTypes"
+        },
+        {
+          "name": "DescribeTags"
+        }
+      ]
+    },
+    {
       "service": "organizations",
       "name": "organizations-gen-organization",
       "generated": true,

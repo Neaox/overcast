@@ -38,6 +38,33 @@ from .loader import ScenarioGroup
 _BAG_KEY = "__scenario_context__"
 
 
+# The whole of compat/model/README.md § Naming's python-sdk row: botocore's
+# service name is the scenario's endpoint prefix except for four services,
+# where botocore keeps a shorter historical directory name. It is a table
+# because nothing about "elasticloadbalancing" implies "elb" — botocore's
+# service names come from its own data directory, not from the endpoint, and
+# for these four the two disagree. ``boto3.client("elasticloadbalancing")``
+# raises UnknownServiceError, so a generated group for elastic-load-balancing
+# would report every test as a failure of the service rather than of the
+# derivation.
+#
+# The plan (§7.3) asked for this to land with the first scenario that names one
+# of the four rather than up front, which is ``elastic-load-balancing``; the
+# other three are here because they are one documented set and a table with one
+# entry invites the next author to add theirs somewhere else.
+_BOTOCORE_SERVICE_OVERRIDES = {
+    "elasticloadbalancing": "elb",
+    "monitoring": "cloudwatch",
+    "email": "ses",
+    "states": "stepfunctions",
+}
+
+
+def botocore_service(endpoint_prefix: str) -> str:
+    """The botocore service name for a scenario's endpoint prefix."""
+    return _BOTOCORE_SERVICE_OVERRIDES.get(endpoint_prefix, endpoint_prefix)
+
+
 @dataclass(frozen=True)
 class StepRef:
     """Fields 1 and 6 of a failure message: which test failed, and where in
@@ -103,7 +130,7 @@ class Executor:
         scenario ever did carry a string for a numeric member, botocore would
         reject it here rather than silently coerce, which is the right failure.
         """
-        client = self._clients.get(self.ctx, self.spec.client["endpointPrefix"])
+        client = self._clients.get(self.ctx, botocore_service(self.spec.client["endpointPrefix"]))
         return getattr(client, xform_name(call["op"]))(**params)
 
     def perform(self, call: dict, ref: StepRef, assertion: str, *,

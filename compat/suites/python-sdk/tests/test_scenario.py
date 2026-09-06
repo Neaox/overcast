@@ -27,7 +27,12 @@ from botocore.exceptions import ClientError  # noqa: E402
 from lib.harness import TestContext, TestGroup, run_group  # noqa: E402
 from lib.harness import TestCase as HarnessTestCase  # noqa: E402
 from lib.scenario import ScenarioInterpreter, scenario_hooks  # noqa: E402
-from lib.scenario.executor import ClientCache, error_matches, error_names  # noqa: E402
+from lib.scenario.executor import (  # noqa: E402
+    ClientCache,
+    botocore_service,
+    error_matches,
+    error_names,
+)
 from lib.scenario.expressions import (  # noqa: E402
     evaluate,
     is_non_empty,
@@ -311,6 +316,45 @@ class TestErrorNames(unittest.TestCase):
 
     def test_an_unrelated_error_does_not_match(self):
         self.assertFalse(error_matches(client_error("AccessDenied"), self.ERROR))
+
+
+class TestBotocoreServiceName(unittest.TestCase):
+    """compat/model/README.md § Naming's python-sdk row.
+
+    The scenario file carries an endpoint prefix and no botocore service name,
+    and for four services the two disagree. ``boto3.client`` raises
+    ``UnknownServiceError`` for the endpoint prefix, so a generated group for
+    one of them would report every test as a failure of the service rather
+    than of the derivation."""
+
+    def test_the_four_services_botocore_names_differently(self):
+        for prefix, want in {
+            "elasticloadbalancing": "elb",
+            "monitoring": "cloudwatch",
+            "email": "ses",
+            "states": "stepfunctions",
+        }.items():
+            self.assertEqual(botocore_service(prefix), want, prefix)
+
+    def test_everything_else_is_the_endpoint_prefix_unchanged(self):
+        for prefix in ("sqs", "organizations", "batch", "servicediscovery"):
+            self.assertEqual(botocore_service(prefix), prefix)
+
+    def test_every_override_names_a_service_botocore_actually_has(self):
+        # The table is only worth having if the names in it construct. This is
+        # the "a test that the client it names actually constructs" the plan
+        # (§7.3) asks the first backend needing an override to land.
+        import boto3
+
+        for name in ("elb", "cloudwatch", "ses", "stepfunctions"):
+            client = boto3.client(
+                name,
+                region_name="us-east-1",
+                endpoint_url="http://127.0.0.1:1",
+                aws_access_key_id="compat",
+                aws_secret_access_key="compat",
+            )
+            self.assertIsNotNone(client)
 
 
 class TestClientCacheSharing(unittest.TestCase):
@@ -865,7 +909,10 @@ class TestPilotCorpus(unittest.TestCase):
         seen: set[tuple[str, str]] = set()
         for group in self.registry["groups"]:
             spec = self.interp.group_spec(group.get("scenario"), group["name"])
-            service = spec.client["endpointPrefix"]
+            # Through botocore_service, not the endpoint prefix: for four
+            # services botocore's own name is not the prefix, and this test is
+            # what proves the table stays right as the corpus grows.
+            service = botocore_service(spec.client["endpointPrefix"])
             model = session.get_service_model(service)
             for op in _operations(spec):
                 if (service, op) in seen:

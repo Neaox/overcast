@@ -1,0 +1,220 @@
+{
+  "$comment": "Elastic Load Balancing (Classic, API version 2012-06-01) — the AWS Query member of Phase I4's pilot trio (docs/plans/inert-tier-rollout.md §8, G4 wave 1 of docs/plans/compat-coverage-modelgen.md §5), and the first Query service in the generated corpus. Overcast declares no capability row for it, so every operation here is Tier 0: each probe records `unimplemented` and each lifecycle group records `skip` on the 501 its create raises. Three things shape the file. The load balancer's own name is not in the create response — CreateLoadBalancer answers with a DNSName and nothing else — so the name comes back through a `derived` call, which is what lets `binds` hand LoadBalancerName to the eleven other operations that take it. Classic ELB has no id but the name, and DNSName is the one value the create states, so it is the identity the read-back and the list-membership check compare. And the listeners, the cookie-stickiness policies and the attribute set are all sub-objects of a load balancer rather than resources with their own create/delete pair, so they are authored operations on this resource: a listener added and then removed is checked by membership of ListenerDescriptions, which is the observable AWS actually gives. Two things a real-AWS run would trip on are recorded here rather than hidden, and neither is anything the emulator can show. A Classic load balancer name is limited to 32 characters, which the model does not declare, and `$name` is `{runId}-{group}-{suffix}` — here 54 characters. The IR has no shorter spelling for a name a run owns, so AWS refuses this create on the name alone; Overcast accepts it, and so will the inert tier that implements it. And CreateLoadBalancer needs either AvailabilityZones or Subnets, and a compat run owns no VPC, so the zone is the literal us-east-1a — right for the region the compat runner defaults to and wrong anywhere else, in the same way values.json's existing ARNs are.",
+  "service": "elastic-load-balancing",
+  "neverProbe": {
+    "AddTags": "Tags a live load balancer. Harmless in itself, but nothing in a probe group removes what it adds, and an account's tags are what its owner's cost allocation is keyed on.",
+    "ApplySecurityGroupsToLoadBalancer": "Replaces the security groups of a load balancer wholesale rather than adding to them, so a probe would strip whatever rules the caller's own load balancer relies on.",
+    "AttachLoadBalancerToSubnets": "Puts a live load balancer into another subnet, which changes where it accepts traffic.",
+    "DeregisterInstancesFromLoadBalancer": "Takes instances out of service behind a live load balancer.",
+    "DetachLoadBalancerFromSubnets": "Removes a load balancer from a subnet, and with it every instance in that subnet.",
+    "DisableAvailabilityZonesForLoadBalancer": "Takes a whole Availability Zone out of a load balancer. AWS documents the instances in it as deregistered and the zone's capacity as lost immediately.",
+    "EnableAvailabilityZonesForLoadBalancer": "Adds an Availability Zone to a live load balancer, changing where it serves from and what it bills for.",
+    "RegisterInstancesWithLoadBalancer": "Puts EC2 instances into service behind a live load balancer, sending it traffic it was not meant to receive.",
+    "RemoveTags": "Removes tags from a live load balancer; the tags it deletes are not recoverable, and cost allocation is keyed on them.",
+    "SetLoadBalancerListenerSSLCertificate": "Replaces the TLS certificate a live listener serves.",
+    "SetLoadBalancerPoliciesForBackendServer": "Replaces the policies applied to a backend port wholesale — an empty list removes every one of them.",
+    "SetLoadBalancerPoliciesOfListener": "Replaces the policies applied to a listener wholesale, which is how a listener loses its stickiness or its cipher policy."
+  },
+  "resources": [
+    {
+      "$comment": "The load balancer itself. `derived` is the interesting half: CreateLoadBalancer returns only DNSName, so the name a run owns has to be read back before anything else can bind it — one DescribeLoadBalancers call, exporting LoadBalancerName, which is also the create test's first read-back clause. DNSName is the identity: it is the one value the create states, and the read and the list both carry it. The listener is HTTP on 80 in front of HTTP on 80, which is the smallest legal listener Classic ELB accepts and needs no certificate. The health-check mutation goes through ConfigureHealthCheck, whose other four members are all @required and so are written out in full; only Interval is the value the update changes and the read compares. `async` is a minute because AWS documents a load balancer's DNS as taking time to become resolvable, and a deleted one as continuing to appear in DescribeLoadBalancers for a short while afterwards. notFound is left to the derivation — DescribeLoadBalancers declares exactly one not-found-shaped error, AccessPointNotFoundException. `tags` is declared even though the generator refuses it, because the refusal is the honest record of where the model layer stops: RemoveTags takes a list of TagKeyOnly structures rather than a list of strings, which detectTagShape does not accept. Deleting the field would hide a limitation rather than remove one, and would leave AddTags, DescribeTags and RemoveTags with no explanation in gaps.json at all.",
+      "id": "loadbalancer",
+      "create": {
+        "op": "CreateLoadBalancer",
+        "params": {
+          "LoadBalancerName": { "$name": "lb" },
+          "AvailabilityZones": ["us-east-1a"],
+          "Listeners": [
+            {
+              "Protocol": "HTTP",
+              "LoadBalancerPort": 80,
+              "InstanceProtocol": "HTTP",
+              "InstancePort": 80
+            }
+          ]
+        }
+      },
+      "exports": { "dns": "$.DNSName" },
+      "derived": [
+        {
+          "export": "name",
+          "op": "DescribeLoadBalancers",
+          "params": { "LoadBalancerNames": [{ "$name": "lb" }] },
+          "path": "$.LoadBalancerDescriptions[0].LoadBalancerName"
+        }
+      ],
+      "binds": { "LoadBalancerName": "loadbalancer.name" },
+      "read": {
+        "op": "DescribeLoadBalancers",
+        "params": { "LoadBalancerNames": [{ "$ref": "loadbalancer.name" }] },
+        "identityPath": "$.LoadBalancerDescriptions[0].DNSName",
+        "identity": "dns"
+      },
+      "list": {
+        "$comment": "The same operation as the read, unfiltered: Classic ELB has no separate list, so membership and absence are checked against the account-wide listing while the read is the filtered describe. itemsPath is left to the derivation — @paginated names LoadBalancerDescriptions as its items.",
+        "op": "DescribeLoadBalancers",
+        "identityPath": "$.DNSName",
+        "identity": "dns"
+      },
+      "mutable": [
+        {
+          "op": "ConfigureHealthCheck",
+          "params": {
+            "HealthCheck": {
+              "HealthyThreshold": 2,
+              "Target": "TCP:80",
+              "Timeout": 5,
+              "UnhealthyThreshold": 2
+            }
+          },
+          "member": "HealthCheck.Interval",
+          "to": 30,
+          "readPath": "$.LoadBalancerDescriptions[0].HealthCheck.Interval"
+        }
+      ],
+      "tags": {
+        "tag": { "op": "AddTags", "member": "Tags" },
+        "untag": { "op": "RemoveTags", "member": "Tags" },
+        "list": { "op": "DescribeTags", "path": "$.TagDescriptions[0].Tags" }
+      },
+      "delete": { "op": "DeleteLoadBalancer" },
+      "async": { "maxAttempts": 30, "delayMs": 2000 },
+      "operations": [
+        {
+          "$comment": "A listener is not a resource with its own create/delete pair — it is a member of the load balancer — so the pair is authored here and verified the way AWS makes it observable: the port shows up in, and then goes from, ListenerDescriptions. 8080 rather than 80 so the create's own listener is untouched either way.",
+          "op": "CreateLoadBalancerListeners",
+          "params": {
+            "Listeners": [
+              {
+                "Protocol": "TCP",
+                "LoadBalancerPort": 8080,
+                "InstanceProtocol": "TCP",
+                "InstancePort": 8080
+              }
+            ]
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "call": {
+                "op": "DescribeLoadBalancers",
+                "params": { "LoadBalancerNames": [{ "$ref": "loadbalancer.name" }] }
+              },
+              "itemsPath": "$.LoadBalancerDescriptions[0].ListenerDescriptions",
+              "where": { "$.Listener.LoadBalancerPort": 8080 }
+            }
+          ]
+        },
+        {
+          "op": "DeleteLoadBalancerListeners",
+          "params": { "LoadBalancerPorts": [8080] },
+          "assert": [
+            {
+              "kind": "absent",
+              "call": {
+                "op": "DescribeLoadBalancers",
+                "params": { "LoadBalancerNames": [{ "$ref": "loadbalancer.name" }] }
+              },
+              "itemsPath": "$.LoadBalancerDescriptions[0].ListenerDescriptions",
+              "where": { "$.Listener.LoadBalancerPort": 8080 }
+            }
+          ]
+        },
+        {
+          "$comment": "Cross-zone load balancing is the one attribute whose whole value is a boolean, so the read-back compares the value the call set rather than merely that something came back. AWS documents it as off by default on a Classic load balancer, which is what makes `true` a change.",
+          "op": "ModifyLoadBalancerAttributes",
+          "params": {
+            "LoadBalancerAttributes": {
+              "CrossZoneLoadBalancing": { "Enabled": true }
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": { "op": "DescribeLoadBalancerAttributes" },
+              "checks": {
+                "$.LoadBalancerAttributes.CrossZoneLoadBalancing.Enabled": { "equals": true }
+              }
+            }
+          ]
+        },
+        {
+          "$comment": "Nothing is registered behind this load balancer, so the honest assertion is that the service answered with a page of instance states rather than that the page holds anything.",
+          "op": "DescribeInstanceHealth",
+          "assert": [
+            { "kind": "responseField", "checks": { "$.InstanceStates": { "isList": true } } }
+          ]
+        },
+        {
+          "$comment": "The two cookie-stickiness policies are created by their own operations and deleted only by DeleteLoadBalancerPolicy or by the load balancer going away, so neither is a resource in its own right. Each read-back asks DescribeLoadBalancerPolicies for that one policy name, so a non-empty PolicyName at index 0 is the statement that the named policy now exists.",
+          "op": "CreateLBCookieStickinessPolicy",
+          "params": {
+            "PolicyName": { "$name": "lbcookie" },
+            "CookieExpirationPeriod": 300
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "DescribeLoadBalancerPolicies",
+                "params": {
+                  "LoadBalancerName": { "$ref": "loadbalancer.name" },
+                  "PolicyNames": [{ "$name": "lbcookie" }]
+                }
+              },
+              "checks": { "$.PolicyDescriptions[0].PolicyName": { "nonEmpty": true } }
+            }
+          ]
+        },
+        {
+          "op": "CreateAppCookieStickinessPolicy",
+          "params": {
+            "PolicyName": { "$name": "appcookie" },
+            "CookieName": "compat-scenario"
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "DescribeLoadBalancerPolicies",
+                "params": {
+                  "LoadBalancerName": { "$ref": "loadbalancer.name" },
+                  "PolicyNames": [{ "$name": "appcookie" }]
+                }
+              },
+              "checks": { "$.PolicyDescriptions[0].PolicyName": { "nonEmpty": true } }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "$comment": "A load-balancer policy is the one Classic ELB sub-object with a create, a read and a delete of its own, so it gets a group. ProxyProtocolPolicyType with ProxyProtocol=true is AWS's own documented example and the only built-in policy type whose attributes a test can state without a certificate or a cipher list. CreateLoadBalancerPolicy returns nothing at all, so there is no export and the read asserts the shape of the name it filtered on rather than equality with one — a non-empty PolicyName at index 0 of a listing filtered to this one name is the statement that the policy exists. There is no `list` because absence after the delete is proven by the stronger thing: DescribeLoadBalancerPolicies raises PolicyNotFoundException. That error is written out rather than derived, because the read declares two not-found-shaped errors and the generator refuses to choose between them.",
+      "id": "loadbalancerpolicy",
+      "requires": ["loadbalancer"],
+      "create": {
+        "op": "CreateLoadBalancerPolicy",
+        "params": {
+          "PolicyName": { "$name": "policy" },
+          "PolicyTypeName": "ProxyProtocolPolicyType",
+          "PolicyAttributes": [
+            { "AttributeName": "ProxyProtocol", "AttributeValue": "true" }
+          ]
+        }
+      },
+      "read": {
+        "op": "DescribeLoadBalancerPolicies",
+        "params": {
+          "LoadBalancerName": { "$ref": "loadbalancer.name" },
+          "PolicyNames": [{ "$name": "policy" }]
+        },
+        "identityPath": "$.PolicyDescriptions[0].PolicyName"
+      },
+      "delete": {
+        "op": "DeleteLoadBalancerPolicy",
+        "params": { "PolicyName": { "$name": "policy" } }
+      },
+      "notFound": { "error": "PolicyNotFoundException" }
+    }
+  ]
+}

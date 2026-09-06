@@ -14,6 +14,13 @@
         "ListQuotaShares": { "jobQueue": "compat-scenario-nonexistent" }
       }
     },
+    "elastic-load-balancing": {
+      "$comment": "Both entries name a Classic load balancer that does not exist. The name is 27 characters, inside AWS's 32-character limit for a load balancer name, and it carries no $name prefix, so it can never be the one a run created: DescribeLoadBalancerAttributes and DescribeTags both answer LoadBalancerNotFound for it rather than reaching anything. DescribeLoadBalancerAttributes needs an entry of its own because the loadbalancer resource binds LoadBalancerName, and a probe may not draw on a binding a live resource supplies.",
+      "operations": {
+        "DescribeLoadBalancerAttributes": { "LoadBalancerName": "compat-scenario-nonexistent" },
+        "DescribeTags": { "LoadBalancerNames": ["compat-scenario-nonexistent"] }
+      }
+    },
     "sqs": {
       "$comment": "TaskHandle is base64 on AWS — StartMessageMoveTask hands back an opaque encoded handle — so the placeholder is base64 too: an unencoded string is answered with a validation error rather than the not-found the probe is written for. This one decodes to {\"taskId\":\"compat-scenario\"}. QueueUrl and SourceArn name a queue in an account that is not the caller's, so a probe of AddPermission, RemovePermission, CancelMessageMoveTask or ListMessageMoveTasks cannot reach the queue the run created.",
       "operations": {

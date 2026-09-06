@@ -93,6 +93,118 @@
       "detail": "Re-prioritises a service job that is already queued or running, which changes the order real work is scheduled in."
     },
     {
+      "service": "elastic-load-balancing",
+      "operation": "AddTags",
+      "group": "elastic-load-balancing-gen-loadbalancer",
+      "reason": "unsupported-tag-shape:TagKeyList",
+      "detail": "RemoveTags.Tags targets TagKeyList, which is not a list of strings"
+    },
+    {
+      "service": "elastic-load-balancing",
+      "operation": "AddTags",
+      "group": "elastic-load-balancing-gen-probe",
+      "reason": "never-probe",
+      "detail": "Tags a live load balancer. Harmless in itself, but nothing in a probe group removes what it adds, and an account's tags are what its owner's cost allocation is keyed on."
+    },
+    {
+      "service": "elastic-load-balancing",
+      "operation": "ApplySecurityGroupsToLoadBalancer",
+      "group": "elastic-load-balancing-gen-probe",
+      "reason": "never-probe",
+      "detail": "Replaces the security groups of a load balancer wholesale rather than adding to them, so a probe would strip whatever rules the caller's own load balancer relies on."
+    },
+    {
+      "service": "elastic-load-balancing",
+      "operation": "AttachLoadBalancerToSubnets",
+      "group": "elastic-load-balancing-gen-probe",
+      "reason": "never-probe",
+      "detail": "Puts a live load balancer into another subnet, which changes where it accepts traffic."
+    },
+    {
+      "service": "elastic-load-balancing",
+      "operation": "DeregisterInstancesFromLoadBalancer",
+      "group": "elastic-load-balancing-gen-probe",
+      "reason": "never-probe",
+      "detail": "Takes instances out of service behind a live load balancer."
+    },
+    {
+      "service": "elastic-load-balancing",
+      "operation": "DescribeTags",
+      "group": "elastic-load-balancing-gen-loadbalancer",
+      "reason": "unsupported-tag-shape:TagKeyList",
+      "detail": "RemoveTags.Tags targets TagKeyList, which is not a list of strings"
+    },
+    {
+      "service": "elastic-load-balancing",
+      "operation": "DetachLoadBalancerFromSubnets",
+      "group": "elastic-load-balancing-gen-probe",
+      "reason": "never-probe",
+      "detail": "Removes a load balancer from a subnet, and with it every instance in that subnet."
+    },
+    {
+      "service": "elastic-load-balancing",
+      "operation": "DisableAvailabilityZonesForLoadBalancer",
+      "group": "elastic-load-balancing-gen-probe",
+      "reason": "never-probe",
+      "detail": "Takes a whole Availability Zone out of a load balancer. AWS documents the instances in it as deregistered and the zone's capacity as lost immediately."
+    },
+    {
+      "service": "elastic-load-balancing",
+      "operation": "EnableAvailabilityZonesForLoadBalancer",
+      "group": "elastic-load-balancing-gen-probe",
+      "reason": "never-probe",
+      "detail": "Adds an Availability Zone to a live load balancer, changing where it serves from and what it bills for."
+    },
+    {
+      "service": "elastic-load-balancing",
+      "operation": "ModifyLoadBalancerAttributes",
+      "group": "elastic-load-balancing-gen-loadbalancer",
+      "reason": "rust-emit-unsupported:LoadBalancerAttributes",
+      "detail": "ModifyLoadBalancerAttributes.LoadBalancerAttributes cannot be spelled as Rust: no Rust literal for a structure member"
+    },
+    {
+      "service": "elastic-load-balancing",
+      "operation": "RegisterInstancesWithLoadBalancer",
+      "group": "elastic-load-balancing-gen-probe",
+      "reason": "never-probe",
+      "detail": "Puts EC2 instances into service behind a live load balancer, sending it traffic it was not meant to receive."
+    },
+    {
+      "service": "elastic-load-balancing",
+      "operation": "RemoveTags",
+      "group": "elastic-load-balancing-gen-loadbalancer",
+      "reason": "unsupported-tag-shape:TagKeyList",
+      "detail": "RemoveTags.Tags targets TagKeyList, which is not a list of strings"
+    },
+    {
+      "service": "elastic-load-balancing",
+      "operation": "RemoveTags",
+      "group": "elastic-load-balancing-gen-probe",
+      "reason": "never-probe",
+      "detail": "Removes tags from a live load balancer; the tags it deletes are not recoverable, and cost allocation is keyed on them."
+    },
+    {
+      "service": "elastic-load-balancing",
+      "operation": "SetLoadBalancerListenerSSLCertificate",
+      "group": "elastic-load-balancing-gen-probe",
+      "reason": "never-probe",
+      "detail": "Replaces the TLS certificate a live listener serves."
+    },
+    {
+      "service": "elastic-load-balancing",
+      "operation": "SetLoadBalancerPoliciesForBackendServer",
+      "group": "elastic-load-balancing-gen-probe",
+      "reason": "never-probe",
+      "detail": "Replaces the policies applied to a backend port wholesale — an empty list removes every one of them."
+    },
+    {
+      "service": "elastic-load-balancing",
+      "operation": "SetLoadBalancerPoliciesOfListener",
+      "group": "elastic-load-balancing-gen-probe",
+      "reason": "never-probe",
+      "detail": "Replaces the policies applied to a listener wholesale, which is how a listener loses its stickiness or its cipher policy."
+    },
+    {
       "service": "organizations",
       "operation": "AcceptHandshake",
       "group": "organizations-gen-probe",

@@ -1,0 +1,762 @@
+{
+  "version": 1,
+  "service": "elastic-load-balancing",
+  "client": {
+    "sdkId": "Elastic Load Balancing",
+    "endpointPrefix": "elasticloadbalancing",
+    "signingName": "elasticloadbalancing",
+    "protocol": "awsQuery",
+    "apiVersion": "2012-06-01",
+    "awsQueryCompatible": false
+  },
+  "groups": [
+    {
+      "name": "elastic-load-balancing-gen-loadbalancer",
+      "kind": "lifecycle",
+      "setup": [],
+      "tests": [
+        {
+          "name": "CreateLoadBalancer",
+          "op": "CreateLoadBalancer",
+          "call": {
+            "op": "CreateLoadBalancer",
+            "params": {
+              "AvailabilityZones": [
+                "us-east-1a"
+              ],
+              "Listeners": [
+                {
+                  "InstancePort": 80,
+                  "InstanceProtocol": "HTTP",
+                  "LoadBalancerPort": 80,
+                  "Protocol": "HTTP"
+                }
+              ],
+              "LoadBalancerName": {
+                "$name": "lb"
+              }
+            },
+            "export": {
+              "loadbalancer.dns": "$.DNSName"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.DNSName": {
+                  "nonEmpty": true
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "DescribeLoadBalancers",
+                  "params": {
+                    "LoadBalancerNames": [
+                      {
+                        "$name": "lb"
+                      }
+                    ]
+                  },
+                  "export": {
+                    "loadbalancer.name": "$.LoadBalancerDescriptions[0].LoadBalancerName"
+                  }
+                },
+                "checks": {
+                  "$.LoadBalancerDescriptions[0].LoadBalancerName": {
+                    "nonEmpty": true
+                  }
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "DescribeLoadBalancers",
+                  "params": {
+                    "LoadBalancerNames": [
+                      {
+                        "$ref": "loadbalancer.name"
+                      }
+                    ]
+                  }
+                },
+                "checks": {
+                  "$.LoadBalancerDescriptions[0].DNSName": {
+                    "equals": {
+                      "$ref": "loadbalancer.dns"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "listContains",
+                "call": {
+                  "op": "DescribeLoadBalancers",
+                  "params": {}
+                },
+                "itemsPath": "$.LoadBalancerDescriptions",
+                "where": {
+                  "$.DNSName": {
+                    "$ref": "loadbalancer.dns"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeLoadBalancers",
+          "op": "DescribeLoadBalancers",
+          "call": {
+            "op": "DescribeLoadBalancers",
+            "params": {
+              "LoadBalancerNames": [
+                {
+                  "$ref": "loadbalancer.name"
+                }
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.LoadBalancerDescriptions[0].DNSName": {
+                  "equals": {
+                    "$ref": "loadbalancer.dns"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        },
+        {
+          "name": "ConfigureHealthCheck",
+          "op": "ConfigureHealthCheck",
+          "call": {
+            "op": "ConfigureHealthCheck",
+            "params": {
+              "HealthCheck": {
+                "HealthyThreshold": 2,
+                "Interval": 30,
+                "Target": "TCP:80",
+                "Timeout": 5,
+                "UnhealthyThreshold": 2
+              },
+              "LoadBalancerName": {
+                "$ref": "loadbalancer.name"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "DescribeLoadBalancers",
+                  "params": {
+                    "LoadBalancerNames": [
+                      {
+                        "$ref": "loadbalancer.name"
+                      }
+                    ]
+                  }
+                },
+                "checks": {
+                  "$.LoadBalancerDescriptions[0].HealthCheck.Interval": {
+                    "equals": 30
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        },
+        {
+          "name": "CreateLoadBalancerListeners",
+          "op": "CreateLoadBalancerListeners",
+          "call": {
+            "op": "CreateLoadBalancerListeners",
+            "params": {
+              "Listeners": [
+                {
+                  "InstancePort": 8080,
+                  "InstanceProtocol": "TCP",
+                  "LoadBalancerPort": 8080,
+                  "Protocol": "TCP"
+                }
+              ],
+              "LoadBalancerName": {
+                "$ref": "loadbalancer.name"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "listContains",
+                "call": {
+                  "op": "DescribeLoadBalancers",
+                  "params": {
+                    "LoadBalancerNames": [
+                      {
+                        "$ref": "loadbalancer.name"
+                      }
+                    ]
+                  }
+                },
+                "itemsPath": "$.LoadBalancerDescriptions[0].ListenerDescriptions",
+                "where": {
+                  "$.Listener.LoadBalancerPort": 8080
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        },
+        {
+          "name": "DeleteLoadBalancerListeners",
+          "op": "DeleteLoadBalancerListeners",
+          "call": {
+            "op": "DeleteLoadBalancerListeners",
+            "params": {
+              "LoadBalancerName": {
+                "$ref": "loadbalancer.name"
+              },
+              "LoadBalancerPorts": [
+                8080
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "absent",
+                "call": {
+                  "op": "DescribeLoadBalancers",
+                  "params": {
+                    "LoadBalancerNames": [
+                      {
+                        "$ref": "loadbalancer.name"
+                      }
+                    ]
+                  }
+                },
+                "itemsPath": "$.LoadBalancerDescriptions[0].ListenerDescriptions",
+                "where": {
+                  "$.Listener.LoadBalancerPort": 8080
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        },
+        {
+          "name": "ModifyLoadBalancerAttributes",
+          "op": "ModifyLoadBalancerAttributes",
+          "call": {
+            "op": "ModifyLoadBalancerAttributes",
+            "params": {
+              "LoadBalancerAttributes": {
+                "CrossZoneLoadBalancing": {
+                  "Enabled": true
+                }
+              },
+              "LoadBalancerName": {
+                "$ref": "loadbalancer.name"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "DescribeLoadBalancerAttributes",
+                  "params": {
+                    "LoadBalancerName": {
+                      "$ref": "loadbalancer.name"
+                    }
+                  }
+                },
+                "checks": {
+                  "$.LoadBalancerAttributes.CrossZoneLoadBalancing.Enabled": {
+                    "equals": true
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        },
+        {
+          "name": "DescribeInstanceHealth",
+          "op": "DescribeInstanceHealth",
+          "call": {
+            "op": "DescribeInstanceHealth",
+            "params": {
+              "LoadBalancerName": {
+                "$ref": "loadbalancer.name"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.InstanceStates": {
+                  "isList": true
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        },
+        {
+          "name": "CreateLBCookieStickinessPolicy",
+          "op": "CreateLBCookieStickinessPolicy",
+          "call": {
+            "op": "CreateLBCookieStickinessPolicy",
+            "params": {
+              "CookieExpirationPeriod": 300,
+              "LoadBalancerName": {
+                "$ref": "loadbalancer.name"
+              },
+              "PolicyName": {
+                "$name": "lbcookie"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "DescribeLoadBalancerPolicies",
+                  "params": {
+                    "LoadBalancerName": {
+                      "$ref": "loadbalancer.name"
+                    },
+                    "PolicyNames": [
+                      {
+                        "$name": "lbcookie"
+                      }
+                    ]
+                  }
+                },
+                "checks": {
+                  "$.PolicyDescriptions[0].PolicyName": {
+                    "nonEmpty": true
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        },
+        {
+          "name": "CreateAppCookieStickinessPolicy",
+          "op": "CreateAppCookieStickinessPolicy",
+          "call": {
+            "op": "CreateAppCookieStickinessPolicy",
+            "params": {
+              "CookieName": "compat-scenario",
+              "LoadBalancerName": {
+                "$ref": "loadbalancer.name"
+              },
+              "PolicyName": {
+                "$name": "appcookie"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "readback",
+                "call": {
+                  "op": "DescribeLoadBalancerPolicies",
+                  "params": {
+                    "LoadBalancerName": {
+                      "$ref": "loadbalancer.name"
+                    },
+                    "PolicyNames": [
+                      {
+                        "$name": "appcookie"
+                      }
+                    ]
+                  }
+                },
+                "checks": {
+                  "$.PolicyDescriptions[0].PolicyName": {
+                    "nonEmpty": true
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        },
+        {
+          "name": "DeleteLoadBalancer",
+          "op": "DeleteLoadBalancer",
+          "call": {
+            "op": "DeleteLoadBalancer",
+            "params": {
+              "LoadBalancerName": {
+                "$ref": "loadbalancer.name"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "eventually",
+              "maxAttempts": 30,
+              "delayMs": 2000,
+              "assert": {
+                "kind": "absent",
+                "call": {
+                  "op": "DescribeLoadBalancers",
+                  "params": {
+                    "LoadBalancerNames": [
+                      {
+                        "$ref": "loadbalancer.name"
+                      }
+                    ]
+                  }
+                },
+                "error": {
+                  "shape": "AccessPointNotFoundException",
+                  "code": "LoadBalancerNotFound"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateLoadBalancer"
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeleteLoadBalancer",
+          "params": {
+            "LoadBalancerName": {
+              "$ref": "loadbalancer.name"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "elastic-load-balancing-gen-loadbalancerpolicy",
+      "kind": "lifecycle",
+      "setup": [
+        {
+          "op": "CreateLoadBalancer",
+          "params": {
+            "AvailabilityZones": [
+              "us-east-1a"
+            ],
+            "Listeners": [
+              {
+                "InstancePort": 80,
+                "InstanceProtocol": "HTTP",
+                "LoadBalancerPort": 80,
+                "Protocol": "HTTP"
+              }
+            ],
+            "LoadBalancerName": {
+              "$name": "lb"
+            }
+          },
+          "export": {
+            "loadbalancer.dns": "$.DNSName"
+          }
+        },
+        {
+          "op": "DescribeLoadBalancers",
+          "params": {
+            "LoadBalancerNames": [
+              {
+                "$name": "lb"
+              }
+            ]
+          },
+          "export": {
+            "loadbalancer.name": "$.LoadBalancerDescriptions[0].LoadBalancerName"
+          }
+        }
+      ],
+      "tests": [
+        {
+          "name": "CreateLoadBalancerPolicy",
+          "op": "CreateLoadBalancerPolicy",
+          "call": {
+            "op": "CreateLoadBalancerPolicy",
+            "params": {
+              "LoadBalancerName": {
+                "$ref": "loadbalancer.name"
+              },
+              "PolicyAttributes": [
+                {
+                  "AttributeName": "ProxyProtocol",
+                  "AttributeValue": "true"
+                }
+              ],
+              "PolicyName": {
+                "$name": "policy"
+              },
+              "PolicyTypeName": "ProxyProtocolPolicyType"
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "DescribeLoadBalancerPolicies",
+                "params": {
+                  "LoadBalancerName": {
+                    "$ref": "loadbalancer.name"
+                  },
+                  "PolicyNames": [
+                    {
+                      "$name": "policy"
+                    }
+                  ]
+                }
+              },
+              "checks": {
+                "$.PolicyDescriptions[0].PolicyName": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeLoadBalancerPolicies",
+          "op": "DescribeLoadBalancerPolicies",
+          "call": {
+            "op": "DescribeLoadBalancerPolicies",
+            "params": {
+              "LoadBalancerName": {
+                "$ref": "loadbalancer.name"
+              },
+              "PolicyNames": [
+                {
+                  "$name": "policy"
+                }
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.PolicyDescriptions[0].PolicyName": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DeleteLoadBalancerPolicy",
+          "op": "DeleteLoadBalancerPolicy",
+          "call": {
+            "op": "DeleteLoadBalancerPolicy",
+            "params": {
+              "LoadBalancerName": {
+                "$ref": "loadbalancer.name"
+              },
+              "PolicyName": {
+                "$name": "policy"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "absent",
+              "call": {
+                "op": "DescribeLoadBalancerPolicies",
+                "params": {
+                  "LoadBalancerName": {
+                    "$ref": "loadbalancer.name"
+                  },
+                  "PolicyNames": [
+                    {
+                      "$name": "policy"
+                    }
+                  ]
+                }
+              },
+              "error": {
+                "shape": "PolicyNotFoundException",
+                "code": "PolicyNotFound"
+              }
+            }
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeleteLoadBalancerPolicy",
+          "params": {
+            "LoadBalancerName": {
+              "$ref": "loadbalancer.name"
+            },
+            "PolicyName": {
+              "$name": "policy"
+            }
+          }
+        },
+        {
+          "op": "DeleteLoadBalancer",
+          "params": {
+            "LoadBalancerName": {
+              "$ref": "loadbalancer.name"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "elastic-load-balancing-gen-probe",
+      "kind": "probe",
+      "parallel": true,
+      "setup": [],
+      "tests": [
+        {
+          "name": "DescribeAccountLimits",
+          "op": "DescribeAccountLimits",
+          "call": {
+            "op": "DescribeAccountLimits",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Limits": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeLoadBalancerAttributes",
+          "op": "DescribeLoadBalancerAttributes",
+          "call": {
+            "op": "DescribeLoadBalancerAttributes",
+            "params": {
+              "LoadBalancerName": "compat-scenario-nonexistent"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.LoadBalancerAttributes": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeLoadBalancerPolicyTypes",
+          "op": "DescribeLoadBalancerPolicyTypes",
+          "call": {
+            "op": "DescribeLoadBalancerPolicyTypes",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.PolicyTypeDescriptions": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "DescribeTags",
+          "op": "DescribeTags",
+          "call": {
+            "op": "DescribeTags",
+            "params": {
+              "LoadBalancerNames": [
+                "compat-scenario-nonexistent"
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.TagDescriptions": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "teardown": []
+    }
+  ]
+}

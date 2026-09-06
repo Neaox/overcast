@@ -21,6 +21,7 @@ public final class ScenariosGen {
     public static List<ServiceGroup> all(AwsClients clients) {
         return List.of(
                 new ScenariosBatchGen(clients),
+                new ScenariosElasticLoadBalancingGen(clients),
                 new ScenariosOrganizationsGen(clients),
                 new ScenariosSqsGen(clients));
     }
