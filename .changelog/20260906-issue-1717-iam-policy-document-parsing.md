@@ -4,3 +4,5 @@
   migration: give any placeholder document a real statement — `{}` and an empty `Statement` list were never accepted by AWS either.
 * [iam] `AttachmentCount` counts the users, groups and roles a managed policy is attached to instead of always reading 0
   `PermissionsBoundaryUsageCount` is reported too, having been missing from the `Policy` shape entirely; both are derived on read, so neither can drift.
+* [iam] `GetRole`, `GetUser`, `GetPolicy` and `GetInstanceProfile` return the `Tags` on the resource, which were stored but never rendered
+  the `Create*` calls that accept inline `Tags` return them too; `List*` still omits them, as AWS does, and points the caller at the matching `Get*`.

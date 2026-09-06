@@ -3670,17 +3670,19 @@
           "operation": "CreateUser",
           "category": "Users",
           "status": "✅ Supported",
-          "notes": "Inline `Tags` applied at creation"
+          "notes": "Inline `Tags` applied at creation and returned on the resource"
         },
         {
           "operation": "GetUser",
           "category": "Users",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Returns the resource's `Tags`"
         },
         {
           "operation": "ListUsers",
           "category": "Users",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Returns AWS's listing subset: no `Tags` — call the matching `Get` for those"
         },
         {
           "operation": "UpdateUser",
@@ -3786,17 +3788,19 @@
           "operation": "CreateRole",
           "category": "Roles",
           "status": "✅ Supported",
-          "notes": "Inline `Tags` applied at creation; the `AssumeRolePolicyDocument` is parsed, and a malformed one rejected with `MalformedPolicyDocument` (400) — see `CreatePolicy` for what that check does and does not cover"
+          "notes": "Inline `Tags` applied at creation and returned on the role; the `AssumeRolePolicyDocument` is parsed, and a malformed one rejected with `MalformedPolicyDocument` (400) — see `CreatePolicy` for what that check does and does not cover"
         },
         {
           "operation": "GetRole",
           "category": "Roles",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Returns the resource's `Tags`"
         },
         {
           "operation": "ListRoles",
           "category": "Roles",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Returns AWS's listing subset: no `Tags` — call the matching `Get` for those"
         },
         {
           "operation": "DeleteRole",
@@ -3906,12 +3910,13 @@
           "operation": "CreateInstanceProfile",
           "category": "Instance profiles",
           "status": "✅ Supported",
-          "notes": "Inline `Tags` applied at creation"
+          "notes": "Inline `Tags` applied at creation and returned on the resource"
         },
         {
           "operation": "GetInstanceProfile",
           "category": "Instance profiles",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Returns the resource's `Tags`"
         },
         {
           "operation": "DeleteInstanceProfile",
@@ -3931,7 +3936,8 @@
         {
           "operation": "ListInstanceProfiles",
           "category": "Instance profiles",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Returns AWS's listing subset: no `Tags` — call the matching `Get` for those"
         },
         {
           "operation": "ListInstanceProfilesForRole",
@@ -3942,19 +3948,19 @@
           "operation": "CreatePolicy",
           "category": "Managed policies",
           "status": "✅ Supported",
-          "notes": "Inline `Tags` applied at creation. The `PolicyDocument` is parsed before it is stored and a malformed one is rejected with `MalformedPolicyDocument` (400): it must be valid JSON, a JSON object, carry a `Statement` that is an object or a non-empty array, and give every statement an `Effect` of exactly `Allow` or `Deny` plus an `Action` or `NotAction` (not both) — with `Resource`/`NotResource` mutually exclusive too, and `Version`, when present, one of `2012-10-17` or `2008-10-17`. Deliberately **not** checked: ARN syntax in `Resource`/`Principal`, whether an action name exists, condition-operator and condition-key names, `Sid` uniqueness and character set, `Principal` appearing in an identity policy or being absent from a trust policy, `Resource` being absent where AWS requires it, the 6,144-character document size limit, and an omitted or empty document, which is left to the operation's own required-parameter handling rather than reported as malformed"
+          "notes": "Inline `Tags` applied at creation and returned on the policy. The `PolicyDocument` is parsed before it is stored and a malformed one is rejected with `MalformedPolicyDocument` (400): it must be valid JSON, a JSON object, carry a `Statement` that is an object or a non-empty array, and give every statement an `Effect` of exactly `Allow` or `Deny` plus an `Action` or `NotAction` (not both) — with `Resource`/`NotResource` mutually exclusive too, and `Version`, when present, one of `2012-10-17` or `2008-10-17`. Deliberately **not** checked: ARN syntax in `Resource`/`Principal`, whether an action name exists, condition-operator and condition-key names, `Sid` uniqueness and character set, `Principal` appearing in an identity policy or being absent from a trust policy, `Resource` being absent where AWS requires it, the 6,144-character document size limit, and an omitted or empty document, which is left to the operation's own required-parameter handling rather than reported as malformed"
         },
         {
           "operation": "GetPolicy",
           "category": "Managed policies",
           "status": "✅ Supported",
-          "notes": "`AttachmentCount` and `PermissionsBoundaryUsageCount` are derived from the users, groups and roles that refer to the policy, so they follow attach/detach and boundary changes; `IsAttachable` is always true, as every policy here is a customer managed one"
+          "notes": "Returns the policy's `Tags`. `AttachmentCount` and `PermissionsBoundaryUsageCount` are derived from the users, groups and roles that refer to the policy, so they follow attach/detach and boundary changes; `IsAttachable` is always true, as every policy here is a customer managed one"
         },
         {
           "operation": "ListPolicies",
           "category": "Managed policies",
           "status": "✅ Supported",
-          "notes": "Carries the same derived `AttachmentCount` and `PermissionsBoundaryUsageCount` as `GetPolicy`"
+          "notes": "Returns AWS's listing subset: no `Tags`. Carries the same derived `AttachmentCount` and `PermissionsBoundaryUsageCount` as `GetPolicy`"
         },
         {
           "operation": "DeletePolicy",

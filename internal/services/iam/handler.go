@@ -241,6 +241,7 @@ type userXML struct {
 	Arn                 string                          `xml:"Arn"`
 	CreateDate          string                          `xml:"CreateDate"`
 	PermissionsBoundary *attachedPermissionsBoundaryXML `xml:"PermissionsBoundary,omitempty"`
+	Tags                *listMembersXML[tagXML]         `xml:"Tags,omitempty"`
 }
 
 // attachedPermissionsBoundaryXML is AWS's AttachedPermissionsBoundary, the
@@ -282,6 +283,7 @@ type roleXML struct {
 	Description              string                          `xml:"Description,omitempty"`
 	MaxSessionDuration       int                             `xml:"MaxSessionDuration"`
 	PermissionsBoundary      *attachedPermissionsBoundaryXML `xml:"PermissionsBoundary,omitempty"`
+	Tags                     *listMembersXML[tagXML]         `xml:"Tags,omitempty"`
 }
 
 type policyXML struct {
@@ -296,10 +298,11 @@ type policyXML struct {
 	// bounds. AWS carries it alongside AttachmentCount on every Policy it
 	// returns (IAM API Reference, API_Policy.html); the two move independently,
 	// which is what lets a caller tell an attachment from a boundary.
-	PermissionsBoundaryUsageCount int    `xml:"PermissionsBoundaryUsageCount"`
-	IsAttachable                  bool   `xml:"IsAttachable"`
-	CreateDate                    string `xml:"CreateDate"`
-	UpdateDate                    string `xml:"UpdateDate"`
+	PermissionsBoundaryUsageCount int                     `xml:"PermissionsBoundaryUsageCount"`
+	IsAttachable                  bool                    `xml:"IsAttachable"`
+	CreateDate                    string                  `xml:"CreateDate"`
+	UpdateDate                    string                  `xml:"UpdateDate"`
+	Tags                          *listMembersXML[tagXML] `xml:"Tags,omitempty"`
 }
 
 type groupXML struct {
@@ -317,6 +320,7 @@ type instanceProfileXML struct {
 	Path                string                  `xml:"Path"`
 	CreateDate          string                  `xml:"CreateDate"`
 	Roles               listMembersXML[roleXML] `xml:"Roles"`
+	Tags                *listMembersXML[tagXML] `xml:"Tags,omitempty"`
 }
 
 type attachedPolicyXML struct {
@@ -354,6 +358,24 @@ func (l listMembersXML[T]) MarshalXML(enc *xml.Encoder, start xml.StartElement) 
 
 // ─── Conversion helpers ───────────────────────────────────────────────────────
 
+// tagsXML renders a resource's tags as AWS's <Tags> member list, or nil when it
+// has none — AWS omits the member rather than sending an empty one.
+//
+// Only the operations that return a whole resource carry it. AWS's listing
+// operations "return a subset of the available attributes for the resource"
+// and name Tags among the attributes they leave out (IAM API Reference,
+// API_ListRoles.html and the ListUsers / ListPolicies / ListInstanceProfiles
+// equivalents), pointing the caller at the matching Get instead. That is why
+// each toXWithTags below is a separate call rather than a flag on toX: the
+// listing paths must keep the subset shape, and so must a role embedded in an
+// instance profile, which AWS's samples show without tags.
+func tagsXML(tags map[string]string) *listMembersXML[tagXML] {
+	if len(tags) == 0 {
+		return nil
+	}
+	return &listMembersXML[tagXML]{Members: sortedTagXML(tags), Tag: "member"}
+}
+
 func toUserXML(u *User) userXML {
 	return userXML{
 		Path:                u.Path,
@@ -363,6 +385,14 @@ func toUserXML(u *User) userXML {
 		CreateDate:          u.CreateDate,
 		PermissionsBoundary: toPermissionsBoundaryXML(u.PermissionsBoundary),
 	}
+}
+
+// toUserXMLWithTags renders a user for GetUser / CreateUser, which return the
+// whole resource including its tags.
+func toUserXMLWithTags(u *User) userXML {
+	x := toUserXML(u)
+	x.Tags = tagsXML(u.Tags)
+	return x
 }
 
 func toAccessKeyXML(ak *AccessKey) accessKeyXML {
@@ -394,6 +424,14 @@ func toRoleXML(r *Role) roleXML {
 	}
 }
 
+// toRoleXMLWithTags renders a role for GetRole / CreateRole /
+// CreateServiceLinkedRole, which return the whole resource including its tags.
+func toRoleXMLWithTags(r *Role) roleXML {
+	x := toRoleXML(r)
+	x.Tags = tagsXML(r.Tags)
+	return x
+}
+
 // toPolicyXML renders a managed policy. usage carries the two counters, which
 // are derived from the entities that refer to the policy rather than stored on
 // it — see policyUsageFrom.
@@ -414,6 +452,14 @@ func toPolicyXML(p *Policy, usage policyUsage) policyXML {
 		CreateDate:                    p.CreateDate,
 		UpdateDate:                    p.CreateDate,
 	}
+}
+
+// toPolicyXMLWithTags renders a policy for GetPolicy / CreatePolicy, which
+// return the whole resource including its tags.
+func toPolicyXMLWithTags(p *Policy, usage policyUsage) policyXML {
+	x := toPolicyXML(p, usage)
+	x.Tags = tagsXML(p.Tags)
+	return x
 }
 
 func toGroupXML(g *Group) groupXML {
@@ -438,6 +484,15 @@ func toInstanceProfileXML(p *InstanceProfile, roles []roleXML) instanceProfileXM
 		CreateDate:          p.CreateDate,
 		Roles:               listMembersXML[roleXML]{Members: roles, Tag: "member"},
 	}
+}
+
+// toInstanceProfileXMLWithTags renders an instance profile for
+// GetInstanceProfile / CreateInstanceProfile, which return the whole resource
+// including its tags.
+func toInstanceProfileXMLWithTags(p *InstanceProfile, roles []roleXML) instanceProfileXML {
+	x := toInstanceProfileXML(p, roles)
+	x.Tags = tagsXML(p.Tags)
+	return x
 }
 
 // ─── ID and ARN helpers ───────────────────────────────────────────────────────

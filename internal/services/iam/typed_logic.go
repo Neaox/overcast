@@ -1004,7 +1004,7 @@ func (h *Handler) createUserTyped(ctx context.Context, req *createUserReq) (*cre
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.IAMUserCreated, Time: h.clk.Now(), Source: "iam", Payload: events.ResourcePayload{Name: name}})
 	}
-	return &createUserResp{Xmlns: iamXMLNS, Result: createUserResult{User: toUserXML(u)}, Meta: metaFromCtx(ctx)}, nil
+	return &createUserResp{Xmlns: iamXMLNS, Result: createUserResult{User: toUserXMLWithTags(u)}, Meta: metaFromCtx(ctx)}, nil
 }
 
 func (h *Handler) getUserTyped(ctx context.Context, req *getUserReq) (*getUserResp, *protocol.AWSError) {
@@ -1016,7 +1016,7 @@ func (h *Handler) getUserTyped(ctx context.Context, req *getUserReq) (*getUserRe
 	if aerr != nil {
 		return nil, aerr
 	}
-	return &getUserResp{Xmlns: iamXMLNS, Result: getUserResult{User: toUserXML(u)}, Meta: metaFromCtx(ctx)}, nil
+	return &getUserResp{Xmlns: iamXMLNS, Result: getUserResult{User: toUserXMLWithTags(u)}, Meta: metaFromCtx(ctx)}, nil
 }
 
 func (h *Handler) listUsersTyped(ctx context.Context, _ *listUsersReq) (*listUsersResp, *protocol.AWSError) {
@@ -1215,7 +1215,7 @@ func (h *Handler) createRoleTyped(ctx context.Context, req *createRoleReq) (*cre
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.IAMRoleCreated, Time: h.clk.Now(), Source: "iam", Payload: events.ResourcePayload{Name: req.RoleName}})
 	}
-	return &createRoleResp{Xmlns: iamXMLNS, Result: createRoleResult{Role: toRoleXML(role)}, Meta: metaFromCtx(ctx)}, nil
+	return &createRoleResp{Xmlns: iamXMLNS, Result: createRoleResult{Role: toRoleXMLWithTags(role)}, Meta: metaFromCtx(ctx)}, nil
 }
 
 func (h *Handler) getRoleTyped(ctx context.Context, req *getRoleReq) (*getRoleResp, *protocol.AWSError) {
@@ -1223,7 +1223,7 @@ func (h *Handler) getRoleTyped(ctx context.Context, req *getRoleReq) (*getRoleRe
 	if aerr != nil {
 		return nil, aerr
 	}
-	return &getRoleResp{Xmlns: iamXMLNS, Result: getRoleResult{Role: toRoleXML(role)}, Meta: metaFromCtx(ctx)}, nil
+	return &getRoleResp{Xmlns: iamXMLNS, Result: getRoleResult{Role: toRoleXMLWithTags(role)}, Meta: metaFromCtx(ctx)}, nil
 }
 
 func (h *Handler) listRolesTyped(ctx context.Context, _ *listRolesReq) (*listRolesResp, *protocol.AWSError) {
@@ -1380,7 +1380,7 @@ func (h *Handler) createInstanceProfileTyped(ctx context.Context, req *createIns
 		return nil, aerr
 	}
 	return &createInstanceProfileResp{Xmlns: iamXMLNS, Result: createInstanceProfileResult{
-		InstanceProfile: toInstanceProfileXML(profile, nil),
+		InstanceProfile: toInstanceProfileXMLWithTags(profile, nil),
 	}, Meta: metaFromCtx(ctx)}, nil
 }
 
@@ -1394,14 +1394,24 @@ func (h *Handler) deleteInstanceProfileTyped(ctx context.Context, req *deleteIns
 	return &deleteInstanceProfileResp{Xmlns: iamXMLNS, Meta: metaFromCtx(ctx)}, nil
 }
 
-func toInstanceProfileResp(ctx context.Context, store *iamStore, profile *InstanceProfile) instanceProfileXML {
+// instanceProfileRoleXML resolves the roles an instance profile names. The
+// embedded roles carry no tags: AWS's own GetInstanceProfile,
+// ListInstanceProfiles and ListInstanceProfilesForRole samples show them
+// without, and nothing in the API Reference says they should have them.
+func instanceProfileRoleXML(ctx context.Context, store *iamStore, profile *InstanceProfile) []roleXML {
 	var roles []roleXML
 	for _, rn := range profile.Roles {
 		if role, aerr := store.getRole(ctx, rn); aerr == nil {
 			roles = append(roles, toRoleXML(role))
 		}
 	}
-	return toInstanceProfileXML(profile, roles)
+	return roles
+}
+
+// toInstanceProfileResp renders an instance profile for the listing
+// operations, which return the resource without its tags.
+func toInstanceProfileResp(ctx context.Context, store *iamStore, profile *InstanceProfile) instanceProfileXML {
+	return toInstanceProfileXML(profile, instanceProfileRoleXML(ctx, store, profile))
 }
 
 func (h *Handler) getInstanceProfileTyped(ctx context.Context, req *getInstanceProfileReq) (*getInstanceProfileResp, *protocol.AWSError) {
@@ -1410,7 +1420,7 @@ func (h *Handler) getInstanceProfileTyped(ctx context.Context, req *getInstanceP
 		return nil, aerr
 	}
 	return &getInstanceProfileResp{Xmlns: iamXMLNS, Result: getInstanceProfileResult{
-		InstanceProfile: toInstanceProfileResp(ctx, h.store, profile),
+		InstanceProfile: toInstanceProfileXMLWithTags(profile, instanceProfileRoleXML(ctx, h.store, profile)),
 	}, Meta: metaFromCtx(ctx)}, nil
 }
 
@@ -1484,7 +1494,7 @@ func (h *Handler) createPolicyTyped(ctx context.Context, req *createPolicyReq) (
 		h.bus.Publish(ctx, events.Event{Type: events.IAMPolicyCreated, Time: h.clk.Now(), Source: "iam", Payload: events.ResourcePayload{Name: req.PolicyName}})
 	}
 	// A policy that has just been created is attached to nothing.
-	return &createPolicyResp{Xmlns: iamXMLNS, Result: createPolicyResult{Policy: toPolicyXML(p, policyUsage{})}, Meta: metaFromCtx(ctx)}, nil
+	return &createPolicyResp{Xmlns: iamXMLNS, Result: createPolicyResult{Policy: toPolicyXMLWithTags(p, policyUsage{})}, Meta: metaFromCtx(ctx)}, nil
 }
 
 func (h *Handler) getPolicyTyped(ctx context.Context, req *getPolicyReq) (*getPolicyResp, *protocol.AWSError) {
@@ -1496,7 +1506,7 @@ func (h *Handler) getPolicyTyped(ctx context.Context, req *getPolicyReq) (*getPo
 	if aerr != nil {
 		return nil, aerr
 	}
-	return &getPolicyResp{Xmlns: iamXMLNS, Result: getPolicyResult{Policy: toPolicyXML(p, usage[p.Arn])}, Meta: metaFromCtx(ctx)}, nil
+	return &getPolicyResp{Xmlns: iamXMLNS, Result: getPolicyResult{Policy: toPolicyXMLWithTags(p, usage[p.Arn])}, Meta: metaFromCtx(ctx)}, nil
 }
 
 func (h *Handler) listPoliciesTyped(ctx context.Context, _ *listPoliciesReq) (*listPoliciesResp, *protocol.AWSError) {
@@ -2061,7 +2071,7 @@ func (h *Handler) createServiceLinkedRoleTyped(ctx context.Context, req *createS
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.IAMRoleCreated, Time: h.clk.Now(), Source: "iam", Payload: events.ResourcePayload{Name: roleName}})
 	}
-	return &createServiceLinkedRoleResp{Xmlns: iamXMLNS, Result: createServiceLinkedRoleResult{Role: toRoleXML(role)}, Meta: metaFromCtx(ctx)}, nil
+	return &createServiceLinkedRoleResp{Xmlns: iamXMLNS, Result: createServiceLinkedRoleResult{Role: toRoleXMLWithTags(role)}, Meta: metaFromCtx(ctx)}, nil
 }
 
 // --- Instance Profiles For Role ---
