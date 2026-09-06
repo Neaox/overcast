@@ -15,6 +15,5 @@
 **/.venv
 **/__pycache__
 **/*.pyc
-suites/rust-sdk/target
 suites/go-sdk/vendor
 ui/dist

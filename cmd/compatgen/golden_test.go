@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// The golden files under testdata/golden, shared by the two source emitters.
+// The golden files under testdata/golden, shared by every source emitter.
 //
 // A golden file is the review artifact for what an emitter writes: the diff is
 // how a change to the emitted shape is reviewed, rather than being inferred
@@ -44,4 +44,17 @@ func assertGolden(t *testing.T, path string, got []byte) {
 	if string(got) != string(want) {
 		t.Errorf("emitted source differs from %s; set OVERCAST_UPDATE_GOLDEN=1 to update it after reading the diff\n--- got ---\n%s", path, got)
 	}
+}
+
+// fixtureRenderEnv is the `-explain` environment for the fixture service: the
+// stand-in Go SDK's types for the Go rendering, and the fixture's own shape
+// model for every rendering that reads the model instead. The fixture has no
+// recipe under compat/model/recipes, which is why renderEnv takes a resolver
+// rather than a directory.
+//
+// It lives here rather than beside one emitter's tests because every typed
+// backend asserts that `-explain` renders the source it emits, and each needs
+// this to do it.
+func fixtureRenderEnv(gen *generation) renderEnv {
+	return renderEnv{goTypes: fixtureGoTypes(), model: staticModel(gen.model)}
 }

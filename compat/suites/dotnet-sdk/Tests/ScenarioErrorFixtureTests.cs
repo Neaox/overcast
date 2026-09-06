@@ -208,14 +208,48 @@ public sealed class ScenarioErrorFixtureTests
         }
         catch (Exception ex)
         {
-            await serving;
             return ex;
         }
         finally
         {
+            // Stopping first, and awaiting after, is the whole point. A replay
+            // that throws before the listener ever accepts — an SDK-side
+            // validation throw, a connection reset, a FreePort() race lost to
+            // something else binding the port — leaves the handler parked in
+            // GetContextAsync forever, and awaiting it there would hang the
+            // whole test run inside `docker build` with no timeout to end it.
+            // Stopping the listener is what makes that await return.
             listener.Stop();
+            await DrainAsync(serving);
         }
         throw new InvalidOperationException($"{fixture.Id}: the replayed wire raised nothing");
+    }
+
+    /// <summary>How long the handler gets to finish once the listener is stopped.</summary>
+    private static readonly TimeSpan ServingTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Observes the server task, so it can neither hang the run nor resurface
+    /// later as an unobserved task exception.
+    /// </summary>
+    /// <remarks>
+    /// Two outcomes are expected and neither says anything about the fixture:
+    /// the handler faulted because the listener was stopped underneath it, or it
+    /// never accepted at all and the timeout ends the wait. Both are swallowed
+    /// here — the exception the test wants is the one the SDK raised.
+    /// </remarks>
+    private static async Task DrainAsync(Task serving)
+    {
+        using var timeout = new CancellationTokenSource(ServingTimeout);
+        try
+        {
+            await serving.WaitAsync(timeout.Token);
+        }
+        catch (Exception)
+        {
+            // A task still running after the timeout is observed when it ends.
+            _ = serving.ContinueWith(static task => _ = task.Exception, TaskScheduler.Default);
+        }
     }
 
     /// <summary>

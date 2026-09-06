@@ -9,8 +9,7 @@ namespace OvercastCompat.Groups;
 /// Program.cs registers these as the suite's ScenarioBackend rather than
 /// merging them into the hand-written impl map: a generated group is resolved
 /// by the loader's backend hook, which is the last step before the
-/// no-backend sentinel. The list is empty until cmd/compatgen's
-/// scenarioBackends table names dotnet-sdk.
+/// no-backend sentinel.
 /// </remarks>
 internal static class ScenarioGroups
 {

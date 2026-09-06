@@ -137,8 +137,17 @@ internal sealed class ScenarioGroup(string name, string file)
     /// atomic because a parallel group's tests share one TestContext and reach
     /// this concurrently.
     /// </summary>
+    /// <remarks>
+    /// Something else under this key cannot happen — the key is private to this
+    /// class and nothing else writes it — and if it ever did, handing back a
+    /// fresh bag would be the worst answer available: the exports one step
+    /// wrote would be invisible to the next, and the step would fail on a
+    /// missing $ref rather than on the thing that is actually wrong.
+    /// </remarks>
     private static ContextBag BagFor(TestContext context) =>
-        context.LoadOrStore(BagKey, static () => new ContextBag()) as ContextBag ?? new ContextBag();
+        context.LoadOrStore(BagKey, static () => new ContextBag()) as ContextBag
+            ?? throw new InvalidOperationException(
+                $"the scenario context key \"{BagKey}\" holds something other than a ContextBag");
 
     /// <summary>
     /// The test's errorCode clause, if it has one. Its presence means the

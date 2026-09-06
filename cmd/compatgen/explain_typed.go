@@ -158,13 +158,8 @@ func dotnetStyle(sp *dotnetSpeller, loadErr error) style {
 	}
 	st.list = func(items []string) string { return "new List<T> { " + strings.Join(items, ", ") + " }" }
 	st.pathExpr = func(root, path string) string { return root + pathAsGetters(path, "") }
-	st.call = func(op string, members [][2]string) string {
-		var parts []string
-		for _, m := range members {
-			parts = append(parts, m[0]+" = "+m[1])
-		}
-		return fmt.Sprintf("await client.%sAsync(new %sRequest { %s })", op, op, strings.Join(parts, ", "))
-	}
+	// No st.call: callLines below is set unconditionally, and the explainer
+	// prefers it, so a second spelling of the same call would only ever be dead.
 	st.callLines = func(op string, params map[string]any) []string {
 		if loadErr != nil {
 			return []string{fmt.Sprintf("// the service's shape snapshot could not be read: %v", loadErr)}

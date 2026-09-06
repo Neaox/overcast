@@ -76,15 +76,6 @@ func TestReport_listsCoverageRefusalsAndSamples(t *testing.T) {
 	}
 }
 
-// fixtureRenderEnv is the `-explain` environment for the fixture service, with
-// every source-emitting backend's input supplied: the stand-in Go SDK's types
-// for Go, and the fixture's own shape model for Java, .NET and Rust. The
-// fixture has no recipe under compat/model/recipes, which is why renderEnv
-// takes a resolver rather than a directory.
-func fixtureRenderEnv(gen *generation) renderEnv {
-	return renderEnv{goTypes: fixtureGoTypes(), model: staticModel(gen.model)}
-}
-
 // staticModel is the renderEnv loader for a test that already holds the model
 // it wants every lookup to answer with.
 func staticModel(model *serviceModel) func(string) (*serviceModel, error) {

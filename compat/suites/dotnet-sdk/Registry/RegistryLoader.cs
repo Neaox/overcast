@@ -368,19 +368,50 @@ public static class RegistryLoader
     /// <exception cref="InvalidOperationException">If any key is registered more than once.</exception>
     public static Dictionary<string, TestFn> MergeImpls(
         IEnumerable<(string Name, IReadOnlyDictionary<string, TestFn> Impls)> sources,
-        string suite)
+        string suite) => Merge(sources, suite, "impl");
+
+    /// <summary>
+    /// The same merge for the setup hooks, keyed by group name.
+    /// </summary>
+    /// <remarks>
+    /// A hook map used to be merged by plain assignment while the impls went
+    /// through <see cref="MergeImpls"/>, which made the two halves disagree
+    /// about the same mistake: two group classes claiming one group's setup lost
+    /// one of them silently, and the group then ran with the wrong fixture -
+    /// which surfaces as every test in it failing on a resource that was never
+    /// created, not as a registration error.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">If any group is registered more than once.</exception>
+    public static Dictionary<string, SetupFn> MergeSetups(
+        IEnumerable<(string Name, IReadOnlyDictionary<string, SetupFn> Setups)> sources,
+        string suite) => Merge(sources, suite, "setup");
+
+    /// <summary>The same merge for the teardown hooks. See <see cref="MergeSetups"/>.</summary>
+    /// <exception cref="InvalidOperationException">If any group is registered more than once.</exception>
+    public static Dictionary<string, SetupFn> MergeTeardowns(
+        IEnumerable<(string Name, IReadOnlyDictionary<string, SetupFn> Teardowns)> sources,
+        string suite) => Merge(sources, suite, "teardown");
+
+    /// <summary>
+    /// Flattens per-source maps into one, refusing any key two sources both
+    /// register. <paramref name="kind"/> names the registration in the message.
+    /// </summary>
+    private static Dictionary<string, T> Merge<T>(
+        IEnumerable<(string Name, IReadOnlyDictionary<string, T> Entries)> sources,
+        string suite,
+        string kind)
     {
-        var merged = new Dictionary<string, TestFn>(StringComparer.Ordinal);
+        var merged = new Dictionary<string, T>(StringComparer.Ordinal);
         var owner = new Dictionary<string, string>(StringComparer.Ordinal); // key -> first registrant
 
         var problems = new List<string>();
-        foreach (var (name, impls) in sources)
+        foreach (var (name, entries) in sources)
         {
-            foreach (var entry in impls)
+            foreach (var entry in entries)
             {
                 if (owner.TryGetValue(entry.Key, out var first))
                 {
-                    problems.Add(DuplicateProblem(entry.Key, first, name));
+                    problems.Add(DuplicateProblem(kind, entry.Key, first, name));
                     continue;
                 }
                 owner[entry.Key] = name;
@@ -393,7 +424,7 @@ public static class RegistryLoader
         // Every problem starts with the key, which is what a reader scans for.
         problems.Sort(StringComparer.Ordinal);
         throw new InvalidOperationException(
-            $"[{suite}] {problems.Count} duplicate impl registration(s):{Environment.NewLine}  - "
+            $"[{suite}] {problems.Count} duplicate {kind} registration(s):{Environment.NewLine}  - "
             + string.Join($"{Environment.NewLine}  - ", problems));
     }
 
@@ -401,12 +432,12 @@ public static class RegistryLoader
     /// One collision. The two sources are the same when a single group class
     /// registers the key twice.
     /// </summary>
-    private static string DuplicateProblem(string key, string first, string second)
+    private static string DuplicateProblem(string kind, string key, string first, string second)
     {
         var where = first == second
             ? $"is registered twice by \"{first}\""
             : $"is registered by both \"{first}\" and \"{second}\"";
-        return $"impl \"{key}\" {where} - one of the two would be silently discarded; "
+        return $"{kind} \"{key}\" {where} - one of the two would be silently discarded; "
             + "remove or re-key one";
     }
 

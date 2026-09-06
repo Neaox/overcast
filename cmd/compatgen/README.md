@@ -143,7 +143,7 @@ entries and the gap report.
   and the empty-file gate kept holding; the scenario files and `gaps.json`
   are fully generated regardless.
 - List a suite against a group its backend cannot execute. `suites` is
-  derived from backend availability, so a group the Go emitter refused is
+  derived from backend availability, so a group a source emitter refused is
   scoped to the other backends instead — and a group no backend can run is
   left out of the registry altogether. Listing it anyway would turn the
   refusal into a hard failure in that suite, whose loader treats a generated
@@ -316,13 +316,14 @@ both become a compile error in the suite's own build, which is loud but
 suite-wide rather than scoped to one group. `OvercastCompat.csproj` pins the
 package versions that keep them from arising, and says so.
 
-Two refusals remain, both read off the model, and both scope the group away
-from `dotnet-sdk` in the registry:
+Three refusals remain, all read off the model, and all three scope the group
+away from `dotnet-sdk` in the registry:
 
 | refusal | what it means |
 | --- | --- |
 | the modeled kind has no C# literal | a timestamp, blob, document, union, bigInteger or bigDecimal |
 | a value expression on a composite member | `$ref`/`$name` resolve into one scalar slot, never a list |
+| an integer literal outside the C# type's range | C# range-checks an integral literal at compile time, and a compile error here is suite-wide |
 
 `-explain -lang dotnet` renders through the same `dotnetInputLines`, so the
 pseudo-code a reader reproduces a failure with is the source the emitter wrote;

@@ -41,7 +41,17 @@ public sealed class ScenarioDocumentTests
         Assert.False(Paths.TryResolve(received, "$.Messages[1].ReceiptHandle", out _));
 
         // A number is a double on both sides of an equals, whatever width the
-        // SDK gave the property.
+        // SDK gave the property: ApproximateNumberOfMessagesMoved is a long? and
+        // reads back as 7d, so `equals: 7` compares here the way it does in the
+        // three interpreters.
+        Assert.True(Documents.TryConvert(
+            new CancelMessageMoveTaskResponse { ApproximateNumberOfMessagesMoved = 7 }, out var cancelled));
+        Assert.True(Paths.TryResolve(cancelled, "$.ApproximateNumberOfMessagesMoved", out var moved));
+        Assert.Equal(7d, moved);
+
+        // A member AWS models as a string stays one, however numeric it looks:
+        // SendMessage's SequenceNumber is a 128-bit FIFO counter, so `equals:
+        // "7"` matches it and `equals: 7` does not.
         Assert.True(Documents.TryConvert(new SendMessageResponse { SequenceNumber = "7" }, out var sent));
         Assert.True(Paths.TryResolve(sent, "$.SequenceNumber", out var sequence));
         Assert.Equal("7", sequence);

@@ -44,7 +44,7 @@ extended in [#1725](https://github.com/overcast-sh/overcast/pull/1725).
 | Item        | Value                                                        |
 | ----------- | -------------------------------------------------------------- |
 | Language    | C# 12 / .NET 8                                                 |
-| AWS client  | `AWSSDK.*` NuGet packages, pinned to `4.0.0` in `OvercastCompat.csproj` |
+| AWS client  | `AWSSDK.*` NuGet packages pinned in `OvercastCompat.csproj`: `4.0.0`, except `AWSSDK.Core` `4.0.102.3` and `AWSSDK.Organizations` `4.0.101.4` (added) |
 | Test client | xunit `2.9.2` (`Tests/OvercastCompat.Tests.csproj`)             |
 | CI image    | `mcr.microsoft.com/dotnet/sdk:8.0-alpine` (build stage) → `mcr.microsoft.com/dotnet/runtime:8.0-alpine` (runtime) |
 
@@ -343,7 +343,11 @@ Two things about the generated half are worth knowing before you touch it:
   operation the pinned package does not declare, or a member it renamed, is a
   **compile error in this project**, not a refusal in `gaps.json`. That is why
   `OvercastCompat.csproj` pins a version of `AWSSDK.Organizations` newer than
-  the rest, and says so.
+  the rest, and says so. **When an AWS model refresh adds an operation the
+  pinned AWSSDK has not shipped, the whole project stops compiling.** The fix
+  is a pin bump to a package version that declares it — never a change to the
+  emitter or to the recipe — and it follows
+  [compat/AGENTS.md § Upgrade procedure](../../AGENTS.md#upgrade-procedure).
 - **A generated group this suite is scoped to but cannot resolve is a hard
   failure**, naming the group (`generated group "<group>" is scoped to
   dotnet-sdk but dotnet-sdk has no scenario backend`), never a skip.
@@ -375,6 +379,15 @@ generated half:
 - `ScenarioRegistrationTests.cs` — every generated test the registry scopes to
   this suite resolves to an emitted method, and every emitted method has a
   registry test. A gap either way is a stale `make generate-compat-model`.
+- `ScenarioRequestNullabilityTests.cs` — every `<Op>Request` the emitted groups
+  build, discovered from the generated sources, has only `Nullable<T>`
+  value-typed members. That is the measured fact the emitter rests on; a member
+  that stopped being nullable would make a zero vanish from the wire, in source
+  that still compiles.
+- `ParallelGroupTests.cs` — the runner's parallel-group path: the tests of a
+  group the registry marks `parallel` overlap, their results are still emitted
+  in declaration order, a group declaring `depends` falls back to serial, and
+  `TestContext.LoadOrStore` creates one bag under concurrent callers.
 - `ScenarioTests.cs` and `ScenarioDocumentTests.cs` — the `Scenario/` runtime
   against real SDK request and response objects: the six-field failure message,
   the closed check set, `eventually`'s give-up wording, an absent list reading

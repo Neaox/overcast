@@ -43,28 +43,6 @@ type serviceModel struct {
 	operationNames []string
 }
 
-// Prelude shape kinds. Prelude targets (smithy.api#String, …) are never
-// emitted by the pruner, so their kinds are known by name.
-var preludeKinds = map[string]string{
-	"smithy.api#String":           "string",
-	"smithy.api#Blob":             "blob",
-	"smithy.api#Boolean":          "boolean",
-	"smithy.api#PrimitiveBoolean": "boolean",
-	"smithy.api#Byte":             "integer",
-	"smithy.api#Short":            "integer",
-	"smithy.api#Integer":          "integer",
-	"smithy.api#PrimitiveInteger": "integer",
-	"smithy.api#Long":             "integer",
-	"smithy.api#PrimitiveLong":    "integer",
-	"smithy.api#Float":            "float",
-	"smithy.api#Double":           "float",
-	"smithy.api#BigInteger":       "integer",
-	"smithy.api#BigDecimal":       "float",
-	"smithy.api#Timestamp":        "timestamp",
-	"smithy.api#Document":         "document",
-	"smithy.api#Unit":             "unit",
-}
-
 // modelMissingHint is what a user reads when a recipe names a service whose
 // shapes are not committed. The generator never falls back to the raw corpus.
 const modelMissingHint = "add the service to models/aws/shapes-services.txt and regenerate the snapshot with `make generate-aws-operations` (see cmd/awsmodelgen/README.md)"
@@ -249,12 +227,14 @@ func (m *serviceModel) MemberTarget(structure, member string) (string, bool) {
 	return entry.Target, true
 }
 
-// preludeShapeTypes is the Smithy type behind each prelude shape, which
-// preludeKinds deliberately rounds: byte, short, integer and long are all
-// "integer" to Kind, and float, double and bigDecimal are all "float". A
-// backend that has to choose a numeric literal's suffix, or the scalar type a
-// value is converted to, needs the distinction back — and ShapeType is where
-// it lives.
+// preludeShapeTypes is the Smithy type behind each prelude shape. The pruner
+// never emits a prelude target (smithy.api#String, …), so their types are known
+// by name rather than looked up.
+//
+// Kind rounds them: byte, short, integer and long all answer "integer", and
+// float, double and bigDecimal all answer "float". A backend that has to choose
+// a numeric literal's suffix, or the scalar type a value is converted to, needs
+// the distinction back — and ShapeType is where it lives.
 var preludeShapeTypes = map[string]string{
 	"smithy.api#String":           "string",
 	"smithy.api#Blob":             "blob",
@@ -313,34 +293,19 @@ func (m *serviceModel) ValueTarget(target string) string { return m.Shapes[targe
 
 // Kind classifies a shape as one of: string, enum, integer, float, boolean,
 // timestamp, blob, document, list, map, structure, union, unit.
+//
+// It is ShapeType rounded, and deliberately nothing else: two tables saying
+// which prelude shape is which would be two tables to keep in step, and the
+// rounding is the only thing this adds.
 func (m *serviceModel) Kind(target string) string {
-	if kind, ok := preludeKinds[target]; ok {
-		return kind
-	}
-	shape, ok := m.Shapes[target]
-	if !ok {
-		return "unknown"
-	}
-	switch shape.Type {
-	case "string":
-		if hasTrait(shape.Traits, "smithy.api#enum") {
-			return "enum"
-		}
-		return "string"
-	case "enum":
-		return "enum"
-	case "intEnum":
-		return "integer"
-	case "byte", "short", "integer", "long", "bigInteger":
+	switch shapeType := m.ShapeType(target); shapeType {
+	case "byte", "short", "integer", "long", "bigInteger", "intEnum":
 		return "integer"
 	case "float", "double", "bigDecimal":
 		return "float"
-	case "boolean", "timestamp", "blob", "document", "list", "map", "structure", "union":
-		return shape.Type
-	case "set":
-		return "list"
+	default:
+		return shapeType
 	}
-	return shape.Type
 }
 
 // EnumValues returns an enum shape's wire values in the order the shape

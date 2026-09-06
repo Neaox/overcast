@@ -82,10 +82,13 @@ This suite ships its own image. The **build context is `compat/`**, not this
 directory, because the image copies in the shared
 `compat/suites/registry.json` (see [compat/AGENTS.md § Running suites](../../AGENTS.md#running-suites-docker--ci))
 and the shared error-matching fixtures under `compat/model/testdata/errors`,
-which the unit tests the build stage runs answer:
+which the unit tests the build stage runs answer. Keep the `DOCKER_BUILDKIT=1`:
+`Dockerfile.dockerignore` is a BuildKit feature and there is no
+`compat/.dockerignore`, so a classic build sends the whole 2.6 GiB context to
+the daemon.
 
 ```bash
-docker build -f compat/suites/dotnet-sdk/Dockerfile -t oc-dotnet-sdk-compat compat
+DOCKER_BUILDKIT=1 docker build -f compat/suites/dotnet-sdk/Dockerfile -t oc-dotnet-sdk-compat compat
 docker run --rm --network host \
   -e OVERCAST_ENDPOINT=http://localhost:4566 \
   oc-dotnet-sdk-compat
@@ -139,7 +142,7 @@ you.
 | `OVERCAST_COMPAT_GROUPS`         | unset (all)              | Comma-separated group names to run                                              |
 | `OVERCAST_COMPAT_TESTS`          | unset (all)              | Comma-separated test names to run within those groups                           |
 | `OVERCAST_COMPAT_TEST_PAIRS`     | unset (all)              | Comma-separated `group:test` pairs to run — the exact-pair filter `java-sdk` does not have |
-| `OVERCAST_COMPAT_PARALLEL_SLOTS` | `8`                      | Max groups run concurrently                                                     |
+| `OVERCAST_COMPAT_PARALLEL_SLOTS` | `8`                      | Max groups run concurrently, and max tests of one parallel probe group          |
 | `OVERCAST_COMPAT_INTERACTIVE`    | unset                    | Set to `1` to run the interactive command protocol instead of one batch run      |
 
 \* `Program.cs` resolves `registry.json` relative to the process working

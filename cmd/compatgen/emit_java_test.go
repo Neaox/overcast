@@ -4,8 +4,6 @@ package main
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -100,22 +98,7 @@ func TestEmitJava_matchesTheGoldenSource(t *testing.T) {
 	if emission.Path != want {
 		t.Errorf("emitted path = %s, want %s", emission.Path, want)
 	}
-	if updateGolden() {
-		if err := os.MkdirAll(filepath.Dir(javaGoldenPath), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(javaGoldenPath, emission.Contents, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		t.Fatalf("golden file rewritten; re-run without OVERCAST_UPDATE_GOLDEN and read the diff")
-	}
-	golden, err := os.ReadFile(javaGoldenPath)
-	if err != nil {
-		t.Fatalf("read golden: %v (set OVERCAST_UPDATE_GOLDEN=1 to write it)", err)
-	}
-	if string(emission.Contents) != string(golden) {
-		t.Errorf("emitted source differs from %s; set OVERCAST_UPDATE_GOLDEN=1 to update it after reading the diff\n--- got ---\n%s", javaGoldenPath, emission.Contents)
-	}
+	assertGolden(t, javaGoldenPath, emission.Contents)
 }
 
 func TestEmitJava_isDeterministic(t *testing.T) {

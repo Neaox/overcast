@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using Amazon.Runtime;
+using Amazon.Runtime.Documents;
 
 namespace OvercastCompat.Scenario;
 
@@ -106,6 +107,13 @@ internal static class Documents
             case MemoryStream stream:
                 document = System.Convert.ToBase64String(stream.ToArray());
                 return true;
+            // AWSSDK's own JSON value, for a modeled `document` member. It is a
+            // struct wrapping a tagged union, so the reflection fallback below
+            // would produce a `{"Type": ...}` object rather than the JSON the
+            // service sent, and no path over it would resolve.
+            case Document json:
+                document = FromDocument(json);
+                return true;
             case IDictionary map:
             {
                 var members = new SortedDictionary<string, object?>(StringComparer.Ordinal);
@@ -153,6 +161,45 @@ internal static class Documents
     }
 
     /// <summary>
+    /// Converts AWSSDK's own JSON value into the IR's document form.
+    /// </summary>
+    /// <remarks>
+    /// Every numeric arm becomes a double, as every other number does: an
+    /// <c>equals</c> compares in the JSON type system, where 1 and 1.0 are one
+    /// value. A null document is the JSON null the service sent rather than an
+    /// absent member — this is inside a value, not a property of one.
+    /// </remarks>
+    private static object? FromDocument(Document value)
+    {
+        switch (value.Type)
+        {
+            case DocumentType.Bool:
+                return value.AsBool();
+            case DocumentType.String:
+                return value.AsString();
+            case DocumentType.Int:
+                return (double)value.AsInt();
+            case DocumentType.Long:
+                return (double)value.AsLong();
+            case DocumentType.Double:
+                return value.AsDouble();
+            case DocumentType.List:
+                return value.AsList().Select(FromDocument).ToList();
+            case DocumentType.Dictionary:
+            {
+                var members = new SortedDictionary<string, object?>(StringComparer.Ordinal);
+                foreach (var entry in value.AsDictionary())
+                {
+                    members[entry.Key] = FromDocument(entry.Value);
+                }
+                return members;
+            }
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
     /// Converts an SDK response or model object by reading its public
     /// properties.
     /// </summary>
@@ -163,6 +210,13 @@ internal static class Documents
     /// mean a modeled member, so they are dropped rather than surfaced. They
     /// are recognised by where they are declared, which is the one rule that
     /// stays right as AWSSDK adds to that base class.
+    /// <para>The same skip is applied on the request path. A request reaches
+    /// here too — <see cref="Execution"/> renders the request it sent into
+    /// failure-message field 3 — and <c>AmazonWebServiceRequest</c> declares no
+    /// public property today, so the skip changes nothing yet. That is exactly
+    /// when to write it: the day the SDK adds one, the two paths would
+    /// otherwise start disagreeing about what a modeled member is, and the
+    /// failure message would gain a field no scenario can name.</para>
     /// </remarks>
     private static SortedDictionary<string, object?> FromObject(object value)
     {
@@ -173,7 +227,8 @@ internal static class Documents
             {
                 continue;
             }
-            if (property.DeclaringType == typeof(AmazonWebServiceResponse))
+            if (property.DeclaringType == typeof(AmazonWebServiceResponse)
+                || property.DeclaringType == typeof(AmazonWebServiceRequest))
             {
                 continue;
             }

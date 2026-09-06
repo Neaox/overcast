@@ -105,9 +105,10 @@ func TestEmitDotnet_emitsEveryGroupAndTest(t *testing.T) {
 //
 // None arises from a committed scenario — the recipes and the upstream
 // refusals see to that — so each is constructed against the fixture model.
-// The two families the emitter's header names are both here: a modeled kind
-// with no C# literal, and a deferred expression with no scalar slot to land
-// in. The last two rows are the backstops either side of them.
+// The three families the emitter's header names are all here: a modeled kind
+// with no C# literal, a deferred expression with no scalar slot to land in,
+// and an integral literal C# would refuse to compile. The other two rows are
+// the backstops either side of them.
 func TestEmitDotnet_refusesWhatItCannotSpell(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -145,6 +146,17 @@ func TestEmitDotnet_refusesWhatItCannotSpell(t *testing.T) {
 			params:     map[string]any{"Angle": "45", "WidgetId": "w-1"},
 			wantMember: "Angle",
 			wantDetail: "wants a number, got a string",
+		},
+		{
+			// C# range-checks an integral literal at compile time, and this
+			// backend's compile errors are suite-wide rather than scoped to one
+			// group. So the value is refused here, where the cost is one group
+			// leaving the dotnet-sdk column.
+			name:       "an integer literal outside the C# type's range",
+			op:         "RotateWidget",
+			params:     map[string]any{"Angle": 3000000000, "WidgetId": "w-1"},
+			wantMember: "Angle",
+			wantDetail: "is out of range for an integer member",
 		},
 		{
 			// The upstream validation refuses an unknown member long before
@@ -318,6 +330,10 @@ func TestCsString_escapesWhatCSharpWouldMisread(t *testing.T) {
 		{`back\slash`, `"back\\slash"`},
 		{"tab\tand\nnewline", `"tab\tand\nnewline"`},
 		{"caf\u00e9", `"caf\u00E9"`},
+		// Above the BMP the four-digit form is not merely ugly, it is wrong:
+		// C# reads exactly four hex digits, so \u1F600 is U+1F60 followed by
+		// a literal "0".
+		{"\U0001F600", `"\U0001F600"`},
 	} {
 		if got := csString(tc.in); got != tc.want {
 			t.Errorf("csString(%q) = %s, want %s", tc.in, got, tc.want)
@@ -356,7 +372,16 @@ func TestEmitDotnetIndex_listsEveryEmittedServiceAndCompilesWhenEmpty(t *testing
 		t.Error("the index is not sorted; regeneration would depend on recipe read order")
 	}
 
+	// The remark explaining an empty list is printed only where the list is
+	// empty: above two entries it contradicts what the reader can see.
+	if strings.Contains(source, "The list is empty") {
+		t.Errorf("the populated index claims to be empty:\n%s", source)
+	}
+
 	empty := string(emitDotnetIndex(nil))
+	if !strings.Contains(empty, "The list is empty because") {
+		t.Errorf("the empty index does not say why it is empty:\n%s", empty)
+	}
 	if !strings.Contains(empty, "All(AwsClients clients) => [];") {
 		t.Errorf("the empty index does not compile to an empty list:\n%s", empty)
 	}

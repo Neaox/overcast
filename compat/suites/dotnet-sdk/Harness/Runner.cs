@@ -51,7 +51,12 @@ public static class Runner
         });
     }
 
-    private static async Task<GroupResult> RunGroupAsync(string suite, string endpoint, string region, TestGroup group)
+    /// <summary>
+    /// Runs one group: setup, then its tests serially or concurrently, then
+    /// teardown. Internal rather than private so the suite's own tests can
+    /// drive a group without a live emulator behind it.
+    /// </summary>
+    internal static async Task<GroupResult> RunGroupAsync(string suite, string endpoint, string region, TestGroup group)
     {
         var context = new TestContext(endpoint, region, Environment.GetEnvironmentVariable("OVERCAST_COMPAT_RUN_ID") ?? "local");
         var result = new GroupResult();
@@ -206,7 +211,7 @@ public static class Runner
     /// How many things this suite may do at once - groups in RunSuiteAsync, and
     /// the tests of one parallel group.
     /// </summary>
-    private static int ParallelSlots() =>
+    internal static int ParallelSlots() =>
         int.TryParse(Environment.GetEnvironmentVariable("OVERCAST_COMPAT_PARALLEL_SLOTS"), out var configured) && configured > 0
             ? configured
             : 8;
@@ -287,7 +292,7 @@ public static class Runner
         }
     }
 
-    private sealed class GroupResult
+    internal sealed class GroupResult
     {
         public int Passed { get; set; }
         public int Failed { get; set; }

@@ -21,19 +21,28 @@ var serviceGroups = ServiceGroups.All(clients);
 // registrations and go into the same two maps.
 var scenarioGroups = ScenarioGroups.All(clients);
 
-var setups = new Dictionary<string, SetupFn>(StringComparer.Ordinal);
-var teardowns = new Dictionary<string, SetupFn>(StringComparer.Ordinal);
-
-foreach (var group in serviceGroups.Concat(scenarioGroups))
+// The two hook maps go through the same duplicate check the impls do below.
+// They used to merge last-writer-wins, which made the halves disagree about one
+// mistake: two group classes claiming one group's setup lost one of them
+// silently, and the group then ran against a fixture that was never created -
+// which reads as every test in it failing, not as a registration error.
+// Generated and hand-written groups share these two maps, so a collision
+// between the halves is caught here too.
+var registeringGroups = serviceGroups.Concat(scenarioGroups).ToList();
+Dictionary<string, SetupFn> setups;
+Dictionary<string, SetupFn> teardowns;
+try
 {
-    foreach (var entry in group.Setups())
-    {
-        setups[entry.Key] = entry.Value;
-    }
-    foreach (var entry in group.Teardowns())
-    {
-        teardowns[entry.Key] = entry.Value;
-    }
+    setups = RegistryLoader.MergeSetups(
+        registeringGroups.Select(group => (group.SourceName, group.Setups())), suite);
+    teardowns = RegistryLoader.MergeTeardowns(
+        registeringGroups.Select(group => (group.SourceName, group.Teardowns())), suite);
+}
+catch (InvalidOperationException ex)
+{
+    Console.Error.WriteLine(ex.Message);
+    Environment.Exit(1);
+    return;
 }
 
 // The impls go through MergeImpls rather than a plain assignment: a key two
