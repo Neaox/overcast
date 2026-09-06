@@ -1065,6 +1065,54 @@ operations, exactly one declared capability** — `DescribeOrganization`,
 > group it was written about — and, now, for `organizations-gen-probe`, which
 > carries neither setup nor teardown because a probe has nothing to set up.
 
+> **Criterion 5, first half (2026-09-06, #1813).** The organizational-unit
+> lifecycle is now in the recipe, and the corpus was regenerated over it. The
+> five OU operations and `ListRoots` are still undeclared in
+> `internal/capabilities/all.gen.go`, so this records the *before* state that
+> the emulator half of the demonstration will move:
+>
+> | | before | after |
+> | --- | --- | --- |
+> | `organizations` groups | 3 | 5 (`-ou`, `-root` added) |
+> | `organizations` tests | 34 | 40 |
+> | operations covered | 34 of 63 | 37 of 63 |
+> | `organizations-gen-probe` tests | 25 | 22 |
+> | `organizations` refusals | 29 `never-probe` | 26 `never-probe` |
+>
+> The three the probe group lost are `DescribeOrganizationalUnit`,
+> `ListOrganizationalUnitsForParent` and `ListRoots`, which the two new
+> lifecycles now claim; the three refusals it lost are the `never-probe` rows
+> for `CreateOrganizationalUnit`, `UpdateOrganizationalUnit` and
+> `DeleteOrganizationalUnit`, whose curated sentences left the recipe with
+> them. No file under `compat/suites/` changed.
+>
+> §3.1's intended shape held: the generator emits a lifecycle over undeclared
+> operations without complaint — nothing in `generate.go` consults the
+> capability table on the lifecycle path, only on the probe path — so
+> `organizations-gen-ou` is in `registry.generated.json` as `candidate`
+> alongside the rest.
+>
+> **One correction to the expectation.** `organizations-gen-ou` does *not*
+> record `unimplemented` for its eight tests today. Its setup calls `ListRoots`
+> to obtain a `ParentId`, that operation is unimplemented, and a setup failure
+> is `skip` for every test of the group with `setup failed: …` — the harness
+> contract, held identically by all three interpreters
+> (`python-sdk/lib/harness.py`, `cli/internal/harness/harness.go`,
+> `node-js-sdk/src/lib/harness.ts`). `unimplemented` is reachable only for a
+> test whose *own* call gets the 501, which is every test of a probe group and
+> no test of a lifecycle whose setup cannot run. It costs the demonstration
+> nothing — a `candidate` group is excluded from `--compare-baseline` and
+> `--max-failures`, and a group that only skips cannot promote
+> (§ "Generated groups soak in before they gate") — but it means the emulator
+> half moves these tests from `skip` to `pass`, not from `unimplemented` to
+> `pass`, and the criterion's wording should say so.
+>
+> Measured, python-sdk against a slim image of this branch, three consecutive
+> identical runs: before, `organizations-gen-probe` 25 `unimplemented`, 0
+> `fail`; after, `organizations-gen-probe` 22 `unimplemented`,
+> `organizations-gen-root` 1 `unimplemented`, `organizations-gen-ou` 8 `skip`,
+> 0 `fail` throughout.
+
 Acceptance criteria:
 
 1. `organizations-gen-probe` covers the 62 undeclared operations; **all record

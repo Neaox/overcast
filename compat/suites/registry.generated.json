@@ -22,6 +22,65 @@
     },
     {
       "service": "organizations",
+      "name": "organizations-gen-ou",
+      "generated": true,
+      "scenario": "compat/model/scenarios/organizations.json",
+      "state": "candidate",
+      "suites": [
+        "cli",
+        "node-js-sdk",
+        "python-sdk"
+      ],
+      "tests": [
+        {
+          "name": "CreateOrganizationalUnit"
+        },
+        {
+          "name": "DescribeOrganizationalUnit",
+          "depends": [
+            "CreateOrganizationalUnit"
+          ]
+        },
+        {
+          "name": "UpdateOrganizationalUnit",
+          "depends": [
+            "CreateOrganizationalUnit"
+          ]
+        },
+        {
+          "name": "TagResource",
+          "depends": [
+            "CreateOrganizationalUnit"
+          ]
+        },
+        {
+          "name": "ListTagsForResource",
+          "depends": [
+            "CreateOrganizationalUnit"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "depends": [
+            "CreateOrganizationalUnit"
+          ]
+        },
+        {
+          "name": "ListOrganizationalUnitsForParent",
+          "depends": [
+            "CreateOrganizationalUnit"
+          ]
+        },
+        {
+          "name": "DeleteOrganizationalUnit",
+          "depends": [
+            "CreateOrganizationalUnit"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "organizations",
       "name": "organizations-gen-policy",
       "generated": true,
       "scenario": "compat/model/scenarios/organizations.json",
@@ -104,9 +163,6 @@
           "name": "DescribeHandshake"
         },
         {
-          "name": "DescribeOrganizationalUnit"
-        },
-        {
           "name": "DescribeResourcePolicy"
         },
         {
@@ -149,9 +205,6 @@
           "name": "ListInboundResponsibilityTransfers"
         },
         {
-          "name": "ListOrganizationalUnitsForParent"
-        },
-        {
           "name": "ListOutboundResponsibilityTransfers"
         },
         {
@@ -161,10 +214,24 @@
           "name": "ListPoliciesForTarget"
         },
         {
-          "name": "ListRoots"
-        },
-        {
           "name": "ListTargetsForPolicy"
+        }
+      ]
+    },
+    {
+      "service": "organizations",
+      "name": "organizations-gen-root",
+      "generated": true,
+      "scenario": "compat/model/scenarios/organizations.json",
+      "state": "candidate",
+      "suites": [
+        "cli",
+        "node-js-sdk",
+        "python-sdk"
+      ],
+      "tests": [
+        {
+          "name": "ListRoots"
         }
       ]
     },
