@@ -1800,13 +1800,13 @@
       "suite": "rust-sdk",
       "service": "iam",
       "group": "iam-policies",
-      "tests": 4
+      "tests": 8
     },
     {
       "suite": "rust-sdk",
       "service": "iam",
       "group": "iam-roles",
-      "tests": 14
+      "tests": 16
     },
     {
       "suite": "rust-sdk",

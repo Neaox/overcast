@@ -21,6 +21,49 @@ _POLICY_DOC = json.dumps({
     "Statement": [{"Effect": "Allow", "Action": "s3:GetObject", "Resource": "*"}],
 })
 
+# A document AWS refuses with MalformedPolicyDocument: "Statements must include
+# either an Action or NotAction element" (IAM User Guide,
+# reference_policies_elements_action.html). Every writer that takes a document
+# names that error (IAM API Reference, API_CreatePolicy.html and
+# API_CreateRole.html, Errors).
+_MALFORMED_POLICY = json.dumps({
+    "Version": "2012-10-17",
+    "Statement": [{"Effect": "Allow", "Resource": "*"}],
+})
+
+# The tag set the role and policy fixtures are created with, and the one
+# GetRole and GetPolicy must hand back on the resource itself.
+_RESOURCE_TAGS = [{"Key": "owner", "Value": "compat"}, {"Key": "stage", "Value": "dev"}]
+
+
+def _assert_malformed_policy_document(op: str, call) -> None:
+    """Run call() and require MalformedPolicyDocument (HTTP 400) back."""
+    import botocore.exceptions
+    try:
+        call()
+    except botocore.exceptions.ClientError as exc:
+        code = exc.response["Error"]["Code"]
+        if code != "MalformedPolicyDocument":
+            raise AssertionError(f"{op}: expected MalformedPolicyDocument, got {code}") from exc
+        status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if status != 400:
+            raise AssertionError(
+                f"{op}: expected HTTP 400 for MalformedPolicyDocument, got {status}"
+            ) from exc
+        return
+    raise AssertionError(f"{op}: expected MalformedPolicyDocument, got success")
+
+
+def _assert_resource_tags(op: str, tags) -> None:
+    """Check the two fixture tags on a resource returned by a Get* call."""
+    got = {tag["Key"]: tag["Value"] for tag in (tags or [])}
+    for want in _RESOURCE_TAGS:
+        if got.get(want["Key"]) != want["Value"]:
+            raise AssertionError(
+                f"{op}: tag {want['Key']} = {got.get(want['Key'])!r}, "
+                f"want {want['Value']!r} (tags: {got})"
+            )
+
 
 def _iam(ctx: TestContext):
     return make_clients(ctx.endpoint, ctx.region).iam
@@ -165,7 +208,9 @@ def ListAccessKeys(ctx: TestContext) -> None:
 def setup_iam_roles(ctx: TestContext) -> None:
     iam = _iam(ctx)
     name = f"{ctx.run_id}-role"
-    resp = iam.create_role(RoleName=name, AssumeRolePolicyDocument=_ASSUME_POLICY)
+    resp = iam.create_role(
+        RoleName=name, AssumeRolePolicyDocument=_ASSUME_POLICY, Tags=_RESOURCE_TAGS
+    )
     ctx["iam_role_name"] = name
     ctx["iam_role_arn"] = resp["Role"]["Arn"]
 
@@ -226,6 +271,23 @@ def GetRole(ctx: TestContext) -> None:
     resp = iam.get_role(RoleName=name)
     if resp.get("Role", {}).get("RoleName") != name:
         raise AssertionError(f"GetRole: wrong name {resp.get('Role', {}).get('RoleName')!r}")
+
+
+def CreateRoleMalformedDocument(ctx: TestContext) -> None:
+    """A trust policy AWS would refuse must be refused here, not stored unparsed."""
+    iam = _iam(ctx)
+    name = f"{ctx.run_id}-r-malformed"
+    _assert_malformed_policy_document(
+        "CreateRoleMalformedDocument",
+        lambda: iam.create_role(RoleName=name, AssumeRolePolicyDocument=_MALFORMED_POLICY),
+    )
+
+
+def GetRoleReturnsTags(ctx: TestContext) -> None:
+    """Tags given to CreateRole come back on the role (API_Role.html)."""
+    iam = _iam(ctx)
+    resp = iam.get_role(RoleName=ctx["iam_role_name"])
+    _assert_resource_tags("GetRoleReturnsTags", resp.get("Role", {}).get("Tags"))
 
 
 def ListRoles(ctx: TestContext) -> None:
@@ -340,13 +402,31 @@ def DeleteRolePolicy(ctx: TestContext) -> None:
 
 def setup_iam_policies(ctx: TestContext) -> None:
     ctx["iam_policy_arn"] = None
+    # The counter tests attach this group's own policy to a role of its own, so
+    # AttachmentCount moves for a customer managed policy rather than for the
+    # AWS managed one iam-roles attaches.
+    role = f"{ctx.run_id}-pol-role"
+    _iam(ctx).create_role(RoleName=role, AssumeRolePolicyDocument=_ASSUME_POLICY)
+    ctx["iam_policy_role"] = role
 
 
 def teardown_iam_policies(ctx: TestContext) -> None:
+    iam = _iam(ctx)
     arn = ctx.get("iam_policy_arn")
+    role = ctx.get("iam_policy_role")
+    if role:
+        if arn:
+            try:
+                iam.detach_role_policy(RoleName=role, PolicyArn=arn)
+            except Exception:
+                pass
+        try:
+            iam.delete_role(RoleName=role)
+        except Exception:
+            pass
     if arn:
         try:
-            _iam(ctx).delete_policy(PolicyArn=arn)
+            iam.delete_policy(PolicyArn=arn)
         except Exception:
             pass
 
@@ -357,6 +437,7 @@ def CreatePolicy(ctx: TestContext) -> None:
     resp = iam.create_policy(
         PolicyName=name,
         PolicyDocument=_POLICY_DOC,
+        Tags=_RESOURCE_TAGS,
     )
     arn = resp.get("Policy", {}).get("Arn")
     if not arn:
@@ -381,6 +462,63 @@ def ListPolicies(ctx: TestContext) -> None:
     arns = [p["Arn"] for p in resp.get("Policies", [])]
     if arn and arn not in arns:
         raise AssertionError(f"ListPolicies: {arn!r} not found in local policies")
+
+
+def CreatePolicyMalformedDocument(ctx: TestContext) -> None:
+    """The same refusal on the identity-policy writer."""
+    iam = _iam(ctx)
+    name = f"{ctx.run_id}-p-malformed"
+    _assert_malformed_policy_document(
+        "CreatePolicyMalformedDocument",
+        lambda: iam.create_policy(PolicyName=name, PolicyDocument=_MALFORMED_POLICY),
+    )
+
+
+def GetPolicyReturnsTags(ctx: TestContext) -> None:
+    """Tags given to CreatePolicy come back on the policy (API_Policy.html)."""
+    iam = _iam(ctx)
+    arn = ctx.get("iam_policy_arn")
+    if not arn:
+        raise AssertionError("GetPolicyReturnsTags: no policy ARN")
+    resp = iam.get_policy(PolicyArn=arn)
+    _assert_resource_tags("GetPolicyReturnsTags", resp.get("Policy", {}).get("Tags"))
+
+
+def _attachment_count(ctx: TestContext, op: str) -> int:
+    """Read AttachmentCount back through GetPolicy."""
+    resp = _iam(ctx).get_policy(PolicyArn=ctx["iam_policy_arn"])
+    policy = resp.get("Policy", {})
+    if "AttachmentCount" not in policy:
+        raise AssertionError(f"{op}: GetPolicy returned no AttachmentCount: {policy}")
+    return policy["AttachmentCount"]
+
+
+def GetPolicyAttachmentCountAfterAttach(ctx: TestContext) -> None:
+    """AttachmentCount moves 0 to 1.
+
+    "The number of entities (users, groups, and roles) that the policy is
+    attached to" (IAM API Reference, API_Policy.html) is what a cleanup script
+    reads before deleting a policy, so a stuck 0 deletes something in use.
+    """
+    op = "GetPolicyAttachmentCountAfterAttach"
+    iam = _iam(ctx)
+    before = _attachment_count(ctx, op)
+    if before != 0:
+        raise AssertionError(f"{op}: AttachmentCount = {before} before the attach, want 0")
+    iam.attach_role_policy(RoleName=ctx["iam_policy_role"], PolicyArn=ctx["iam_policy_arn"])
+    after = _attachment_count(ctx, op)
+    if after != 1:
+        raise AssertionError(f"{op}: AttachmentCount = {after} after attaching to one role, want 1")
+
+
+def GetPolicyAttachmentCountAfterDetach(ctx: TestContext) -> None:
+    """The counter moves back to 0, which a never-decremented one would fail."""
+    op = "GetPolicyAttachmentCountAfterDetach"
+    iam = _iam(ctx)
+    iam.detach_role_policy(RoleName=ctx["iam_policy_role"], PolicyArn=ctx["iam_policy_arn"])
+    after = _attachment_count(ctx, op)
+    if after != 0:
+        raise AssertionError(f"{op}: AttachmentCount = {after} after the detach, want 0")
 
 
 def DeletePolicy(ctx: TestContext) -> None:
@@ -605,7 +743,9 @@ IMPLS = {
     "iam-users:UpdateUser": UpdateUser,
     "iam-users:ListAccessKeys": ListAccessKeys,
     "iam-roles:CreateRole": CreateRole,
+    "iam-roles:CreateRoleMalformedDocument": CreateRoleMalformedDocument,
     "iam-roles:GetRole": GetRole,
+    "iam-roles:GetRoleReturnsTags": GetRoleReturnsTags,
     "iam-roles:ListRoles": ListRoles,
     "iam-roles:AttachRolePolicy": AttachRolePolicy,
     "iam-roles:ListAttachedRolePolicies": ListAttachedRolePolicies,
@@ -619,8 +759,12 @@ IMPLS = {
     "iam-roles:GetInstanceProfile": GetInstanceProfile,
     "iam-roles:DeleteRole": DeleteRole,
     "iam-policies:CreatePolicy": CreatePolicy,
+    "iam-policies:CreatePolicyMalformedDocument": CreatePolicyMalformedDocument,
     "iam-policies:GetPolicy": GetPolicy,
+    "iam-policies:GetPolicyReturnsTags": GetPolicyReturnsTags,
     "iam-policies:ListPolicies": ListPolicies,
+    "iam-policies:GetPolicyAttachmentCountAfterAttach": GetPolicyAttachmentCountAfterAttach,
+    "iam-policies:GetPolicyAttachmentCountAfterDetach": GetPolicyAttachmentCountAfterDetach,
     "iam-policies:DeletePolicy": DeletePolicy,
     "iam-groups:CreateGroup": CreateGroup,
     "iam-groups:AddUserToGroup": AddUserToGroup,
