@@ -4,9 +4,10 @@ package trace
 // something it is.
 //
 // The cheap search (search_test.go) matches short scalar fields and stops
-// there, because reaching further means scanning up to MaxHopBodyBytes per
-// trace. This is the further reach: hop bodies, hop errors and log entries,
-// scanned a budget at a time so no single call can run away with the process.
+// there, because reaching further means reading the retained payloads
+// themselves. This is the further reach: hop bodies, hop errors and log
+// entries, scanned a DefaultScanBudget at a time so no single call can run away
+// with the process.
 //
 // See docs/plans/trace-deep-search.md.
 

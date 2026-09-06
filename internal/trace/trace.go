@@ -468,9 +468,10 @@ func (r *Recorder) RequestID() string {
 // is what keeps the list's 1 Hz poll cheap while a deploy is in flight.
 //
 // Bodies, log entries and hop errors are deliberately absent. Searching those
-// means scanning up to MaxHopBodyBytes per trace, which is not something a list
-// call can do inline; it is the deep search's job, and a test pins the
-// separation so it is changed on purpose rather than by accident.
+// means reading the retained payloads themselves, a scan DeepSearch bounds with
+// DefaultScanBudget and resumes across calls rather than something a list call
+// can do inline; it is the deep search's job, and a test pins the separation so
+// it is changed on purpose rather than by accident.
 func (r *Recorder) MatchesSearch(lowered string) bool {
 	if r == nil {
 		return false
