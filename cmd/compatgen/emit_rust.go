@@ -94,22 +94,11 @@ var rustUnsupportedKinds = map[string]bool{
 // rustBinderParam.
 type rustBindings struct{ used bool }
 
-// rustEmission is one service's emitted source plus what it could not express.
-type rustEmission struct {
-	// Path is the emitted file, repository-relative.
-	Path string
-	// Contents is the emitted Rust.
-	Contents []byte
-	// Refused names the groups this backend cannot execute, and Gaps says why.
-	Refused map[string]bool
-	Gaps    []gap
-}
-
 // emitRust renders one service's generated groups as Rust for the rust-sdk
 // suite.
-func emitRust(gen *generation) (*rustEmission, error) {
+func emitRust(gen *generation) (*sourceEmission, error) {
 	s := gen.scenario
-	e := &rustEmission{
+	e := &sourceEmission{
 		Path:    rustSuiteDir + "/" + rustFileName(s.Service),
 		Refused: map[string]bool{},
 	}
@@ -1067,7 +1056,7 @@ func rustFileName(service string) string {
 }
 
 // rustNameStruct is the exported entry point the index file constructs.
-func rustNameStruct(service string) string { return "Scenarios" + rustCamel(service) }
+func rustNameStruct(service string) string { return "Scenarios" + camel(service) }
 
 func rustNameGroupConst(group string) string {
 	return "GROUP_" + strings.ToUpper(strings.ReplaceAll(group, "-", "_"))
@@ -1084,16 +1073,6 @@ func rustNameTestFn(group, test string) string {
 // rustSnakeName turns a kebab-case registry name into a snake_case identifier
 // fragment: sqs-gen-queue → sqs_gen_queue.
 func rustSnakeName(name string) string { return strings.ReplaceAll(name, "-", "_") }
-
-// rustCamel turns a kebab-case registry name into a Rust type-name fragment:
-// sqs → Sqs, cost-explorer → CostExplorer.
-func rustCamel(name string) string {
-	var out strings.Builder
-	for _, part := range strings.Split(name, "-") {
-		out.WriteString(pascal(part))
-	}
-	return out.String()
-}
 
 // rustItemNamesAreUnique refuses a service whose group and test names collide
 // once folded into Rust identifiers. Two names differing only in where their
@@ -1202,14 +1181,18 @@ func emitRustIndex(services []string) ([]byte, error) {
 // Writing
 // ---------------------------------------------------------------------------
 
-// rustWriter accumulates source lines. Unlike the Go emitter's there is no
-// formatter to run afterwards — cmd/compatgen has no Rust toolchain and CI's
-// docs job has only Go — so the indentation written here is the output's actual
-// layout.
-type rustWriter struct{ lines []string }
+// rustWriter is sourceWriter with the two things Rust needs and no other
+// backend does. There is no formatter to run afterwards — cmd/compatgen has no
+// Rust toolchain and CI's docs job has only Go — so the indentation written
+// here is the output's actual layout.
+type rustWriter struct{ sourceWriter }
 
+// linef splits on newlines, so a multi-line template writes one entry per line
+// and closeSome below can address the last of them.
 func (w *rustWriter) linef(format string, args ...any) {
-	w.lines = append(w.lines, strings.Split(fmt.Sprintf(format, args...), "\n")...)
+	for _, line := range strings.Split(fmt.Sprintf(format, args...), "\n") {
+		w.sourceWriter.linef("%s", line)
+	}
 }
 
 // closeSome turns the "}," a nested call struct ends with into the "})," that
@@ -1220,5 +1203,3 @@ func (w *rustWriter) closeSome(indent string) {
 		w.lines[last] = indent + "}),"
 	}
 }
-
-func (w *rustWriter) String() string { return strings.Join(w.lines, "\n") + "\n" }

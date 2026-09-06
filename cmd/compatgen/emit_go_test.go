@@ -5,7 +5,6 @@ package main
 import (
 	"encoding/json"
 	"go/format"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -37,15 +36,6 @@ var fixtureGoTypes = sync.OnceValue(func() *goSDKTypes {
 	return newGoSDKTypes(filepath.Join("testdata", "awssdk"))
 })
 
-// updateGolden rewrites the golden file instead of comparing against it:
-//
-//	OVERCAST_UPDATE_GOLDEN=1 go test -tags dev -run TestEmitGo ./cmd/compatgen
-//
-// Read the diff before committing the result — the golden file is the review
-// artifact for what the emitter writes, and a golden regenerated without being
-// read proves nothing.
-func updateGolden() bool { return os.Getenv("OVERCAST_UPDATE_GOLDEN") == "1" }
-
 func TestEmitGo_matchesTheGoldenSource(t *testing.T) {
 	// Given: the fixture service, generated.
 	_, gen := generateFixture(t)
@@ -60,22 +50,7 @@ func TestEmitGo_matchesTheGoldenSource(t *testing.T) {
 	if emission.Path != "compat/suites/go-sdk/internal/groups/scenarios_widgets_gen.go" {
 		t.Errorf("emitted path = %s", emission.Path)
 	}
-	if updateGolden() {
-		if err := os.MkdirAll(filepath.Dir(goldenPath), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(goldenPath, emission.Contents, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		t.Fatalf("golden file rewritten; re-run without OVERCAST_UPDATE_GOLDEN and read the diff")
-	}
-	want, err := os.ReadFile(goldenPath)
-	if err != nil {
-		t.Fatalf("read golden: %v (set OVERCAST_UPDATE_GOLDEN=1 to write it)", err)
-	}
-	if string(emission.Contents) != string(want) {
-		t.Errorf("emitted source differs from %s; set OVERCAST_UPDATE_GOLDEN=1 to update it after reading the diff\n--- got ---\n%s", goldenPath, emission.Contents)
-	}
+	assertGolden(t, goldenPath, emission.Contents)
 }
 
 func TestEmitGo_isDeterministicAndGofmtClean(t *testing.T) {
@@ -483,7 +458,7 @@ func TestExplainGoRendersTheEmittedCall(t *testing.T) {
 	if !ok {
 		t.Fatal("fixture has no CreateWidget")
 	}
-	explained := renderGo(renderEnv{goTypes: fixtureGoTypes()}, gen.scenario, g, tc)
+	explained := renderGo(fixtureRenderEnv(gen), gen.scenario, g, tc)
 
 	emission, err := emitGo(gen, fixtureGoTypes())
 	if err != nil {

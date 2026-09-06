@@ -229,3 +229,130 @@ func refusals(gen *generation, g group, reason string, checks refusalChecks) []g
 	sortGaps(out)
 	return out
 }
+
+// ---------------------------------------------------------------------------
+// Identifiers
+// ---------------------------------------------------------------------------
+
+// camel turns a kebab-case registry name into an identifier fragment:
+// sqs-gen-queue → SqsGenQueue. Every backend whose identifiers are PascalCase
+// builds its group, test and file names out of it, and they agree because it is
+// one function rather than one per emitter.
+func camel(name string) string {
+	var out strings.Builder
+	for _, part := range strings.Split(name, "-") {
+		out.WriteString(pascal(part))
+	}
+	return out.String()
+}
+
+// ---------------------------------------------------------------------------
+// Writing
+// ---------------------------------------------------------------------------
+
+// sourceWriter accumulates emitted source lines.
+//
+// A trailing space is never meaningful in any language this emits — a string
+// literal ends with its own quote — so lines are right-trimmed here rather than
+// in each emitter, and no backend has to prove it did not leave one behind. A
+// backend whose output goes through a formatter (Go's through go/format) is
+// unaffected either way.
+type sourceWriter struct{ lines []string }
+
+func (w *sourceWriter) linef(format string, args ...any) {
+	w.lines = append(w.lines, strings.TrimRight(fmt.Sprintf(format, args...), " "))
+}
+
+func (w *sourceWriter) String() string { return strings.Join(w.lines, "\n") + "\n" }
+
+// ---------------------------------------------------------------------------
+// Emission, and the backend table
+// ---------------------------------------------------------------------------
+
+// sourceEmission is one service's emitted source plus what the backend could
+// not express. Every source emitter returns one, which is what lets generateAll
+// drive them from a table rather than from a block per backend.
+type sourceEmission struct {
+	// Path is the emitted file, repository-relative.
+	Path string
+	// Contents is the source, formatted the way that backend commits it.
+	Contents []byte
+	// Refused names the groups this backend cannot execute, and Gaps says why.
+	Refused map[string]bool
+	Gaps    []gap
+}
+
+// sourceBackend is one typed source emitter as generateAll drives it: which
+// suite it writes for, how it renders a service and the index that suite calls
+// into, and how one of its own files is recognised so a stale one can be
+// removed. Adding a backend is a row in sourceBackends, not another copy of the
+// block that used to sit in main.go.
+//
+// emit takes the Go SDK type loader because the Go emitter needs it (emit_go.go
+// says why) and no other backend does; one that reads the model alone ignores
+// it. Threading one loader through is cheaper than a second table of
+// per-backend inputs for the single backend that has any.
+type sourceBackend struct {
+	suite string
+	emit  func(gen *generation, goTypes *goSDKTypes) (*sourceEmission, error)
+	// indexPath is the index file, repository-relative, and index renders it
+	// from the services actually emitted.
+	indexPath string
+	index     func(services []string) ([]byte, error)
+	// dir is where the emitted files live, repository-relative; language names
+	// the source in a stale-file message; emittedFile reports whether a file
+	// name in dir is one this backend writes.
+	dir         string
+	language    string
+	emittedFile func(name string) bool
+}
+
+// sourceBackends is every typed source emitter, in the order their files are
+// rendered. A suite appears here whether or not scenarioBackends names it: the
+// index is emitted either way, and a stale file has to be removed either way.
+var sourceBackends = []sourceBackend{
+	{
+		suite:     goSDKSuite,
+		emit:      emitGo,
+		indexPath: goIndexPath,
+		index:     emitGoIndex,
+		dir:       goSuiteDir,
+		language:  "Go",
+		emittedFile: func(name string) bool {
+			return strings.HasPrefix(name, "scenarios_") && strings.HasSuffix(name, "_gen.go")
+		},
+	},
+	{
+		suite:     javaSDKSuite,
+		emit:      func(gen *generation, _ *goSDKTypes) (*sourceEmission, error) { return emitJava(gen) },
+		indexPath: javaIndexPath,
+		index:     func(services []string) ([]byte, error) { return emitJavaIndex(services), nil },
+		dir:       javaSuiteDir,
+		language:  "Java",
+		emittedFile: func(name string) bool {
+			return strings.HasPrefix(name, "Scenarios") && strings.HasSuffix(name, "Gen.java")
+		},
+	},
+	{
+		suite:     dotnetSDKSuite,
+		emit:      func(gen *generation, _ *goSDKTypes) (*sourceEmission, error) { return emitDotnet(gen) },
+		indexPath: dotnetIndexPath,
+		index:     func(services []string) ([]byte, error) { return emitDotnetIndex(services), nil },
+		dir:       dotnetSuiteDir,
+		language:  "C#",
+		emittedFile: func(name string) bool {
+			return strings.HasPrefix(name, "Scenarios") && strings.HasSuffix(name, "Gen.cs")
+		},
+	},
+	{
+		suite:     rustSDKSuite,
+		emit:      func(gen *generation, _ *goSDKTypes) (*sourceEmission, error) { return emitRust(gen) },
+		indexPath: rustIndexPath,
+		index:     emitRustIndex,
+		dir:       rustSuiteDir,
+		language:  "Rust",
+		emittedFile: func(name string) bool {
+			return strings.HasPrefix(name, "scenarios_") && strings.HasSuffix(name, "_gen.rs")
+		},
+	},
+}

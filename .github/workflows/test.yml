@@ -776,7 +776,12 @@ jobs:
   #
   # One suite is deliberately absent:
   #
-  #   dotnet-sdk  carries no unit tests to run.
+  #   dotnet-sdk  already covered, and for the reason java-sdk and rust-sdk
+  #               are not. Its Dockerfile runs `dotnet test` between the
+  #               restore and the publish, and its build context is compat/
+  #               rather than compat/suites/, so the shared error-matching
+  #               corpus is reachable there and its fixture case really runs.
+  #               See that suite's run.sh for why the context is wider.
   #
   # java-sdk and rust-sdk are here even though each suite's Dockerfile already
   # runs its tests — `mvn package` runs surefire, and `cargo test` runs beside

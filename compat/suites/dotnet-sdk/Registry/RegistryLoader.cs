@@ -15,8 +15,10 @@ namespace OvercastCompat.Registry;
 /// order, after the group-qualified and bare impl keys and before the
 /// not-implemented sentinel. Returns null when the backend cannot execute the
 /// test.
-/// <para>Nothing implements it yet. Until one does, a generated group scoped to
-/// this suite reports a failure rather than a skip.</para>
+/// <para>The suite's implementation is the generated groups under Groups/ that
+/// cmd/compatgen writes, collected by ScenarioGroups.All and registered in
+/// Program.cs. A generated group scoped to this suite that the backend does not
+/// resolve still reports a failure rather than a skip.</para>
 /// </remarks>
 internal delegate TestFn? ScenarioBackend(RegistryLoader.RegistryGroup group, RegistryLoader.RegistryTest test);
 
@@ -93,7 +95,8 @@ public static class RegistryLoader
                 group.Name,
                 TopoSort(group.Tests).Select(test => BuildTestCase(group, test, suite, impls, capabilities, ambiguous, backend)).ToList(),
                 setups.TryGetValue(group.Name, out var setup) ? setup : null,
-                teardowns.TryGetValue(group.Name, out var teardown) ? teardown : null))
+                teardowns.TryGetValue(group.Name, out var teardown) ? teardown : null,
+                group.Parallel))
             .ToList();
     }
 
@@ -365,19 +368,50 @@ public static class RegistryLoader
     /// <exception cref="InvalidOperationException">If any key is registered more than once.</exception>
     public static Dictionary<string, TestFn> MergeImpls(
         IEnumerable<(string Name, IReadOnlyDictionary<string, TestFn> Impls)> sources,
-        string suite)
+        string suite) => Merge(sources, suite, "impl");
+
+    /// <summary>
+    /// The same merge for the setup hooks, keyed by group name.
+    /// </summary>
+    /// <remarks>
+    /// A hook map used to be merged by plain assignment while the impls went
+    /// through <see cref="MergeImpls"/>, which made the two halves disagree
+    /// about the same mistake: two group classes claiming one group's setup lost
+    /// one of them silently, and the group then ran with the wrong fixture -
+    /// which surfaces as every test in it failing on a resource that was never
+    /// created, not as a registration error.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">If any group is registered more than once.</exception>
+    public static Dictionary<string, SetupFn> MergeSetups(
+        IEnumerable<(string Name, IReadOnlyDictionary<string, SetupFn> Setups)> sources,
+        string suite) => Merge(sources, suite, "setup");
+
+    /// <summary>The same merge for the teardown hooks. See <see cref="MergeSetups"/>.</summary>
+    /// <exception cref="InvalidOperationException">If any group is registered more than once.</exception>
+    public static Dictionary<string, SetupFn> MergeTeardowns(
+        IEnumerable<(string Name, IReadOnlyDictionary<string, SetupFn> Teardowns)> sources,
+        string suite) => Merge(sources, suite, "teardown");
+
+    /// <summary>
+    /// Flattens per-source maps into one, refusing any key two sources both
+    /// register. <paramref name="kind"/> names the registration in the message.
+    /// </summary>
+    private static Dictionary<string, T> Merge<T>(
+        IEnumerable<(string Name, IReadOnlyDictionary<string, T> Entries)> sources,
+        string suite,
+        string kind)
     {
-        var merged = new Dictionary<string, TestFn>(StringComparer.Ordinal);
+        var merged = new Dictionary<string, T>(StringComparer.Ordinal);
         var owner = new Dictionary<string, string>(StringComparer.Ordinal); // key -> first registrant
 
         var problems = new List<string>();
-        foreach (var (name, impls) in sources)
+        foreach (var (name, entries) in sources)
         {
-            foreach (var entry in impls)
+            foreach (var entry in entries)
             {
                 if (owner.TryGetValue(entry.Key, out var first))
                 {
-                    problems.Add(DuplicateProblem(entry.Key, first, name));
+                    problems.Add(DuplicateProblem(kind, entry.Key, first, name));
                     continue;
                 }
                 owner[entry.Key] = name;
@@ -390,7 +424,7 @@ public static class RegistryLoader
         // Every problem starts with the key, which is what a reader scans for.
         problems.Sort(StringComparer.Ordinal);
         throw new InvalidOperationException(
-            $"[{suite}] {problems.Count} duplicate impl registration(s):{Environment.NewLine}  - "
+            $"[{suite}] {problems.Count} duplicate {kind} registration(s):{Environment.NewLine}  - "
             + string.Join($"{Environment.NewLine}  - ", problems));
     }
 
@@ -398,12 +432,12 @@ public static class RegistryLoader
     /// One collision. The two sources are the same when a single group class
     /// registers the key twice.
     /// </summary>
-    private static string DuplicateProblem(string key, string first, string second)
+    private static string DuplicateProblem(string kind, string key, string first, string second)
     {
         var where = first == second
             ? $"is registered twice by \"{first}\""
             : $"is registered by both \"{first}\" and \"{second}\"";
-        return $"impl \"{key}\" {where} - one of the two would be silently discarded; "
+        return $"{kind} \"{key}\" {where} - one of the two would be silently discarded; "
             + "remove or re-key one";
     }
 
@@ -494,6 +528,19 @@ public static class RegistryLoader
         /// <summary>True for a group read from registry.generated.json.</summary>
         [JsonPropertyName("generated")]
         public bool Generated { get; init; }
+
+        /// <summary>
+        /// Whether the group's tests may run concurrently with one another.
+        /// </summary>
+        /// <remarks>
+        /// Only a generated probe group carries it: a probe has no setup, no
+        /// teardown and no exports, so nothing orders its tests. A loader that
+        /// ignored the flag would still be correct - it would run the group in
+        /// order - which is what makes it safe to read from the registry rather
+        /// than from the scenario file.
+        /// </remarks>
+        [JsonPropertyName("parallel")]
+        public bool Parallel { get; init; }
 
         /// <summary>"candidate" or "gated" - generated groups only.</summary>
         [JsonPropertyName("state")]

@@ -11,6 +11,7 @@
       "state": "candidate",
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
@@ -31,6 +32,7 @@
       "state": "candidate",
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
@@ -93,6 +95,7 @@
       "state": "candidate",
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
@@ -156,6 +159,7 @@
       "parallel": true,
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
@@ -239,6 +243,7 @@
       "state": "candidate",
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
@@ -259,6 +264,7 @@
       "state": "candidate",
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
@@ -298,6 +304,7 @@
       "state": "candidate",
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
@@ -338,6 +345,7 @@
       "parallel": true,
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",
@@ -358,6 +366,7 @@
       "state": "candidate",
       "suites": [
         "cli",
+        "dotnet-sdk",
         "go-sdk",
         "java-sdk",
         "node-js-sdk",

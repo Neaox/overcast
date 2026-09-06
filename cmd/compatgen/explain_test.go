@@ -9,18 +9,14 @@ import (
 )
 
 func TestExplain_rendersEveryLanguage(t *testing.T) {
-	f, gen := generateFixture(t)
+	_, gen := generateFixture(t)
 	g, tc, ok := gen.scenario.findTest("widgets-gen-widget", "CreateWidget")
 	if !ok {
 		t.Fatal("fixture has no CreateWidget")
 	}
 	for _, lang := range rendererNames() {
 		t.Run(lang, func(t *testing.T) {
-			// All three source-emitting backends render through their own
-			// emitter, so every one of their inputs is supplied: the vendored
-			// SDK's types for Go, the shape snapshot for Java and Rust.
-			env := renderEnv{goTypes: fixtureGoTypes(), model: staticModel(f.model)}
-			out := renderers[lang](env, gen.scenario, g, tc)
+			out := renderers[lang](fixtureRenderEnv(gen), gen.scenario, g, tc)
 			// Operation names are spelled per language (get_widget, getWidget,
 			// GetWidget), so compare with case and separators folded.
 			folded := strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(out))

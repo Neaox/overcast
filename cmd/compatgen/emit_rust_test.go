@@ -5,7 +5,6 @@ package main
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -39,22 +38,7 @@ func TestEmitRust_matchesTheGoldenSource(t *testing.T) {
 	if emission.Path != "compat/suites/rust-sdk/src/groups/scenarios_widgets_gen.rs" {
 		t.Errorf("emitted path = %s", emission.Path)
 	}
-	if updateGolden() {
-		if err := os.MkdirAll(filepath.Dir(rustGoldenPath), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(rustGoldenPath, emission.Contents, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		t.Fatalf("golden file rewritten; re-run without OVERCAST_UPDATE_GOLDEN and read the diff")
-	}
-	want, err := os.ReadFile(rustGoldenPath)
-	if err != nil {
-		t.Fatalf("read golden: %v (set OVERCAST_UPDATE_GOLDEN=1 to write it)", err)
-	}
-	if string(emission.Contents) != string(want) {
-		t.Errorf("emitted source differs from %s; set OVERCAST_UPDATE_GOLDEN=1 to update it after reading the diff\n--- got ---\n%s", rustGoldenPath, emission.Contents)
-	}
+	assertGolden(t, rustGoldenPath, emission.Contents)
 }
 
 func TestEmitRust_isDeterministic(t *testing.T) {
