@@ -16,7 +16,7 @@ func init() {
 		capabilities.Capability{Service: "sqs", Operation: "ListQueues", Category: "Queue management",
 			Status: capabilities.StatusSupported, Notes: "Optional QueueNamePrefix filter"},
 		capabilities.Capability{Service: "sqs", Operation: "GetQueueAttributes", Category: "Queue management",
-			Status: capabilities.StatusSupported, Notes: "All standard attributes; All wildcard supported; ApproximateNumberOfMessages(NotVisible) reflects the same counts a background sampler also publishes to CloudWatch every minute as ApproximateNumberOfMessagesVisible/NotVisible/Delayed, whether or not the queue has traffic"},
+			Status: capabilities.StatusSupported, Notes: "All standard attributes including CreatedTimestamp, LastModifiedTimestamp and ApproximateNumberOfMessagesDelayed; an unmodelled attribute name is rejected with InvalidAttributeName; All wildcard supported from any position in the list; ApproximateNumberOfMessages(NotVisible/Delayed) reflects the same counts a background sampler also publishes to CloudWatch every minute as ApproximateNumberOfMessagesVisible/NotVisible/Delayed, whether or not the queue has traffic"},
 		capabilities.Capability{Service: "sqs", Operation: "SetQueueAttributes", Category: "Queue management",
 			Status: capabilities.StatusSupported, Notes: "RedriveAllowPolicy accepted, validated, and round-tripped; the redrivePermission restriction itself is not enforced against StartMessageMoveTask or automatic DLQ redrive"},
 		capabilities.Capability{Service: "sqs", Operation: "PurgeQueue", Category: "Queue management",
@@ -30,19 +30,19 @@ func init() {
 
 		// Message operations
 		capabilities.Capability{Service: "sqs", Operation: "SendMessage", Category: "Message operations",
-			Status: capabilities.StatusSupported, Notes: "DelaySeconds, MessageAttributes supported; records AWS/SQS CloudWatch metrics NumberOfMessagesSent and SentMessageSize, skipped for a FIFO content-based-deduplication resend since no new message is enqueued"},
+			Status: capabilities.StatusSupported, Notes: "DelaySeconds, MessageAttributes supported, with MD5OfMessageAttributes returned when attributes are present; records AWS/SQS CloudWatch metrics NumberOfMessagesSent and SentMessageSize, skipped for a FIFO content-based-deduplication resend since no new message is enqueued"},
 		capabilities.Capability{Service: "sqs", Operation: "SendMessageBatch", Category: "Message operations",
-			Status: capabilities.StatusSupported, Notes: "Up to 10 messages per batch; records NumberOfMessagesSent/SentMessageSize per successful entry"},
+			Status: capabilities.StatusSupported, Notes: "Up to 10 messages per batch, enforced — an empty batch, an oversized one or duplicate entry Ids are rejected whole; MD5OfMessageAttributes returned per entry; records NumberOfMessagesSent/SentMessageSize per successful entry"},
 		capabilities.Capability{Service: "sqs", Operation: "ReceiveMessage", Category: "Message operations",
 			Status: capabilities.StatusSupported, Notes: "MaxNumberOfMessages, VisibilityTimeout, WaitTimeSeconds, queue default long polling, FIFO ReceiveRequestAttemptId with its 5-minute replay window; a FIFO batch drains one message group in sequence order before filling from other unblocked groups; the in-flight OverLimit quota is not enforced; records NumberOfMessagesReceived (non-empty) or NumberOfEmptyReceives (zero messages) once per call, after any long-poll retry settles"},
 		capabilities.Capability{Service: "sqs", Operation: "DeleteMessage", Category: "Message operations",
 			Status: capabilities.StatusSupported, Notes: "Records NumberOfMessagesDeleted"},
 		capabilities.Capability{Service: "sqs", Operation: "DeleteMessageBatch", Category: "Message operations",
-			Status: capabilities.StatusSupported, Notes: "Up to 10 messages per batch; records NumberOfMessagesDeleted per successful entry"},
+			Status: capabilities.StatusSupported, Notes: "Up to 10 messages per batch, enforced — an empty batch, an oversized one or duplicate entry Ids are rejected whole; records NumberOfMessagesDeleted per successful entry"},
 		capabilities.Capability{Service: "sqs", Operation: "ChangeMessageVisibility", Category: "Message operations",
 			Status: capabilities.StatusSupported, Notes: "Sets new visibility timeout on an in-flight message"},
 		capabilities.Capability{Service: "sqs", Operation: "ChangeMessageVisibilityBatch", Category: "Message operations",
-			Status: capabilities.StatusSupported, Notes: "Batch visibility timeout changes; per-entry success/failure response"},
+			Status: capabilities.StatusSupported, Notes: "Batch visibility timeout changes; up to 10 entries, enforced — an empty batch, an oversized one or duplicate entry Ids are rejected whole; per-entry success/failure response"},
 
 		// Permissions
 		capabilities.Capability{Service: "sqs", Operation: "AddPermission", Category: "Permissions",

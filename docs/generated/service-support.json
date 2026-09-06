@@ -339,7 +339,7 @@
           "operation": "GetQueueAttributes",
           "category": "Queue management",
           "status": "✅ Supported",
-          "notes": "All standard attributes; All wildcard supported; ApproximateNumberOfMessages(NotVisible) reflects the same counts a background sampler also publishes to CloudWatch every minute as ApproximateNumberOfMessagesVisible/NotVisible/Delayed, whether or not the queue has traffic"
+          "notes": "All standard attributes including CreatedTimestamp, LastModifiedTimestamp and ApproximateNumberOfMessagesDelayed; an unmodelled attribute name is rejected with InvalidAttributeName; All wildcard supported from any position in the list; ApproximateNumberOfMessages(NotVisible/Delayed) reflects the same counts a background sampler also publishes to CloudWatch every minute as ApproximateNumberOfMessagesVisible/NotVisible/Delayed, whether or not the queue has traffic"
         },
         {
           "operation": "SetQueueAttributes",
@@ -373,13 +373,13 @@
           "operation": "SendMessage",
           "category": "Message operations",
           "status": "✅ Supported",
-          "notes": "DelaySeconds, MessageAttributes supported; records AWS/SQS CloudWatch metrics NumberOfMessagesSent and SentMessageSize, skipped for a FIFO content-based-deduplication resend since no new message is enqueued"
+          "notes": "DelaySeconds, MessageAttributes supported, with MD5OfMessageAttributes returned when attributes are present; records AWS/SQS CloudWatch metrics NumberOfMessagesSent and SentMessageSize, skipped for a FIFO content-based-deduplication resend since no new message is enqueued"
         },
         {
           "operation": "SendMessageBatch",
           "category": "Message operations",
           "status": "✅ Supported",
-          "notes": "Up to 10 messages per batch; records NumberOfMessagesSent/SentMessageSize per successful entry"
+          "notes": "Up to 10 messages per batch, enforced — an empty batch, an oversized one or duplicate entry Ids are rejected whole; MD5OfMessageAttributes returned per entry; records NumberOfMessagesSent/SentMessageSize per successful entry"
         },
         {
           "operation": "ReceiveMessage",
@@ -397,7 +397,7 @@
           "operation": "DeleteMessageBatch",
           "category": "Message operations",
           "status": "✅ Supported",
-          "notes": "Up to 10 messages per batch; records NumberOfMessagesDeleted per successful entry"
+          "notes": "Up to 10 messages per batch, enforced — an empty batch, an oversized one or duplicate entry Ids are rejected whole; records NumberOfMessagesDeleted per successful entry"
         },
         {
           "operation": "ChangeMessageVisibility",
@@ -409,7 +409,7 @@
           "operation": "ChangeMessageVisibilityBatch",
           "category": "Message operations",
           "status": "✅ Supported",
-          "notes": "Batch visibility timeout changes; per-entry success/failure response"
+          "notes": "Batch visibility timeout changes; up to 10 entries, enforced — an empty batch, an oversized one or duplicate entry Ids are rejected whole; per-entry success/failure response"
         },
         {
           "operation": "AddPermission",

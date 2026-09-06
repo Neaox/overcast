@@ -122,10 +122,9 @@ type messageBackend interface {
 	// for a standard queue or an empty queue.
 	blockedGroups(ctx context.Context, region, queueName string, now time.Time) (map[string]bool, error)
 
-	// countMessages returns (visible, total) message counts for
-	// ApproximateNumberOfMessages / ApproximateNumberOfMessagesNotVisible
-	// (= total - visible).
-	countMessages(ctx context.Context, region, queueName string, now time.Time) (visible, total int, err error)
+	// countMessages returns the queue's message counts as of now, for the
+	// three Approximate* queue attributes GetQueueAttributes reports.
+	countMessages(ctx context.Context, region, queueName string, now time.Time) (messageCounts, error)
 
 	// debugScan returns up to limit raw message rows for
 	// /_overcast/debug/state/sqs:messages, ordered deterministically. limit <= 0
@@ -334,18 +333,21 @@ func (b *memMessageBackend) blockedGroups(_ context.Context, region, queueName s
 	return blocked, nil
 }
 
-func (b *memMessageBackend) countMessages(_ context.Context, region, queueName string, now time.Time) (visible, total int, err error) {
+func (b *memMessageBackend) countMessages(_ context.Context, region, queueName string, now time.Time) (messageCounts, error) {
 	key := memQueueKey(region, queueName)
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	q := b.queues[key]
-	total = len(q)
+	counts := messageCounts{Total: len(q)}
 	for _, msg := range q {
-		if messageVisibleAt(msg, now) {
-			visible++
+		switch {
+		case messageVisibleAt(msg, now):
+			counts.Visible++
+		case msg.ApproximateReceiveCount == 0:
+			counts.Delayed++
 		}
 	}
-	return visible, total, nil
+	return counts, nil
 }
 
 func (b *memMessageBackend) debugScan(_ context.Context, limit int) ([]debugMessageRecord, bool, error) {
@@ -626,20 +628,28 @@ func (b *sqlMessageBackend) blockedGroups(ctx context.Context, region, queueName
 	return blocked, nil
 }
 
-func (b *sqlMessageBackend) countMessages(ctx context.Context, region, queueName string, now time.Time) (visible, total int, err error) {
+func (b *sqlMessageBackend) countMessages(ctx context.Context, region, queueName string, now time.Time) (messageCounts, error) {
+	var counts messageCounts
 	if err := b.init(); err != nil {
-		return 0, 0, err
+		return counts, err
 	}
-	err = b.db.QueryRowContext(ctx, `
+	// The delayed arm reads approximate_receive_count out of message_json
+	// rather than a column of its own: the receive count is not part of the
+	// sqs_messages row shape (see migrations.go), and json_extract is how this
+	// codebase already filters on a JSON-only field (dynamodb/item_store.go).
+	err := b.db.QueryRowContext(ctx, `
 		SELECT
 			COALESCE(SUM(CASE WHEN visible_at <= ? THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN visible_at > ?
+				AND COALESCE(CAST(json_extract(message_json, '$.approximate_receive_count') AS INTEGER), 0) = 0
+				THEN 1 ELSE 0 END), 0),
 			COUNT(*)
 		FROM sqs_messages WHERE region = ? AND queue_name = ?
-	`, now.UnixMilli(), region, queueName).Scan(&visible, &total)
+	`, now.UnixMilli(), now.UnixMilli(), region, queueName).Scan(&counts.Visible, &counts.Delayed, &counts.Total)
 	if err != nil {
-		return 0, 0, fmt.Errorf("sqs count messages [%s/%s]: %w", region, queueName, err)
+		return messageCounts{}, fmt.Errorf("sqs count messages [%s/%s]: %w", region, queueName, err)
 	}
-	return visible, total, nil
+	return counts, nil
 }
 
 func (b *sqlMessageBackend) debugScan(ctx context.Context, limit int) ([]debugMessageRecord, bool, error) {

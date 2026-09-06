@@ -42,7 +42,10 @@ type sendMessageRequest struct {
 type sendMessageResponse struct {
 	MessageId        string `json:"MessageId"`
 	MD5OfMessageBody string `json:"MD5OfMessageBody"`
-	SequenceNumber   string `json:"SequenceNumber,omitempty"` // FIFO only
+	// MD5OfMessageAttributes is present only when the message carried
+	// attributes, matching AWS — see messageattrmd5.go.
+	MD5OfMessageAttributes string `json:"MD5OfMessageAttributes,omitempty"`
+	SequenceNumber         string `json:"SequenceNumber,omitempty"` // FIFO only
 }
 
 type receiveMessageRequest struct {
@@ -87,10 +90,16 @@ type sendMessageBatchRequest struct {
 	Entries  []sendMessageBatchRequestEntry `json:"Entries"`
 }
 
+// The three *BatchEntryID functions below give batch.go's shared validation
+// (validateBatchEntries) the Id member of each operation's own entry type —
+// the only field the batch-level limits look at.
+func sendMessageBatchEntryID(e sendMessageBatchRequestEntry) string { return e.Id }
+
 type sendMessageBatchResultEntry struct {
-	Id               string `json:"Id"`
-	MessageId        string `json:"MessageId"`
-	MD5OfMessageBody string `json:"MD5OfMessageBody"`
+	Id                     string `json:"Id"`
+	MessageId              string `json:"MessageId"`
+	MD5OfMessageBody       string `json:"MD5OfMessageBody"`
+	MD5OfMessageAttributes string `json:"MD5OfMessageAttributes,omitempty"`
 }
 
 type sendMessageBatchResponse struct {
@@ -107,6 +116,8 @@ type deleteMessageBatchRequest struct {
 	QueueUrl string                           `json:"QueueUrl"`
 	Entries  []deleteMessageBatchRequestEntry `json:"Entries"`
 }
+
+func deleteMessageBatchEntryID(e deleteMessageBatchRequestEntry) string { return e.Id }
 
 type deleteMessageBatchResultEntry struct {
 	Id string `json:"Id"`
@@ -133,6 +144,8 @@ type changeMessageVisibilityBatchRequest struct {
 	QueueUrl string                              `json:"QueueUrl"`
 	Entries  []changeMessageVisibilityBatchEntry `json:"Entries"`
 }
+
+func changeMessageVisibilityBatchEntryID(e changeMessageVisibilityBatchEntry) string { return e.Id }
 
 type changeMessageVisibilityBatchSuccessEntry struct {
 	Id string `json:"Id"`
@@ -209,8 +222,9 @@ func (h *Handler) sendMessageTyped(ctx context.Context, in *sendMessageRequest) 
 			msgID := uuid.New().String()
 			bodyMD5 := md5Hex([]byte(in.MessageBody))
 			return &sendMessageResponse{
-				MessageId:        msgID,
-				MD5OfMessageBody: bodyMD5,
+				MessageId:              msgID,
+				MD5OfMessageBody:       bodyMD5,
+				MD5OfMessageAttributes: md5OfMessageAttributes(in.MessageAttributes),
 			}, nil
 		}
 		h.store.recordDedup(ctx, queueName, dedupID)
@@ -267,9 +281,10 @@ func (h *Handler) sendMessageTyped(ctx context.Context, in *sendMessageRequest) 
 	h.recordMessageSent(ctx, queueName, len(in.MessageBody))
 
 	return &sendMessageResponse{
-		MessageId:        msgID,
-		MD5OfMessageBody: bodyMD5,
-		SequenceNumber:   seqNum,
+		MessageId:              msgID,
+		MD5OfMessageBody:       bodyMD5,
+		MD5OfMessageAttributes: md5OfMessageAttributes(in.MessageAttributes),
+		SequenceNumber:         seqNum,
 	}, nil
 }
 
@@ -541,6 +556,10 @@ func (h *Handler) deleteMessageTyped(ctx context.Context, in *deleteMessageReque
 }
 
 func (h *Handler) sendMessageBatchTyped(ctx context.Context, in *sendMessageBatchRequest) (*sendMessageBatchResponse, *protocol.AWSError) {
+	if aerr := validateBatchEntries(sendMessageBatchEntryName, in.Entries, sendMessageBatchEntryID); aerr != nil {
+		return nil, aerr
+	}
+
 	queueName := queueNameFromURL(in.QueueUrl)
 	if _, aerr := h.store.getQueue(ctx, queueName); aerr != nil {
 		return nil, aerr
@@ -551,13 +570,14 @@ func (h *Handler) sendMessageBatchTyped(ctx context.Context, in *sendMessageBatc
 		msgID := uuid.New().String()
 		bodyMD5 := md5Hex([]byte(entry.MessageBody))
 		msg := &Message{
-			MessageID:     msgID,
-			ReceiptHandle: encodeReceiptHandle(queueName, msgID),
-			Body:          entry.MessageBody,
-			MD5OfBody:     bodyMD5,
-			SentTimestamp: h.clk.Now().UnixMilli(),
-			VisibleAfter:  h.clk.Now().Add(time.Duration(entry.DelaySeconds) * time.Second),
-			Attributes:    map[string]string{"ApproximateReceiveCount": "0"},
+			MessageID:         msgID,
+			ReceiptHandle:     encodeReceiptHandle(queueName, msgID),
+			Body:              entry.MessageBody,
+			MD5OfBody:         bodyMD5,
+			SentTimestamp:     h.clk.Now().UnixMilli(),
+			VisibleAfter:      h.clk.Now().Add(time.Duration(entry.DelaySeconds) * time.Second),
+			Attributes:        map[string]string{"ApproximateReceiveCount": "0"},
+			MessageAttributes: entry.MessageAttributes,
 		}
 		_ = h.store.putMessage(ctx, queueName, msg)
 		h.bus.Publish(ctx, events.Event{
@@ -571,9 +591,10 @@ func (h *Handler) sendMessageBatchTyped(ctx context.Context, in *sendMessageBatc
 		})
 		h.recordMessageSent(ctx, queueName, len(entry.MessageBody))
 		successful = append(successful, sendMessageBatchResultEntry{
-			Id:               entry.Id,
-			MessageId:        msgID,
-			MD5OfMessageBody: bodyMD5,
+			Id:                     entry.Id,
+			MessageId:              msgID,
+			MD5OfMessageBody:       bodyMD5,
+			MD5OfMessageAttributes: md5OfMessageAttributes(entry.MessageAttributes),
 		})
 	}
 
@@ -584,6 +605,10 @@ func (h *Handler) sendMessageBatchTyped(ctx context.Context, in *sendMessageBatc
 }
 
 func (h *Handler) deleteMessageBatchTyped(ctx context.Context, in *deleteMessageBatchRequest) (*deleteMessageBatchResponse, *protocol.AWSError) {
+	if aerr := validateBatchEntries(deleteMessageBatchEntryName, in.Entries, deleteMessageBatchEntryID); aerr != nil {
+		return nil, aerr
+	}
+
 	queueName := queueNameFromURL(in.QueueUrl)
 	var successful []deleteMessageBatchResultEntry
 	var failed []interface{}
@@ -672,6 +697,10 @@ func (h *Handler) changeMessageVisibilityTyped(ctx context.Context, in *changeMe
 }
 
 func (h *Handler) changeMessageVisibilityBatchTyped(ctx context.Context, in *changeMessageVisibilityBatchRequest) (*changeMessageVisibilityBatchResponse, *protocol.AWSError) {
+	if aerr := validateBatchEntries(changeMessageVisibilityBatchEntryName, in.Entries, changeMessageVisibilityBatchEntryID); aerr != nil {
+		return nil, aerr
+	}
+
 	queueName := queueNameFromURL(in.QueueUrl)
 
 	var successful []changeMessageVisibilityBatchSuccessEntry
@@ -750,150 +779,21 @@ func (h *Handler) changeMessageVisibilityBatchTyped(ctx context.Context, in *cha
 
 // ---- Handlers --------------------------------------------------------------
 
+// SendMessage is the legacy (Query-protocol) dispatch path for
+// SQS:SendMessage. It decodes the request and shares sendMessageTyped so the
+// two dispatch paths cannot drift on validation, FIFO deduplication or the
+// response's digests.
 func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	var req sendMessageRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if !serviceutil.RequireString(w, r, req.QueueUrl, "QueueUrl") {
-		return
-	}
-	if !serviceutil.RequireString(w, r, req.MessageBody, "MessageBody") {
-		return
-	}
-	if len(req.MessageBody) > maxMessageBodyBytes {
-		writeJSONError(w, r, &protocol.AWSError{
-			Code:       "InvalidParameterValue",
-			Message:    "Value for parameter MessageBody is invalid. Reason: Message body must be no larger than 1048576 bytes.",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-	if req.DelaySeconds < 0 || req.DelaySeconds > 900 {
-		writeJSONError(w, r, &protocol.AWSError{
-			Code:       "InvalidParameterValue",
-			Message:    "Value for parameter DelaySeconds is invalid. Reason: DelaySeconds must be between 0 and 900, inclusive.",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-
-	queueName := queueNameFromURL(req.QueueUrl)
-	q, aerr := h.store.getQueue(r.Context(), queueName)
+	resp, aerr := h.sendMessageTyped(r.Context(), &req)
 	if aerr != nil {
 		writeJSONError(w, r, aerr)
 		return
 	}
-
-	fifo := isFifoQueue(q)
-
-	// FIFO validation: MessageGroupId is required.
-	if fifo && req.MessageGroupId == "" {
-		writeJSONError(w, r, &protocol.AWSError{
-			Code:       "MissingParameter",
-			Message:    "The request must contain the parameter MessageGroupId.",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-	if fifo && req.DelaySeconds > 0 {
-		writeJSONError(w, r, &protocol.AWSError{
-			Code:       "InvalidParameterValue",
-			Message:    "Value for parameter DelaySeconds is invalid. Reason: DelaySeconds cannot be set on FIFO queues.",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-
-	// FIFO deduplication
-	var dedupID string
-	if fifo {
-		dedupID = req.MessageDeduplicationId
-		if dedupID == "" && q.Attributes["ContentBasedDeduplication"] == "true" {
-			// Content-based dedup: use MD5 of the body as the dedup ID.
-			dedupID = md5Hex([]byte(req.MessageBody))
-		}
-		if dedupID == "" {
-			writeJSONError(w, r, &protocol.AWSError{
-				Code:       "InvalidParameterValue",
-				Message:    "The queue should either have ContentBasedDeduplication enabled or MessageDeduplicationId provided explicitly.",
-				HTTPStatus: http.StatusBadRequest,
-			})
-			return
-		}
-		if h.store.isDuplicate(r.Context(), queueName, dedupID) {
-			// Duplicate — return success with the original message ID (AWS behaviour).
-			// We return a new ID; real AWS returns the original, but the key behaviour
-			// is that the message is not enqueued twice.
-			msgID := uuid.New().String()
-			bodyMD5 := md5Hex([]byte(req.MessageBody))
-			protocol.WriteJSON(w, r, http.StatusOK, &sendMessageResponse{
-				MessageId:        msgID,
-				MD5OfMessageBody: bodyMD5,
-			})
-			return
-		}
-		h.store.recordDedup(r.Context(), queueName, dedupID)
-	}
-
-	msgID := uuid.New().String()
-	bodyMD5 := md5Hex([]byte(req.MessageBody))
-
-	// Apply delay: message is invisible until DelaySeconds have elapsed.
-	visibleAfter := h.clk.Now()
-	if req.DelaySeconds > 0 {
-		visibleAfter = visibleAfter.Add(time.Duration(req.DelaySeconds) * time.Second)
-	}
-
-	msg := &Message{
-		MessageID:     msgID,
-		ReceiptHandle: encodeReceiptHandle(queueName, msgID),
-		Body:          req.MessageBody,
-		MD5OfBody:     bodyMD5,
-		SentTimestamp: h.clk.Now().UnixMilli(),
-		VisibleAfter:  visibleAfter,
-		Attributes: map[string]string{
-			"SenderId":                         h.cfg.AccountID,
-			"SentTimestamp":                    strconv.FormatInt(h.clk.Now().UnixMilli(), 10),
-			"ApproximateReceiveCount":          "0",
-			"ApproximateFirstReceiveTimestamp": "0",
-		},
-		MessageAttributes:      req.MessageAttributes,
-		MessageGroupId:         req.MessageGroupId,
-		MessageDeduplicationId: dedupID,
-	}
-
-	// FIFO: assign a monotonically increasing sequence number.
-	var seqNum string
-	if fifo {
-		seqNum = strconv.FormatInt(h.seqNum.Add(1), 10)
-		msg.SequenceNumber = seqNum
-		msg.Attributes["MessageGroupId"] = req.MessageGroupId
-		msg.Attributes["MessageDeduplicationId"] = dedupID
-		msg.Attributes["SequenceNumber"] = seqNum
-	}
-
-	if aerr := h.store.putMessage(r.Context(), queueName, msg); aerr != nil {
-		writeJSONError(w, r, aerr)
-		return
-	}
-
-	h.bus.Publish(r.Context(), events.Event{
-		Type:   events.SQSMessageSent,
-		Time:   h.clk.Now(),
-		Source: serviceName,
-		Payload: events.SQSMessagePayload{
-			QueueName: queueName,
-			MessageID: msgID,
-		},
-	})
-	h.recordMessageSent(r.Context(), queueName, len(req.MessageBody))
-
-	protocol.WriteJSON(w, r, http.StatusOK, &sendMessageResponse{
-		MessageId:        msgID,
-		MD5OfMessageBody: bodyMD5,
-		SequenceNumber:   seqNum,
-	})
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
 func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
@@ -1320,53 +1220,22 @@ func (h *Handler) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, struct{}{})
 }
 
+// SendMessageBatch, DeleteMessageBatch and ChangeMessageVisibilityBatch are
+// the legacy (Query-protocol) dispatch path for the three batch operations.
+// Each decodes the request and shares its typed implementation, so the
+// batch-request limits in batch.go are enforced once and the two dispatch
+// paths cannot drift on the per-entry response shape.
 func (h *Handler) SendMessageBatch(w http.ResponseWriter, r *http.Request) {
 	var req sendMessageBatchRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-
-	queueName := queueNameFromURL(req.QueueUrl)
-	if _, aerr := h.store.getQueue(r.Context(), queueName); aerr != nil {
+	resp, aerr := h.sendMessageBatchTyped(r.Context(), &req)
+	if aerr != nil {
 		writeJSONError(w, r, aerr)
 		return
 	}
-
-	var successful []sendMessageBatchResultEntry
-	for _, entry := range req.Entries {
-		msgID := uuid.New().String()
-		bodyMD5 := md5Hex([]byte(entry.MessageBody))
-		msg := &Message{
-			MessageID:     msgID,
-			ReceiptHandle: encodeReceiptHandle(queueName, msgID),
-			Body:          entry.MessageBody,
-			MD5OfBody:     bodyMD5,
-			SentTimestamp: h.clk.Now().UnixMilli(),
-			VisibleAfter:  h.clk.Now().Add(time.Duration(entry.DelaySeconds) * time.Second),
-			Attributes:    map[string]string{"ApproximateReceiveCount": "0"},
-		}
-		_ = h.store.putMessage(r.Context(), queueName, msg)
-		h.bus.Publish(r.Context(), events.Event{
-			Type:   events.SQSMessageSent,
-			Time:   h.clk.Now(),
-			Source: serviceName,
-			Payload: events.SQSMessagePayload{
-				QueueName: queueName,
-				MessageID: msgID,
-			},
-		})
-		h.recordMessageSent(r.Context(), queueName, len(entry.MessageBody))
-		successful = append(successful, sendMessageBatchResultEntry{
-			Id:               entry.Id,
-			MessageId:        msgID,
-			MD5OfMessageBody: bodyMD5,
-		})
-	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, &sendMessageBatchResponse{
-		Successful: successful,
-		Failed:     []interface{}{},
-	})
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
 func (h *Handler) DeleteMessageBatch(w http.ResponseWriter, r *http.Request) {
@@ -1374,151 +1243,25 @@ func (h *Handler) DeleteMessageBatch(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-
-	queueName := queueNameFromURL(req.QueueUrl)
-	var successful []deleteMessageBatchResultEntry
-	var failed []interface{}
-	for _, entry := range req.Entries {
-		_, messageID, err := decodeReceiptHandle(entry.ReceiptHandle)
-		if err != nil {
-			failed = append(failed, map[string]string{
-				"Id":      entry.Id,
-				"Code":    "ReceiptHandleIsInvalid",
-				"Message": "The receipt handle is invalid.",
-			})
-			continue
-		}
-		// Verify handle still matches the stored message (not superseded).
-		if msg, aerr := h.store.getMessage(r.Context(), queueName, messageID); aerr == nil {
-			if msg.ReceiptHandle != entry.ReceiptHandle {
-				failed = append(failed, map[string]string{
-					"Id":      entry.Id,
-					"Code":    "ReceiptHandleIsInvalid",
-					"Message": "The receipt handle has expired or been superseded.",
-				})
-				continue
-			}
-		}
-		_ = h.store.deleteMessage(r.Context(), queueName, messageID)
-		if h.bus != nil {
-			h.bus.Publish(r.Context(), events.Event{
-				Type:   events.SQSMessageDeleted,
-				Time:   h.clk.Now(),
-				Source: serviceName,
-				Payload: events.SQSMessagePayload{
-					QueueName: queueName,
-					MessageID: messageID,
-				},
-			})
-		}
-		h.recordMessageDeleted(r.Context(), queueName)
-		successful = append(successful, deleteMessageBatchResultEntry{Id: entry.Id})
+	resp, aerr := h.deleteMessageBatchTyped(r.Context(), &req)
+	if aerr != nil {
+		writeJSONError(w, r, aerr)
+		return
 	}
-	if successful == nil {
-		successful = []deleteMessageBatchResultEntry{}
-	}
-	if failed == nil {
-		failed = []interface{}{}
-	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, &deleteMessageBatchResponse{
-		Successful: successful,
-		Failed:     failed,
-	})
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
-// ChangeMessageVisibilityBatch handles the SQS ChangeMessageVisibilityBatch operation.
-// AWS docs: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibilityBatch.html
 func (h *Handler) ChangeMessageVisibilityBatch(w http.ResponseWriter, r *http.Request) {
 	var req changeMessageVisibilityBatchRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-
-	queueName := queueNameFromURL(req.QueueUrl)
-
-	type successEntry struct {
-		Id string `json:"Id"`
+	resp, aerr := h.changeMessageVisibilityBatchTyped(r.Context(), &req)
+	if aerr != nil {
+		writeJSONError(w, r, aerr)
+		return
 	}
-	type failedEntry struct {
-		Id          string `json:"Id"`
-		Code        string `json:"Code"`
-		Message     string `json:"Message"`
-		SenderFault bool   `json:"SenderFault"`
-	}
-
-	var successful []successEntry
-	var failed []failedEntry
-
-	for _, entry := range req.Entries {
-		if aerr := validateVisibilityTimeout("VisibilityTimeout", entry.VisibilityTimeout); aerr != nil {
-			failed = append(failed, failedEntry{
-				Id:          entry.Id,
-				Code:        aerr.Code,
-				Message:     aerr.Message,
-				SenderFault: true,
-			})
-			continue
-		}
-
-		_, messageID, err := decodeReceiptHandle(entry.ReceiptHandle)
-		if err != nil {
-			failed = append(failed, failedEntry{
-				Id:          entry.Id,
-				Code:        "ReceiptHandleIsInvalid",
-				Message:     "The receipt handle is invalid.",
-				SenderFault: true,
-			})
-			continue
-		}
-
-		msg, aerr := h.store.getMessage(r.Context(), queueName, messageID)
-		if aerr != nil {
-			failed = append(failed, failedEntry{
-				Id:          entry.Id,
-				Code:        aerr.Code,
-				Message:     aerr.Message,
-				SenderFault: false,
-			})
-			continue
-		}
-
-		if msg.ReceiptHandle != entry.ReceiptHandle {
-			failed = append(failed, failedEntry{
-				Id:          entry.Id,
-				Code:        "ReceiptHandleIsInvalid",
-				Message:     "The receipt handle has expired or been superseded.",
-				SenderFault: true,
-			})
-			continue
-		}
-
-		msg.VisibleAfter = h.clk.Now().Add(time.Duration(entry.VisibilityTimeout) * time.Second)
-		msg.VisibilityVersion++
-		if aerr := h.store.putMessage(r.Context(), queueName, msg); aerr != nil {
-			failed = append(failed, failedEntry{
-				Id:          entry.Id,
-				Code:        aerr.Code,
-				Message:     aerr.Message,
-				SenderFault: false,
-			})
-			continue
-		}
-
-		successful = append(successful, successEntry{Id: entry.Id})
-	}
-
-	if successful == nil {
-		successful = []successEntry{}
-	}
-	if failed == nil {
-		failed = []failedEntry{}
-	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"Successful": successful,
-		"Failed":     failed,
-	})
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
 // ---- PeekMessages ----------------------------------------------------------

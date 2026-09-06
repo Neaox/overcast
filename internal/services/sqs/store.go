@@ -30,7 +30,22 @@ type Queue struct {
 	ARN              string            `json:"arn"`
 	Attributes       map[string]string `json:"attributes"`
 	CreatedTimestamp int64             `json:"created_timestamp"`
-	Tags             map[string]string `json:"tags,omitempty"`
+	// LastModifiedTimestamp is the Unix second the queue's attributes last
+	// changed, which AWS reports beside CreatedTimestamp. Zero on a queue
+	// persisted before this field existed; readers fall back to
+	// CreatedTimestamp, which is what it would have held for an untouched
+	// queue anyway.
+	LastModifiedTimestamp int64             `json:"last_modified_timestamp,omitempty"`
+	Tags                  map[string]string `json:"tags,omitempty"`
+}
+
+// LastModified returns the queue's last-modified Unix second, falling back to
+// its creation time for a record written before the field existed.
+func (q *Queue) LastModified() int64 {
+	if q.LastModifiedTimestamp == 0 {
+		return q.CreatedTimestamp
+	}
+	return q.LastModifiedTimestamp
 }
 
 func (q *Queue) GetTags() map[string]string     { return q.Tags }
@@ -368,14 +383,33 @@ func (s *sqsStore) blockedGroups(ctx context.Context, queueName string, now time
 	return groups, nil
 }
 
-// countMessages returns (visible, total) message counts for
-// ApproximateNumberOfMessages / ApproximateNumberOfMessagesNotVisible.
-func (s *sqsStore) countMessages(ctx context.Context, queueName string, now time.Time) (visible, total int, aerr *protocol.AWSError) {
-	v, t, err := s.backend.countMessages(ctx, s.region(ctx), queueName, now)
+// messageCounts is one queue's message population, split the way AWS's three
+// Approximate* queue attributes split it. Delayed and NotVisible are both
+// invisible; what separates them is whether the message has ever been
+// received — an unreceived invisible message is still serving its
+// DelaySeconds. That is the same distinction the CloudWatch sampler
+// (metrics_sqs.go) and the peek endpoint already draw.
+type messageCounts struct {
+	// Visible is ApproximateNumberOfMessages.
+	Visible int
+	// Delayed is ApproximateNumberOfMessagesDelayed.
+	Delayed int
+	// Total is every message in the queue, visible or not.
+	Total int
+}
+
+// NotVisible is ApproximateNumberOfMessagesNotVisible: the in-flight messages,
+// which are the invisible ones that are not merely delayed.
+func (c messageCounts) NotVisible() int { return c.Total - c.Visible - c.Delayed }
+
+// countMessages returns the queue's message counts as of now, for the three
+// Approximate* attributes GetQueueAttributes reports.
+func (s *sqsStore) countMessages(ctx context.Context, queueName string, now time.Time) (messageCounts, *protocol.AWSError) {
+	counts, err := s.backend.countMessages(ctx, s.region(ctx), queueName, now)
 	if err != nil {
-		return 0, 0, protocol.Wrap(protocol.ErrInternalError, err)
+		return messageCounts{}, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	return v, t, nil
+	return counts, nil
 }
 
 // ---- FIFO deduplication helpers --------------------------------------------

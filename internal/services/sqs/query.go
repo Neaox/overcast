@@ -485,10 +485,16 @@ func writeQueryXMLErrorFromJSON(w http.ResponseWriter, r *http.Request, rec *htt
 		w.Header().Set("x-emulator-unsupported", "true")
 	}
 
+	// The Query protocol spells these errors with the legacy code the shape's
+	// aws.protocols#awsQueryError trait binds, where the JSON body this was
+	// captured from carries the modeled shape name in __type and the legacy
+	// code only in the (discarded) x-amzn-query-error header. Translating here
+	// is what makes the code match the protocol the request actually arrived
+	// on — see queryerror.go for the table and why it is hard-coded.
 	body, _ := xml.Marshal(&queryXMLErrorEnvelope{
 		Error: queryXMLErrorBody{
 			Type:    "Sender",
-			Code:    jsonErr.Type,
+			Code:    sqsLegacyQueryErrorCode(jsonErr.Type),
 			Message: jsonErr.Message,
 		},
 		RequestID: reqID,

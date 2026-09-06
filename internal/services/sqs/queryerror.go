@@ -83,6 +83,21 @@ var sqsQueryErrorCodes = map[string]sqsQueryErrorMapping{
 		Shape:      "ReceiptHandleIsInvalid",
 		LegacyCode: "ReceiptHandleIsInvalid",
 	},
+	// The three batch-request limits (batch.go). Each writes the modeled
+	// shape name as Code; the legacy code carries the
+	// "AWS.SimpleQueueService." prefix the shape name itself lacks.
+	"EmptyBatchRequest": {
+		Shape:      "EmptyBatchRequest",
+		LegacyCode: "AWS.SimpleQueueService.EmptyBatchRequest",
+	},
+	"TooManyEntriesInBatchRequest": {
+		Shape:      "TooManyEntriesInBatchRequest",
+		LegacyCode: "AWS.SimpleQueueService.TooManyEntriesInBatchRequest",
+	},
+	"BatchEntryIdsNotDistinct": {
+		Shape:      "BatchEntryIdsNotDistinct",
+		LegacyCode: "AWS.SimpleQueueService.BatchEntryIdsNotDistinct",
+	},
 }
 
 // sqsLegacyQueryErrorCode returns the legacy Query-protocol error code for a

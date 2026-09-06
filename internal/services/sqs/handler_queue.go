@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -123,12 +124,13 @@ func (h *Handler) createQueueTyped(ctx context.Context, in *createQueueRequest) 
 	}
 
 	q := &Queue{
-		Name:             in.QueueName,
-		URL:              canonicalURL,
-		ARN:              protocol.QueueARN(middleware.RegionFromContext(ctx, h.cfg.Region), h.cfg.AccountID, in.QueueName),
-		Attributes:       attrs,
-		CreatedTimestamp: h.clk.Now().Unix(),
-		Tags:             in.Tags,
+		Name:                  in.QueueName,
+		URL:                   canonicalURL,
+		ARN:                   protocol.QueueARN(middleware.RegionFromContext(ctx, h.cfg.Region), h.cfg.AccountID, in.QueueName),
+		Attributes:            attrs,
+		CreatedTimestamp:      h.clk.Now().Unix(),
+		LastModifiedTimestamp: h.clk.Now().Unix(),
+		Tags:                  in.Tags,
 	}
 
 	if aerr := h.store.putQueue(ctx, q); aerr != nil {
@@ -158,20 +160,36 @@ func (h *Handler) getQueueURLTyped(ctx context.Context, in *getQueueURLRequest) 
 }
 
 func (h *Handler) getQueueAttributesTyped(ctx context.Context, in *getQueueAttributesRequest) (*getQueueAttributesResponse, *protocol.AWSError) {
+	if aerr := validateQueueAttributeNames(in.AttributeNames); aerr != nil {
+		return nil, aerr
+	}
+
 	queueName := queueNameFromURL(in.QueueUrl)
 	q, aerr := h.store.getQueue(ctx, queueName)
 	if aerr != nil {
 		return nil, aerr
 	}
 
-	visibleCount, total, _ := h.store.countMessages(ctx, queueName, h.clk.Now())
-	q.Attributes["ApproximateNumberOfMessages"] = strconv.Itoa(visibleCount)
-	q.Attributes["ApproximateNumberOfMessagesNotVisible"] = strconv.Itoa(total - visibleCount)
+	counts, aerr := h.store.countMessages(ctx, queueName, h.clk.Now())
+	if aerr != nil {
+		return nil, aerr
+	}
+	// The derived attributes: computed per request rather than stored, so they
+	// go onto the copy this call answers with and are never persisted.
+	q.Attributes["ApproximateNumberOfMessages"] = strconv.Itoa(counts.Visible)
+	q.Attributes["ApproximateNumberOfMessagesNotVisible"] = strconv.Itoa(counts.NotVisible())
+	q.Attributes["ApproximateNumberOfMessagesDelayed"] = strconv.Itoa(counts.Delayed)
 	q.Attributes["QueueArn"] = q.ARN
+	q.Attributes["CreatedTimestamp"] = strconv.FormatInt(q.CreatedTimestamp, 10)
+	q.Attributes["LastModifiedTimestamp"] = strconv.FormatInt(q.LastModified(), 10)
 
 	attrs := q.Attributes
-	if len(in.AttributeNames) > 0 && in.AttributeNames[0] != "All" {
-		filtered := make(map[string]string)
+	// "All" wins from anywhere in the list, as on AWS — it is one QueueAttributeName
+	// enum value among the names, not a distinguished first element. (Message
+	// attributes' ".*" selector has no meaning here: it is not in the enum, so
+	// validateQueueAttributeNames has already rejected it.)
+	if len(in.AttributeNames) > 0 && !slices.Contains(in.AttributeNames, "All") {
+		filtered := make(map[string]string, len(in.AttributeNames))
 		for _, name := range in.AttributeNames {
 			if v, ok := attrs[name]; ok {
 				filtered[name] = v
@@ -209,6 +227,7 @@ func (h *Handler) setQueueAttributesTyped(ctx context.Context, in *setQueueAttri
 		return nil, aerr
 	}
 	q.Attributes = attrs
+	q.LastModifiedTimestamp = h.clk.Now().Unix()
 
 	if aerr := h.store.putQueue(ctx, q); aerr != nil {
 		return nil, aerr
@@ -355,12 +374,13 @@ func (h *Handler) CreateQueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := &Queue{
-		Name:             req.QueueName,
-		URL:              canonicalURL,
-		ARN:              protocol.QueueARN(middleware.RegionFromContext(r.Context(), h.cfg.Region), h.cfg.AccountID, req.QueueName),
-		Attributes:       attrs,
-		CreatedTimestamp: h.clk.Now().Unix(),
-		Tags:             req.Tags,
+		Name:                  req.QueueName,
+		URL:                   canonicalURL,
+		ARN:                   protocol.QueueARN(middleware.RegionFromContext(r.Context(), h.cfg.Region), h.cfg.AccountID, req.QueueName),
+		Attributes:            attrs,
+		CreatedTimestamp:      h.clk.Now().Unix(),
+		LastModifiedTimestamp: h.clk.Now().Unix(),
+		Tags:                  req.Tags,
 	}
 
 	if aerr := h.store.putQueue(r.Context(), q); aerr != nil {
@@ -397,38 +417,22 @@ func (h *Handler) GetQueueURL(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, &getQueueURLResponse{QueueUrl: h.queueURL(r.Context(), q.Name)})
 }
 
+// GetQueueAttributes and SetQueueAttributes are the legacy (Query-protocol)
+// dispatch path for the two attribute operations. Each decodes the request and
+// shares its typed implementation, so the attribute-name validation, the
+// derived Approximate*/timestamp attributes and the LastModifiedTimestamp bump
+// are defined once and the two dispatch paths cannot drift.
 func (h *Handler) GetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 	var req getQueueAttributesRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-
-	queueName := queueNameFromURL(req.QueueUrl)
-	q, aerr := h.store.getQueue(r.Context(), queueName)
+	resp, aerr := h.getQueueAttributesTyped(r.Context(), &req)
 	if aerr != nil {
 		writeJSONError(w, r, aerr)
 		return
 	}
-
-	// Count visible messages for ApproximateNumberOfMessages.
-	visibleCount, total, _ := h.store.countMessages(r.Context(), queueName, h.clk.Now())
-	q.Attributes["ApproximateNumberOfMessages"] = strconv.Itoa(visibleCount)
-	q.Attributes["ApproximateNumberOfMessagesNotVisible"] = strconv.Itoa(total - visibleCount)
-	q.Attributes["QueueArn"] = q.ARN
-
-	attrs := q.Attributes
-	// If specific attributes are requested, filter to those.
-	if len(req.AttributeNames) > 0 && req.AttributeNames[0] != "All" {
-		filtered := make(map[string]string)
-		for _, name := range req.AttributeNames {
-			if v, ok := attrs[name]; ok {
-				filtered[name] = v
-			}
-		}
-		attrs = filtered
-	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, &getQueueAttributesResponse{Attributes: attrs})
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
 func (h *Handler) SetQueueAttributes(w http.ResponseWriter, r *http.Request) {
@@ -436,44 +440,12 @@ func (h *Handler) SetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-
-	queueName := queueNameFromURL(req.QueueUrl)
-	q, aerr := h.store.getQueue(r.Context(), queueName)
+	resp, aerr := h.setQueueAttributesTyped(r.Context(), &req)
 	if aerr != nil {
 		writeJSONError(w, r, aerr)
 		return
 	}
-
-	attrs := make(map[string]string, len(q.Attributes)+len(req.Attributes))
-	for k, v := range q.Attributes {
-		attrs[k] = v
-	}
-	for k, v := range req.Attributes {
-		attrs[k] = v
-	}
-
-	if aerr := validateSetQueueAttributes(req.Attributes); aerr != nil {
-		writeJSONError(w, r, aerr)
-		return
-	}
-	if aerr := validateQueueAttributes(attrs); aerr != nil {
-		writeJSONError(w, r, aerr)
-		return
-	}
-
-	// Validate RedrivePolicy if updated.
-	if aerr := h.validateRedrivePolicy(r, attrs); aerr != nil {
-		writeJSONError(w, r, aerr)
-		return
-	}
-	q.Attributes = attrs
-
-	if aerr := h.store.putQueue(r.Context(), q); aerr != nil {
-		writeJSONError(w, r, aerr)
-		return
-	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, struct{}{})
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
 func (h *Handler) DeleteQueue(w http.ResponseWriter, r *http.Request) {
