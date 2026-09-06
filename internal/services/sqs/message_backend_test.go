@@ -94,6 +94,10 @@ func TestMessageBackend_MemoryAndSQL_Parity(t *testing.T) {
 			visible := newTestMessage("m-visible", "", "", now.Add(-time.Second))
 			delayed := newTestMessage("m-delayed", "", "", now.Add(time.Hour))
 			inflight := newTestMessage("m-inflight", "", "", now.Add(time.Minute))
+			// A received message is in-flight rather than delayed, and that is
+			// exactly what the receive count distinguishes — see
+			// countMessages' delayed arm and store.go's messageCounts.
+			inflight.ApproximateReceiveCount = 1
 			for _, m := range []*Message{visible, delayed, inflight} {
 				if err := b.putMessage(ctx, region, queue, m); err != nil {
 					t.Fatalf("putMessage(%s): %v", m.MessageID, err)
@@ -128,13 +132,18 @@ func TestMessageBackend_MemoryAndSQL_Parity(t *testing.T) {
 				t.Fatalf("receiveCandidates = %v, want just m-visible", candidates)
 			}
 
-			// countMessages: 1 visible, 3 total.
-			visibleCount, total, err := b.countMessages(ctx, region, queue, now)
+			// countMessages: 1 visible, 1 delayed (never received, not yet
+			// visible), 1 in-flight, 3 total.
+			counts, err := b.countMessages(ctx, region, queue, now)
 			if err != nil {
 				t.Fatalf("countMessages: %v", err)
 			}
-			if visibleCount != 1 || total != 3 {
-				t.Fatalf("countMessages = (%d, %d), want (1, 3)", visibleCount, total)
+			want := messageCounts{Visible: 1, Delayed: 1, Total: 3}
+			if counts != want {
+				t.Fatalf("countMessages = %+v, want %+v", counts, want)
+			}
+			if counts.NotVisible() != 1 {
+				t.Fatalf("countMessages NotVisible = %d, want 1", counts.NotVisible())
 			}
 
 			// deleteMessage removes exactly one.
@@ -144,9 +153,12 @@ func TestMessageBackend_MemoryAndSQL_Parity(t *testing.T) {
 			if _, found, _ := b.getMessage(ctx, region, queue, "m-delayed"); found {
 				t.Fatalf("m-delayed still found after deleteMessage")
 			}
-			_, total, _ = b.countMessages(ctx, region, queue, now)
-			if total != 2 {
-				t.Fatalf("countMessages total after delete = %d, want 2", total)
+			counts, _ = b.countMessages(ctx, region, queue, now)
+			if counts.Total != 2 {
+				t.Fatalf("countMessages total after delete = %d, want 2", counts.Total)
+			}
+			if counts.Delayed != 0 {
+				t.Fatalf("countMessages delayed after deleting the delayed message = %d, want 0", counts.Delayed)
 			}
 
 			// deleteQueueMessages clears everything for the queue.
@@ -291,12 +303,12 @@ func TestMessageBackend_VisibleAtBoundary_Parity(t *testing.T) {
 			if len(candidates) != 0 {
 				t.Fatalf("receiveCandidates(before boundary) = %v, want none visible yet", candidates)
 			}
-			visibleCount, _, err := b.countMessages(ctx, region, queue, before)
+			counts, err := b.countMessages(ctx, region, queue, before)
 			if err != nil {
 				t.Fatalf("countMessages(before): %v", err)
 			}
-			if visibleCount != 0 {
-				t.Fatalf("countMessages(before boundary) visible = %d, want 0", visibleCount)
+			if counts.Visible != 0 {
+				t.Fatalf("countMessages(before boundary) visible = %d, want 0", counts.Visible)
 			}
 
 			// Exactly at the boundary: visible.
@@ -307,12 +319,12 @@ func TestMessageBackend_VisibleAtBoundary_Parity(t *testing.T) {
 			if len(candidates) != 1 {
 				t.Fatalf("receiveCandidates(at boundary) = %v, want exactly 1 visible", candidates)
 			}
-			visibleCount, _, err = b.countMessages(ctx, region, queue, boundary)
+			counts, err = b.countMessages(ctx, region, queue, boundary)
 			if err != nil {
 				t.Fatalf("countMessages(at): %v", err)
 			}
-			if visibleCount != 1 {
-				t.Fatalf("countMessages(at boundary) visible = %d, want 1", visibleCount)
+			if counts.Visible != 1 {
+				t.Fatalf("countMessages(at boundary) visible = %d, want 1", counts.Visible)
 			}
 
 			// One millisecond after: still visible.

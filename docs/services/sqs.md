@@ -36,7 +36,8 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 | Area               | Behaviour                                                                                                                   |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
 | Queues             | Idempotent `CreateQueue`, FIFO queues via the `.fifo` suffix, inline tags, all standard attributes                            |
-| Sending            | `SendMessage` and `SendMessageBatch` (10 per call) with `DelaySeconds` and message attributes                                 |
+| Sending            | `SendMessage` and `SendMessageBatch` with `DelaySeconds`, message attributes and `MD5OfMessageAttributes`                     |
+| Batches            | All three batch operations take 1-10 entries with distinct `Id`s; a batch breaking either limit is rejected whole             |
 | Receiving          | `MaxNumberOfMessages`, per-call and queue-default long polling, per-call `VisibilityTimeout`, FIFO `ReceiveRequestAttemptId`  |
 | FIFO ordering      | A batch drains a message group in sequence order and fills from other groups; a group with in-flight messages returns nothing more until they are deleted or become visible |
 | Visibility         | `ChangeMessageVisibility` and its batch form on in-flight messages                                                           |
