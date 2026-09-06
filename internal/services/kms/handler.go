@@ -401,35 +401,12 @@ func (h *Handler) CancelKeyDeletion(w http.ResponseWriter, r *http.Request) {
 
 // CreateAlias creates an alias pointing to a key.
 func (h *Handler) CreateAlias(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		AliasName   string `json:"AliasName"`
-		TargetKeyId string `json:"TargetKeyId"`
-	}
+	var req createAliasRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.AliasName == "" {
-		protocol.WriteJSONError(w, r, protocol.ErrMissingParameter("AliasName"))
-		return
-	}
-	ctx := r.Context()
-	k, err := h.resolveKey(ctx, req.TargetKeyId)
-	if err != nil || k == nil {
-		if k == nil {
-			protocol.WriteJSONError(w, r, errNotFound(req.TargetKeyId))
-			return
-		}
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	a := &Alias{
-		AliasName:   req.AliasName,
-		AliasARN:    fmt.Sprintf("arn:aws:kms:%s:%s:%s", middleware.RegionFromContext(ctx, h.cfg.Region), h.cfg.AccountID, req.AliasName),
-		TargetKeyID: k.KeyID,
-		CreatedAt:   h.clk.Now(),
-	}
-	if err := h.store.PutAlias(ctx, a); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	if _, aerr := h.createAliasTyped(r.Context(), &req); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")

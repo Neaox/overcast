@@ -11,3 +11,8 @@
 *! [kms] `Encrypt` enforces the 4096-byte `Plaintext` limit and `ScheduleKeyDeletion` the 7-30 day `PendingWindowInDays` range
   both are `ValidationException`; accepting either let a design through locally that AWS refuses
   migration: envelope-encrypt payloads over 4096 bytes with `GenerateDataKey`; clamp deletion windows into 7-30
+*! [kms] `CreateAlias` enforces the `alias/` prefix and refuses a name already in use, as AWS does
+  a bad name is `InvalidAliasNameException` (reserved `alias/aws/` included) and a duplicate `AlreadyExistsException`; `UpdateAlias` still re-points
+  migration: prefix alias names with `alias/`; re-point an existing alias through `UpdateAlias` rather than a second `CreateAlias`
+* [kms] `ScheduleKeyDeletion` returns the key ARN in `KeyId`
+  it returned the bare key id, which does not parse where a caller feeds the response value into something ARN-shaped

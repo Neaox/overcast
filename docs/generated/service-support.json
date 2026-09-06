@@ -4531,7 +4531,7 @@
           "operation": "ScheduleKeyDeletion",
           "category": "Key lifecycle",
           "status": "✅ Supported",
-          "notes": "`PendingWindowInDays` 7-30, defaulting to 30"
+          "notes": "`PendingWindowInDays` 7-30, defaulting to 30; response `KeyId` is the key ARN"
         },
         {
           "operation": "CancelKeyDeletion",
@@ -4543,7 +4543,7 @@
           "operation": "CreateAlias",
           "category": "Aliases",
           "status": "✅ Supported",
-          "notes": "`alias/` prefix required"
+          "notes": "`alias/` prefix required; reserved `alias/aws/` and duplicate names rejected"
         },
         {
           "operation": "DeleteAlias",

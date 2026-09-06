@@ -355,7 +355,10 @@ func (h *Handler) scheduleKeyDeletionTyped(ctx context.Context, req *scheduleKey
 	}
 	h.publishCtx(ctx, events.KMSKeyDeleted, events.ResourcePayload{Name: k.KeyID, ARN: k.ARN})
 	return &scheduleKeyDeletionResponse{
-		KeyId:        k.KeyID,
+		// KeyId is "The Amazon Resource Name (key ARN) of the KMS key whose
+		// deletion is scheduled" — not the bare key id, which does not parse
+		// where a caller feeds the response value into something ARN-shaped.
+		KeyId:        k.ARN,
 		KeyArn:       k.ARN,
 		DeletionDate: float64(deletionDate.UnixMilli()) / 1000.0,
 		KeyState:     k.KeyState,
@@ -381,13 +384,32 @@ func (h *Handler) createAliasTyped(ctx context.Context, req *createAliasRequest)
 	if req.AliasName == "" {
 		return nil, protocol.ErrMissingParameter("AliasName")
 	}
+	if aerr := validateAliasName(req.AliasName); aerr != nil {
+		return nil, aerr
+	}
+	// The region comes from the request, not from config alone, so the alias
+	// ARN matches the key ARN CreateKey minted on the same request.
+	aliasARN := fmt.Sprintf("arn:aws:kms:%s:%s:%s",
+		middleware.RegionFromContext(ctx, h.cfg.Region), h.cfg.AccountID, req.AliasName)
+
+	// CreateAlias never re-points an alias: "The alias must be unique in the
+	// account and Region." Changing an alias's target is UpdateAlias's job,
+	// and that distinction is what makes alias-based key rotation safe.
+	existing, err := h.store.GetAlias(ctx, req.AliasName)
+	if err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	if existing != nil {
+		return nil, errAliasExists(aliasARN)
+	}
+
 	k, aerr := h.resolveKeyForTyped(ctx, req.TargetKeyId)
 	if aerr != nil {
 		return nil, aerr
 	}
 	a := &Alias{
 		AliasName:   req.AliasName,
-		AliasARN:    fmt.Sprintf("arn:aws:kms:%s:%s:%s", h.cfg.Region, h.cfg.AccountID, req.AliasName),
+		AliasARN:    aliasARN,
 		TargetKeyID: k.KeyID,
 		CreatedAt:   h.clk.Now(),
 	}

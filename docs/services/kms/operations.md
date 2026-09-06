@@ -41,17 +41,17 @@ All 34 listed operations are implemented. Back to [KMS](../kms.md).
 | `EnableKey`            | ✅ Supported |                                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_EnableKey.html)            |
 | `DisableKey`           | ✅ Supported |                                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_DisableKey.html)           |
 | `UpdateKeyDescription` | ✅ Supported | Also dispatched by CloudFormation when AWS::KMS::Key Description changes                                                                                                        | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_UpdateKeyDescription.html) |
-| `ScheduleKeyDeletion`  | ✅ Supported | `PendingWindowInDays` 7-30, defaulting to 30                                                                                                                                    | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ScheduleKeyDeletion.html)  |
+| `ScheduleKeyDeletion`  | ✅ Supported | `PendingWindowInDays` 7-30, defaulting to 30; response `KeyId` is the key ARN                                                                                                   | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ScheduleKeyDeletion.html)  |
 | `CancelKeyDeletion`    | ✅ Supported | Restores key to `Disabled` state                                                                                                                                                | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_CancelKeyDeletion.html)    |
 
 ### Aliases
 
-| Operation     | Status       | Notes                                      | AWS Docs                                                                         |
-| ------------- | ------------ | ------------------------------------------ | -------------------------------------------------------------------------------- |
-| `CreateAlias` | ✅ Supported | `alias/` prefix required                   | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_CreateAlias.html) |
-| `DeleteAlias` | ✅ Supported |                                            | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_DeleteAlias.html) |
-| `ListAliases` | ✅ Supported | Optional `KeyId` filter (UUID, ARN, alias) | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ListAliases.html) |
-| `UpdateAlias` | ✅ Supported | Updates target key for an existing alias   | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_UpdateAlias.html) |
+| Operation     | Status       | Notes                                                                        | AWS Docs                                                                         |
+| ------------- | ------------ | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `CreateAlias` | ✅ Supported | `alias/` prefix required; reserved `alias/aws/` and duplicate names rejected | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_CreateAlias.html) |
+| `DeleteAlias` | ✅ Supported |                                                                              | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_DeleteAlias.html) |
+| `ListAliases` | ✅ Supported | Optional `KeyId` filter (UUID, ARN, alias)                                   | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ListAliases.html) |
+| `UpdateAlias` | ✅ Supported | Updates target key for an existing alias                                     | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_UpdateAlias.html) |
 
 ### Symmetric crypto
 

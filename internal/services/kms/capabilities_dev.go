@@ -12,10 +12,10 @@ func init() {
 		capabilities.Capability{Service: "kms", Operation: "EnableKey", Category: "Key lifecycle", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "kms", Operation: "DisableKey", Category: "Key lifecycle", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "kms", Operation: "UpdateKeyDescription", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "Also dispatched by CloudFormation when AWS::KMS::Key Description changes"},
-		capabilities.Capability{Service: "kms", Operation: "ScheduleKeyDeletion", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "`PendingWindowInDays` 7-30, defaulting to 30"},
+		capabilities.Capability{Service: "kms", Operation: "ScheduleKeyDeletion", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "`PendingWindowInDays` 7-30, defaulting to 30; response `KeyId` is the key ARN"},
 		capabilities.Capability{Service: "kms", Operation: "CancelKeyDeletion", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "Restores key to `Disabled` state"},
 
-		capabilities.Capability{Service: "kms", Operation: "CreateAlias", Category: "Aliases", Status: capabilities.StatusSupported, Notes: "`alias/` prefix required"},
+		capabilities.Capability{Service: "kms", Operation: "CreateAlias", Category: "Aliases", Status: capabilities.StatusSupported, Notes: "`alias/` prefix required; reserved `alias/aws/` and duplicate names rejected"},
 		capabilities.Capability{Service: "kms", Operation: "DeleteAlias", Category: "Aliases", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "kms", Operation: "ListAliases", Category: "Aliases", Status: capabilities.StatusSupported, Notes: "Optional `KeyId` filter (UUID, ARN, alias)"},
 		capabilities.Capability{Service: "kms", Operation: "UpdateAlias", Category: "Aliases", Status: capabilities.StatusSupported, Notes: "Updates target key for an existing alias"},

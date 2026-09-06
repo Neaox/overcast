@@ -3,6 +3,7 @@ package kms
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/overcast-sh/overcast/internal/protocol"
 )
@@ -29,6 +30,15 @@ const (
 	minPendingWindowInDays     = 7
 	maxPendingWindowInDays     = 30
 	defaultPendingWindowInDays = 30
+
+	// CreateAlias's AliasName rules: Length Constraints "Minimum length of 1.
+	// Maximum length of 256", Pattern `^alias/[a-zA-Z0-9/_-]+$`, and "The
+	// alias name cannot begin with alias/aws/. The alias/aws/ prefix is
+	// reserved for AWS managed keys."
+	// https://docs.aws.amazon.com/kms/latest/APIReference/API_CreateAlias.html
+	aliasNamePrefix     = "alias/"
+	reservedAliasPrefix = "alias/aws/"
+	maxAliasNameLength  = 256
 )
 
 // errValidation returns the 400 ValidationException KMS uses for a request
@@ -134,4 +144,60 @@ func errIncorrectKey() *protocol.AWSError {
 			"The KeyId in a Decrypt request must identify the same KMS key that was used to encrypt the ciphertext.",
 		HTTPStatus: http.StatusBadRequest,
 	}
+}
+
+// errInvalidAliasName returns CreateAlias's documented
+// InvalidAliasNameException (HTTP 400, "The request was rejected because the
+// specified alias name is not valid").
+//
+// AWS's request-validation layer can also reject a badly shaped name with the
+// generic ValidationException raised by the AliasName pattern constraint. The
+// operation-modeled exception is used here because it is the one the reference
+// documents for CreateAlias and the one SDK error handling branches on
+// (types.InvalidAliasNameException), and it covers the reserved alias/aws/
+// prefix too, which no pattern constraint can express.
+// https://docs.aws.amazon.com/kms/latest/APIReference/API_CreateAlias.html
+func errInvalidAliasName(name, reason string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidAliasNameException",
+		Message:    fmt.Sprintf("Invalid alias name %q: %s", name, reason),
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+// errAliasExists returns CreateAlias's AlreadyExistsException (HTTP 400, "The
+// request was rejected because it attempted to create a resource that already
+// exists"). Re-pointing an existing alias goes through UpdateAlias, and that
+// distinction is what makes alias-based key rotation safe.
+func errAliasExists(aliasARN string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "AlreadyExistsException",
+		Message:    fmt.Sprintf("An alias with the name %s already exists", aliasARN),
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+// validateAliasName enforces CreateAlias's AliasName rules: the alias/ prefix,
+// the 256-character maximum, the `^alias/[a-zA-Z0-9/_-]+$` pattern, and the
+// alias/aws/ prefix reserved for AWS managed keys.
+func validateAliasName(name string) *protocol.AWSError {
+	if len(name) > maxAliasNameLength {
+		return errInvalidAliasName(name, fmt.Sprintf("alias names are at most %d characters", maxAliasNameLength))
+	}
+	if !strings.HasPrefix(name, aliasNamePrefix) || len(name) == len(aliasNamePrefix) {
+		return errInvalidAliasName(name, `alias names must begin with "alias/" followed by a name, such as "alias/ExampleAlias"`)
+	}
+	if strings.HasPrefix(name, reservedAliasPrefix) {
+		return errInvalidAliasName(name, `the "alias/aws/" prefix is reserved for AWS managed keys`)
+	}
+	for _, c := range name[len(aliasNamePrefix):] {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '/', c == '_', c == '-':
+		default:
+			return errInvalidAliasName(name,
+				"alias names may contain only alphanumeric characters, forward slashes (/), underscores (_) and dashes (-)")
+		}
+	}
+	return nil
 }

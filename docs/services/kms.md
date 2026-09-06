@@ -38,7 +38,7 @@ Any credentials work; with none configured, run `eval "$(overcast env)"` first
 | Area              | Behaviour                                                                                     |
 | ----------------- | --------------------------------------------------------------------------------------------- |
 | Key lifecycle     | `CreateKey` (symmetric and RSA specs), enable/disable, description updates, schedule/cancel deletion |
-| Aliases           | Create, update, delete and list; any operation taking `KeyId` accepts a UUID, an ARN or an alias |
+| Aliases           | Create, update, delete and list; names must start `alias/` and be unique; any operation taking `KeyId` accepts a UUID, an ARN or an alias |
 | Symmetric crypto  | `Encrypt`, `Decrypt`, `ReEncrypt`, `GenerateDataKey` and `GenerateDataKeyWithoutPlaintext` (`KeySpec` or `NumberOfBytes`, never both), `GenerateDataKeyPair`, `GenerateRandom` |
 | Asymmetric crypto | `Sign` / `Verify` (RSA-2048, `RSASSA_PKCS1_V1_5_SHA_256`), `GetPublicKey` (DER), `VerifyMac` (HMAC-SHA-256/384/512) |
 | Key policies      | `PutKeyPolicy` validates structure, principals and caller-lockout safety before it mutates      |
