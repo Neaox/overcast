@@ -295,10 +295,11 @@ analogue of `ResourceListPage`'s header actions minus a title) and `children` (t
 state-filter chip row and the usage-plan/IAM-group expanded-detail blocks are extra content passed
 alongside the table, not a second prop). One adaptation surfaced during the conversion: IAM's Groups
 tab previously expanded a member list as an extra table row inserted inline (via a `flatMap` trick);
-`ResourceTable` has no row-expansion concept, so it now renders the expanded group's members in a
+`ResourceTable` had no row-expansion concept, so it rendered the expanded group's members in a
 bordered block below the table — the same pattern `usage-plans-page`'s plan-keys expansion already
-used. Functionally identical (toggle, membership list), position differs (bottom of the list rather
-than inline under the clicked row). Two conditional-delete cases (EventBridge's undeletable
+used. Functionally identical (toggle, membership list), position differed (bottom of the list rather
+than inline under the clicked row). Both are back under their own row as of 2026-09-06, on
+`expandedContent` (see P3). Two conditional-delete cases (EventBridge's undeletable
 `default` bus, EC2's undeletable default VPC) kept a hand-rolled `rowActions` button instead of
 `ResourceTable`'s `onDelete`, which had no per-row-disable hook — extending the shared kernel for a
 two-instance edge case was judged worse than the small duplication. `canDelete` exists now
@@ -561,6 +562,19 @@ the grid back into the page fails CI rather than only lint-warning.
   DynamoDB tables). The columns menu's default is now "a card table with five or more columns" —
   the old "more than one hideable column" put one on nearly every list and had been turned off by
   hand at **70** call sites, all of which this removes.
+- **2026-09-06 — row expansion** (#1327). `rowExpandingFeature` is the fourth v9 feature
+  registered, without `createExpandedRowModel()`: these tables have no sub-rows, so what the
+  feature is for is the expanded state and `getIsExpanded`/`toggleExpanded`, which
+  `expandedContent` renders a full-width panel row from. Four call sites, all previously
+  recorded as blocked on this: `stepfunctions/execution-detail`'s state history (the last
+  bespoke `<Table>` of the four Wave D specials' neighbours) converts outright, and the three
+  that had settled for a panel *below* the table in #1200 wave 2 — `iam-page`'s group members,
+  `apigateway/usage-plans-page`'s plan keys, `ecs/cluster-detail`'s task containers and service
+  detail — now render under the row they belong to. `defaultExpanded` came with them: a deep
+  link (`initialService`, `initialExpandedPlanId`) has to be able to open a row, and it seeds
+  once so a reader who closes the panel keeps it closed. `rest-api-detail`'s resource tree
+  stays bespoke with its reason rewritten: it wants real sub-rows sharing the parent's columns,
+  not a panel. `dynamodb/table-detail`'s Items table is down to row selection + server paging.
   - **Still not built:** `rowTo`, `select?`, `filter?`. Selection is now one feature import
     (`rowSelectionFeature`) away rather than a rewrite, but nothing needs it yet; filtering stays
     at the page level, where `q` already lives.

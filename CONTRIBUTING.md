@@ -1686,7 +1686,8 @@ of the file; the 14 index pages converted in #1200 are the worked examples.
 The engine also carries what used to send a page back to a hand-rolled table:
 `rowClassName` for a row that has a tone of its own (a failure event, a log level),
 `rowKey`'s second argument for a feed whose entries carry no id, `emptyExtra` for
-content that belongs under the empty state, `interactive` on a column whose cell holds
+content that belongs under the empty state, `expandedContent` for a detail panel that
+opens under its own row (several at once), `interactive` on a column whose cell holds
 a control, and a delete whose `getVars` builds whatever the mutation needs — a lock
 token, an ETag, a composite `{apiId, routeId}` — with `canDelete` where only some rows
 can be deleted at all. Two rules to know before writing the columns: a column sorts

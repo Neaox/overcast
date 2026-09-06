@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
 import { useQuery, useMutation } from "@tanstack/react-query"
-import { Trash2, ChevronRight, Gauge } from "lucide-react"
+import { Trash2, Gauge } from "lucide-react"
 import {
   usagePlansQueryOptions,
   usagePlanKeysQueryOptions,
@@ -246,7 +246,6 @@ export function UsagePlansPage({
 
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<UsagePlan>()
-  const [expandedPlanId, setExpandedPlanId] = useState<string | undefined>(initialExpandedPlanId)
 
   // Form state
   const [newPlanName, setNewPlanName] = useState("")
@@ -266,12 +265,6 @@ export function UsagePlansPage({
     ? allPlans.filter((p) => (p.apiStages ?? []).some((s) => s.apiId === apiIdFilter))
     : allPlans
 
-  // When filtering and exactly one plan matches, auto-expand it.
-  if (apiIdFilter && !expandedPlanId && plans.length === 1) {
-    // Defer to next render via state setter to avoid setState during render.
-    queueMicrotask(() => setExpandedPlanId(plans[0].id))
-  }
-
   const createMut = useMutation({
     ...createUsagePlanMutationOptions(),
     onSuccess: (_data, _variables, _result, { client }) => {
@@ -290,18 +283,11 @@ export function UsagePlansPage({
     onSuccess: (_data, _variables, _result, { client }) => {
       void client.invalidateQueries({ queryKey: apigwKeys.usagePlans() })
       setDeleteTarget(undefined)
-      if (expandedPlanId === deleteTarget?.id) setExpandedPlanId(undefined)
       toast({ title: "Usage plan deleted" })
     },
     onError: (err: Error) =>
       toast({ title: "Delete failed", description: err.message, variant: "danger" }),
   })
-
-  function togglePlan(planId: string) {
-    setExpandedPlanId((prev) => (prev === planId ? undefined : planId))
-  }
-
-  const expandedPlan = plans.find((p) => p.id === expandedPlanId)
 
   return (
     <ResourceListPage
@@ -330,21 +316,16 @@ export function UsagePlansPage({
         emptyTitle="No usage plans yet"
         errorTitle="Failed to load usage plans"
         rowKey={(plan) => plan.id}
-        onRowClick={(plan) => togglePlan(plan.id)}
+        // The plan's keys open under the plan. The chevron moved to the end of
+        // the row when `ResourceTable` took ownership of expansion (#1327),
+        // which is where every expandable table in the console now carries it.
+        expandedContent={(plan) => <PlanKeys plan={plan} />}
+        // A deep link names a plan; so does a filter that matches exactly one,
+        // which is the "API key required" pill's landing state.
+        defaultExpanded={(plan) =>
+          plan.id === initialExpandedPlanId || (Boolean(apiIdFilter) && plans.length === 1)
+        }
         columns={[
-          {
-            header: "",
-            headerClassName: "w-8",
-            cellClassName: "w-8",
-            cell: (plan) => (
-              <ChevronRight
-                className={cn(
-                  "h-4 w-4 text-fg-muted transition-transform",
-                  expandedPlanId === plan.id && "rotate-90",
-                )}
-              />
-            ),
-          },
           {
             header: "Name",
             cellClassName: "font-medium",
@@ -380,8 +361,6 @@ export function UsagePlansPage({
           ),
         }}
       />
-
-      {expandedPlan && <PlanKeys plan={expandedPlan} />}
 
       {/* Create dialog */}
       <Dialog

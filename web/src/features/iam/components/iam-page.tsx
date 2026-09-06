@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Users, ChevronDown, ChevronRight } from "lucide-react"
+import { Users } from "lucide-react"
 import {
   iamUsersQueryOptions,
   iamRolesQueryOptions,
@@ -417,7 +417,6 @@ function GroupMembers({ groupName }: { groupName: string }) {
 function GroupsTab({ filter, onFilterChange }: FilterProps) {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string>()
-  const [expanded, setExpanded] = useState<string>()
   const {
     data: groups = [],
     isLoading,
@@ -472,26 +471,9 @@ function GroupsTab({ filter, onFilterChange }: FilterProps) {
         columns={[
           {
             header: "Group Name",
+            cellClassName: "font-medium text-fg",
             sortValue: (g) => g.GroupName,
-            cell: (g) => {
-              const name = g.GroupName ?? ""
-              const isExpanded = expanded === name
-              return (
-                <button
-                  type="button"
-                  aria-expanded={isExpanded}
-                  onClick={() => setExpanded(isExpanded ? undefined : name)}
-                  className="flex items-center gap-1.5 text-left font-medium text-fg hover:text-accent"
-                >
-                  {isExpanded ? (
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-                  ) : (
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-                  )}
-                  {name}
-                </button>
-              )
-            },
+            cell: (g) => g.GroupName ?? "",
           },
           { header: "ARN", cellClassName: "text-fg-muted", cell: (g) => g.Arn },
           { header: "Path", cell: (g) => g.Path },
@@ -513,16 +495,11 @@ function GroupsTab({ filter, onFilterChange }: FilterProps) {
           ),
           actionLabel: (g) => `Delete ${g.GroupName}`,
         }}
+        // The members belong under their group. #1200 wave 2 had to put them
+        // below the whole table because `ResourceTable` could not expand a row;
+        // it can now (#1327).
+        expandedContent={(g) => <GroupMembers groupName={g.GroupName ?? ""} />}
       />
-
-      {expanded && (
-        <div className="rounded-lg border bg-bg-elevated p-4">
-          <p className="mb-1 text-sm font-medium text-fg-muted">
-            Members of <span className="font-semibold text-fg">{expanded}</span>
-          </p>
-          <GroupMembers groupName={expanded} />
-        </div>
-      )}
 
       <CreateResourceDialog
         open={showCreate}

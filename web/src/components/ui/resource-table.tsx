@@ -1,11 +1,12 @@
 import * as React from "react"
 import type { LucideIcon } from "lucide-react"
-import { Trash2 } from "lucide-react"
+import { ChevronRight, Trash2 } from "lucide-react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import {
   columnVisibilityFeature,
   createPaginatedRowModel,
   createSortedRowModel,
+  rowExpandingFeature,
   rowPaginationFeature,
   rowSortingFeature,
   sortFn_alphanumeric,
@@ -16,6 +17,7 @@ import {
 } from "@tanstack/react-table"
 import type {
   ColumnDef,
+  ExpandedState,
   PaginationState,
   RowData,
   SortFn,
@@ -122,6 +124,18 @@ import { cn } from "@/lib/utils"
  * when its cell holds a control of its own, so a click that misses the control
  * stops in the cell instead of navigating.
  *
+ * ## Expanding a row
+ *
+ * `expandedContent` renders a panel in a full-width row directly beneath the
+ * row it belongs to — a Step Functions event's raw JSON, an ECS task's
+ * containers. Several rows can be open at once, which is the whole reason it is
+ * a row and not a detail pane: it is what lets two events be read side by side.
+ * A chevron column appears at the end of the row, and clicking anywhere in the
+ * row toggles it unless the page also passes `onRowClick`, in which case only
+ * the chevron does. `canExpand` narrows it to the rows that have something to
+ * show. It does not combine with `virtualize`: the virtualizer measures one
+ * fixed row height and a panel is not that height.
+ *
  * ## Delete
  *
  * `onDelete` is deliberately controlled by the caller rather than owning the
@@ -150,13 +164,19 @@ import { cn } from "@/lib/utils"
  * stable across renders (v9 rebuilds its models when `features`, `data` or
  * `columns` change identity).
  *
- * Adopted: row sorting, column visibility, row pagination. Deliberately not
- * adopted: filtering (the page filters `query.data` and `useFilterSearchParam`
- * owns `q` — moving it in here would fork that contract), row selection,
- * column sizing/resizing/pinning/ordering, grouping, aggregation, expanding,
- * faceting, cell selection. `stockFeatures` is never used: it bundles all
- * sixteen and defeats the point. Neither is `useLegacyTable`, which is
- * deprecated and bundles every feature.
+ * Adopted: row sorting, column visibility, row pagination, row expanding.
+ * Deliberately not adopted: filtering (the page filters `query.data` and
+ * `useFilterSearchParam` owns `q` — moving it in here would fork that
+ * contract), row selection, column sizing/resizing/pinning/ordering, grouping,
+ * aggregation, faceting, cell selection. `stockFeatures` is never used: it
+ * bundles all sixteen and defeats the point. Neither is `useLegacyTable`, which
+ * is deprecated and bundles every feature.
+ *
+ * `rowExpandingFeature` is registered without `createExpandedRowModel()`: that
+ * row model exists to splice a row's `subRows` into the flattened order, and
+ * these tables have no sub-rows. What the feature is here for is the expanded
+ * *state* and the per-row API (`getIsExpanded`, `toggleExpanded`) that the
+ * detail panel is rendered from — v9's own "expanding sub-components" shape.
  *
  * `sortFns` registers only the three built-ins v9's `'auto'` resolution can ask
  * for (`datetime`, `alphanumeric`, `text`); anything else falls back to
@@ -172,6 +192,7 @@ const resourceTableFeatures = tableFeatures({
   rowSortingFeature,
   columnVisibilityFeature,
   rowPaginationFeature,
+  rowExpandingFeature,
   sortedRowModel: createSortedRowModel(),
   paginatedRowModel: createPaginatedRowModel(),
   sortFns: {
@@ -316,6 +337,20 @@ interface ResourceTableProps<T extends RowData, TVars> {
    * tinted row faked from cells is a row with gaps in it.
    */
   rowClassName?: (item: T, index: number) => string | undefined
+  /**
+   * Detail panel for a row, rendered in a full-width row underneath it when the
+   * row is expanded. Adds a chevron column; several rows can be open at once.
+   * Not supported together with `virtualize` — see the note above.
+   */
+  expandedContent?: (item: T) => React.ReactNode
+  /** Which rows can expand at all. Defaults to every row, once `expandedContent` is set. */
+  canExpand?: (item: T) => boolean
+  /**
+   * Rows to open on first paint — a deep link that names one of them. Applied
+   * once, when the rows first arrive, so a reader who closes the panel does not
+   * find it open again on the next refetch.
+   */
+  defaultExpanded?: (item: T) => boolean
   emptyIcon?: LucideIcon
   emptyTitle?: string
   emptyDescription?: string
@@ -423,6 +458,9 @@ export function ResourceTable<T extends RowData, TVars = string>({
   noun,
   onRowClick,
   rowClassName,
+  expandedContent,
+  canExpand,
+  defaultExpanded,
   emptyIcon: EmptyIcon,
   emptyTitle,
   emptyDescription,
@@ -519,6 +557,19 @@ export function ResourceTable<T extends RowData, TVars = string>({
     setColumnVisibility((previous) => (typeof updater === "function" ? updater(previous) : updater))
   }, [])
 
+  // Expansion is this component's own state: a panel that is open is a reading
+  // position, not something a shared link should carry, and every caller so far
+  // wants it forgotten when the page unmounts.
+  const [expanded, setExpanded] = React.useState<ExpandedState>({})
+  const handleExpandedChange = React.useCallback((updater: Updater<ExpandedState>) => {
+    setExpanded((previous) => (typeof updater === "function" ? updater(previous) : updater))
+  }, [])
+  const canExpandRef = React.useRef(canExpand)
+  canExpandRef.current = canExpand
+  const defaultExpandedRef = React.useRef(defaultExpanded)
+  defaultExpandedRef.current = defaultExpanded
+  const seededExpansion = React.useRef(false)
+
   const [pageIndex, setPageIndex] = React.useState(0)
   const effectivePageSize = pageSize ?? UNPAGED_PAGE_SIZE
   const pageSizeRef = React.useRef(effectivePageSize)
@@ -541,10 +592,14 @@ export function ResourceTable<T extends RowData, TVars = string>({
     columns: columnDefs,
     getRowId: (item, index) => String(rowKeyRef.current(item, index)) || String(index),
     enableMultiSort: false,
-    state: { sorting: sortingState, columnVisibility, pagination: paginationState },
+    state: { sorting: sortingState, columnVisibility, pagination: paginationState, expanded },
     onSortingChange: handleSortingChange,
     onColumnVisibilityChange: handleVisibilityChange,
     onPaginationChange: handlePaginationChange,
+    onExpandedChange: handleExpandedChange,
+    // Without this every row reports `getCanExpand() === false`: v9 answers it
+    // from `subRows`, which a flat resource list never has.
+    getRowCanExpand: (row) => canExpandRef.current?.(row.original) ?? true,
   })
 
   // A filter that shrinks the list can strand the pager past the last page.
@@ -554,6 +609,20 @@ export function ResourceTable<T extends RowData, TVars = string>({
   }, [pageIndex, pageCount])
 
   const rows = table.getRowModel().rows
+
+  // `defaultExpanded` seeds once the query has resolved, not at mount: at mount
+  // there are no rows to match against.
+  const rowCount = rows.length
+  React.useEffect(() => {
+    if (seededExpansion.current || rowCount === 0 || !defaultExpandedRef.current) return
+    seededExpansion.current = true
+    const seed: Record<string, boolean> = {}
+    for (const row of table.getRowModel().rows) {
+      if (defaultExpandedRef.current(row.original)) seed[row.id] = true
+    }
+    if (Object.keys(seed).length > 0) setExpanded(seed)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs on the first non-empty row model only
+  }, [rowCount])
 
   // ── Virtualization ─────────────────────────────────────────────────────
   // v9 has no virtualization feature — its own guide is explicit that
@@ -584,6 +653,7 @@ export function ResourceTable<T extends RowData, TVars = string>({
 
   // ── Rendering ──────────────────────────────────────────────────────────
   const columnsById = new Map(resolved.map((column) => [column.id, column]))
+  const hasExpandColumn = expandedContent !== undefined
   const hideableColumns = table.getAllLeafColumns().filter((column) => column.getCanHide())
   const showColumnToggle =
     columnToggle ??
@@ -595,48 +665,92 @@ export function ResourceTable<T extends RowData, TVars = string>({
   // onto the rows, so without `aria-rowcount` on the table and a 1-based `aria-rowindex`
   // on each row a screen reader reports "row 3 of 20" inside a five-thousand-row table
   // and has no way to tell that scrolling brings more. Row 1 is the header.
-  const renderRow = (row: (typeof rows)[number], ariaRowIndex?: number) => (
-    <TableRow
-      key={row.id}
-      aria-rowindex={ariaRowIndex}
-      className={rowClassName?.(row.original, row.index)}
-      onClick={onRowClick ? () => onRowClick(row.original) : undefined}
-    >
-      {row.getVisibleCells().map((cell) => {
-        const column = columnsById.get(cell.column.id)
-        const Cell = column?.prose ? TableCellProse : TableCell
-        return (
-          <Cell
-            key={cell.id}
-            className={column?.cellClassName}
-            onClick={
-              onRowClick && column?.interactive ? (event) => event.stopPropagation() : undefined
-            }
-          >
-            <table.FlexRender cell={cell} />
-          </Cell>
-        )
-      })}
-      {hasActionsColumn && (
-        <TableCell onClick={(event) => event.stopPropagation()}>
-          <RowActions>
-            {rowActions?.(row.original)}
-            {onDelete && (onDelete.canDelete?.(row.original) ?? true) && (
-              <RowAction
-                label={
-                  onDelete.actionLabel?.(row.original) ?? `Delete ${onDelete.label(row.original)}`
-                }
-                tone="danger"
-                onClick={() => onDelete.onRequest(row.original)}
+  const renderRow = (row: (typeof rows)[number], ariaRowIndex?: number) => {
+    const isExpanded = hasExpandColumn && row.getIsExpanded()
+    const expandable = hasExpandColumn && row.getCanExpand()
+    // A row that navigates keeps its click; the chevron is then the only way to
+    // open the panel. A row that does not navigate toggles anywhere.
+    const rowClick = onRowClick
+      ? () => onRowClick(row.original)
+      : expandable
+        ? () => row.toggleExpanded()
+        : undefined
+
+    const mainRow = (
+      <TableRow
+        aria-rowindex={ariaRowIndex}
+        className={rowClassName?.(row.original, row.index)}
+        onClick={rowClick}
+      >
+        {row.getVisibleCells().map((cell) => {
+          const column = columnsById.get(cell.column.id)
+          const Cell = column?.prose ? TableCellProse : TableCell
+          return (
+            <Cell
+              key={cell.id}
+              className={column?.cellClassName}
+              onClick={
+                onRowClick && column?.interactive ? (event) => event.stopPropagation() : undefined
+              }
+            >
+              <table.FlexRender cell={cell} />
+            </Cell>
+          )
+        })}
+        {hasExpandColumn && (
+          <TableCell className="w-8 text-fg-subtle" onClick={(event) => event.stopPropagation()}>
+            {expandable && (
+              <button
+                type="button"
+                aria-expanded={isExpanded}
+                aria-label={`${isExpanded ? "Collapse" : "Expand"} row`}
+                onClick={row.getToggleExpandedHandler()}
+                className="flex cursor-pointer items-center text-fg-subtle transition-colors hover:text-fg"
               >
-                <Trash2 className="h-3.5 w-3.5" />
-              </RowAction>
+                <ChevronRight
+                  className={cn("h-3.5 w-3.5 transition-transform", isExpanded && "rotate-90")}
+                />
+              </button>
             )}
-          </RowActions>
-        </TableCell>
-      )}
-    </TableRow>
-  )
+          </TableCell>
+        )}
+        {hasActionsColumn && (
+          <TableCell onClick={(event) => event.stopPropagation()}>
+            <RowActions>
+              {rowActions?.(row.original)}
+              {onDelete && (onDelete.canDelete?.(row.original) ?? true) && (
+                <RowAction
+                  label={
+                    onDelete.actionLabel?.(row.original) ?? `Delete ${onDelete.label(row.original)}`
+                  }
+                  tone="danger"
+                  onClick={() => onDelete.onRequest(row.original)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </RowAction>
+              )}
+            </RowActions>
+          </TableCell>
+        )}
+      </TableRow>
+    )
+
+    if (!isExpanded) return <React.Fragment key={row.id}>{mainRow}</React.Fragment>
+
+    return (
+      <React.Fragment key={row.id}>
+        {mainRow}
+        {/* Reached only when the row is expanded, so the chevron column exists
+            and `expandedContent` is defined — TS narrows both through
+            `isExpanded`. */}
+        <TableRow data-slot="expanded-row">
+          <TableCell colSpan={row.getVisibleCells().length + 1 + (hasActionsColumn ? 1 : 0)}>
+            {expandedContent(row.original)}
+          </TableCell>
+        </TableRow>
+      </React.Fragment>
+    )
+  }
 
   const headerRow = (
     <TableRow>
@@ -690,6 +804,7 @@ export function ResourceTable<T extends RowData, TVars = string>({
           </TableHead>
         )
       })}
+      {hasExpandColumn && <TableHead className="w-8" />}
       {hasActionsColumn && <TableHead className="w-20 text-right" />}
     </TableRow>
   )

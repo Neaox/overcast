@@ -678,27 +678,19 @@ export function QueueDetail({ queueName }: Props) {
                 />
               </div>
             ) : (
-              // ResourceTable didn't fit because this is a live message stream,
-              // not a resource list, and it needs three things the row model
-              // cannot express (#1327 wave C):
-              //
-              //  1. **Two `<TableRow>`s per row.** Expanding a message renders a
-              //     second, full-width `colSpan` row underneath it.
-              //     `ResourceTable` renders exactly one row per item and
-              //     registers no `rowExpandingFeature`.
-              //  2. **Per-row styling.** In-flight messages dim and tombstoned
-              //     ones strike through; that lives on `TableRow`'s className,
-              //     and `ResourceTable` exposes no `rowClassName`.
-              //  3. **Ghost rows.** The 30s tombstones are synthetic rows that
-              //     are deliberately *not* in `query.data` — they are what the
-              //     Archetype-E ghost-tracker kernel exists to show, and folding
-              //     them into the data array would make them sortable and
-              //     countable as if they were still in the queue.
-              //
-              // `virtualize` would carry the volume, but none of the three above
-              // follow from row count, so it does not unblock the conversion.
-              // The subscriptions sub-table on this same page *is* a resource
-              // list and is converted.
+              // ResourceTable didn't fit because of the ghost rows: the 30s
+              // tombstones are synthetic rows deliberately *not* in
+              // `query.data`, which is what the Archetype-E ghost-tracker kernel
+              // exists to show. Folding them into the data array would make them
+              // sortable and countable as if they were still in the queue, so
+              // this table's row set is not the query's — which is the one thing
+              // `ResourceTable` cannot be told. The other two reasons wave C
+              // recorded are gone: `rowClassName` carries the in-flight dim and
+              // the tombstone strike-through, and `expandedContent` renders the
+              // per-message panel (#1327). `virtualize` would carry the volume,
+              // but the row set is not a volume problem. The subscriptions
+              // sub-table on this same page *is* a resource list and is
+              // converted.
               <Table>
                 <TableHeader>
                   <TableRow>
