@@ -75,7 +75,7 @@ func init() {
 		capabilities.Capability{Service: "ec2", Operation: "ModifyInstanceAttribute", Category: "General", Status: capabilities.StatusSupported, Notes: "InstanceType.Value persisted; all other attributes accepted"},
 		capabilities.Capability{Service: "ec2", Operation: "ModifySubnetAttribute", Category: "General", Status: capabilities.StatusSupported, Notes: "MapPublicIpOnLaunch is persisted and returned by DescribeSubnets"},
 		capabilities.Capability{Service: "ec2", Operation: "ModifyVpcAttribute", Category: "General", Status: capabilities.StatusSupported, Notes: "EnableDnsSupport, EnableDnsHostnames are persisted and returned by DescribeVpcAttribute"},
-		capabilities.Capability{Service: "ec2", Operation: "ReleaseAddress", Category: "General", Status: capabilities.StatusSupported, Notes: "By AllocationId"},
+		capabilities.Capability{Service: "ec2", Operation: "ReleaseAddress", Category: "General", Status: capabilities.StatusSupported, Notes: "By AllocationId; an allocation that does not exist raises InvalidAllocationID.NotFound"},
 		capabilities.Capability{Service: "ec2", Operation: "RevokeSecurityGroupEgress", Category: "General", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "ec2", Operation: "RevokeSecurityGroupIngress", Category: "General", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "ec2", Operation: "RunInstances", Category: "General", Status: capabilities.StatusSupported, Notes: "MinCount/MaxCount, TagSpecifications, async pending→running; each state emits an EC2 Instance State-change Notification to the default EventBridge bus. LaunchTemplate supplies ImageId, InstanceType, security groups, subnet and instance tags beneath any parameter the request passes"},

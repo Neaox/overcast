@@ -210,3 +210,21 @@ func TestDescribeVpcs_noSelectorsStillListsTheRegion(t *testing.T) {
 		t.Errorf("DescribeVpcs with no selectors did not return %s: %s", vpcID, body)
 	}
 }
+
+// ReleaseAddress names the allocation ID it could not resolve with the code
+// real EC2 answers: InvalidAllocationID.NotFound, not InvalidAddressID.NotFound
+// (#1708). The reference's description column reads as though the latter is
+// the release-specific one; the wire disagrees.
+func TestReleaseAddress_unknownAllocationIsInvalidAllocationID(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := ec2Query(t, srv, "ReleaseAddress", url.Values{
+		"AllocationId": []string{"eipalloc-00000000"},
+	})
+	defer resp.Body.Close()
+
+	result := assertEC2QueryError(t, resp, http.StatusBadRequest, "InvalidAllocationID.NotFound")
+	if !strings.Contains(result.Errors[0].Message, "eipalloc-00000000") {
+		t.Errorf("message %q does not name the allocation ID", result.Errors[0].Message)
+	}
+}

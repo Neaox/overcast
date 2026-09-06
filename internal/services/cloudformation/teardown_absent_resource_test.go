@@ -70,7 +70,7 @@ func TestResourceDelete_absentResourceIsASuccessfulTeardown(t *testing.T) {
 		{"AWS::EC2::RouteTable", "rtb-absent", gone(400, ec2NotFound("InvalidRouteTableID.NotFound"))},
 		{"AWS::EC2::Route", "rtb-absent|0.0.0.0/0", gone(400, ec2NotFound("InvalidRouteTableID.NotFound"))},
 		{"AWS::EC2::SubnetRouteTableAssociation", "rtbassoc-absent", gone(400, ec2NotFound("InvalidAssociationID.NotFound"))},
-		{"AWS::EC2::EIP", "eipalloc-absent", gone(400, ec2NotFound("InvalidAddressID.NotFound"))},
+		{"AWS::EC2::EIP", "eipalloc-absent", gone(400, ec2NotFound("InvalidAllocationID.NotFound"))},
 		{"AWS::EC2::NatGateway", "nat-absent", gone(400, ec2NotFound("NatGatewayNotFound"))},
 
 		// API Gateway — HTTP 404 under NotFoundException.

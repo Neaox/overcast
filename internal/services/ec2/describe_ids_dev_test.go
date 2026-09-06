@@ -35,3 +35,19 @@ func TestCapabilityNotesNameTheIDErrorCodes(t *testing.T) {
 		}
 	}
 }
+
+// ReleaseAddress is not a Describe*, so it has no scope above — but it is the
+// other half of #1708 and the code it answers is just as easy to normalise
+// back to the one AWS documents rather than the one it sends.
+func TestCapabilityNotes_releaseAddressNamesTheAllocationCode(t *testing.T) {
+	for _, c := range ec2Capabilities(t) {
+		if c.Operation != "ReleaseAddress" {
+			continue
+		}
+		if !strings.Contains(c.Notes, "InvalidAllocationID.NotFound") {
+			t.Errorf("ReleaseAddress note does not name InvalidAllocationID.NotFound:\n  %s", c.Notes)
+		}
+		return
+	}
+	t.Error("ec2 declares no ReleaseAddress capability")
+}

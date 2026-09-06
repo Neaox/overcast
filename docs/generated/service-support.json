@@ -3408,7 +3408,7 @@
           "operation": "ReleaseAddress",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "By AllocationId"
+          "notes": "By AllocationId; an allocation that does not exist raises InvalidAllocationID.NotFound"
         },
         {
           "operation": "RevokeSecurityGroupEgress",

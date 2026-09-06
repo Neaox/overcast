@@ -1111,6 +1111,12 @@ func mutationCases() map[string][]mutationCase {
 					return dispatchLegacy(t, h, "DescribeAddresses", indexed("AllocationId", "eipalloc-mut-del"))
 				},
 			},
+			// InvalidAllocationID.NotFound, and the same one on both paths —
+			// the code #1708 found ReleaseAddress answering as
+			// InvalidAddressID.NotFound. The comparison covers the error text,
+			// so a code changed on one body only fails here.
+			{name: "unknown-allocation", params: url.Values{"AllocationId": {"eipalloc-00000000"}}},
+			{name: "missing-allocation", params: url.Values{}},
 		},
 		"AssociateAddress": {
 			{

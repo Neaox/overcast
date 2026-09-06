@@ -975,9 +975,25 @@ func (s *ec2Store) putElasticIP(ctx context.Context, eip *ElasticIP) *protocol.A
 func (s *ec2Store) getElasticIP(ctx context.Context, allocID string) (*ElasticIP, *protocol.AWSError) {
 	raw, ok, err := s.store.Get(ctx, nsElasticIPs, serviceutil.RegionKey(s.region(ctx), allocID))
 	if err != nil || !ok {
+		// InvalidAllocationID.NotFound, not InvalidAddressID.NotFound.
+		//
+		// The reference's description column reads as though the two split by
+		// operation — InvalidAddressID.NotFound is worded "the allocation ID
+		// for the Elastic IP address you are trying to release", and
+		// InvalidAllocationID.NotFound "the allocation ID you are trying to
+		// describe or associate". Real EC2 does not split them: it answers
+		// InvalidAllocationID.NotFound to a release, an associate and a
+		// describe alike, which is what the probe sweep behind #1708 measured
+		// and what every reported capture shows —
+		// hashicorp/terraform#1815, on an associate: "InvalidAllocationID.NotFound:
+		// The allocation ID 'eipalloc-9b0b7cfe' does not exist".
+		//
+		// Every caller of this getter names an allocation ID (ReleaseAddress,
+		// AssociateAddress, CreateNatGateway), so the code belongs here rather
+		// than at one call site.
 		return nil, &protocol.AWSError{
-			Code:       "InvalidAddressID.NotFound",
-			Message:    fmt.Sprintf("The address '%s' does not exist", allocID),
+			Code:       "InvalidAllocationID.NotFound",
+			Message:    fmt.Sprintf("The allocation ID '%s' does not exist", allocID),
 			HTTPStatus: http.StatusBadRequest,
 		}
 	}
