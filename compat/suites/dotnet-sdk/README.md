@@ -78,17 +78,19 @@ dotnet test Tests/OvercastCompat.Tests.csproj -c Release
 
 ### Via Docker (no local .NET SDK required)
 
-This suite ships its own image. The **build context is `compat/`**, not this
-directory, because the image copies in the shared
-`compat/suites/registry.json` (see [compat/AGENTS.md § Running suites](../../AGENTS.md#running-suites-docker--ci))
-and the shared error-matching fixtures under `compat/model/testdata/errors`,
-which the unit tests the build stage runs answer. Keep the `DOCKER_BUILDKIT=1`:
-`Dockerfile.dockerignore` is a BuildKit feature and there is no
-`compat/.dockerignore`, so a classic build sends the whole 2.6 GiB context to
-the daemon.
+This suite ships its own image. The **build context is `compat/suites/`**, not
+this directory, because the image copies in the shared
+`compat/suites/registry.json` (see [compat/AGENTS.md § Running suites](../../AGENTS.md#running-suites-docker--ci)).
+The build stage also runs the `Tests/` project — the registration tests,
+never against a live Overcast instance — but not the shared error-fixture
+conformance set: `compat/model/testdata/errors` is not reachable from this
+context, and `ScenarioErrorFixtureTests` detects that and skips itself rather
+than failing the build. That fixture set runs for real from a full checkout,
+in `test.yml`'s `compat-suite-unit-tests` job — see
+[compat/AGENTS.md § Where the shared error corpus runs](../../AGENTS.md#where-the-shared-error-corpus-runs).
 
 ```bash
-DOCKER_BUILDKIT=1 docker build -f compat/suites/dotnet-sdk/Dockerfile -t oc-dotnet-sdk-compat compat
+docker build -f compat/suites/dotnet-sdk/Dockerfile -t oc-dotnet-sdk-compat compat/suites
 docker run --rm --network host \
   -e OVERCAST_ENDPOINT=http://localhost:4566 \
   oc-dotnet-sdk-compat
