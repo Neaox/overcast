@@ -12,7 +12,7 @@
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <aws.sdk.version>2.31.7</aws.sdk.version>
+    <aws.sdk.version>2.40.0</aws.sdk.version>
     <jackson.version>2.17.2</jackson.version>
     <junit.version>5.11.3</junit.version>
   </properties>
@@ -60,6 +60,11 @@
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>shield</artifactId></dependency>
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>elasticache</artifactId></dependency>
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>efs</artifactId></dependency>
+    <!-- Generated scenario groups (compat/suites/registry.generated.json) need
+         the client for every service cmd/compatgen emits a Scenarios*Gen class
+         for. organizations has no hand-written group; it is here because the
+         generated corpus covers it. -->
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>organizations</artifactId></dependency>
     <!-- URL connection client (no Apache HTTP, keeps image small) -->
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>url-connection-client</artifactId></dependency>
     <!-- Async HTTP client — required by LambdaAsyncClient (InvokeWithResponseStream) -->

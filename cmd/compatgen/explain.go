@@ -30,12 +30,19 @@ import (
 type renderer func(env renderEnv, s *scenario, g *group, t *test) string
 
 // renderEnv is what a rendering needs from outside the scenario file. Only the
-// Go backend uses it: it is the one rendering that reproduces real emitted
-// source, so it spells each member as the vendored SDK declares that member
-// and has to read those declarations. The other six are pseudo-code derived
-// from the IR alone.
+// two source-emitting backends use it: they are the renderings that reproduce
+// real emitted source, so each spells a member the way its emitter does and has
+// to read what the emitter reads — the vendored SDK's declarations for Go, the
+// pinned shape snapshot for Java. The other five are pseudo-code derived from
+// the IR alone.
 type renderEnv struct {
 	goTypes *goSDKTypes
+	// javaModel resolves a service's pinned shapes, which is what the Java
+	// emitter spells a member against. runExplain reads them from the
+	// repository; the generator's own tests hand over the fixture model they
+	// already hold, which is what keeps them hermetic and off the committed
+	// snapshot.
+	javaModel func(service string) (*serviceModel, error)
 }
 
 // speller resolves one service's SDK types for the Go rendering. The error is
@@ -51,6 +58,49 @@ func (env renderEnv) speller(sdkID string) (*goSpeller, error) {
 		return nil, err
 	}
 	return &goSpeller{svc: svc}, nil
+}
+
+// javaSpeller resolves one service's modeled shapes for the Java rendering. The
+// error is returned rather than fatal, for the same reason speller's is:
+// `-explain` is a reader's tool and must still say something useful on a
+// checkout whose shape snapshot does not cover the service.
+func (env renderEnv) javaSpeller(service string) (*javaSpeller, error) {
+	if env.javaModel == nil {
+		return nil, fmt.Errorf("internal: no shape source was configured")
+	}
+	model, err := env.javaModel(service)
+	if err != nil {
+		return nil, err
+	}
+	return newJavaSpeller(model), nil
+}
+
+// repoShapes reads a service's pinned shape snapshot from the repository.
+func repoShapes(root string) func(service string) (*serviceModel, error) {
+	return func(service string) (*serviceModel, error) {
+		return loadModel(filepath.Join(root, filepath.FromSlash(shapesDir)), modelServiceOf(root, service))
+	}
+}
+
+// modelServiceOf is the shape-snapshot key for an Overcast capability key,
+// read from the recipe's own `model` field. `-explain` reads the committed
+// scenario file rather than the corpus, and the scenario deliberately carries no
+// per-SDK or per-snapshot naming (compat/model/README.md § Naming), so the one
+// place that mapping lives is the recipe. A recipe that cannot be read leaves
+// the service its own name, which is right for every service that needs no
+// mapping.
+func modelServiceOf(root, service string) string {
+	contents, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(recipesDir), service+".json"))
+	if err != nil {
+		return service
+	}
+	var r struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(contents, &r); err != nil || r.Model == "" {
+		return service
+	}
+	return r.Model
 }
 
 var renderers = map[string]renderer{
@@ -84,7 +134,10 @@ func runExplain(opts options, stdout io.Writer) error {
 	if !ok {
 		return fmt.Errorf("no test %s in %s", opts.explain, scenarioPath(service))
 	}
-	env := renderEnv{goTypes: newGoSDKTypes(filepath.Join(opts.root, filepath.FromSlash(goSDKModuleDir)))}
+	env := renderEnv{
+		goTypes:   newGoSDKTypes(filepath.Join(opts.root, filepath.FromSlash(goSDKModuleDir))),
+		javaModel: repoShapes(opts.root),
+	}
 	_, err = io.WriteString(stdout, render(env, s, g, t))
 	return err
 }

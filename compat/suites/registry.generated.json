@@ -12,6 +12,7 @@
       "suites": [
         "cli",
         "go-sdk",
+        "java-sdk",
         "node-js-sdk",
         "python-sdk"
       ],
@@ -30,6 +31,7 @@
       "suites": [
         "cli",
         "go-sdk",
+        "java-sdk",
         "node-js-sdk",
         "python-sdk"
       ],
@@ -90,6 +92,7 @@
       "suites": [
         "cli",
         "go-sdk",
+        "java-sdk",
         "node-js-sdk",
         "python-sdk"
       ],
@@ -151,6 +154,7 @@
       "suites": [
         "cli",
         "go-sdk",
+        "java-sdk",
         "node-js-sdk",
         "python-sdk"
       ],
@@ -232,6 +236,7 @@
       "suites": [
         "cli",
         "go-sdk",
+        "java-sdk",
         "node-js-sdk",
         "python-sdk"
       ],
@@ -250,6 +255,7 @@
       "suites": [
         "cli",
         "go-sdk",
+        "java-sdk",
         "node-js-sdk",
         "python-sdk"
       ],
@@ -287,6 +293,7 @@
       "suites": [
         "cli",
         "go-sdk",
+        "java-sdk",
         "node-js-sdk",
         "python-sdk"
       ],
@@ -325,6 +332,7 @@
       "suites": [
         "cli",
         "go-sdk",
+        "java-sdk",
         "node-js-sdk",
         "python-sdk"
       ],
@@ -343,6 +351,7 @@
       "suites": [
         "cli",
         "go-sdk",
+        "java-sdk",
         "node-js-sdk",
         "python-sdk"
       ],

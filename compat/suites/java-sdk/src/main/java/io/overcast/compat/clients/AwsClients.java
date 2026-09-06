@@ -2,6 +2,8 @@ package io.overcast.compat.clients;
 
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.awscore.client.builder.AwsClientBuilder;
+import software.amazon.awssdk.awscore.client.builder.AwsSyncClientBuilder;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.apigateway.ApiGatewayClient;
@@ -95,6 +97,26 @@ public final class AwsClients {
         this.region      = Region.of(region);
         this.credentials = StaticCredentialsProvider.create(
                 AwsBasicCredentials.create("test", "test"));
+    }
+
+    /**
+     * Applies this factory's endpoint, region, credentials and HTTP client to
+     * any AWS SDK v2 sync client builder.
+     *
+     * <p>It exists for the generated scenario groups
+     * ({@code io.overcast.compat.groups.Scenarios*Gen}), which cover services
+     * this class has no accessor for and would otherwise need one added per
+     * service the generator learns to cover. They still obtain their client
+     * <em>through</em> this factory, so there is one description of how a client
+     * in this suite is configured — a generated group's client differs from a
+     * hand-written group's in nothing but the service.
+     */
+    public <C, B extends AwsSyncClientBuilder<B, C> & AwsClientBuilder<B, C>> B configure(B builder) {
+        return builder
+                .endpointOverride(endpoint)
+                .region(region)
+                .credentialsProvider(credentials)
+                .httpClient(UrlConnectionHttpClient.create());
     }
 
     public S3Client s3() {

@@ -149,7 +149,7 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 	// The typed backends compile source rather than interpreting the IR, so
 	// their files are outputs of this run too. unable collects the groups an
 	// emitter refused, which decides each group's `suites` below.
-	var goServices []string
+	var goServices, javaServices []string
 	unable := unableSuites{}
 	// The Go emitter spells each member as the vendored SDK declares it, so it
 	// reads that SDK's own types out of the go-sdk suite's module — the one the
@@ -206,12 +206,17 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 			outputs[emission.Path] = emission.Contents
 			gaps.Gaps = append(gaps.Gaps, emission.Gaps...)
 			goServices = append(goServices, r.Service)
-			for name := range emission.Refused {
-				if unable[name] == nil {
-					unable[name] = map[string]bool{}
-				}
-				unable[name][goSDKSuite] = true
+			markUnable(unable, goSDKSuite, emission.Refused)
+		}
+		if hasBackend(javaSDKSuite) {
+			emission, err := emitJava(gen)
+			if err != nil {
+				return nil, nil, fmt.Errorf("%s: %w", r.Service, err)
 			}
+			outputs[emission.Path] = emission.Contents
+			gaps.Gaps = append(gaps.Gaps, emission.Gaps...)
+			javaServices = append(javaServices, r.Service)
+			markUnable(unable, javaSDKSuite, emission.Refused)
 		}
 	}
 	// The index is emitted whether or not the backend is enabled: the go-sdk
@@ -222,6 +227,7 @@ func generateAll(root string, c *corpus) ([]*generation, outputSet, error) {
 		return nil, nil, err
 	}
 	outputs[goIndexPath] = goIndex
+	outputs[javaIndexPath] = emitJavaIndex(javaServices)
 	sortGaps(gaps.Gaps)
 	contents, err := encodeDocument(gaps)
 	if err != nil {
@@ -264,6 +270,12 @@ func validateOutput(c *corpus, rel string, contents []byte) error {
 		// gofmt-clean, which emitGo proves by running go/format over the bytes
 		// it is about to return and failing generation if it will not parse.
 		return nil
+	case strings.HasPrefix(rel, javaSuiteDir+"/"):
+		// Emitted Java has no JSON schema either, and no formatter the generator
+		// can run to prove it parses. Its contract is the suite's own `mvn
+		// package`, which compiles every file in the package — the same evidence
+		// the go-sdk suite's build gives, arriving one step later.
+		return nil
 	}
 	return fmt.Errorf("internal: no schema is checked for generated file %s", rel)
 }
@@ -288,6 +300,9 @@ func runGenerate(opts options, stdout io.Writer) error {
 		return err
 	}
 	if err := checkStaleEmittedGo(opts.root, outputs, opts.check); err != nil {
+		return err
+	}
+	if err := checkStaleEmittedJava(opts.root, outputs, opts.check); err != nil {
 		return err
 	}
 	if opts.check {
@@ -343,11 +358,27 @@ func checkStaleScenarios(root string, outputs outputSet, check bool) error {
 
 // checkStaleEmittedGo catches an emitted Go file whose recipe was deleted, or
 // one left behind by a checkout where go-sdk was a scenario backend and this
-// one where it is not. The suite compiles every file in the package, so a
-// stale one is a build failure rather than dead weight.
+// one where it is not. The suite compiles every file in the package, so a stale
+// one is a build failure rather than dead weight.
 func checkStaleEmittedGo(root string, outputs outputSet, check bool) error {
-	dir := filepath.Join(root, filepath.FromSlash(goSuiteDir))
-	entries, err := os.ReadDir(dir)
+	return checkStaleEmitted(root, outputs, check, goSuiteDir, "Go", func(name string) bool {
+		return strings.HasPrefix(name, "scenarios_") && strings.HasSuffix(name, "_gen.go")
+	})
+}
+
+// checkStaleEmittedJava is the same rule for the java-sdk suite, whose emitted
+// classes sit beside the hand-written group classes in one package.
+func checkStaleEmittedJava(root string, outputs outputSet, check bool) error {
+	return checkStaleEmitted(root, outputs, check, javaSuiteDir, "Java", func(name string) bool {
+		return strings.HasPrefix(name, "Scenarios") && strings.HasSuffix(name, "Gen.java")
+	})
+}
+
+// checkStaleEmitted removes — or, under -check, reports — a generated source
+// file in dir that this run did not produce.
+func checkStaleEmitted(root string, outputs outputSet, check bool, dir, language string, emitted func(name string) bool) error {
+	path := filepath.Join(root, filepath.FromSlash(dir))
+	entries, err := os.ReadDir(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -357,10 +388,10 @@ func checkStaleEmittedGo(root string, outputs outputSet, check bool) error {
 	var stale []string
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || !strings.HasPrefix(name, "scenarios_") || !strings.HasSuffix(name, "_gen.go") {
+		if entry.IsDir() || !emitted(name) {
 			continue
 		}
-		rel := goSuiteDir + "/" + name
+		rel := dir + "/" + name
 		if _, produced := outputs[rel]; produced {
 			continue
 		}
@@ -368,15 +399,27 @@ func checkStaleEmittedGo(root string, outputs outputSet, check bool) error {
 			stale = append(stale, rel)
 			continue
 		}
-		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+		if err := os.Remove(filepath.Join(path, name)); err != nil {
 			return err
 		}
 	}
 	if len(stale) > 0 {
 		sort.Strings(stale)
-		return fmt.Errorf("emitted Go file(s) with no scenario: %s; run `make generate-compat-model` to remove them", strings.Join(stale, ", "))
+		return fmt.Errorf("emitted %s file(s) with no scenario: %s; run `make generate-compat-model` to remove them", language, strings.Join(stale, ", "))
 	}
 	return nil
+}
+
+// markUnable records that one backend refused a set of groups, so buildRegistry
+// scopes each of them away from that suite rather than listing a backend
+// against a group it will not compile.
+func markUnable(unable unableSuites, suite string, refused map[string]bool) {
+	for name := range refused {
+		if unable[name] == nil {
+			unable[name] = map[string]bool{}
+		}
+		unable[name][suite] = true
+	}
 }
 
 // summaryLine is the one-line generation summary printed per service.

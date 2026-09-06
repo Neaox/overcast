@@ -463,16 +463,17 @@ SDK-specific. Each backend derives what it needs:
 | node-js-sdk | `@aws-sdk/client-<lower(sdkId), whitespace/underscore to "-">` (so DynamoDB → dynamodb, not dynamo-db), class `<sdkId's alphanumerics>Client` | `new <Op>Command(params)` |
 | cli | `aws <endpointPrefix> <kebab(op)> --cli-input-json '<params>'` | same |
 | go-sdk | `github.com/aws/aws-sdk-go-v2/service/<lower(sdkId, spaces removed)>` | `client.<Op>(ctx, &<Op>Input{…})` |
-| java-sdk | `<PascalCase(sdkId)>Client` | `client.<lowerFirst(op)>(<Op>Request.builder()…)` |
+| java-sdk | `<pascalCase(sdkId)>Client` | `client.<unCapitalize(op)>(<pascalCase(op)>Request.builder()…)` |
 | dotnet-sdk | `Amazon<PascalCase(sdkId)>Client` | `client.<Op>Async(new <Op>Request {…})` |
 | rust-sdk | `aws_sdk_<snake(sdkId)>` | `client.<snake(op)>()…send()` |
 
-**go-sdk is a source emitter, not an interpreter**, so its row is the naming
-table `cmd/compatgen/emit_go.go` renders through, and
-`go run -tags dev ./cmd/compatgen -explain <group>/<test> -lang go` prints the
-statements it writes. One detail of that row is worth stating because the other
-typed backends will meet it too: **the member's Go type is read from the
-vendored SDK at generation time, never derived from the model's nullability.**
+**go-sdk and java-sdk are source emitters, not interpreters**, so their rows
+are the naming tables `cmd/compatgen/emit_go.go` and `emit_java.go` render
+through, and `-explain <group>/<test> -lang go|java` prints the statements each
+emitter writes. Where the two differ is where a member's type comes from, and
+between them they are both halves of the plan's typed-backend binding decision.
+For go, **the member's type is read from the vendored SDK at generation time,
+never derived from the model's nullability.**
 Whether smithy-go made a member a pointer or a value does not follow from the
 pinned snapshot — the snapshot and the vendored SDK are generated from
 different revisions of the same AWS model, and for SQS's `ReceiveMessage` they
@@ -481,6 +482,31 @@ already disagree about three members the pilot sends. So the emitter loads
 `in.QueueUrl = aws.String(…)`, `in.MaxNumberOfMessages = 10`,
 `in.Type = types.PolicyType("…")` from what it finds there. A member the SDK
 has no field for is refused rather than emitted.
+
+**java-sdk resolves its spellings from the pinned model instead**, and that is
+the other half of the same decision: the AWS SDK for Java v2 boxes every scalar,
+so a builder setter takes the value whatever the member's optionality and a
+boxed `0` really is serialized — nothing about a member's Java type follows from
+the SDK rather than from the model. Two of its naming rules are worth stating
+because they disagree, and an emitter that derived either from the other would
+not compile. A **class** — the client, an operation's `<Op>Request`, every enum
+and structure — is the name run through the SDK code generator's `pascalCase`,
+which splits on word boundaries and lower-cases each part:
+`ListAWSServiceAccessForOrganization` becomes
+`ListAwsServiceAccessForOrganizationRequest`. A **method or setter** is the raw
+name run through its `unCapitalize`, which lower-cases only the leading run of
+capitals: the client method for that same operation is
+`listAWSServiceAccessForOrganization`. Organizations declares both spellings on
+one line.
+
+The one thing the model cannot answer is whether the *pinned* SDK is new enough
+to have the operation at all — the shape snapshot is generated from a newer
+revision of the AWS model than any released SDK. That axis is answered by the
+suite's own `mvn package`, which fails naming the missing class, and the fix is
+the version pin in `compat/suites/java-sdk/pom.xml`. The same pin bounds the one
+hazard of spelling an enum as `Type.fromValue("…")`: a value the pinned SDK does
+not know becomes `UNKNOWN_TO_SDK_VERSION`, which serializes as the literal
+string `"null"` rather than as itself.
 
 Where a derivation is known to break, the interpreter needs a small override
 table of its own, and the plan asks for those to be recorded as follow-ups
@@ -492,6 +518,7 @@ so nothing is implemented yet:
 | cli | the `aws` command name is the endpoint prefix except for four services: `elasticloadbalancing` → `elb`, `monitoring` → `cloudwatch`, `email` → `ses`, `states` → `stepfunctions` | not yet implemented — no scenario names one of them |
 | python-sdk | botocore's service name differs from the endpoint prefix for the same four | not yet implemented — same reason |
 | go-sdk | the package for `Cost Explorer` is `costexplorer` (derivable), but `SFN` is `sfn` and `ELB` is `elasticloadbalancing`, neither of which follows from the SDK id | not yet implemented |
+| java-sdk | the SDK's `customization.config` may rename a service or a shape outright, which no rule over the SDK id or the shape name reproduces | not yet implemented — nothing in scope is renamed, and the suite's `mvn package` is what would say so |
 
 Each table is added with the first scenario that needs it, in the interpreter
 that needs it, and never by adding a per-SDK name to the IR: carrying `sdkId`,
@@ -693,6 +720,7 @@ service and operation, with a stable reason:
 | `setup-refused:<resource>` | a required resource could not be bound |
 | `unsupported-tag-shape:<Shape>` | the tag member is neither a string map nor a list of `{Key, Value}`. `<Shape>` is the bare shape name; the qualified Smithy id is in the detail |
 | `go-emit-unsupported:<Member>` | the go-sdk emitter cannot write that member as typed Go: its modeled kind has no IR literal (a timestamp, blob, document or union), or the vendored SDK has no `<Op>Input`, no field for the member, or a field of a type no literal builds, or the member is value-typed and the scenario sets it to its zero value (see § Values). It is the one reason here that does **not** mean "no test": the operation is generated and the interpreters run it, and the group is scoped away from `go-sdk` in the generated registry instead, because a suite listed against a group it cannot compile would report as a hard failure |
+| `java-emit-unsupported:<Member>` | the java-sdk emitter cannot write that member as typed Java: its modeled kind has no IR literal (a timestamp, blob, document or union), the model gives the operation no such member, the literal is of the wrong JSON type for the member's kind, a value expression is bound to a composite member, or the value is an explicit `null` — which the AWS SDK for Java v2 spells as "unset" and so cannot send. It is scoped away from `java-sdk` on the same terms as the row above. Unlike the Go emitter it needs no SDK lookup and refuses no zero: every Java scalar is boxed, so a builder setter takes the value whatever the member's optionality and a boxed `0` is serialized (measured by the suite's own `JavaSdkWireFactsTest`). What the model cannot answer — whether the *pinned* SDK has the operation at all — is answered by the suite's `mvn package`, as a compile error rather than a wrong request |
 
 Refusals are a feature. Fixing one is a line in a recipe or in
 `values.json`; guessing is never an option.

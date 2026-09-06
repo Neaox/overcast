@@ -9,14 +9,18 @@ import (
 )
 
 func TestExplain_rendersEveryLanguage(t *testing.T) {
-	_, gen := generateFixture(t)
+	f, gen := generateFixture(t)
 	g, tc, ok := gen.scenario.findTest("widgets-gen-widget", "CreateWidget")
 	if !ok {
 		t.Fatal("fixture has no CreateWidget")
 	}
 	for _, lang := range rendererNames() {
 		t.Run(lang, func(t *testing.T) {
-			out := renderers[lang](renderEnv{goTypes: fixtureGoTypes()}, gen.scenario, g, tc)
+			env := renderEnv{
+				goTypes:   fixtureGoTypes(),
+				javaModel: func(string) (*serviceModel, error) { return f.model, nil },
+			}
+			out := renderers[lang](env, gen.scenario, g, tc)
 			// Operation names are spelled per language (get_widget, getWidget,
 			// GetWidget), so compare with case and separators folded.
 			folded := strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(out))

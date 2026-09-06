@@ -190,11 +190,33 @@ public final class Runner {
     /**
      * Returns {@code true} when {@code e} signals a 501 / not-implemented
      * response from the Overcast emulator.
+     *
+     * <p>Two markers come first, and both exist for the generated scenario
+     * runtime — the only code here that composes a failure message out of data
+     * it was handed. {@link Unimplemented} is a classification already decided
+     * from the SDK's own status code, and it must survive being wrapped.
+     * {@link ComposedFailure} is the opposite guarantee: such a message embeds
+     * the exact params JSON sent, where a run id, a queue URL or a port number
+     * can put a {@code "501"} that says nothing about the response, so the
+     * heuristic below may not be pointed at it.
      */
     public static boolean isUnimplemented(Throwable e) {
         if (e == null) return false;
+        if (e instanceof Unimplemented) return true;
+        if (e instanceof ComposedFailure) return false;
         String msg = e.getMessage();
         if (msg == null) msg = e.getClass().getName();
+        return looksUnimplemented(msg);
+    }
+
+    /**
+     * The substring heuristic over an SDK error's own text, for a failure that
+     * states no status code of its own. It is the whole of what a hand-written
+     * group offers, and the fallback the scenario runtime uses when the SDK
+     * failed before or after the exchange and there is no HTTP response to read.
+     */
+    public static boolean looksUnimplemented(String msg) {
+        if (msg == null) return false;
         return msg.contains("501")
                 || msg.contains("NotImplemented")
                 || msg.contains("UnknownOperationException")
