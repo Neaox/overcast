@@ -37,7 +37,7 @@ import (
 // failure with is the source the emitter wrote. The table is deliberately
 // tiny:
 //
-//	service   → namespace Amazon.<sdkId without spaces>, client Amazon<…>Client
+//	service   → namespace Amazon.<dotnetServiceName>, client Amazon<…>Client
 //	operation → new <Op>Request() and client.<Op>Async(request)
 //	member    → the property named <Member> with its first letter capitalized
 //	value     → the member's *modeled* kind, spelled by dotnetSpeller
@@ -443,21 +443,51 @@ func dotnetCheck(path string, c check) string {
 // The naming table — shared with -explain -lang dotnet (explain_typed.go)
 // ---------------------------------------------------------------------------
 
+// dotnetServiceNames is the override table compat/model/README.md § Naming
+// says this backend will need: the AWS SDK for .NET keeps several services
+// under the long names they were launched with, and no rule over the SDK id
+// reproduces them. An entry is the token that stands in for pascalSDK(sdkID)
+// in the namespace, the client class and the config class alike.
+//
+// It holds only the services a scenario has actually named, because the rest
+// cannot be written without checking the SDK, and three of them do not even
+// share one token across the three spellings: AWSSDK.SecurityToken's client is
+// AmazonSecurityTokenServiceClient in namespace Amazon.SecurityToken,
+// AWSSDK.IdentityManagement's is AmazonIdentityManagementServiceClient, and
+// AWSSDK.DynamoDBv2's is AmazonDynamoDBClient. Adding one of those means
+// splitting this table by spelling, not adding a row to it — so the row is
+// written when the scenario that needs it arrives and its own suite build
+// proves it, which is the same discipline the cli and python-sdk override
+// tables landed under.
+var dotnetServiceNames = map[string]string{
+	// AWSSDK.SimpleNotificationService: namespace Amazon.SimpleNotificationService,
+	// client AmazonSimpleNotificationServiceClient, config …Config.
+	"SNS": "SimpleNotificationService",
+}
+
+// dotnetServiceName is the SDK id as the AWS SDK for .NET spells it: the id
+// with spaces removed, unless the table above overrides it.
+func dotnetServiceName(sdkID string) string {
+	if name, ok := dotnetServiceNames[sdkID]; ok {
+		return name
+	}
+	return pascalSDK(sdkID)
+}
+
 // dotnetNameNamespace is the AWS SDK for .NET namespace for a service: Amazon.
 // plus the SDK id with spaces removed. SQS → Amazon.SQS, Organizations →
-// Amazon.Organizations.
-//
-// compat/model/README.md § Naming records the derivations known to break — the
-// .NET SDK spells several services by their old long names (SNS →
-// SimpleNotificationService, STS → SecurityToken) — and the override table
-// belongs here when a scenario needs one.
-func dotnetNameNamespace(sdkID string) string { return "Amazon." + pascalSDK(sdkID) }
+// Amazon.Organizations, SNS → Amazon.SimpleNotificationService.
+func dotnetNameNamespace(sdkID string) string { return "Amazon." + dotnetServiceName(sdkID) }
 
 // dotnetNameClientClass is the service client: AmazonSQSClient.
-func dotnetNameClientClass(sdkID string) string { return "Amazon" + pascalSDK(sdkID) + "Client" }
+func dotnetNameClientClass(sdkID string) string {
+	return "Amazon" + dotnetServiceName(sdkID) + "Client"
+}
 
 // dotnetNameConfigClass is that client's configuration: AmazonSQSConfig.
-func dotnetNameConfigClass(sdkID string) string { return "Amazon" + pascalSDK(sdkID) + "Config" }
+func dotnetNameConfigClass(sdkID string) string {
+	return "Amazon" + dotnetServiceName(sdkID) + "Config"
+}
 
 // dotnetNameProperty is the request property a modeled member is assigned
 // through: the member name with its first letter capitalized. Almost every AWS

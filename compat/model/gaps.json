@@ -450,6 +450,104 @@
       "detail": "The same rewrite against a public hosted zone, where the cached answers are the internet's."
     },
     {
+      "service": "sns",
+      "operation": "AddPermission",
+      "group": "sns-gen-probe",
+      "reason": "never-probe",
+      "detail": "Adds a statement to a live topic's access policy, granting the named AWS accounts the named actions on it. Nothing in a probe group removes what it adds, and the result is another account holding rights over the caller's topic."
+    },
+    {
+      "service": "sns",
+      "operation": "CreatePlatformApplication",
+      "group": "sns-gen-probe",
+      "reason": "never-probe",
+      "detail": "Registers push credentials (an APNs certificate, an FCM server key) as a platform application in the caller's account. The credentials are stored, the application is billable to use, and nothing here deletes it."
+    },
+    {
+      "service": "sns",
+      "operation": "CreatePlatformEndpoint",
+      "group": "sns-gen-probe",
+      "reason": "never-probe",
+      "detail": "Registers a device token against a platform application, which is what makes a device a push target. A probe would enrol a device nobody asked to enrol."
+    },
+    {
+      "service": "sns",
+      "operation": "CreateSMSSandboxPhoneNumber",
+      "group": "sns-gen-probe",
+      "reason": "never-probe",
+      "detail": "Starts SMS-sandbox verification for a phone number, which sends a one-time password by SMS to whoever holds it. A probe would text a stranger."
+    },
+    {
+      "service": "sns",
+      "operation": "DeleteEndpoint",
+      "group": "sns-gen-probe",
+      "reason": "never-probe",
+      "detail": "Removes a platform endpoint, so the device behind it stops receiving push notifications. AWS documents the call as idempotent, which means it reports nothing when it has destroyed something."
+    },
+    {
+      "service": "sns",
+      "operation": "DeletePlatformApplication",
+      "group": "sns-gen-probe",
+      "reason": "never-probe",
+      "detail": "Deletes a platform application and every endpoint under it, so every device registered against it stops receiving notifications at once."
+    },
+    {
+      "service": "sns",
+      "operation": "DeleteSMSSandboxPhoneNumber",
+      "group": "sns-gen-probe",
+      "reason": "never-probe",
+      "detail": "Removes a verified destination number from the account's SMS sandbox, which stops the account being able to text it until somebody re-verifies it."
+    },
+    {
+      "service": "sns",
+      "operation": "OptInPhoneNumber",
+      "group": "sns-gen-probe",
+      "reason": "never-probe",
+      "detail": "Opts a phone number back in to receiving SMS from the account after its holder opted out. Opting somebody back in is the one SMS action whose whole purpose is to override a person's stated preference, and AWS allows it only once every 30 days."
+    },
+    {
+      "service": "sns",
+      "operation": "PutDataProtectionPolicy",
+      "group": "sns-gen-probe",
+      "reason": "never-probe",
+      "detail": "Replaces a live topic's data protection policy wholesale, so the redaction and blocking rules an owner relies on to keep PII out of a topic are gone the moment the call lands."
+    },
+    {
+      "service": "sns",
+      "operation": "RemovePermission",
+      "group": "sns-gen-probe",
+      "reason": "never-probe",
+      "detail": "Removes a statement from a live topic's access policy by label, so whichever account that statement was for loses its access immediately."
+    },
+    {
+      "service": "sns",
+      "operation": "SetEndpointAttributes",
+      "group": "sns-gen-probe",
+      "reason": "never-probe",
+      "detail": "Writes attributes onto a live platform endpoint — Enabled among them, which is what decides whether a device is sent anything at all."
+    },
+    {
+      "service": "sns",
+      "operation": "SetPlatformApplicationAttributes",
+      "group": "sns-gen-probe",
+      "reason": "never-probe",
+      "detail": "Writes attributes onto a live platform application, including the push credentials themselves and the event-notification topics AWS reports delivery failures to."
+    },
+    {
+      "service": "sns",
+      "operation": "SetSMSAttributes",
+      "group": "sns-gen-probe",
+      "reason": "never-probe",
+      "detail": "Sets the account-wide SMS preferences: the monthly spend limit, the default sender id, the delivery-status role. These are one set per account, so a probe would overwrite the caller's own settings and could not put them back."
+    },
+    {
+      "service": "sns",
+      "operation": "VerifySMSSandboxPhoneNumber",
+      "group": "sns-gen-probe",
+      "reason": "never-probe",
+      "detail": "Completes SMS-sandbox verification with a one-time password. It is a write against the account's sandbox, and a probe guessing a password is the shape of a brute-force attempt rather than of a read."
+    },
+    {
       "service": "sqs",
       "operation": "AddPermission",
       "group": "sqs-gen-probe",

@@ -21,6 +21,7 @@ internal static class ScenarioGroups
         new ScenariosOrganizations(clients),
         new ScenariosSecretsmanager(clients),
         new ScenariosServicediscovery(clients),
+        new ScenariosSns(clients),
         new ScenariosSqs(clients),
     ];
 }

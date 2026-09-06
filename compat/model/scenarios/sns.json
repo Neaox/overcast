@@ -1,0 +1,885 @@
+{
+  "version": 1,
+  "service": "sns",
+  "client": {
+    "sdkId": "SNS",
+    "endpointPrefix": "sns",
+    "signingName": "sns",
+    "protocol": "awsQuery",
+    "apiVersion": "2010-03-31",
+    "awsQueryCompatible": false
+  },
+  "groups": [
+    {
+      "name": "sns-gen-topic",
+      "kind": "lifecycle",
+      "setup": [],
+      "tests": [
+        {
+          "name": "CreateTopic",
+          "op": "CreateTopic",
+          "call": {
+            "op": "CreateTopic",
+            "params": {
+              "Attributes": {
+                "DisplayName": "compat scenario topic"
+              },
+              "Name": {
+                "$name": "t"
+              }
+            },
+            "export": {
+              "topic.id": "$.TopicArn"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.TopicArn": {
+                  "nonEmpty": true
+                }
+              }
+            },
+            {
+              "kind": "readback",
+              "call": {
+                "op": "GetTopicAttributes",
+                "params": {
+                  "TopicArn": {
+                    "$ref": "topic.id"
+                  }
+                }
+              },
+              "checks": {
+                "$.Attributes.TopicArn": {
+                  "equals": {
+                    "$ref": "topic.id"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "listContains",
+              "call": {
+                "op": "ListTopics",
+                "params": {}
+              },
+              "itemsPath": "$.Topics",
+              "where": {
+                "$.TopicArn": {
+                  "$ref": "topic.id"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "GetTopicAttributes",
+          "op": "GetTopicAttributes",
+          "call": {
+            "op": "GetTopicAttributes",
+            "params": {
+              "TopicArn": {
+                "$ref": "topic.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Attributes.TopicArn": {
+                  "equals": {
+                    "$ref": "topic.id"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "SetTopicAttributes",
+          "op": "SetTopicAttributes",
+          "call": {
+            "op": "SetTopicAttributes",
+            "params": {
+              "AttributeName": "DisplayName",
+              "AttributeValue": "compat scenario topic, updated",
+              "TopicArn": {
+                "$ref": "topic.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "GetTopicAttributes",
+                "params": {
+                  "TopicArn": {
+                    "$ref": "topic.id"
+                  }
+                }
+              },
+              "checks": {
+                "$.Attributes.DisplayName": {
+                  "equals": "compat scenario topic, updated"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "TagResource",
+          "op": "TagResource",
+          "call": {
+            "op": "TagResource",
+            "params": {
+              "ResourceArn": {
+                "$ref": "topic.id"
+              },
+              "Tags": [
+                {
+                  "Key": "compat",
+                  "Value": "scenario"
+                }
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "call": {
+                "op": "ListTagsForResource",
+                "params": {
+                  "ResourceArn": {
+                    "$ref": "topic.id"
+                  }
+                }
+              },
+              "itemsPath": "$.Tags",
+              "where": {
+                "$.Key": "compat",
+                "$.Value": "scenario"
+              }
+            }
+          ],
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "ListTagsForResource",
+          "op": "ListTagsForResource",
+          "call": {
+            "op": "ListTagsForResource",
+            "params": {
+              "ResourceArn": {
+                "$ref": "topic.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.Tags",
+              "where": {
+                "$.Key": "compat",
+                "$.Value": "scenario"
+              }
+            }
+          ],
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "op": "UntagResource",
+          "call": {
+            "op": "UntagResource",
+            "params": {
+              "ResourceArn": {
+                "$ref": "topic.id"
+              },
+              "TagKeys": [
+                "compat"
+              ]
+            }
+          },
+          "assert": [
+            {
+              "kind": "absent",
+              "call": {
+                "op": "ListTagsForResource",
+                "params": {
+                  "ResourceArn": {
+                    "$ref": "topic.id"
+                  }
+                }
+              },
+              "itemsPath": "$.Tags",
+              "where": {
+                "$.Key": "compat"
+              }
+            }
+          ],
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "Publish",
+          "op": "Publish",
+          "call": {
+            "op": "Publish",
+            "params": {
+              "Message": "compat scenario message",
+              "Subject": "compat scenario",
+              "TopicArn": {
+                "$ref": "topic.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.MessageId": {
+                  "matches": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "PublishBatch",
+          "op": "PublishBatch",
+          "call": {
+            "op": "PublishBatch",
+            "params": {
+              "PublishBatchRequestEntries": [
+                {
+                  "Id": "1",
+                  "Message": "compat scenario batch message 1",
+                  "Subject": "compat scenario 1"
+                },
+                {
+                  "Id": "2",
+                  "Message": "compat scenario batch message 2",
+                  "Subject": "compat scenario 2"
+                }
+              ],
+              "TopicArn": {
+                "$ref": "topic.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Successful[0].Id": {
+                  "equals": "1"
+                },
+                "$.Successful[0].MessageId": {
+                  "matches": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                },
+                "$.Successful[1].Id": {
+                  "equals": "2"
+                }
+              }
+            },
+            {
+              "kind": "absent",
+              "itemsPath": "$.Failed",
+              "where": {
+                "$.Id": "1"
+              }
+            }
+          ],
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "ConfirmSubscription",
+          "op": "ConfirmSubscription",
+          "call": {
+            "op": "ConfirmSubscription",
+            "params": {
+              "Token": "compat-scenario-token-that-sns-never-issued",
+              "TopicArn": {
+                "$ref": "topic.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "errorCode",
+              "error": {
+                "shape": "InvalidParameterException",
+                "code": "InvalidParameter"
+              }
+            }
+          ],
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "ListTopics",
+          "op": "ListTopics",
+          "call": {
+            "op": "ListTopics",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.Topics",
+              "where": {
+                "$.TopicArn": {
+                  "$ref": "topic.id"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "CreateTopic"
+          ]
+        },
+        {
+          "name": "DeleteTopic",
+          "op": "DeleteTopic",
+          "call": {
+            "op": "DeleteTopic",
+            "params": {
+              "TopicArn": {
+                "$ref": "topic.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "absent",
+              "call": {
+                "op": "GetTopicAttributes",
+                "params": {
+                  "TopicArn": {
+                    "$ref": "topic.id"
+                  }
+                }
+              },
+              "error": {
+                "shape": "NotFoundException",
+                "code": "NotFound"
+              }
+            }
+          ],
+          "depends": [
+            "CreateTopic"
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "DeleteTopic",
+          "params": {
+            "TopicArn": {
+              "$ref": "topic.id"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sns-gen-subscription",
+      "kind": "lifecycle",
+      "setup": [
+        {
+          "op": "CreateTopic",
+          "params": {
+            "Attributes": {
+              "DisplayName": "compat scenario topic"
+            },
+            "Name": {
+              "$name": "t"
+            }
+          },
+          "export": {
+            "topic.id": "$.TopicArn"
+          }
+        }
+      ],
+      "tests": [
+        {
+          "name": "Subscribe",
+          "op": "Subscribe",
+          "call": {
+            "op": "Subscribe",
+            "params": {
+              "Attributes": {
+                "FilterPolicy": "{\"compat\":[\"scenario\"]}"
+              },
+              "Endpoint": {
+                "$concat": [
+                  {
+                    "$name": "s"
+                  },
+                  "@example.com"
+                ]
+              },
+              "Protocol": "email",
+              "ReturnSubscriptionArn": true,
+              "TopicArn": {
+                "$ref": "topic.id"
+              }
+            },
+            "export": {
+              "subscription.id": "$.SubscriptionArn"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.SubscriptionArn": {
+                  "nonEmpty": true
+                }
+              }
+            },
+            {
+              "kind": "readback",
+              "call": {
+                "op": "GetSubscriptionAttributes",
+                "params": {
+                  "SubscriptionArn": {
+                    "$ref": "subscription.id"
+                  }
+                }
+              },
+              "checks": {
+                "$.Attributes.SubscriptionArn": {
+                  "equals": {
+                    "$ref": "subscription.id"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "GetSubscriptionAttributes",
+          "op": "GetSubscriptionAttributes",
+          "call": {
+            "op": "GetSubscriptionAttributes",
+            "params": {
+              "SubscriptionArn": {
+                "$ref": "subscription.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Attributes.SubscriptionArn": {
+                  "equals": {
+                    "$ref": "subscription.id"
+                  }
+                }
+              }
+            }
+          ],
+          "depends": [
+            "Subscribe"
+          ]
+        },
+        {
+          "name": "SetSubscriptionAttributes",
+          "op": "SetSubscriptionAttributes",
+          "call": {
+            "op": "SetSubscriptionAttributes",
+            "params": {
+              "AttributeName": "FilterPolicy",
+              "AttributeValue": "{\"compat\":[\"scenario\",\"updated\"]}",
+              "SubscriptionArn": {
+                "$ref": "subscription.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "readback",
+              "call": {
+                "op": "GetSubscriptionAttributes",
+                "params": {
+                  "SubscriptionArn": {
+                    "$ref": "subscription.id"
+                  }
+                }
+              },
+              "checks": {
+                "$.Attributes.FilterPolicy": {
+                  "equals": "{\"compat\":[\"scenario\",\"updated\"]}"
+                }
+              }
+            }
+          ],
+          "depends": [
+            "Subscribe"
+          ]
+        },
+        {
+          "name": "GetTopicAttributesAfterCreate",
+          "op": "GetTopicAttributes",
+          "call": {
+            "op": "GetTopicAttributes",
+            "params": {
+              "TopicArn": {
+                "$ref": "topic.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Attributes.DisplayName": {
+                  "equals": "compat scenario topic"
+                },
+                "$.Attributes.TopicArn": {
+                  "equals": {
+                    "$ref": "topic.id"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListSubscriptionsByTopic",
+          "op": "ListSubscriptionsByTopic",
+          "call": {
+            "op": "ListSubscriptionsByTopic",
+            "params": {
+              "TopicArn": {
+                "$ref": "topic.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.Subscriptions",
+              "where": {
+                "$.Protocol": "email",
+                "$.TopicArn": {
+                  "$ref": "topic.id"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListSubscriptions",
+          "op": "ListSubscriptions",
+          "call": {
+            "op": "ListSubscriptions",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "listContains",
+              "itemsPath": "$.Subscriptions",
+              "where": {
+                "$.Protocol": "email",
+                "$.TopicArn": {
+                  "$ref": "topic.id"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unsubscribe",
+          "op": "Unsubscribe",
+          "call": {
+            "op": "Unsubscribe",
+            "params": {
+              "SubscriptionArn": {
+                "$ref": "subscription.id"
+              }
+            }
+          },
+          "assert": [
+            {
+              "kind": "absent",
+              "call": {
+                "op": "GetSubscriptionAttributes",
+                "params": {
+                  "SubscriptionArn": {
+                    "$ref": "subscription.id"
+                  }
+                }
+              },
+              "error": {
+                "shape": "NotFoundException",
+                "code": "NotFound"
+              }
+            }
+          ],
+          "depends": [
+            "Subscribe"
+          ]
+        }
+      ],
+      "teardown": [
+        {
+          "op": "Unsubscribe",
+          "params": {
+            "SubscriptionArn": {
+              "$ref": "subscription.id"
+            }
+          }
+        },
+        {
+          "op": "DeleteTopic",
+          "params": {
+            "TopicArn": {
+              "$ref": "topic.id"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sns-gen-probe",
+      "kind": "probe",
+      "parallel": true,
+      "setup": [],
+      "tests": [
+        {
+          "name": "CheckIfPhoneNumberIsOptedOut",
+          "op": "CheckIfPhoneNumberIsOptedOut",
+          "call": {
+            "op": "CheckIfPhoneNumberIsOptedOut",
+            "params": {
+              "phoneNumber": "+12025550100"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.isOptedOut": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "GetDataProtectionPolicy",
+          "op": "GetDataProtectionPolicy",
+          "call": {
+            "op": "GetDataProtectionPolicy",
+            "params": {
+              "ResourceArn": "arn:aws:sns:us-east-1:123456789012:compat-scenario-nonexistent"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.DataProtectionPolicy": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "GetEndpointAttributes",
+          "op": "GetEndpointAttributes",
+          "call": {
+            "op": "GetEndpointAttributes",
+            "params": {
+              "EndpointArn": "arn:aws:sns:us-east-1:123456789012:endpoint/GCM/compat-scenario-nonexistent/00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Attributes": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "GetPlatformApplicationAttributes",
+          "op": "GetPlatformApplicationAttributes",
+          "call": {
+            "op": "GetPlatformApplicationAttributes",
+            "params": {
+              "PlatformApplicationArn": "arn:aws:sns:us-east-1:123456789012:app/GCM/compat-scenario-nonexistent"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Attributes": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "GetSMSAttributes",
+          "op": "GetSMSAttributes",
+          "call": {
+            "op": "GetSMSAttributes",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.attributes": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "GetSMSSandboxAccountStatus",
+          "op": "GetSMSSandboxAccountStatus",
+          "call": {
+            "op": "GetSMSSandboxAccountStatus",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.IsInSandbox": {
+                  "nonEmpty": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListEndpointsByPlatformApplication",
+          "op": "ListEndpointsByPlatformApplication",
+          "call": {
+            "op": "ListEndpointsByPlatformApplication",
+            "params": {
+              "PlatformApplicationArn": "arn:aws:sns:us-east-1:123456789012:app/GCM/compat-scenario-nonexistent"
+            }
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.Endpoints": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListOriginationNumbers",
+          "op": "ListOriginationNumbers",
+          "call": {
+            "op": "ListOriginationNumbers",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.PhoneNumbers": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListPhoneNumbersOptedOut",
+          "op": "ListPhoneNumbersOptedOut",
+          "call": {
+            "op": "ListPhoneNumbersOptedOut",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.phoneNumbers": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListPlatformApplications",
+          "op": "ListPlatformApplications",
+          "call": {
+            "op": "ListPlatformApplications",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.PlatformApplications": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "ListSMSSandboxPhoneNumbers",
+          "op": "ListSMSSandboxPhoneNumbers",
+          "call": {
+            "op": "ListSMSSandboxPhoneNumbers",
+            "params": {}
+          },
+          "assert": [
+            {
+              "kind": "responseField",
+              "checks": {
+                "$.PhoneNumbers": {
+                  "isList": true
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "teardown": []
+    }
+  ]
+}
