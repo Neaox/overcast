@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/overcast-sh/overcast/internal/protocol"
@@ -549,15 +550,22 @@ func errNoSuchKey(key string) *protocol.AWSError {
 // errInvalidRange is S3's answer to a valid but unsatisfiable Range header.
 // Per AWS's S3 error list
 // (https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html) the
-// code is InvalidRange with HTTP 416. AWS's document also carries
-// RangeRequested and ActualObjectSize members, which the shared
-// protocol.WriteXMLError envelope does not model; the Content-Range: bytes
-// */<size> sent alongside it carries the object's size to the caller.
-func errInvalidRange() *protocol.AWSError {
+// code is InvalidRange with HTTP 416.
+//
+// rangeRequested echoes the caller's Range header verbatim and actualSize is
+// the object's length: AWS names both in the document, and they are what a
+// ranged-download client compares to find its own off-by-one. The response
+// carries no Content-Range — real S3 does not send one on a 416, though RFC
+// 9110 SHOULD. See docs/dev/compatibility/looks-like-a-bug.md for the transcript.
+func errInvalidRange(rangeRequested string, actualSize int64) *protocol.AWSError {
 	return &protocol.AWSError{
 		Code:       "InvalidRange",
 		Message:    "The requested range is not satisfiable",
 		HTTPStatus: http.StatusRequestedRangeNotSatisfiable,
+		XMLDetails: []protocol.XMLDetail{
+			{Name: "RangeRequested", Value: rangeRequested},
+			{Name: "ActualObjectSize", Value: strconv.FormatInt(actualSize, 10)},
+		},
 	}
 }
 

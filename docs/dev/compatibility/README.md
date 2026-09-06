@@ -16,6 +16,7 @@ This directory tracks Overcast service fidelity against AWS documentation. It ex
 - `matrix.yaml` is the global service-level index for priority, claims, progress counts, and next actions.
 - `services/<service>.yaml` is the operation/scenario source of truth for AWS docs links, tests, findings, gaps, and handoff notes.
 - `review-template.yaml` is the template for new service review files.
+- `looks-like-a-bug.md` records counter-intuitive AWS behaviour we replicate on purpose, with the command that confirmed each one and the date.
 
 ## Status Values
 

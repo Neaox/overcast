@@ -152,6 +152,16 @@ comments) so users aren't caught off guard. Never silently return a `200` with w
 behaviour — a `501` that says "not implemented" is always preferable to a response that
 looks right but acts wrong.
 
+**When AWS's answer is the surprising one, record it.** Sometimes matching AWS means
+shipping something that reads as a defect: a header a standard says to send that AWS
+omits, an input AWS accepts that it plainly should reject, an answer every other emulator
+disagrees with. Left unexplained, that gets "fixed" — by a linter, by a review comment, or
+by the next contributor working from the spec instead of from AWS. Add it to
+[docs/dev/compatibility/looks-like-a-bug.md](./docs/dev/compatibility/looks-like-a-bug.md)
+with the command you ran and the date, and cite the page from a comment at the code site.
+Checking real AWS needs the user's explicit approval first; that page's Methodology section
+covers the cheapest way to get an answer worth recording.
+
 ---
 
 ## Service implementation tiers
