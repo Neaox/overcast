@@ -4168,6 +4168,286 @@
     },
     {
       "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-organization",
+      "test": "DescribeOrganization",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-ou",
+      "test": "CreateOrganizationalUnit",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-ou",
+      "test": "DeleteOrganizationalUnit",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-ou",
+      "test": "DescribeOrganizationalUnit",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-ou",
+      "test": "ListOrganizationalUnitsForParent",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-ou",
+      "test": "ListTagsForResource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-ou",
+      "test": "TagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-ou",
+      "test": "UntagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-ou",
+      "test": "UpdateOrganizationalUnit",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-policy",
+      "test": "CreatePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-policy",
+      "test": "DeletePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-policy",
+      "test": "DescribePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-policy",
+      "test": "ListPolicies",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-policy",
+      "test": "ListTagsForResource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-policy",
+      "test": "TagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-policy",
+      "test": "UntagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-policy",
+      "test": "UpdatePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "DescribeAccount",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "DescribeCreateAccountStatus",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "DescribeEffectivePolicy",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "DescribeHandshake",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "DescribeResourcePolicy",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "DescribeResponsibilityTransfer",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "ListAWSServiceAccessForOrganization",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "ListAccounts",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "ListAccountsForParent",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "ListAccountsWithInvalidEffectivePolicy",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "ListChildren",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "ListCreateAccountStatus",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "ListDelegatedAdministrators",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "ListDelegatedServicesForAccount",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "ListEffectivePolicyValidationErrors",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "ListHandshakesForAccount",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "ListHandshakesForOrganization",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "ListInboundResponsibilityTransfers",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "ListOutboundResponsibilityTransfers",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "ListParents",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "ListPoliciesForTarget",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-probe",
+      "test": "ListTargetsForPolicy",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "organizations",
+      "group": "organizations-gen-root",
+      "test": "ListRoots",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
       "service": "pipes",
       "group": "pipes-wiring",
       "test": "CreatePipe",
@@ -5161,6 +5441,161 @@
       "group": "sqs-fifo",
       "test": "SendFifoMessage",
       "op": "SendMessage",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-batch",
+      "test": "ChangeMessageVisibilityBatch",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-batch",
+      "test": "DeleteMessageBatch",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-batch",
+      "test": "ReceiveMessage",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-batch",
+      "test": "SendMessageBatch",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-message",
+      "test": "ChangeMessageVisibility",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-message",
+      "test": "DeleteMessage",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-message",
+      "test": "ReceiveMessage",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-message",
+      "test": "SendMessage",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-probe",
+      "test": "ListMessageMoveTasks",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-queue",
+      "test": "CreateQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-queue",
+      "test": "DeleteQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-queue",
+      "test": "GetQueueAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-queue",
+      "test": "GetQueueUrl",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-queue",
+      "test": "ListDeadLetterSourceQueues",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-queue",
+      "test": "ListQueueTags",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-queue",
+      "test": "ListQueues",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-queue",
+      "test": "PurgeQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-queue",
+      "test": "SendMessageBeforePurge",
+      "op": "SendMessage",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-queue",
+      "test": "SetQueueAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-queue",
+      "test": "StartMessageMoveTask",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-queue",
+      "test": "TagQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-gen-queue",
+      "test": "UntagQueue",
       "status": "pass"
     },
     {
