@@ -10,6 +10,7 @@ import "github.com/overcast-sh/overcast-compat-go-sdk/internal/clients"
 func scenarioGroups(c *clients.Clients) []ServiceGroup {
 	return []ServiceGroup{
 		ScenariosBatch(c),
+		ScenariosElasticLoadBalancing(c),
 		ScenariosOrganizations(c),
 		ScenariosSqs(c),
 	}

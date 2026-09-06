@@ -578,17 +578,18 @@ the call.
 
 Where a derivation is known to break, the interpreter needs a small override
 table of its own, and the plan asks for those to be recorded as follow-ups
-rather than smuggled into the IR. Nothing breaks for `sqs` or `organizations`,
-so nothing is implemented yet:
+rather than smuggled into the IR, each landing with the first scenario that
+needs it. `elastic-load-balancing` is the first, and it landed two of the six
+rows below; the other four are still waiting for a scenario that names one:
 
 | Backend | The override it will need | Status |
 | --- | --- | --- |
-| cli | the `aws` command name is the endpoint prefix except for four services: `elasticloadbalancing` → `elb`, `monitoring` → `cloudwatch`, `email` → `ses`, `states` → `stepfunctions` | not yet implemented — no scenario names one of them |
-| python-sdk | botocore's service name differs from the endpoint prefix for the same four | not yet implemented — same reason |
-| go-sdk | the package for `Cost Explorer` is `costexplorer` (derivable), but `SFN` is `sfn` and `ELB` is `elasticloadbalancing`, neither of which follows from the SDK id | not yet implemented |
+| cli | the `aws` command name is the endpoint prefix except for four services: `elasticloadbalancing` → `elb`, `monitoring` → `cloudwatch`, `email` → `ses`, `states` → `stepfunctions` | **landed** with `elastic-load-balancing`, the first scenario to name one — `awsCommand` in `compat/suites/cli/internal/scenario/executor.go`. All four entries, because they are one documented set |
+| python-sdk | botocore's service name differs from the endpoint prefix for the same four | **landed** with the same recipe — `botocore_service` in `compat/suites/python-sdk/lib/scenario/executor.py`. `boto3.client("elasticloadbalancing")` raises `UnknownServiceError`, and the suite's own corpus test resolves through the table so it stays right as the corpus grows |
+| go-sdk | the package for `Cost Explorer` is `costexplorer` (derivable), but `SFN` is `sfn`, which does not follow from the SDK id. Elastic Load Balancing does not break it after all: its SDK id is `Elastic Load Balancing`, not `ELB`, so the rule already gives `elasticloadbalancing` | not yet implemented — nothing in scope needs it |
 | java-sdk | the SDK's `customization.config` may rename a service or a shape outright, which no rule over the SDK id or the shape name reproduces | not yet implemented — nothing in scope is renamed, and the suite's `mvn package` is what would say so |
 | dotnet-sdk | the namespace and client class are `Amazon.<sdkId with spaces removed>`/`Amazon<sdkId with spaces removed>Client`, which is right for SQS and Organizations, but the .NET SDK keeps several services' older long names: `SNS` is `SimpleNotificationService`, `STS` is `SecurityToken`, `IAM` is `IdentityManagement`, `SSM` is `SimpleSystemsManagement`, `KMS` is `KeyManagementService` and `DynamoDB` is `DynamoDBv2` | not yet implemented — no scenario names one of them |
-| rust-sdk | the crate is the SDK id's letters, not its word boundaries — `DynamoDB` is `aws_sdk_dynamodb` and `Cost Explorer` is `aws_sdk_costexplorer`, both derivable — but `SFN` and `ELB` break exactly as they do for go-sdk | not yet implemented — no scenario names one |
+| rust-sdk | the crate is the SDK id's letters, not its word boundaries — `DynamoDB` is `aws_sdk_dynamodb` and `Cost Explorer` is `aws_sdk_costexplorer`, both derivable — but `SFN` breaks exactly as it does for go-sdk. Elastic Load Balancing does not: `aws_sdk_elasticloadbalancing` is the crate | not yet implemented — no scenario names one |
 
 Each table is added with the first scenario that needs it, in the interpreter
 that needs it, and never by adding a per-SDK name to the IR: carrying `sdkId`,

@@ -275,7 +275,7 @@ func (e *execution) callRaw(ctx context.Context, c *Call, step string) (obs obse
 	}
 	obs.params = sent
 
-	body, runErr := e.b.run.run(ctx, e.tc, []string{e.file.Client.EndpointPrefix, kebabOp(c.Op), "--cli-input-json", sent})
+	body, runErr := e.b.run.run(ctx, e.tc, []string{awsCommand(e.file.Client.EndpointPrefix), kebabOp(c.Op), "--cli-input-json", sent})
 	if runErr != nil {
 		return obs, runErr, nil
 	}
@@ -480,6 +480,32 @@ func acceptedCodes(want *ErrorClause) string {
 		return fmt.Sprintf("error %q", want.Shape)
 	}
 	return fmt.Sprintf("error %q or %q", want.Shape, want.Code)
+}
+
+// awsCommandOverrides is the whole of compat/model/README.md § Naming's cli
+// row: the `aws` command is the scenario's endpoint prefix except for four
+// services, where the CLI keeps a shorter historical name. It is a table
+// because nothing about "elasticloadbalancing" implies "elb" — the CLI's own
+// command names come from botocore's service directory, not from the endpoint,
+// and for these four the two disagree.
+//
+// The plan (§7.3) asked for this to land with the first scenario that names one
+// of the four rather than up front, which is `elastic-load-balancing`; the other
+// three are here because they are one documented set and a table with one entry
+// invites the next author to add theirs somewhere else.
+var awsCommandOverrides = map[string]string{
+	"elasticloadbalancing": "elb",
+	"monitoring":           "cloudwatch",
+	"email":                "ses",
+	"states":               "stepfunctions",
+}
+
+// awsCommand is the `aws` subcommand for a scenario's service.
+func awsCommand(endpointPrefix string) string {
+	if name, ok := awsCommandOverrides[endpointPrefix]; ok {
+		return name
+	}
+	return endpointPrefix
 }
 
 // kebabOp derives the `aws` subcommand from an operation name.
