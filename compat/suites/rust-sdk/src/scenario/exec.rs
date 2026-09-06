@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use serde_json::Value as Json;
 
-use super::capture::{Outcome, SdkFailure};
+use super::capture::{Document, Outcome, SdkFailure, Wire};
 use super::errors;
 use super::failure::{self, Failure};
 use super::json;
@@ -111,9 +111,9 @@ struct Execution<'a> {
 struct Observed {
     op: &'static str,
     params: String,
-    /// The response document. `None` when no call succeeded — the primary call
-    /// of a test that expects an error.
-    body: Option<Json>,
+    /// The response document, with the wire it came off. `None` when no call
+    /// succeeded — the primary call of a test that expects an error.
+    body: Option<Document>,
     error: Option<SdkFailure>,
 }
 
@@ -259,7 +259,10 @@ impl Execution<'_> {
     /// unresolvable reference.
     fn apply_exports(&self, call: &Call, observed: &Observed, step: &str) -> Result<(), Failure> {
         let bag = self.bag();
-        let body = observed.body.as_ref().unwrap_or(&Json::Null);
+        let body = observed
+            .body
+            .as_ref()
+            .map_or(&Json::Null, |document| &document.value);
         let mut exports: Vec<&(&str, &str)> = call.export.iter().collect();
         exports.sort_by_key(|(path, _)| *path);
         for (path, response_path) in exports {
@@ -399,7 +402,7 @@ impl Execution<'_> {
             }
             None => primary,
         };
-        let Some(body) = observed.body.as_ref() else {
+        let Some(document) = observed.body.as_ref() else {
             return Err(self.fail(
                 observed,
                 step,
@@ -410,7 +413,7 @@ impl Execution<'_> {
             ));
         };
 
-        let resolved = match json::resolve(body, items_path) {
+        let resolved = match json::resolve(&document.value, items_path) {
             Ok(resolved) => resolved,
             Err(err) => {
                 return Err(self.fail(
@@ -440,7 +443,8 @@ impl Execution<'_> {
             }
         };
 
-        let (matched, wanted) = self.match_item(observed, &items, criteria, kind, step)?;
+        let (matched, wanted) =
+            self.match_item(observed, &items, criteria, kind, step, document.wire)?;
         if wants_member {
             if matched.is_none() {
                 return Err(self.fail(
@@ -479,6 +483,7 @@ impl Execution<'_> {
 
     /// The index of the first item satisfying every criterion, together with the
     /// evaluated expected values so a failure message can print them.
+    #[allow(clippy::too_many_arguments)]
     fn match_item(
         &self,
         observed: &Observed,
@@ -486,6 +491,7 @@ impl Execution<'_> {
         criteria: &[WhereEntry],
         kind: &str,
         step: &str,
+        wire: Wire,
     ) -> Result<(Option<usize>, Vec<Json>), Failure> {
         let bag = self.bag();
         let mut wanted = Vec::with_capacity(criteria.len());
@@ -523,7 +529,7 @@ impl Execution<'_> {
                         ))
                     }
                 };
-                if !got.is_some_and(|got| json::equal(got, want)) {
+                if !got.is_some_and(|got| json::equal(got, want, wire)) {
                     all = false;
                     break;
                 }
@@ -581,7 +587,7 @@ impl Execution<'_> {
         kind: &str,
         step: &str,
     ) -> Result<(), Failure> {
-        let Some(body) = observed.body.as_ref() else {
+        let Some(document) = observed.body.as_ref() else {
             return Err(self.fail(
                 observed,
                 step,
@@ -592,7 +598,7 @@ impl Execution<'_> {
             ));
         };
         for check in checks {
-            self.check(observed, body, check, kind, step)?;
+            self.check(observed, document, check, kind, step)?;
         }
         Ok(())
     }
@@ -601,13 +607,13 @@ impl Execution<'_> {
     fn check(
         &self,
         observed: &Observed,
-        body: &Json,
+        document: &Document,
         check: &Check,
         kind: &str,
         step: &str,
     ) -> Result<(), Failure> {
         let full_kind = format!("{kind} {}", check.kind.as_str());
-        let resolved = match json::resolve(body, check.path) {
+        let resolved = match json::resolve(&document.value, check.path) {
             Ok(resolved) => resolved,
             Err(err) => {
                 return Err(self.fail(
@@ -668,7 +674,7 @@ impl Execution<'_> {
                     }
                     None => Json::Null,
                 };
-                if !resolved.is_some_and(|got| json::equal(got, &want)) {
+                if !resolved.is_some_and(|got| json::equal(got, &want, document.wire)) {
                     return Err(mismatch(&json::render(&want)));
                 }
             }

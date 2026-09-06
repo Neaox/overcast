@@ -44,12 +44,19 @@
 //! trap the plan names for .NET, and here it has no offline answer.
 //!
 //! So the response document is the **response body as it came off the wire**,
-//! captured by an interceptor ([`capture`]). The consequences are worth being
+//! captured by an interceptor ([`capture`]) and converted from XML by [`xml`]
+//! where the wire is AWS Query or REST XML. The consequences are worth being
 //! explicit about:
 //!
 //! - The document's member names are the modeled names, exactly as the IR's
 //!   paths spell them, so nothing has to be bridged at path resolution — the
-//!   two AWS JSON protocols in scope serialize modeled names verbatim.
+//!   two AWS JSON protocols serialize modeled names verbatim, and an XML
+//!   element is named for its member.
+//! - An XML body's scalars are text, because the wire has no types and this
+//!   crate has no model at run time to supply them. `equals` against an XML
+//!   document therefore compares the literal in the wire's own spelling, so
+//!   `equals: 30` holds against `<Interval>30</Interval>` exactly as it holds
+//!   against the typed 30 every other backend's SDK hands it.
 //! - The SDK still deserializes the response on its own path: a body it cannot
 //!   parse fails the call, and the test fails with it. What is not asserted on
 //!   is the SDK's *rendering* of the values, only the service's.
@@ -63,6 +70,7 @@ mod exec;
 mod failure;
 mod json;
 mod value;
+mod xml;
 
 #[cfg(test)]
 mod errorfixtures;

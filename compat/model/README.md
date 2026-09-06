@@ -368,6 +368,28 @@ an SDK's object model is absence, not a value. Absent and `null` are different
 answers from the service and the IR keeps them apart: `missing` holds only for
 the first, and `nonEmpty` fails for both.
 
+**The document is protocol-independent; where it comes from is not.** A path
+means the same thing whether the service answers AWS JSON, REST JSON, AWS Query
+or REST XML, and every backend must resolve it to the same value — but each
+builds the document from what it has:
+
+| Backend | The document |
+| --- | --- |
+| python-sdk, node-js-sdk, cli | the parsed response the SDK or `aws --output json` already holds |
+| java-sdk, dotnet-sdk | the SDK's response object, walked by accessor |
+| go-sdk | the SDK's output struct, reflected over — `internal/scenario/document.go` |
+| rust-sdk | the **raw response body**, kept by an interceptor: `aws-sdk-*` output types carry no `serde` derive and Rust has no reflection. JSON is itself; XML goes through `src/scenario/xml.rs`, which drops the root, unwraps the `<Op>Response`/`<Op>Result` envelope, flattens `<member>` lists and folds `<entry>` maps — to the same member names, because an element is named for its member |
+
+One difference follows from that last row and is worth stating rather than
+discovering. **The XML wire carries no scalar types**: `<Interval>30</Interval>`
+and `<Enabled>true</Enabled>` are text. Every model-backed backend types them
+from the model, so a recipe writes the modeled type — `equals: 30`,
+`equals: true` — and rust-sdk compares its text against that literal's own
+spelling to reach the same answer. It stays an equality: `"30"` is 30 and
+`"30x"` is nothing. What a scenario may **not** do for a Query or REST XML
+service is depend on the difference between `30` and `"30"`, because rust-sdk
+is the one backend that cannot see it.
+
 ### Values
 
 A value is JSON. An object with exactly one `$`-prefixed key is an

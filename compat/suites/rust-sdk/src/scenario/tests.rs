@@ -5,7 +5,7 @@
 
 use serde_json::{json, Value as Json};
 
-use super::capture::{Outcome, SdkFailure};
+use super::capture::{Document, Outcome, SdkFailure, Wire};
 use super::json as jsonpath;
 use super::value::Bag;
 use super::*;
@@ -34,7 +34,7 @@ fn ok_call(op: &'static str, params: Value, body: Json) -> Call {
             let body = body.clone();
             Box::pin(async move {
                 Ok(Outcome {
-                    body: Some(body),
+                    body: Some(Document::json(body)),
                     error: None,
                 })
             })
@@ -152,11 +152,54 @@ fn a_path_resolves_segment_by_segment() {
 
 #[test]
 fn equality_is_by_json_type_with_no_coercion() {
-    assert!(jsonpath::equal(&json!(30), &json!(30.0)));
-    assert!(!jsonpath::equal(&json!(30), &json!("30")));
-    assert!(!jsonpath::equal(&json!(true), &json!(1)));
-    assert!(jsonpath::equal(&json!({"a": [1]}), &json!({"a": [1]})));
-    assert!(!jsonpath::equal(&json!({"a": 1}), &json!({"a": 1, "b": 2})));
+    assert!(jsonpath::equal(&json!(30), &json!(30.0), Wire::Json));
+    assert!(!jsonpath::equal(&json!(30), &json!("30"), Wire::Json));
+    assert!(!jsonpath::equal(&json!(true), &json!(1), Wire::Json));
+    assert!(jsonpath::equal(
+        &json!({"a": [1]}),
+        &json!({"a": [1]}),
+        Wire::Json
+    ));
+    assert!(!jsonpath::equal(
+        &json!({"a": 1}),
+        &json!({"a": 1, "b": 2}),
+        Wire::Json
+    ));
+}
+
+/// Off an XML wire the same comparison is against the literal's own spelling,
+/// because the wire spelled every scalar as text and nothing here holds the
+/// model that would type it. It is still an equality — `"30x"` is not 30 — and
+/// the last pair is the empty element, which says a member arrived without
+/// content and not which kind of emptiness that is.
+#[test]
+fn equality_off_an_xml_wire_is_against_the_literals_spelling() {
+    for (got, want) in [
+        (json!("30"), json!(30)),
+        (json!("30"), json!(30.0)),
+        (json!("true"), json!(true)),
+        (json!("false"), json!(false)),
+        (json!("TCP:80"), json!("TCP:80")),
+        (json!([]), json!("")),
+    ] {
+        assert!(
+            jsonpath::equal(&got, &want, Wire::Xml),
+            "{got} should equal {want} off an XML wire"
+        );
+    }
+    for (got, want) in [
+        (json!("30x"), json!(30)),
+        (json!("30"), json!(31)),
+        (json!("true"), json!(false)),
+        (json!("yes"), json!(true)),
+        (json!("1"), json!(true)),
+        (json!([]), json!("x")),
+    ] {
+        assert!(
+            !jsonpath::equal(&got, &want, Wire::Xml),
+            "{got} should not equal {want} off an XML wire"
+        );
+    }
 }
 
 #[test]
@@ -577,7 +620,7 @@ async fn setup_stops_at_the_first_failure_and_reports_the_six_fields() {
                     invoke: invoker(|_b| {
                         Box::pin(async {
                             Ok(Outcome {
-                                body: Some(json!({"QueueUrl": "http://q/dlq"})),
+                                body: Some(Document::json(json!({"QueueUrl": "http://q/dlq"}))),
                                 error: None,
                             })
                         })
@@ -622,7 +665,7 @@ async fn teardown_wraps_each_step_and_never_fails_the_group() {
                     invoke: invoker(|_b| {
                         Box::pin(async {
                             Ok(Outcome {
-                                body: Some(json!({"Ok": true})),
+                                body: Some(Document::json(json!({"Ok": true}))),
                                 error: None,
                             })
                         })
@@ -664,7 +707,9 @@ async fn a_readbacks_exports_land_only_once_the_clause_holds() {
                         invoke: invoker(|_b| {
                             Box::pin(async {
                                 Ok(Outcome {
-                                    body: Some(json!({"Attributes": {"QueueArn": "arn:stale"}})),
+                                    body: Some(Document::json(
+                                        json!({"Attributes": {"QueueArn": "arn:stale"}}),
+                                    )),
                                     error: None,
                                 })
                             })
@@ -697,7 +742,7 @@ async fn an_export_that_does_not_resolve_names_the_path() {
                 invoke: invoker(|_b| {
                     Box::pin(async {
                         Ok(Outcome {
-                            body: Some(json!({})),
+                            body: Some(Document::json(json!({}))),
                             error: None,
                         })
                     })
@@ -743,4 +788,213 @@ async fn a_binding_failure_abandons_the_call_before_anything_is_sent() {
         message.contains("params at QueueName: expected a value the input member accepts"),
         "{message}"
     );
+}
+
+// ── The XML wire ────────────────────────────────────────────────────────────
+//
+// A Query or REST XML response is a document too (`super::xml`), and the one
+// thing it cannot carry is its scalars' types. These cases are the ELB
+// scenario's own assertions — `equals: 30`, `equals: true`, a `where` naming a
+// port — run over a real ELB body, because that scenario is the first in the
+// corpus whose service answers XML and every one of them would fail on a
+// string-versus-number comparison.
+
+/// A real `DescribeLoadBalancers` response with a second listener, so a
+/// `listContains` has something to pick between.
+const ELB_DESCRIBE: &str = r#"<DescribeLoadBalancersResponse xmlns="http://elasticloadbalancing.amazonaws.com/doc/2012-06-01/">
+  <DescribeLoadBalancersResult>
+    <LoadBalancerDescriptions>
+      <member>
+        <LoadBalancerName>run7-lb</LoadBalancerName>
+        <HealthCheck><Interval>30</Interval><Target>TCP:80</Target></HealthCheck>
+        <ListenerDescriptions>
+          <member><Listener><Protocol>HTTP</Protocol><LoadBalancerPort>80</LoadBalancerPort></Listener></member>
+          <member><Listener><Protocol>TCP</Protocol><LoadBalancerPort>8080</LoadBalancerPort></Listener></member>
+        </ListenerDescriptions>
+      </member>
+    </LoadBalancerDescriptions>
+  </DescribeLoadBalancersResult>
+  <ResponseMetadata><RequestId>83c88b9d</RequestId></ResponseMetadata>
+</DescribeLoadBalancersResponse>"#;
+
+/// A real `DescribeLoadBalancerAttributes` response, for the boolean.
+const ELB_ATTRIBUTES: &str = r#"<DescribeLoadBalancerAttributesResponse xmlns="http://elasticloadbalancing.amazonaws.com/doc/2012-06-01/">
+  <DescribeLoadBalancerAttributesResult>
+    <LoadBalancerAttributes>
+      <CrossZoneLoadBalancing><Enabled>true</Enabled></CrossZoneLoadBalancing>
+      <ConnectionSettings><IdleTimeout>60</IdleTimeout></ConnectionSettings>
+      <AccessLog><Enabled>false</Enabled></AccessLog>
+    </LoadBalancerAttributes>
+  </DescribeLoadBalancerAttributesResult>
+  <ResponseMetadata><RequestId>83c88b9d</RequestId></ResponseMetadata>
+</DescribeLoadBalancerAttributesResponse>"#;
+
+/// A call that succeeds with a canned XML body, converted the way the
+/// interceptor converts a live one.
+fn xml_call(op: &'static str, body: &'static str) -> Call {
+    Call {
+        op,
+        params: map(vec![]),
+        export: Vec::new(),
+        invoke: invoker(move |_b| {
+            Box::pin(async move {
+                Ok(Outcome {
+                    body: Some(Document {
+                        value: super::xml::to_document(body.as_bytes())
+                            .expect("the canned body converts"),
+                        wire: Wire::Xml,
+                    }),
+                    error: None,
+                })
+            })
+        }),
+    }
+}
+
+const ELB_GROUP: Group = Group {
+    name: "elastic-load-balancing-gen-loadbalancer",
+    file: "compat/model/scenarios/elastic-load-balancing.json",
+};
+
+/// `ConfigureHealthCheck`'s assertion, as the scenario file writes it. The wire
+/// says `<Interval>30</Interval>`; every other backend's SDK types it from the
+/// model and compares 30 to 30, and this suite compares "30" to the literal's
+/// own spelling to reach the same answer.
+#[tokio::test]
+async fn equals_a_number_literal_holds_against_an_xml_scalar() {
+    let ctx = ctx();
+    ELB_GROUP
+        .run_test(
+            &ctx,
+            "ConfigureHealthCheck",
+            Test {
+                call: xml_call("DescribeLoadBalancers", ELB_DESCRIBE),
+                assert: vec![response_field(vec![equals(
+                    "$.LoadBalancerDescriptions[0].HealthCheck.Interval",
+                    lit(json!(30)),
+                )])],
+            },
+        )
+        .await
+        .expect("equals 30 must hold against <Interval>30</Interval>");
+}
+
+/// `ModifyLoadBalancerAttributes`' assertion. Same rule for a boolean.
+#[tokio::test]
+async fn equals_a_boolean_literal_holds_against_an_xml_scalar() {
+    let ctx = ctx();
+    ELB_GROUP
+        .run_test(
+            &ctx,
+            "ModifyLoadBalancerAttributes",
+            Test {
+                call: xml_call("DescribeLoadBalancerAttributes", ELB_ATTRIBUTES),
+                assert: vec![response_field(vec![
+                    equals(
+                        "$.LoadBalancerAttributes.CrossZoneLoadBalancing.Enabled",
+                        lit(json!(true)),
+                    ),
+                    equals(
+                        "$.LoadBalancerAttributes.AccessLog.Enabled",
+                        lit(json!(false)),
+                    ),
+                ])],
+            },
+        )
+        .await
+        .expect("equals true must hold against <Enabled>true</Enabled>");
+}
+
+/// It is still an equality, not a coercion in both directions: a value that is
+/// not the number fails, and text that merely starts with it fails too.
+#[tokio::test]
+async fn an_xml_scalar_that_is_not_the_literal_still_fails() {
+    let ctx = ctx();
+    let err = ELB_GROUP
+        .run_test(
+            &ctx,
+            "ConfigureHealthCheck",
+            Test {
+                call: xml_call("DescribeLoadBalancers", ELB_DESCRIBE),
+                assert: vec![response_field(vec![equals(
+                    "$.LoadBalancerDescriptions[0].HealthCheck.Interval",
+                    lit(json!(31)),
+                )])],
+            },
+        )
+        .await
+        .expect_err("30 is not 31");
+    assert!(err.contains(r#"expected 31, actual "30""#), "{err}");
+
+    let err = ELB_GROUP
+        .run_test(
+            &ctx,
+            "ConfigureHealthCheck",
+            Test {
+                call: xml_call("DescribeLoadBalancers", ELB_DESCRIBE),
+                assert: vec![response_field(vec![equals(
+                    "$.LoadBalancerDescriptions[0].HealthCheck.Target",
+                    lit(json!(80)),
+                )])],
+            },
+        )
+        .await
+        .expect_err("TCP:80 is not the number 80");
+    assert!(err.contains(r#"expected 80, actual "TCP:80""#), "{err}");
+}
+
+/// `CreateLoadBalancerListeners`' assertion: a `where` naming a port, matched
+/// over a `<member>` list the conversion flattened.
+#[tokio::test]
+async fn a_where_clause_matches_a_number_against_an_xml_scalar() {
+    let ctx = ctx();
+    ELB_GROUP
+        .run_test(
+            &ctx,
+            "CreateLoadBalancerListeners",
+            Test {
+                call: xml_call("DescribeLoadBalancers", ELB_DESCRIBE),
+                assert: vec![
+                    list_contains(
+                        None,
+                        "$.LoadBalancerDescriptions[0].ListenerDescriptions",
+                        vec![where_entry("$.Listener.LoadBalancerPort", lit(json!(8080)))],
+                    ),
+                    absent_from_list(
+                        None,
+                        "$.LoadBalancerDescriptions[0].ListenerDescriptions",
+                        vec![where_entry("$.Listener.LoadBalancerPort", lit(json!(9090)))],
+                    ),
+                ],
+            },
+        )
+        .await
+        .expect("the 8080 listener is there and the 9090 one is not");
+}
+
+/// The leniency is the XML wire's and only the XML wire's. A JSON body states
+/// its own types, so the IR's rule stands there unchanged: `"30"` never equals
+/// `30`.
+#[tokio::test]
+async fn a_json_document_still_compares_in_the_json_type_system() {
+    let ctx = ctx();
+    let err = GROUP
+        .run_test(
+            &ctx,
+            "GetQueueAttributes",
+            Test {
+                call: ok_call(
+                    "GetQueueAttributes",
+                    map(vec![]),
+                    json!({"Attributes": {"VisibilityTimeout": "30"}}),
+                ),
+                assert: vec![response_field(vec![equals(
+                    "$.Attributes.VisibilityTimeout",
+                    lit(json!(30)),
+                )])],
+            },
+        )
+        .await
+        .expect_err("a JSON string is not a JSON number");
+    assert!(err.contains(r#"expected 30, actual "30""#), "{err}");
 }

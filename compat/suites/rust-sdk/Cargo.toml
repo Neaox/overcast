@@ -28,3 +28,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "fs", "io-util", "io-std"] }
 flate2 = "1"
 regex = "1"
+# The tokenizer aws-smithy-xml is built on, and so the reader the AWS SDK
+# itself parsed the Query/REST XML response with: src/scenario/xml.rs turns
+# that body into the IR's document form.
+xmlparser = "0.13"

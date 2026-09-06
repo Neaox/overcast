@@ -19,6 +19,11 @@
 //! | the raw response body | the same body, kept by this suite's own interceptor as the SDK deserializes it (`read_after_deserialization`, for the reason [`super::capture`] gives). It is the carrier the shared fixtures exercise, and it is what makes `bodyType` observable even where the SDK folds two codes into one |
 //! | `x-amzn-query-error` | the header an `awsQueryCompatible` service sends, as `<code>;<Sender\|Receiver>`, read off the raw response an `SdkError` carries |
 //!
+//! An AWS Query error body reaches that middle row as a document like any
+//! other: `<ErrorResponse><Error><Code>` converts (via [`super::xml`]) to a
+//! nested `Error.Code`, which [`body_code`] already read — what it could not do
+//! before #1878 was see it, because an XML body parsed as JSON is `Json::Null`.
+//!
 //! What this suite does **not** observe is the `exceptionName` carrier. Rust
 //! models a service's errors as one enum per operation, and a modeled variant's
 //! name is reachable only through `Debug`, which is a rendering rather than a
