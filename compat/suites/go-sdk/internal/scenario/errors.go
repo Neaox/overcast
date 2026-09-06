@@ -10,6 +10,14 @@ import (
 	"github.com/overcast-sh/overcast-compat-go-sdk/internal/harness"
 )
 
+// This file's counterpart is the error-matching section of
+// compat/suites/cli/internal/scenario/executor.go (matchesError, errorCodes,
+// errorCodeSpellings) rather than a same-named file: the CLI suite has no
+// separate errors.go because it reads codes out of stderr instead of a typed
+// error chain. The two apply the same equality rule (below) over their own
+// backend's error surfaces and are not byte-identical, but a change to the
+// rule here usually needs a matching change there — change both or neither.
+
 // Error matching (compat/model/README.md § Errors).
 //
 // A clause carries both the modeled shape and the wire code, because SDKs
@@ -117,9 +125,12 @@ func errorCodeSpellings(code string) []string {
 // either way.
 //
 // Only a type from a generated SDK package counts. smithy-go's own
-// *smithy.GenericAPIError and *smithy.OperationError, and this package's
-// wrappers, are named after what they are rather than after a modeled shape,
-// and one of them called "OperationError" must never satisfy a clause.
+// *smithy.GenericAPIError is named after what it is rather than after a
+// modeled shape, and isModeledErrorType's switch below excludes it by name.
+// *smithy.OperationError never reaches that switch at all: it has no
+// ErrorCode/ErrorMessage/ErrorFault, so it fails isModeledErrorType's own
+// smithy.APIError assertion before the switch is reached, and "OperationError"
+// can never satisfy a clause either way.
 func modeledTypeName(err error) string {
 	t := reflect.TypeOf(err)
 	for t != nil && t.Kind() == reflect.Pointer {
@@ -136,8 +147,8 @@ func modeledTypeName(err error) string {
 
 // isModeledErrorType reports whether an error is one an SDK minted for a
 // modeled error shape: it implements smithy.APIError in its own right (not
-// through something it wraps) and is not one of smithy-go's own catch-all
-// error types.
+// through something it wraps) and is not smithy-go's own catch-all
+// *smithy.GenericAPIError.
 func isModeledErrorType(err error) bool {
 	api, ok := err.(smithy.APIError)
 	if !ok {

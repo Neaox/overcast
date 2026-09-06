@@ -6,6 +6,12 @@ import (
 	"unicode/utf8"
 )
 
+// This file's counterpart is
+// compat/suites/go-sdk/internal/scenario/failure.go: the two build the same
+// six-field failure message (below) for their own backend and are not
+// byte-identical, but a change to the message shape here usually needs a
+// matching change there — change both or neither.
+
 // Debuggability is the interpreter's whole cost, and it is paid here: one
 // helper builds every failure message and every assertion uses it, so a
 // generated failure carries as much as a hand-written one would.
