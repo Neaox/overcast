@@ -26,10 +26,12 @@ import (
 // operation, returning AWS's MalformedPolicyDocument fault when it is one AWS
 // would refuse.
 //
-// An absent document is left to the operation's own required-parameter
-// handling: AWS reports a missing or empty one as a ValidationError against
-// the member's minimum length, not as a malformed document, and modelling that
-// is a separate concern from parsing what was supplied.
+// An absent document is not checked here. AWS reports a missing or empty one
+// as a ValidationError against the member's minimum length, not as a
+// malformed document; of the seven writers only CreatePolicyVersion enforces
+// the parameter's presence today, and the others still store an empty
+// document (#1850). This function's contract is narrower on purpose: it
+// judges what was supplied.
 func checkPolicyDocument(document string) *protocol.AWSError {
 	if strings.TrimSpace(document) == "" {
 		return nil

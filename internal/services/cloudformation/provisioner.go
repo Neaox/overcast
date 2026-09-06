@@ -5475,11 +5475,17 @@ func (h *iamRoleHandler) Create(ctx context.Context, router http.Handler, _ *con
 	if roleName == "" {
 		roleName = rCtx.generatedNameWithin(maxNameLenIAM)
 	}
-	assumePolicy := "{}"
-	if ap, ok := props["AssumeRolePolicyDocument"]; ok {
-		b, _ := json.Marshal(ap)
-		assumePolicy = string(b)
+	// Required by CloudFormation's AWS::IAM::Role, and refused by IAM when
+	// missing; the old "{}" default only ever produced a role whose trust policy
+	// AWS would not have accepted, and since #1717 IAM refuses it too. Failing
+	// here names the property instead of surfacing a MalformedPolicyDocument
+	// about a document the template never wrote. A string form is passed
+	// through: the property is CloudFormation's `Json` type, which allows one.
+	ap, ok := props["AssumeRolePolicyDocument"]
+	if !ok {
+		return "", nil, fmt.Errorf("Role: AssumeRolePolicyDocument is required")
 	}
+	assumePolicy := string(policyDocumentJSON(ap))
 
 	params := map[string]string{
 		"Action":                   "CreateRole",

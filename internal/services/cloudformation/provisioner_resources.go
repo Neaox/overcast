@@ -19,14 +19,30 @@ import (
 
 type iamPolicyHandler struct{}
 
+// policyDocumentJSON renders a CloudFormation `Json`-typed policy property as
+// the document string the IAM API takes.
+//
+// CloudFormation accepts the property as a JSON object *or* as a string that
+// already holds JSON, and templates use both. Reading only the object form
+// turned a string into `null` — silently, while IAM stored documents unparsed,
+// and as a hard MalformedPolicyDocument failure once it started checking them
+// (#1717). A string is passed through untouched so IAM sees exactly what the
+// template author wrote; anything else is marshalled as before.
+func policyDocumentJSON(v any) []byte {
+	if s, ok := v.(string); ok {
+		return []byte(s)
+	}
+	b, _ := json.Marshal(v)
+	return b
+}
+
 func (h *iamPolicyHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	policyName, _ := props["PolicyName"].(string)
 	if policyName == "" {
 		policyName = rCtx.generatedNameWithin(maxNameLenIAMPolicy)
 	}
 
-	policyDoc, _ := props["PolicyDocument"].(map[string]any)
-	policyJSON, _ := json.Marshal(policyDoc)
+	policyJSON := policyDocumentJSON(props["PolicyDocument"])
 
 	// Write the document onto every principal the properties name. Update and
 	// Delete already handled all three principal kinds; Create used to stop at
@@ -141,8 +157,7 @@ func (h *iamPolicyHandler) Update(ctx context.Context, router http.Handler, _ *c
 		return "", nil, errReplacementRequired
 	}
 
-	policyDoc, _ := props["PolicyDocument"].(map[string]any)
-	policyJSON, _ := json.Marshal(policyDoc)
+	policyJSON := policyDocumentJSON(props["PolicyDocument"])
 
 	if roles, ok := props["Roles"].([]any); ok {
 		for _, r := range roles {
@@ -216,8 +231,7 @@ func (h *iamManagedPolicyHandler) Create(ctx context.Context, router http.Handle
 	if policyName == "" {
 		policyName = rCtx.generatedNameWithin(maxNameLenIAMPolicy)
 	}
-	policyDoc, _ := props["PolicyDocument"].(map[string]any)
-	policyJSON, _ := json.Marshal(policyDoc)
+	policyJSON := policyDocumentJSON(props["PolicyDocument"])
 
 	path := "/"
 	if v, _ := props["Path"].(string); v != "" {
@@ -337,10 +351,7 @@ func (h *iamManagedPolicyHandler) Update(ctx context.Context, router http.Handle
 	// The document updates in place under the same ARN, as AWS's provider
 	// does: a new default policy version.
 	if iamJSONPropertyChanged(props, oldProps, "PolicyDocument") {
-		policyJSON, err := json.Marshal(props["PolicyDocument"])
-		if err != nil {
-			return "", nil, failUpdate(fmt.Errorf("marshal PolicyDocument: %w", err))
-		}
+		policyJSON := policyDocumentJSON(props["PolicyDocument"])
 		params := map[string]string{
 			"PolicyArn":      physicalID,
 			"PolicyDocument": string(policyJSON),
@@ -1832,8 +1843,7 @@ func (h *s3BucketPolicyHandler) Create(ctx context.Context, router http.Handler,
 		return "", nil, fmt.Errorf("BucketPolicy: Bucket is required")
 	}
 
-	policyDoc, _ := props["PolicyDocument"].(map[string]any)
-	policyJSON, _ := json.Marshal(policyDoc)
+	policyJSON := policyDocumentJSON(props["PolicyDocument"])
 
 	path := "/" + bucket + "?policy"
 	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, path, "application/json", policyJSON)
@@ -1856,8 +1866,7 @@ func (h *s3BucketPolicyHandler) Update(ctx context.Context, router http.Handler,
 		return "", nil, errReplacementRequired
 	}
 
-	policyDoc, _ := props["PolicyDocument"].(map[string]any)
-	policyJSON, _ := json.Marshal(policyDoc)
+	policyJSON := policyDocumentJSON(props["PolicyDocument"])
 	path := "/" + physicalID + "?policy"
 	if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, path, "application/json", policyJSON); err != nil {
 		return "", nil, fmt.Errorf("PutBucketPolicy: %w", err)

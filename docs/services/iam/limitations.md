@@ -56,8 +56,9 @@ document can still be nonsense in ways AWS would catch:
   refuses both, this does not
 - a missing `Resource` where AWS requires one
 - the 6,144-character document size limit
-- an omitted or empty document, which each operation still handles as a
-  missing parameter rather than as a malformed one
+- an omitted or empty document. AWS answers a `ValidationError` on the
+  parameter's minimum length; here only `CreatePolicyVersion` requires the
+  parameter and the other writers still store an empty document
 
 ## What it will not guess
 

@@ -46,7 +46,7 @@ func createRole(t *testing.T, srv *helpers.TestServer, name string) {
 	t.Helper()
 	resp := iamCall(t, srv, "CreateRole", url.Values{
 		"RoleName":                 {name},
-		"AssumeRolePolicyDocument": {`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}`},
+		"AssumeRolePolicyDocument": {validAssumePolicy},
 	})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
@@ -487,7 +487,7 @@ func TestCreateRole_success(t *testing.T) {
 	// When: CreateRole is called
 	resp := iamCall(t, srv, "CreateRole", url.Values{
 		"RoleName":                 {"test-role"},
-		"AssumeRolePolicyDocument": {`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}`},
+		"AssumeRolePolicyDocument": {validAssumePolicy},
 	})
 	defer resp.Body.Close()
 

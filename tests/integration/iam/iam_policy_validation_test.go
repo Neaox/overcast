@@ -64,12 +64,14 @@ var malformedDocuments = map[string]string{
 // wellFormedDocuments are the shapes AWS accepts. Rejecting any of them would
 // be the regression this validation risks.
 var wellFormedDocuments = map[string]string{
-	"statement list":    validIdentityPolicy,
-	"single object":     `{"Version":"2012-10-17","Statement":{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}}`,
-	"action list":       `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:ListBucket"],"Resource":"*"}]}`,
-	"not action":        `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","NotAction":"s3:GetObject","Resource":"*"}]}`,
-	"not resource":      `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"s3:*","NotResource":"arn:aws:s3:::public/*"}]}`,
-	"no resource":       `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject"}]}`,
+	"statement list": validIdentityPolicy,
+	"single object":  `{"Version":"2012-10-17","Statement":{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}}`,
+	"action list":    `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:ListBucket"],"Resource":"*"}]}`,
+	"not action":     `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","NotAction":"s3:GetObject","Resource":"*"}]}`,
+	"not resource":   `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"s3:*","NotResource":"arn:aws:s3:::public/*"}]}`,
+	// Accepted here, refused by AWS: an identity-policy statement needs a
+	// Resource. The structural tier does not check it (docs/services/iam/limitations.md).
+	"no resource (AWS refuses; unchecked here)": `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject"}]}`,
 	"no version":        `{"Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]}`,
 	"legacy version":    `{"Version":"2008-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]}`,
 	"sid":               `{"Version":"2012-10-17","Statement":[{"Sid":"ReadOnly","Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]}`,
@@ -199,10 +201,16 @@ func TestCreateRole_rejectsMalformedAssumeRolePolicyDocument(t *testing.T) {
 
 	for name, doc := range malformedDocuments {
 		t.Run(name, func(t *testing.T) {
+			roleName := "rejected-" + strings.ReplaceAll(name, " ", "-")
 			assertMalformedPolicyDocument(t, srv, "CreateRole", url.Values{
-				"RoleName":                 {"rejected-" + strings.ReplaceAll(name, " ", "-")},
+				"RoleName":                 {roleName},
 				"AssumeRolePolicyDocument": {doc},
 			})
+			// And: the refusal created nothing. The check runs before the
+			// duplicate-name lookup, so this is what proves no role slipped in.
+			resp := iamCall(t, srv, "GetRole", url.Values{"RoleName": {roleName}})
+			defer resp.Body.Close()
+			helpers.AssertStatus(t, resp, http.StatusNotFound)
 		})
 	}
 }

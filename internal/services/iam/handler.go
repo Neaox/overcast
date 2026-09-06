@@ -369,6 +369,11 @@ func (l listMembersXML[T]) MarshalXML(enc *xml.Encoder, start xml.StartElement) 
 // each toXWithTags below is a separate call rather than a flag on toX: the
 // listing paths must keep the subset shape, and so must a role embedded in an
 // instance profile, which AWS's samples show without tags.
+//
+// A nil pointer is what omits the member: encoding/xml drops a nil pointer
+// before it looks for a Marshaler, but a non-nil pointer to an *empty* list
+// still renders as <Tags></Tags>, which AWS never sends. Every Tags field is
+// therefore populated through this function and nowhere else.
 func tagsXML(tags map[string]string) *listMembersXML[tagXML] {
 	if len(tags) == 0 {
 		return nil
