@@ -6,7 +6,9 @@ import (
 	"context"
 	"sync"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/widgets"
+	"github.com/aws/aws-sdk-go-v2/service/widgets/types"
 	"github.com/overcast-sh/overcast-compat-go-sdk/internal/clients"
 	"github.com/overcast-sh/overcast-compat-go-sdk/internal/harness"
 	"github.com/overcast-sh/overcast-compat-go-sdk/internal/scenario"
@@ -88,7 +90,7 @@ func (g *widgetsScenarios) teardownWidgetsGenWidget(ctx context.Context, t *harn
 			Params: `{"WidgetId":{"$ref":"widget.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.DeleteWidgetInput{}
-				b.Set("WidgetId", &in.WidgetId, scenario.Ref("widget.id"))
+				in.WidgetId = aws.String(scenario.Bind[string](b, "WidgetId", scenario.Ref("widget.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -105,9 +107,9 @@ func (g *widgetsScenarios) testWidgetsGenWidgetCreateWidget(ctx context.Context,
 			Params: `{"Color":"blue","Description":"one","Name":{"$name":"w"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.CreateWidgetInput{}
-				b.Set("Color", &in.Color, "blue")
-				b.Set("Description", &in.Description, "one")
-				b.Set("Name", &in.Name, scenario.Name("w"))
+				in.Color = types.Color("blue")
+				in.Description = aws.String("one")
+				in.Name = aws.String(scenario.Bind[string](b, "Name", scenario.Name("w")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -129,7 +131,7 @@ func (g *widgetsScenarios) testWidgetsGenWidgetCreateWidget(ctx context.Context,
 					Params: `{"WidgetId":{"$ref":"widget.id"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &widgets.GetWidgetInput{}
-						b.Set("WidgetId", &in.WidgetId, scenario.Ref("widget.id"))
+						in.WidgetId = aws.String(scenario.Bind[string](b, "WidgetId", scenario.Ref("widget.id")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -145,7 +147,7 @@ func (g *widgetsScenarios) testWidgetsGenWidgetCreateWidget(ctx context.Context,
 					Params: `{"NamePrefix":{"$name":"w"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &widgets.ListWidgetsInput{}
-						b.Set("NamePrefix", &in.NamePrefix, scenario.Name("w"))
+						in.NamePrefix = aws.String(scenario.Bind[string](b, "NamePrefix", scenario.Name("w")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -166,7 +168,7 @@ func (g *widgetsScenarios) testWidgetsGenWidgetGetWidget(ctx context.Context, t 
 			Params: `{"WidgetId":{"$ref":"widget.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.GetWidgetInput{}
-				b.Set("WidgetId", &in.WidgetId, scenario.Ref("widget.id"))
+				in.WidgetId = aws.String(scenario.Bind[string](b, "WidgetId", scenario.Ref("widget.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -188,7 +190,7 @@ func (g *widgetsScenarios) testWidgetsGenWidgetDescribeWidget(ctx context.Contex
 			Params: `{"WidgetId":{"$ref":"widget.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.DescribeWidgetInput{}
-				b.Set("WidgetId", &in.WidgetId, scenario.Ref("widget.id"))
+				in.WidgetId = aws.String(scenario.Bind[string](b, "WidgetId", scenario.Ref("widget.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -210,8 +212,8 @@ func (g *widgetsScenarios) testWidgetsGenWidgetUpdateWidget(ctx context.Context,
 			Params: `{"Description":"two","WidgetId":{"$ref":"widget.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.UpdateWidgetInput{}
-				b.Set("Description", &in.Description, "two")
-				b.Set("WidgetId", &in.WidgetId, scenario.Ref("widget.id"))
+				in.Description = aws.String("two")
+				in.WidgetId = aws.String(scenario.Bind[string](b, "WidgetId", scenario.Ref("widget.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -225,7 +227,7 @@ func (g *widgetsScenarios) testWidgetsGenWidgetUpdateWidget(ctx context.Context,
 					Params: `{"WidgetId":{"$ref":"widget.id"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &widgets.GetWidgetInput{}
-						b.Set("WidgetId", &in.WidgetId, scenario.Ref("widget.id"))
+						in.WidgetId = aws.String(scenario.Bind[string](b, "WidgetId", scenario.Ref("widget.id")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -245,8 +247,8 @@ func (g *widgetsScenarios) testWidgetsGenWidgetTagWidget(ctx context.Context, t 
 			Params: `{"Tags":{"compat":"scenario"},"WidgetId":{"$ref":"widget.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.TagWidgetInput{}
-				b.Set("Tags", &in.Tags, map[string]any{"compat": "scenario"})
-				b.Set("WidgetId", &in.WidgetId, scenario.Ref("widget.id"))
+				in.Tags = map[string]string{"compat": "scenario"}
+				in.WidgetId = aws.String(scenario.Bind[string](b, "WidgetId", scenario.Ref("widget.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -260,7 +262,7 @@ func (g *widgetsScenarios) testWidgetsGenWidgetTagWidget(ctx context.Context, t 
 					Params: `{"WidgetId":{"$ref":"widget.id"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &widgets.ListWidgetTagsInput{}
-						b.Set("WidgetId", &in.WidgetId, scenario.Ref("widget.id"))
+						in.WidgetId = aws.String(scenario.Bind[string](b, "WidgetId", scenario.Ref("widget.id")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -280,7 +282,7 @@ func (g *widgetsScenarios) testWidgetsGenWidgetListWidgetTags(ctx context.Contex
 			Params: `{"WidgetId":{"$ref":"widget.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.ListWidgetTagsInput{}
-				b.Set("WidgetId", &in.WidgetId, scenario.Ref("widget.id"))
+				in.WidgetId = aws.String(scenario.Bind[string](b, "WidgetId", scenario.Ref("widget.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -302,8 +304,8 @@ func (g *widgetsScenarios) testWidgetsGenWidgetUntagWidget(ctx context.Context, 
 			Params: `{"TagKeys":["compat"],"WidgetId":{"$ref":"widget.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.UntagWidgetInput{}
-				b.Set("TagKeys", &in.TagKeys, []any{"compat"})
-				b.Set("WidgetId", &in.WidgetId, scenario.Ref("widget.id"))
+				in.TagKeys = []string{"compat"}
+				in.WidgetId = aws.String(scenario.Bind[string](b, "WidgetId", scenario.Ref("widget.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -317,7 +319,7 @@ func (g *widgetsScenarios) testWidgetsGenWidgetUntagWidget(ctx context.Context, 
 					Params: `{"WidgetId":{"$ref":"widget.id"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &widgets.ListWidgetTagsInput{}
-						b.Set("WidgetId", &in.WidgetId, scenario.Ref("widget.id"))
+						in.WidgetId = aws.String(scenario.Bind[string](b, "WidgetId", scenario.Ref("widget.id")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -337,7 +339,7 @@ func (g *widgetsScenarios) testWidgetsGenWidgetPolishWidget(ctx context.Context,
 			Params: `{"WidgetId":{"$ref":"widget.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.PolishWidgetInput{}
-				b.Set("WidgetId", &in.WidgetId, scenario.Ref("widget.id"))
+				in.WidgetId = aws.String(scenario.Bind[string](b, "WidgetId", scenario.Ref("widget.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -351,7 +353,7 @@ func (g *widgetsScenarios) testWidgetsGenWidgetPolishWidget(ctx context.Context,
 					Params: `{"WidgetId":{"$ref":"widget.id"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &widgets.GetWidgetInput{}
-						b.Set("WidgetId", &in.WidgetId, scenario.Ref("widget.id"))
+						in.WidgetId = aws.String(scenario.Bind[string](b, "WidgetId", scenario.Ref("widget.id")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -371,7 +373,7 @@ func (g *widgetsScenarios) testWidgetsGenWidgetListWidgets(ctx context.Context, 
 			Params: `{"NamePrefix":{"$name":"w"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.ListWidgetsInput{}
-				b.Set("NamePrefix", &in.NamePrefix, scenario.Name("w"))
+				in.NamePrefix = aws.String(scenario.Bind[string](b, "NamePrefix", scenario.Name("w")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -395,7 +397,7 @@ func (g *widgetsScenarios) testWidgetsGenWidgetDeleteWidget(ctx context.Context,
 			Params: `{"WidgetId":{"$ref":"widget.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.DeleteWidgetInput{}
-				b.Set("WidgetId", &in.WidgetId, scenario.Ref("widget.id"))
+				in.WidgetId = aws.String(scenario.Bind[string](b, "WidgetId", scenario.Ref("widget.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -409,7 +411,7 @@ func (g *widgetsScenarios) testWidgetsGenWidgetDeleteWidget(ctx context.Context,
 					Params: `{"WidgetId":{"$ref":"widget.id"}}`,
 					Build: func(b *scenario.Binder) any {
 						in := &widgets.GetWidgetInput{}
-						b.Set("WidgetId", &in.WidgetId, scenario.Ref("widget.id"))
+						in.WidgetId = aws.String(scenario.Bind[string](b, "WidgetId", scenario.Ref("widget.id")))
 						return in
 					},
 					Send: func(ctx context.Context, in any) (any, error) {
@@ -466,7 +468,7 @@ func (g *widgetsScenarios) testWidgetsGenGaugeCalibrateGauge(ctx context.Context
 			Params: `{"GaugeId":{"$ref":"gauge.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.CalibrateGaugeInput{}
-				b.Set("GaugeId", &in.GaugeId, scenario.Ref("gauge.id"))
+				in.GaugeId = aws.String(scenario.Bind[string](b, "GaugeId", scenario.Ref("gauge.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -510,7 +512,7 @@ func (g *widgetsScenarios) teardownWidgetsGenSprocket(ctx context.Context, t *ha
 			Params: `{"SprocketId":{"$ref":"sprocket.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.DeleteSprocketInput{}
-				b.Set("SprocketId", &in.SprocketId, scenario.Ref("sprocket.id"))
+				in.SprocketId = aws.String(scenario.Bind[string](b, "SprocketId", scenario.Ref("sprocket.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -527,8 +529,8 @@ func (g *widgetsScenarios) testWidgetsGenSprocketCreateSprocket(ctx context.Cont
 			Params: `{"Description":{"$ref":"gauge.arn"},"Name":{"$name":"s"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.CreateSprocketInput{}
-				b.Set("Description", &in.Description, scenario.Ref("gauge.arn"))
-				b.Set("Name", &in.Name, scenario.Name("s"))
+				in.Description = aws.String(scenario.Bind[string](b, "Description", scenario.Ref("gauge.arn")))
+				in.Name = aws.String(scenario.Bind[string](b, "Name", scenario.Name("s")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -549,7 +551,7 @@ func (g *widgetsScenarios) testWidgetsGenSprocketCreateSprocket(ctx context.Cont
 						Params: `{"SprocketId":{"$ref":"sprocket.id"}}`,
 						Build: func(b *scenario.Binder) any {
 							in := &widgets.GetSprocketInput{}
-							b.Set("SprocketId", &in.SprocketId, scenario.Ref("sprocket.id"))
+							in.SprocketId = aws.String(scenario.Bind[string](b, "SprocketId", scenario.Ref("sprocket.id")))
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -570,7 +572,7 @@ func (g *widgetsScenarios) testWidgetsGenSprocketGetSprocket(ctx context.Context
 			Params: `{"SprocketId":{"$ref":"sprocket.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.GetSprocketInput{}
-				b.Set("SprocketId", &in.SprocketId, scenario.Ref("sprocket.id"))
+				in.SprocketId = aws.String(scenario.Bind[string](b, "SprocketId", scenario.Ref("sprocket.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -592,8 +594,8 @@ func (g *widgetsScenarios) testWidgetsGenSprocketTagSprocket(ctx context.Context
 			Params: `{"SprocketId":{"$ref":"sprocket.id"},"Tags":[{"Key":"compat","Value":"scenario"}]}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.TagSprocketInput{}
-				b.Set("SprocketId", &in.SprocketId, scenario.Ref("sprocket.id"))
-				b.Set("Tags", &in.Tags, []any{map[string]any{"Key": "compat", "Value": "scenario"}})
+				in.SprocketId = aws.String(scenario.Bind[string](b, "SprocketId", scenario.Ref("sprocket.id")))
+				in.Tags = []types.SprocketTag{{Key: aws.String("compat"), Value: aws.String("scenario")}}
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -608,7 +610,7 @@ func (g *widgetsScenarios) testWidgetsGenSprocketTagSprocket(ctx context.Context
 						Params: `{"SprocketId":{"$ref":"sprocket.id"}}`,
 						Build: func(b *scenario.Binder) any {
 							in := &widgets.ListSprocketTagsInput{}
-							b.Set("SprocketId", &in.SprocketId, scenario.Ref("sprocket.id"))
+							in.SprocketId = aws.String(scenario.Bind[string](b, "SprocketId", scenario.Ref("sprocket.id")))
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -631,7 +633,7 @@ func (g *widgetsScenarios) testWidgetsGenSprocketListSprocketTags(ctx context.Co
 			Params: `{"SprocketId":{"$ref":"sprocket.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.ListSprocketTagsInput{}
-				b.Set("SprocketId", &in.SprocketId, scenario.Ref("sprocket.id"))
+				in.SprocketId = aws.String(scenario.Bind[string](b, "SprocketId", scenario.Ref("sprocket.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -656,8 +658,8 @@ func (g *widgetsScenarios) testWidgetsGenSprocketUntagSprocket(ctx context.Conte
 			Params: `{"SprocketId":{"$ref":"sprocket.id"},"TagKeys":["compat"]}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.UntagSprocketInput{}
-				b.Set("SprocketId", &in.SprocketId, scenario.Ref("sprocket.id"))
-				b.Set("TagKeys", &in.TagKeys, []any{"compat"})
+				in.SprocketId = aws.String(scenario.Bind[string](b, "SprocketId", scenario.Ref("sprocket.id")))
+				in.TagKeys = []string{"compat"}
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -672,7 +674,7 @@ func (g *widgetsScenarios) testWidgetsGenSprocketUntagSprocket(ctx context.Conte
 						Params: `{"SprocketId":{"$ref":"sprocket.id"}}`,
 						Build: func(b *scenario.Binder) any {
 							in := &widgets.ListSprocketTagsInput{}
-							b.Set("SprocketId", &in.SprocketId, scenario.Ref("sprocket.id"))
+							in.SprocketId = aws.String(scenario.Bind[string](b, "SprocketId", scenario.Ref("sprocket.id")))
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -694,7 +696,7 @@ func (g *widgetsScenarios) testWidgetsGenSprocketDeleteSprocket(ctx context.Cont
 			Params: `{"SprocketId":{"$ref":"sprocket.id"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &widgets.DeleteSprocketInput{}
-				b.Set("SprocketId", &in.SprocketId, scenario.Ref("sprocket.id"))
+				in.SprocketId = aws.String(scenario.Bind[string](b, "SprocketId", scenario.Ref("sprocket.id")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -709,7 +711,7 @@ func (g *widgetsScenarios) testWidgetsGenSprocketDeleteSprocket(ctx context.Cont
 						Params: `{"SprocketId":{"$ref":"sprocket.id"}}`,
 						Build: func(b *scenario.Binder) any {
 							in := &widgets.GetSprocketInput{}
-							b.Set("SprocketId", &in.SprocketId, scenario.Ref("sprocket.id"))
+							in.SprocketId = aws.String(scenario.Bind[string](b, "SprocketId", scenario.Ref("sprocket.id")))
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {

@@ -38,35 +38,34 @@ import (
 //
 //	service → github.com/aws/aws-sdk-go-v2/service/<lower(sdkId), spaces removed>
 //	operation → &<pkg>.<Op>Input{} and client.<Op>(ctx, in)
-//	member → the exported field of the same name, first letter capitalized
-//	value → the IR's own value grammar, as Go data with scenario.Value
-//	        expressions inside it
+//	member → the field the SDK declares for it, looked up by the modeled name
+//	         with its first letter capitalized
+//	value → that field's own type, spelled by emit_go_spell.go
 //
-// # Why members are assigned through a helper rather than with aws.String
+// # Why the SDK's own types are read at emit time
 //
 // `in.QueueUrl = aws.String(v)` compiles only where smithy-go made that member
-// a pointer, and nothing available at generation time reliably says whether it
-// did. The pinned shape snapshot and the vendored SDK are generated from
-// different revisions of the same AWS model, and for the pilot service they
-// already disagree: ReceiveMessage's MaxNumberOfMessages, VisibilityTimeout and
-// WaitTimeSeconds target NullableInteger in models/aws/shapes/sqs.json — which
-// says pointer — and are plain int32 fields in aws-sdk-go-v2/service/sqs. An
-// emitter that derived pointer-ness from the model would emit three fields that
-// do not compile, in the first service it was pointed at.
+// a pointer, and the pinned shape snapshot cannot say whether it did: the
+// snapshot and the vendored SDK are generated from different revisions of the
+// same AWS model, and for the pilot service they already disagree —
+// ReceiveMessage's MaxNumberOfMessages, VisibilityTimeout and WaitTimeSeconds
+// target NullableInteger in models/aws/shapes/sqs.json, which says pointer,
+// and are plain int32 fields in aws-sdk-go-v2/service/sqs.
 //
-// So the emitted code passes the field's *address* to scenario.Binder.Set,
-// which writes through whichever spelling the field turned out to have, and the
-// same helper serves an enum (a named string type), a list, a map and a nested
-// structure. The input struct is still the SDK's own, still filled member by
-// member under its modeled name, and still serialized by the SDK's real
-// middleware stack — the deviation is in how the field is written, not in what
-// is sent. It is also what keeps this emitter free of a per-shape Go type
-// table, which is the part that would otherwise have to grow with every
-// service G4 adds.
+// So the emitter asks the SDK rather than the model. gosdktypes.go loads
+// `github.com/aws/aws-sdk-go-v2/service/<pkg>` from the go-sdk suite module —
+// the same module the emitted source is compiled in — and emit_go_spell.go
+// turns `<Op>Input`'s declared field types into source: aws.String for a
+// pointer, a bare literal for a value, types.<Enum>(…) for a named string,
+// []types.<Struct>{…} and map[string]string{…} recursively. What that buys is
+// compile-time evidence that the call is well-typed, which is the typed
+// backends' whole marginal value over the three interpreters (plan §3.2), and
+// a member the SDK has no field for becomes a refusal here instead of a red
+// compat result on the wire.
 //
-// The java, dotnet and rust emitters face the same question and should answer
-// it the same way wherever their SDK's nullability is not derivable from the
-// pinned model.
+// The java, dotnet and rust emitters face the same question. dotnet answers it
+// the same way — nullable value types are not derivable from the model —
+// while java's builders and Rust's Option<T> are, and need no lookup.
 
 // goSuiteDir is where the emitted files live, repository-relative.
 const goSuiteDir = "compat/suites/go-sdk/internal/groups"
@@ -77,13 +76,22 @@ const goSuiteDir = "compat/suites/go-sdk/internal/groups"
 // cannot compile it, so the whole group is scoped away from go-sdk in the
 // generated registry — a suite that cannot execute a group must not be listed
 // as able to.
+//
+// Five things produce it, and every one of them used to be either a run-time
+// failure or a request the SDK quietly dropped:
+//
+//	the member's modeled kind has no IR literal    a timestamp, blob, document, union
+//	the SDK's <Op>Input does not exist             the vendored SDK is older than the model
+//	the SDK has no field for the member            smithy-go renamed or dropped it
+//	the field's type has no Go literal             a union, or a type from a third package
+//	a value-typed member is set to its zero value  the SDK would not serialize it
 const goEmitReason = "go-emit-unsupported"
 
-// goUnsupportedKinds are the modeled member kinds no Go expression in the
-// grammar above can carry. Timestamps, blobs and documents have no portable
-// literal and are already refused upstream (compat/model/README.md § Recipes),
-// so this is a backstop rather than a live path; a union has a discriminated
-// Go representation that reflection cannot fill from a document.
+// goUnsupportedKinds are the modeled member kinds no value in the IR's grammar
+// can carry. Timestamps, blobs and documents have no portable literal and are
+// already refused upstream (compat/model/README.md § Recipes), so this is a
+// backstop rather than a live path; a union's Go representation is an
+// interface no literal builds.
 var goUnsupportedKinds = map[string]bool{
 	"timestamp": true,
 	"blob":      true,
@@ -103,18 +111,22 @@ type goEmission struct {
 }
 
 // emitGo renders one service's generated groups as Go source for the go-sdk
-// suite.
-func emitGo(gen *generation) (*goEmission, error) {
+// suite. loader resolves the SDK's own field types, from the go-sdk suite
+// module for a real run and from testdata/awssdk for the generator's tests.
+func emitGo(gen *generation, loader *goSDKTypes) (*goEmission, error) {
 	e := &goEmission{
 		Path:    goSuiteDir + "/" + goFileName(gen.scenario.Service),
 		Refused: map[string]bool{},
 	}
 	s := gen.scenario
-	w := &goWriter{}
+	svc, err := loader.service(s.Client.SDKID)
+	if err != nil {
+		return nil, err
+	}
 
 	groups := make([]group, 0, len(s.Groups))
 	for _, g := range s.Groups {
-		if refusals := goRefusals(gen, g); len(refusals) > 0 {
+		if refusals := goRefusals(gen, svc, g); len(refusals) > 0 {
 			e.Refused[g.Name] = true
 			e.Gaps = append(e.Gaps, refusals...)
 			continue
@@ -126,9 +138,60 @@ func emitGo(gen *generation) (*goEmission, error) {
 		return nil, err
 	}
 
-	pkg := goNamePackage(s.Client.SDKID)
+	// The body is written first so the import block can name exactly what it
+	// turned out to need: whether a service reaches for aws.String or the
+	// types package depends on the field types its calls touch, and an unused
+	// import does not compile.
+	sp := &goSpeller{svc: svc}
 	recv := goNameReceiver(s.Service)
+	body := &goWriter{}
+	goWriteHeaderComment(body, s)
+	body.linef("func %s(c *clients.Clients) ServiceGroup {", goNameConstructor(s.Service))
+	body.linef("\tg := &%s{c: c}", recv)
+	body.linef("\treturn ServiceGroup{")
+	body.linef("\t\tName: %q,", "scenarios/"+s.Service)
+	body.linef("\t\tImpls: map[string]harness.TestFn{")
+	for _, g := range groups {
+		for _, t := range g.Tests {
+			body.linef("\t\t\t%q: g.%s,", g.Name+":"+t.Name, goNameTestMethod(g.Name, t.Name))
+		}
+	}
+	body.linef("\t\t},")
+	body.linef("\t\tSetup: map[string]func(context.Context, *harness.TestContext) error{")
+	for _, g := range groups {
+		body.linef("\t\t\t%q: g.%s,", g.Name, goNameSetupMethod(g.Name))
+	}
+	body.linef("\t\t},")
+	body.linef("\t\tTeardown: map[string]func(context.Context, *harness.TestContext) error{")
+	for _, g := range groups {
+		body.linef("\t\t\t%q: g.%s,", g.Name, goNameTeardownMethod(g.Name))
+	}
+	body.linef("\t\t},")
+	body.linef("\t}")
+	body.linef("}")
+	body.linef("")
+	body.linef("type %s struct {", recv)
+	body.linef("\tc      *clients.Clients")
+	body.linef("\tonce   sync.Once")
+	body.linef("\tclient *%s.Client", svc.Name)
+	body.linef("}")
+	body.linef("")
+	body.linef("// cl builds this service's client once, from the config the suite's")
+	body.linef("// hand-written groups share. A generated group builds its own rather than")
+	body.linef("// adding an accessor to internal/clients for every service the generator")
+	body.linef("// learns to cover; nothing else about the client differs.")
+	body.linef("func (g *%s) cl() *%s.Client {", recv, svc.Name)
+	body.linef("\tg.once.Do(func() { g.client = %s.NewFromConfig(g.c.Config()) })", svc.Name)
+	body.linef("\treturn g.client")
+	body.linef("}")
 
+	for _, g := range groups {
+		if err := goWriteGroup(body, gen, sp, recv, g); err != nil {
+			return nil, err
+		}
+	}
+
+	w := &goWriter{}
 	w.linef("// Code generated by cmd/compatgen; DO NOT EDIT.")
 	w.linef("")
 	w.linef("package groups")
@@ -137,57 +200,12 @@ func emitGo(gen *generation) (*goEmission, error) {
 	w.linef("\t%q", "context")
 	w.linef("\t%q", "sync")
 	w.linef("")
-	w.linef("\t%q", goNameModule(s.Client.SDKID))
-	w.linef("\t%q", "github.com/overcast-sh/overcast-compat-go-sdk/internal/clients")
-	w.linef("\t%q", "github.com/overcast-sh/overcast-compat-go-sdk/internal/harness")
-	w.linef("\t%q", "github.com/overcast-sh/overcast-compat-go-sdk/internal/scenario")
+	for _, path := range goImports(sp) {
+		w.linef("\t%q", path)
+	}
 	w.linef(")")
 	w.linef("")
-	goWriteHeaderComment(w, s)
-	w.linef("func %s(c *clients.Clients) ServiceGroup {", goNameConstructor(s.Service))
-	w.linef("\tg := &%s{c: c}", recv)
-	w.linef("\treturn ServiceGroup{")
-	w.linef("\t\tName: %q,", "scenarios/"+s.Service)
-	w.linef("\t\tImpls: map[string]harness.TestFn{")
-	for _, g := range groups {
-		for _, t := range g.Tests {
-			w.linef("\t\t\t%q: g.%s,", g.Name+":"+t.Name, goNameTestMethod(g.Name, t.Name))
-		}
-	}
-	w.linef("\t\t},")
-	w.linef("\t\tSetup: map[string]func(context.Context, *harness.TestContext) error{")
-	for _, g := range groups {
-		w.linef("\t\t\t%q: g.%s,", g.Name, goNameSetupMethod(g.Name))
-	}
-	w.linef("\t\t},")
-	w.linef("\t\tTeardown: map[string]func(context.Context, *harness.TestContext) error{")
-	for _, g := range groups {
-		w.linef("\t\t\t%q: g.%s,", g.Name, goNameTeardownMethod(g.Name))
-	}
-	w.linef("\t\t},")
-	w.linef("\t}")
-	w.linef("}")
-	w.linef("")
-	w.linef("type %s struct {", recv)
-	w.linef("\tc      *clients.Clients")
-	w.linef("\tonce   sync.Once")
-	w.linef("\tclient *%s.Client", pkg)
-	w.linef("}")
-	w.linef("")
-	w.linef("// cl builds this service's client once, from the config the suite's")
-	w.linef("// hand-written groups share. A generated group builds its own rather than")
-	w.linef("// adding an accessor to internal/clients for every service the generator")
-	w.linef("// learns to cover; nothing else about the client differs.")
-	w.linef("func (g *%s) cl() *%s.Client {", recv, pkg)
-	w.linef("\tg.once.Do(func() { g.client = %s.NewFromConfig(g.c.Config()) })", pkg)
-	w.linef("\treturn g.client")
-	w.linef("}")
-
-	for _, g := range groups {
-		if err := goWriteGroup(w, gen, pkg, recv, g); err != nil {
-			return nil, err
-		}
-	}
+	w.lines = append(w.lines, body.lines...)
 
 	contents, err := format.Source([]byte(w.String()))
 	if err != nil {
@@ -202,6 +220,27 @@ func emitGo(gen *generation) (*goEmission, error) {
 	return e, nil
 }
 
+// goImports is the emitted file's second import group, sorted. gofmt does not
+// reorder imports — only goimports does, and generated output must not depend
+// on a tool the generator does not run — so the order is produced rather than
+// corrected.
+func goImports(sp *goSpeller) []string {
+	paths := []string{
+		sp.svc.Path,
+		"github.com/overcast-sh/overcast-compat-go-sdk/internal/clients",
+		"github.com/overcast-sh/overcast-compat-go-sdk/internal/harness",
+		"github.com/overcast-sh/overcast-compat-go-sdk/internal/scenario",
+	}
+	if sp.usesAWS {
+		paths = append(paths, goAWSModule)
+	}
+	if sp.usesTypes {
+		paths = append(paths, sp.svc.TypesPath)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
 func goWriteHeaderComment(w *goWriter, s *scenario) {
 	w.linef("// %s returns the generated %s groups.", goNameConstructor(s.Service), s.Service)
 	w.linef("//")
@@ -213,21 +252,21 @@ func goWriteHeaderComment(w *goWriter, s *scenario) {
 // goWriteGroup emits one group: its identity, its setup and teardown hooks —
 // registered even when empty, because an empty phase is a no-op and not a
 // missing one — and one function per test.
-func goWriteGroup(w *goWriter, gen *generation, pkg, recv string, g group) error {
+func goWriteGroup(w *goWriter, gen *generation, sp *goSpeller, recv string, g group) error {
 	file := scenarioPath(gen.scenario.Service)
 	w.linef("")
 	w.linef("var %s = scenario.Group{Name: %q, File: %q}", goNameGroupVar(g.Name), g.Name, file)
 
 	w.linef("")
 	w.linef("func (g *%s) %s(ctx context.Context, t *harness.TestContext) error {", recv, goNameSetupMethod(g.Name))
-	if err := goWriteHookBody(w, pkg, g, "RunSetup", g.Setup); err != nil {
+	if err := goWriteHookBody(w, sp, g, "RunSetup", g.Setup); err != nil {
 		return err
 	}
 	w.linef("}")
 
 	w.linef("")
 	w.linef("func (g *%s) %s(ctx context.Context, t *harness.TestContext) error {", recv, goNameTeardownMethod(g.Name))
-	if err := goWriteHookBody(w, pkg, g, "RunTeardown", g.Teardown); err != nil {
+	if err := goWriteHookBody(w, sp, g, "RunTeardown", g.Teardown); err != nil {
 		return err
 	}
 	w.linef("}")
@@ -236,12 +275,12 @@ func goWriteGroup(w *goWriter, gen *generation, pkg, recv string, g group) error
 		w.linef("")
 		w.linef("func (g *%s) %s(ctx context.Context, t *harness.TestContext) error {", recv, goNameTestMethod(g.Name, t.Name))
 		w.linef("\treturn %s.RunTest(ctx, t, %q, scenario.Test{", goNameGroupVar(g.Name), t.Name)
-		if err := goWriteCall(w, pkg, t.Call, "\t\t", "Call: "); err != nil {
+		if err := goWriteCall(w, sp, t.Call, "\t\t", "Call: "); err != nil {
 			return err
 		}
 		w.linef("\t\tAssert: []scenario.Clause{")
 		for _, a := range t.Assert {
-			if err := goWriteClause(w, pkg, a, "\t\t\t"); err != nil {
+			if err := goWriteClause(w, sp, a, "\t\t\t"); err != nil {
 				return err
 			}
 		}
@@ -252,7 +291,7 @@ func goWriteGroup(w *goWriter, gen *generation, pkg, recv string, g group) error
 	return nil
 }
 
-func goWriteHookBody(w *goWriter, pkg string, g group, method string, calls []call) error {
+func goWriteHookBody(w *goWriter, sp *goSpeller, g group, method string, calls []call) error {
 	if len(calls) == 0 {
 		w.linef("\t// No %s steps: an empty phase is a no-op, not a missing one.",
 			strings.ToLower(strings.TrimPrefix(method, "Run")))
@@ -261,7 +300,7 @@ func goWriteHookBody(w *goWriter, pkg string, g group, method string, calls []ca
 	}
 	w.linef("\treturn %s.%s(ctx, t,", goNameGroupVar(g.Name), method)
 	for _, c := range calls {
-		if err := goWriteCall(w, pkg, c, "\t\t", ""); err != nil {
+		if err := goWriteCall(w, sp, c, "\t\t", ""); err != nil {
 			return err
 		}
 	}
@@ -274,7 +313,7 @@ func goWriteHookBody(w *goWriter, pkg string, g group, method string, calls []ca
 // exports. prefix carries whatever the call's position needs in front of it —
 // a struct field name, or the "&" the list clauses want, since those take a
 // pointer so that "no call of its own" can be nil.
-func goWriteCall(w *goWriter, pkg string, c call, indent, prefix string) error {
+func goWriteCall(w *goWriter, sp *goSpeller, c call, indent, prefix string) error {
 	w.linef("%s%sscenario.Call{", indent, prefix)
 	w.linef("%s\tOp: %q,", indent, c.Op)
 	raw, err := goRawParams(c.Params)
@@ -283,7 +322,7 @@ func goWriteCall(w *goWriter, pkg string, c call, indent, prefix string) error {
 	}
 	w.linef("%s\tParams: %s,", indent, raw)
 	w.linef("%s\tBuild: func(b *scenario.Binder) any {", indent)
-	lines, err := goInputLines(pkg, c.Op, c.Params, indent+"\t\t")
+	lines, err := goInputLines(sp, c.Op, c.Params, indent+"\t\t")
 	if err != nil {
 		return err
 	}
@@ -293,7 +332,7 @@ func goWriteCall(w *goWriter, pkg string, c call, indent, prefix string) error {
 	w.linef("%s\t\treturn in", indent)
 	w.linef("%s\t},", indent)
 	w.linef("%s\tSend: func(ctx context.Context, in any) (any, error) {", indent)
-	w.linef("%s\t\treturn g.cl().%s", indent, goNameClientCall(pkg, c.Op))
+	w.linef("%s\t\treturn g.cl().%s", indent, goNameClientCall(sp.svc.Name, c.Op))
 	w.linef("%s\t},", indent)
 	if len(c.Export) > 0 {
 		w.linef("%s\tExport: map[string]string{", indent)
@@ -308,7 +347,7 @@ func goWriteCall(w *goWriter, pkg string, c call, indent, prefix string) error {
 
 // goWriteClause emits one assertion clause through the constructors in
 // internal/scenario, which are the same closed set ir.go builds.
-func goWriteClause(w *goWriter, pkg string, a assertion, indent string) error {
+func goWriteClause(w *goWriter, sp *goSpeller, a assertion, indent string) error {
 	switch a.Kind {
 	case assertResponseField:
 		w.linef("%sscenario.ResponseField(", indent)
@@ -316,7 +355,7 @@ func goWriteClause(w *goWriter, pkg string, a assertion, indent string) error {
 		w.linef("%s),", indent)
 	case assertReadback:
 		w.linef("%sscenario.Readback(", indent)
-		if err := goWriteCall(w, pkg, *a.Call, indent+"\t", ""); err != nil {
+		if err := goWriteCall(w, sp, *a.Call, indent+"\t", ""); err != nil {
 			return err
 		}
 		goWriteChecks(w, a.Checks, indent+"\t")
@@ -324,7 +363,7 @@ func goWriteClause(w *goWriter, pkg string, a assertion, indent string) error {
 	case assertListContains, assertAbsent:
 		if a.Kind == assertAbsent && a.Error != nil {
 			w.linef("%sscenario.AbsentByError(", indent)
-			if err := goWriteCall(w, pkg, *a.Call, indent+"\t", ""); err != nil {
+			if err := goWriteCall(w, sp, *a.Call, indent+"\t", ""); err != nil {
 				return err
 			}
 			w.linef("%s\tscenario.Error(%q, %q),", indent, a.Error.Shape, a.Error.Code)
@@ -338,7 +377,7 @@ func goWriteClause(w *goWriter, pkg string, a assertion, indent string) error {
 		w.linef("%sscenario.%s(", indent, name)
 		if a.Call == nil {
 			w.linef("%s\tnil,", indent)
-		} else if err := goWriteCall(w, pkg, *a.Call, indent+"\t", "&"); err != nil {
+		} else if err := goWriteCall(w, sp, *a.Call, indent+"\t", "&"); err != nil {
 			return err
 		}
 		w.linef("%s\t%q,", indent, a.ItemsPath)
@@ -354,7 +393,7 @@ func goWriteClause(w *goWriter, pkg string, a assertion, indent string) error {
 		w.linef("%sscenario.ErrorCode(scenario.Error(%q, %q)),", indent, a.Error.Shape, a.Error.Code)
 	case assertEventually:
 		w.linef("%sscenario.Eventually(%d, %d,", indent, a.MaxAttempts, a.DelayMs)
-		if err := goWriteClause(w, pkg, *a.Assert, indent+"\t"); err != nil {
+		if err := goWriteClause(w, sp, *a.Assert, indent+"\t"); err != nil {
 			return err
 		}
 		w.linef("%s),", indent)
@@ -423,16 +462,19 @@ func goNameClientCall(pkg, op string) string {
 	return fmt.Sprintf("%s(ctx, in.(%s))", op, goNameInputType(pkg, op))
 }
 
-// goNameField is the Go field smithy-go generates for a modeled member: the
-// member name with its first letter capitalized. Almost every AWS member is
-// already PascalCase, but not all — SQS models CreateQueue's tags as `tags`
-// and ListDeadLetterSourceQueues' page as `queueUrls`, and the Go SDK spells
-// both with a capital.
+// goNameField is where the emitter *looks* for the Go field of a modeled
+// member: the member name with its first letter capitalized. Almost every AWS
+// member is already PascalCase, but not all — SQS models CreateQueue's tags as
+// `tags` and ListDeadLetterSourceQueues' page as `queueUrls`, and the Go SDK
+// spells both with a capital.
 //
-// The member's own name stays the label the emitted b.Set carries, because
-// that is what a failure message must name; only the field access is
-// capitalized. The suite's internal/scenario applies the same rule when it
-// walks a response path, and its exportedName carries the reasoning.
+// It is a lookup key, not the answer. smithy-go's rule is capitalization plus
+// reserved-word and collision handling, and reproducing only half of it is
+// what made a renamed member compile and then fail at run time. So the field
+// the SDK actually declares is what gets written (goSDKField), and a member
+// with no field at all is refused. The member's own name stays the label the
+// emitted expression carries, because that is what a failure message must
+// name.
 func goNameField(member string) string {
 	if member == "" {
 		return member
@@ -448,14 +490,22 @@ func goNameField(member string) string {
 // goInputLines renders the statements that build one call's typed input. It is
 // the emitter's Build body and, line for line, what `-explain -lang go` prints,
 // which is what keeps the two from drifting.
-func goInputLines(pkg, op string, params map[string]any, indent string) ([]string, error) {
-	lines := []string{fmt.Sprintf("in := %s", goNameInput(pkg, op))}
+//
+// Each member is one assignment to the field the SDK declares, spelled as that
+// field's own type: the compiler then checks the call, which is the property
+// the reflective binder this replaced could not offer.
+func goInputLines(sp *goSpeller, op string, params map[string]any, indent string) ([]string, error) {
+	lines := []string{fmt.Sprintf("in := %s", goNameInput(sp.svc.Name, op))}
 	for _, member := range sortedValueKeys(params) {
-		value, err := goValue(params[member], indent)
+		field, err := sp.field(op, member)
 		if err != nil {
 			return nil, fmt.Errorf("%s.%s: %w", op, member, err)
 		}
-		lines = append(lines, fmt.Sprintf("b.Set(%q, &in.%s, %s)", member, goNameField(member), value))
+		value, err := sp.value(field.Type(), params[member], member, indent, false)
+		if err != nil {
+			return nil, fmt.Errorf("%s.%s: %w", op, member, err)
+		}
+		lines = append(lines, fmt.Sprintf("in.%s = %s", field.Name(), value))
 	}
 	return lines, nil
 }
@@ -466,13 +516,18 @@ func goInputLines(pkg, op string, params map[string]any, indent string) ([]strin
 // read in a diff is a generated file nobody reviews.
 const goValueWidth = 80
 
-// goValue renders one IR value as a Go expression, indented for the line it
-// will sit on.
+// goValue renders one IR value as an *untyped* Go expression, indented for
+// the line it will sit on: an object is a map[string]any, a list a []any, a
+// scalar itself, and each of the five expression forms is a scenario.Value
+// constructor. Nothing else is representable, which is what makes this total.
 //
-// The IR's grammar maps onto Go data directly: an object is a map[string]any,
-// a list a []any, a scalar itself, and each of the five expression forms is a
-// scenario.Value constructor. Nothing else is representable, which is what
-// makes this total.
+// Untyped is right in the two places it is still used. An assertion's expected
+// value is compared in the IR's own type system against a response read back
+// as a document, so it is data on both sides. And the argument of a value
+// expression — a $concat part, the list a $index takes — is evaluated at run
+// time, where there is no field type to spell it against; only the
+// expression's *result* has one, which is what scenario.Bind converts it to.
+// Input members themselves go through goSpeller instead (emit_go_spell.go).
 func goValue(v any, indent string) (string, error) {
 	if key, arg, ok := exprOf(v); ok {
 		switch key {
@@ -655,7 +710,18 @@ func goMethodNamesAreUnique(service string, groups []group) error {
 
 // goRefusals reports the members of a group's calls this backend cannot
 // express. A group with any is not emitted and is scoped away from go-sdk.
-func goRefusals(gen *generation, g group) []gap {
+//
+// The SDK answers most of it, and it does so by attempting the very spelling
+// emission would write, through a throwaway speller: one code path decides
+// "can this be emitted" and "how", so the two cannot drift, and a group that
+// is refused leaves no import behind.
+//
+// The model's kind is consulted in between, and takes precedence over the type
+// for the kinds it knows about: a timestamp, blob, document or union has no
+// literal in the IR's value grammar at all, and saying that in the model's own
+// vocabulary is more use to a recipe author than naming the Go type it happens
+// to have.
+func goRefusals(gen *generation, svc *goSDKService, g group) []gap {
 	var out []gap
 	seen := map[string]bool{}
 	record := func(op, member, detail string) {
@@ -672,18 +738,29 @@ func goRefusals(gen *generation, g group) []gap {
 			Detail:    detail,
 		})
 	}
+	probe := &goSpeller{svc: svc}
 	for _, c := range goCallsOf(g) {
-		input := gen.model.InputShape(c.Op)
-		if input == "" {
+		if _, err := svc.Input(c.Op); err != nil {
+			record(c.Op, c.Op+"Input", err.Error())
 			continue
 		}
+		input := gen.model.InputShape(c.Op)
 		for _, member := range sortedValueKeys(c.Params) {
-			target, ok := gen.model.MemberTarget(input, member)
-			if !ok {
-				continue // checked against the model already; not this backend's to report
+			if input != "" {
+				if target, ok := gen.model.MemberTarget(input, member); ok {
+					if kind := gen.model.Kind(target); goUnsupportedKinds[kind] {
+						record(c.Op, member, fmt.Sprintf("the go-sdk emitter has no Go value expression for a %s member (%s.%s)", kind, input, member))
+						continue
+					}
+				}
 			}
-			if kind := gen.model.Kind(target); goUnsupportedKinds[kind] {
-				record(c.Op, member, fmt.Sprintf("the go-sdk emitter has no Go value expression for a %s member (%s.%s)", kind, input, member))
+			field, err := probe.field(c.Op, member)
+			if err != nil {
+				record(c.Op, member, err.Error())
+				continue
+			}
+			if _, err := probe.value(field.Type(), c.Params[member], member, "", false); err != nil {
+				record(c.Op, member, fmt.Sprintf("%s.%s cannot be spelled as Go: %v", c.Op, member, err))
 			}
 		}
 	}

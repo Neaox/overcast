@@ -739,7 +739,7 @@ func TestGenerate_probeNeverAssertsAPaginationToken(t *testing.T) {
 	// services (SQS's ListQueues among them) omit an empty list member
 	// instead of serializing [] — so -explain must render it that way rather
 	// than requiring the member to be present.
-	if rendered := renderPython(gen.scenario, cogsGroup, cogs); !strings.Contains(rendered, "is absent or a list") {
+	if rendered := renderPython(renderEnv{}, gen.scenario, cogsGroup, cogs); !strings.Contains(rendered, "is absent or a list") {
 		t.Errorf("explain rendering of ListCogs does not accept an absent page:\n%s", rendered)
 	}
 

@@ -40,7 +40,7 @@ func pyStyle() style {
 	}
 }
 
-func renderPython(s *scenario, g *group, t *test) string {
+func renderPython(_ renderEnv, s *scenario, g *group, t *test) string {
 	e := &explainer{st: pyStyle()}
 	return e.test(s, g, t, func() {
 		e.linef("client = boto3.client(%s, endpoint_url=endpoint)  # sdkId %s, protocol %s", quote(cliService(s.Client)), s.Client.SDKID, s.Client.Protocol)
@@ -67,7 +67,7 @@ func jsStyle() style {
 	return st
 }
 
-func renderNode(s *scenario, g *group, t *test) string {
+func renderNode(_ renderEnv, s *scenario, g *group, t *test) string {
 	e := &explainer{st: jsStyle()}
 	return e.test(s, g, t, func() {
 		e.linef("const client = new %sClient({ endpoint });  // @aws-sdk/client-%s", pascalSDK(s.Client.SDKID), kebab(s.Client.SDKID))
@@ -89,7 +89,7 @@ func cliStyle(client clientInfo) style {
 	return st
 }
 
-func renderCLI(s *scenario, g *group, t *test) string {
+func renderCLI(_ renderEnv, s *scenario, g *group, t *test) string {
 	e := &explainer{st: cliStyle(s.Client)}
 	return e.test(s, g, t, func() {
 		e.linef("export AWS_ENDPOINT_URL=$ENDPOINT  # service command %q from endpointPrefix %q", cliService(s.Client), s.Client.EndpointPrefix)

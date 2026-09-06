@@ -140,7 +140,10 @@ func writeReport(w io.Writer, gen *generation, sample int) {
 	for _, key := range sampleTests(s, sample) {
 		g, t, _ := s.findTest(key[0], key[1])
 		fmt.Fprintf(w, "#### %s/%s\n\n```python\n", g.Name, t.Name)
-		fmt.Fprint(w, renderers["python"](s, g, t))
+		// The python rendering needs nothing from renderEnv, which is what
+		// keeps the review report — a PR-body artifact — independent of
+		// whether the go-sdk suite module's dependencies have been fetched.
+		fmt.Fprint(w, renderers["python"](renderEnv{}, s, g, t))
 		fmt.Fprintln(w, "```")
 		fmt.Fprintln(w)
 	}

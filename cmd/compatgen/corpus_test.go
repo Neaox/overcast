@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -20,6 +21,7 @@ import (
 var repoRoot = filepath.Join("..", "..")
 
 func TestCommittedCorpus_isInSyncWithTheGenerator(t *testing.T) {
+	skipWithoutVendoredSDK(t)
 	c, err := loadCorpus(repoRoot)
 	if err != nil {
 		t.Fatalf("load corpus: %v", err)
@@ -115,6 +117,7 @@ func TestRegistryIsEmptyExactlyWhileNoBackendExists(t *testing.T) {
 }
 
 func TestCheck_detectsAHandEdit(t *testing.T) {
+	skipWithoutVendoredSDK(t)
 	// Given: a copy of the corpus with one byte changed in a generated file.
 	root := copyCorpus(t)
 	path := filepath.Join(root, filepath.FromSlash(scenarioPath("sqs")))
@@ -147,6 +150,7 @@ func TestCheck_detectsAHandEdit(t *testing.T) {
 }
 
 func TestRun_removesAScenarioWhoseRecipeIsGone(t *testing.T) {
+	skipWithoutVendoredSDK(t)
 	root := copyCorpus(t)
 	stale := filepath.Join(root, filepath.FromSlash(scenarioDir), "gone.json")
 	writeFile(t, stale, "{}")
@@ -172,8 +176,35 @@ func TestRun_refusesAServiceOutsideTheSnapshot(t *testing.T) {
 	}
 }
 
+// skipWithoutVendoredSDK skips a test that regenerates the *committed* corpus
+// when the go-sdk suite module's dependencies cannot be resolved.
+//
+// Those tests run the Go emitter over the real services, so they need the real
+// vendored SDK — the emitter spells each member as that SDK declares it — and
+// a checkout that has never fetched the suite module's dependencies has no way
+// to answer. Skipping there rather than failing is what keeps `go test`
+// runnable offline; the unconditional gate is `make compat-model-check`, whose
+// second command is `go run -tags dev ./cmd/compatgen -check` and which fails
+// outright. Everything about the emitter that can be proved without the real
+// SDK is proved against testdata/awssdk instead, and always runs.
+func skipWithoutVendoredSDK(t *testing.T) {
+	t.Helper()
+	if err := vendoredSDKAvailable(); err != nil {
+		t.Skipf("the go-sdk suite module's dependencies are not available: %v", err)
+	}
+}
+
+var vendoredSDKAvailable = sync.OnceValue(func() error {
+	_, err := newGoSDKTypes(filepath.Join(repoRoot, filepath.FromSlash(goSDKModuleDir))).service("SQS")
+	return err
+})
+
 // copyCorpus copies the inputs and outputs the generator reads and writes
 // into a temporary root, so a test can edit them.
+//
+// The go-sdk suite's go.mod and go.sum come with it: they are what pins the
+// SDK the emitter resolves field types from, so a copy without them would
+// generate a corpus the real run could not reproduce.
 func copyCorpus(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -186,7 +217,8 @@ func copyCorpus(t *testing.T) string {
 			if entry.IsDir() {
 				return nil
 			}
-			if !strings.HasSuffix(path, ".json") && !strings.HasSuffix(path, ".txt") {
+			name := entry.Name()
+			if !strings.HasSuffix(path, ".json") && !strings.HasSuffix(path, ".txt") && name != "go.mod" && name != "go.sum" {
 				return nil
 			}
 			relPath, err := filepath.Rel(repoRoot, path)

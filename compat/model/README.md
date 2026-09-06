@@ -396,6 +396,11 @@ default, say it with a value the SDK will send — SQS's message recipes ask for
 a one-second visibility timeout rather than a zero — and give the call that
 must observe the result a poll long enough to cover it.
 
+The go-sdk emitter enforces this rather than trusting it: it knows which
+members the vendored SDK made value-typed, so a zero written into one is
+refused at generation time as `go-emit-unsupported:<Member>` instead of
+becoming a request that quietly omits it.
+
 `$name` is the only way a generated test names a resource, which is what
 makes the name-hygiene convention (`{runId}-<group-token>-…`) hold by
 construction: the group token is the whole group name.
@@ -466,14 +471,16 @@ SDK-specific. Each backend derives what it needs:
 table `cmd/compatgen/emit_go.go` renders through, and
 `go run -tags dev ./cmd/compatgen -explain <group>/<test> -lang go` prints the
 statements it writes. One detail of that row is worth stating because the other
-typed backends will meet it too: a member is assigned through the *address* of
-the input field — `b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))`
-— rather than with `aws.String`. Whether smithy-go made a member a pointer or a
-value is not derivable from the pinned snapshot: the snapshot and the vendored
-SDK are generated from different revisions of the same AWS model, and for
-SQS's `ReceiveMessage` they already disagree about three members the pilot
-sends. Passing the address lets one helper write either spelling, and an enum,
-a list, a map and a nested structure besides.
+typed backends will meet it too: **the member's Go type is read from the
+vendored SDK at generation time, never derived from the model's nullability.**
+Whether smithy-go made a member a pointer or a value does not follow from the
+pinned snapshot — the snapshot and the vendored SDK are generated from
+different revisions of the same AWS model, and for SQS's `ReceiveMessage` they
+already disagree about three members the pilot sends. So the emitter loads
+`aws-sdk-go-v2/service/<pkg>` from the suite's own module and writes
+`in.QueueUrl = aws.String(…)`, `in.MaxNumberOfMessages = 10`,
+`in.Type = types.PolicyType("…")` from what it finds there. A member the SDK
+has no field for is refused rather than emitted.
 
 Where a derivation is known to break, the interpreter needs a small override
 table of its own, and the plan asks for those to be recorded as follow-ups
@@ -685,7 +692,7 @@ service and operation, with a stable reason:
 | `no-output-to-assert` | a probe of an operation that returns nothing a probe can assert: no output at all, or no identity member and no single list to check the shape of. Reading back the resource it names would assert something that was already true before the call, so there is nothing honest to assert |
 | `setup-refused:<resource>` | a required resource could not be bound |
 | `unsupported-tag-shape:<Shape>` | the tag member is neither a string map nor a list of `{Key, Value}`. `<Shape>` is the bare shape name; the qualified Smithy id is in the detail |
-| `go-emit-unsupported:<Member>` | the go-sdk emitter has no Go value expression for that member's modeled kind — a timestamp, blob, document or union. It is the one reason here that does **not** mean "no test": the operation is generated and the interpreters run it, and the group is scoped away from `go-sdk` in the generated registry instead, because a suite listed against a group it cannot compile would report as a hard failure |
+| `go-emit-unsupported:<Member>` | the go-sdk emitter cannot write that member as typed Go: its modeled kind has no IR literal (a timestamp, blob, document or union), or the vendored SDK has no `<Op>Input`, no field for the member, or a field of a type no literal builds, or the member is value-typed and the scenario sets it to its zero value (see § Values). It is the one reason here that does **not** mean "no test": the operation is generated and the interpreters run it, and the group is scoped away from `go-sdk` in the generated registry instead, because a suite listed against a group it cannot compile would report as a hard failure |
 
 Refusals are a feature. Fixing one is a line in a recipe or in
 `values.json`; guessing is never an option.

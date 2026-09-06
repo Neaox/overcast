@@ -6,7 +6,9 @@ import (
 	"context"
 	"sync"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/overcast-sh/overcast-compat-go-sdk/internal/clients"
 	"github.com/overcast-sh/overcast-compat-go-sdk/internal/harness"
 	"github.com/overcast-sh/overcast-compat-go-sdk/internal/scenario"
@@ -84,7 +86,7 @@ func (g *sqsScenarios) setupSqsGenQueue(ctx context.Context, t *harness.TestCont
 			Params: `{"QueueName":{"$name":"dlq"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.CreateQueueInput{}
-				b.Set("QueueName", &in.QueueName, scenario.Name("dlq"))
+				in.QueueName = aws.String(scenario.Bind[string](b, "QueueName", scenario.Name("dlq")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -99,8 +101,8 @@ func (g *sqsScenarios) setupSqsGenQueue(ctx context.Context, t *harness.TestCont
 			Params: `{"AttributeNames":["QueueArn"],"QueueUrl":{"$ref":"dlq.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.GetQueueAttributesInput{}
-				b.Set("AttributeNames", &in.AttributeNames, []any{"QueueArn"})
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("dlq.url"))
+				in.AttributeNames = []types.QueueAttributeName{"QueueArn"}
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("dlq.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -120,7 +122,7 @@ func (g *sqsScenarios) teardownSqsGenQueue(ctx context.Context, t *harness.TestC
 			Params: `{"QueueUrl":{"$ref":"queue.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.DeleteQueueInput{}
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -132,7 +134,7 @@ func (g *sqsScenarios) teardownSqsGenQueue(ctx context.Context, t *harness.TestC
 			Params: `{"QueueUrl":{"$ref":"dlq.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.DeleteQueueInput{}
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("dlq.url"))
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("dlq.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -149,11 +151,11 @@ func (g *sqsScenarios) testSqsGenQueueCreateQueue(ctx context.Context, t *harnes
 			Params: `{"Attributes":{"RedrivePolicy":{"$concat":["{\"deadLetterTargetArn\":\"",{"$ref":"dlq.arn"},"\",\"maxReceiveCount\":\"5\"}"]},"VisibilityTimeout":"30"},"QueueName":{"$name":"q"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.CreateQueueInput{}
-				b.Set("Attributes", &in.Attributes, map[string]any{
-					"RedrivePolicy":     scenario.Concat("{\"deadLetterTargetArn\":\"", scenario.Ref("dlq.arn"), "\",\"maxReceiveCount\":\"5\"}"),
+				in.Attributes = map[string]string{
+					"RedrivePolicy":     scenario.Bind[string](b, "Attributes", scenario.Concat("{\"deadLetterTargetArn\":\"", scenario.Ref("dlq.arn"), "\",\"maxReceiveCount\":\"5\"}")),
 					"VisibilityTimeout": "30",
-				})
-				b.Set("QueueName", &in.QueueName, scenario.Name("q"))
+				}
+				in.QueueName = aws.String(scenario.Bind[string](b, "QueueName", scenario.Name("q")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -174,8 +176,8 @@ func (g *sqsScenarios) testSqsGenQueueCreateQueue(ctx context.Context, t *harnes
 						Params: `{"AttributeNames":["QueueArn"],"QueueUrl":{"$ref":"queue.url"}}`,
 						Build: func(b *scenario.Binder) any {
 							in := &sqs.GetQueueAttributesInput{}
-							b.Set("AttributeNames", &in.AttributeNames, []any{"QueueArn"})
-							b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+							in.AttributeNames = []types.QueueAttributeName{"QueueArn"}
+							in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -195,8 +197,8 @@ func (g *sqsScenarios) testSqsGenQueueCreateQueue(ctx context.Context, t *harnes
 						Params: `{"AttributeNames":["All"],"QueueUrl":{"$ref":"queue.url"}}`,
 						Build: func(b *scenario.Binder) any {
 							in := &sqs.GetQueueAttributesInput{}
-							b.Set("AttributeNames", &in.AttributeNames, []any{"All"})
-							b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+							in.AttributeNames = []types.QueueAttributeName{"All"}
+							in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -214,7 +216,7 @@ func (g *sqsScenarios) testSqsGenQueueCreateQueue(ctx context.Context, t *harnes
 						Params: `{"QueueNamePrefix":{"$name":"q"}}`,
 						Build: func(b *scenario.Binder) any {
 							in := &sqs.ListQueuesInput{}
-							b.Set("QueueNamePrefix", &in.QueueNamePrefix, scenario.Name("q"))
+							in.QueueNamePrefix = aws.String(scenario.Bind[string](b, "QueueNamePrefix", scenario.Name("q")))
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -236,8 +238,8 @@ func (g *sqsScenarios) testSqsGenQueueGetQueueAttributes(ctx context.Context, t 
 			Params: `{"AttributeNames":["All"],"QueueUrl":{"$ref":"queue.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.GetQueueAttributesInput{}
-				b.Set("AttributeNames", &in.AttributeNames, []any{"All"})
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+				in.AttributeNames = []types.QueueAttributeName{"All"}
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -259,7 +261,7 @@ func (g *sqsScenarios) testSqsGenQueueGetQueueUrl(ctx context.Context, t *harnes
 			Params: `{"QueueName":{"$name":"q"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.GetQueueUrlInput{}
-				b.Set("QueueName", &in.QueueName, scenario.Name("q"))
+				in.QueueName = aws.String(scenario.Bind[string](b, "QueueName", scenario.Name("q")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -281,8 +283,8 @@ func (g *sqsScenarios) testSqsGenQueueSetQueueAttributes(ctx context.Context, t 
 			Params: `{"Attributes":{"VisibilityTimeout":"60"},"QueueUrl":{"$ref":"queue.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.SetQueueAttributesInput{}
-				b.Set("Attributes", &in.Attributes, map[string]any{"VisibilityTimeout": "60"})
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+				in.Attributes = map[string]string{"VisibilityTimeout": "60"}
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -297,8 +299,8 @@ func (g *sqsScenarios) testSqsGenQueueSetQueueAttributes(ctx context.Context, t 
 						Params: `{"AttributeNames":["All"],"QueueUrl":{"$ref":"queue.url"}}`,
 						Build: func(b *scenario.Binder) any {
 							in := &sqs.GetQueueAttributesInput{}
-							b.Set("AttributeNames", &in.AttributeNames, []any{"All"})
-							b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+							in.AttributeNames = []types.QueueAttributeName{"All"}
+							in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -319,8 +321,8 @@ func (g *sqsScenarios) testSqsGenQueueTagQueue(ctx context.Context, t *harness.T
 			Params: `{"QueueUrl":{"$ref":"queue.url"},"Tags":{"compat":"scenario"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.TagQueueInput{}
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
-				b.Set("Tags", &in.Tags, map[string]any{"compat": "scenario"})
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
+				in.Tags = map[string]string{"compat": "scenario"}
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -335,7 +337,7 @@ func (g *sqsScenarios) testSqsGenQueueTagQueue(ctx context.Context, t *harness.T
 						Params: `{"QueueUrl":{"$ref":"queue.url"}}`,
 						Build: func(b *scenario.Binder) any {
 							in := &sqs.ListQueueTagsInput{}
-							b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+							in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -356,7 +358,7 @@ func (g *sqsScenarios) testSqsGenQueueListQueueTags(ctx context.Context, t *harn
 			Params: `{"QueueUrl":{"$ref":"queue.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.ListQueueTagsInput{}
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -378,8 +380,8 @@ func (g *sqsScenarios) testSqsGenQueueUntagQueue(ctx context.Context, t *harness
 			Params: `{"QueueUrl":{"$ref":"queue.url"},"TagKeys":["compat"]}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.UntagQueueInput{}
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
-				b.Set("TagKeys", &in.TagKeys, []any{"compat"})
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
+				in.TagKeys = []string{"compat"}
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -394,7 +396,7 @@ func (g *sqsScenarios) testSqsGenQueueUntagQueue(ctx context.Context, t *harness
 						Params: `{"QueueUrl":{"$ref":"queue.url"}}`,
 						Build: func(b *scenario.Binder) any {
 							in := &sqs.ListQueueTagsInput{}
-							b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+							in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -415,7 +417,7 @@ func (g *sqsScenarios) testSqsGenQueueListDeadLetterSourceQueues(ctx context.Con
 			Params: `{"QueueUrl":{"$ref":"dlq.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.ListDeadLetterSourceQueuesInput{}
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("dlq.url"))
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("dlq.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -439,8 +441,8 @@ func (g *sqsScenarios) testSqsGenQueueStartMessageMoveTask(ctx context.Context, 
 			Params: `{"DestinationArn":{"$ref":"queue.arn"},"SourceArn":{"$ref":"dlq.arn"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.StartMessageMoveTaskInput{}
-				b.Set("DestinationArn", &in.DestinationArn, scenario.Ref("queue.arn"))
-				b.Set("SourceArn", &in.SourceArn, scenario.Ref("dlq.arn"))
+				in.DestinationArn = aws.String(scenario.Bind[string](b, "DestinationArn", scenario.Ref("queue.arn")))
+				in.SourceArn = aws.String(scenario.Bind[string](b, "SourceArn", scenario.Ref("dlq.arn")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -462,8 +464,8 @@ func (g *sqsScenarios) testSqsGenQueueSendMessageBeforePurge(ctx context.Context
 			Params: `{"MessageBody":"compat scenario message before purge","QueueUrl":{"$ref":"queue.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.SendMessageInput{}
-				b.Set("MessageBody", &in.MessageBody, "compat scenario message before purge")
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+				in.MessageBody = aws.String("compat scenario message before purge")
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -481,8 +483,8 @@ func (g *sqsScenarios) testSqsGenQueueSendMessageBeforePurge(ctx context.Context
 						Params: `{"AttributeNames":["ApproximateNumberOfMessages"],"QueueUrl":{"$ref":"queue.url"}}`,
 						Build: func(b *scenario.Binder) any {
 							in := &sqs.GetQueueAttributesInput{}
-							b.Set("AttributeNames", &in.AttributeNames, []any{"ApproximateNumberOfMessages"})
-							b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+							in.AttributeNames = []types.QueueAttributeName{"ApproximateNumberOfMessages"}
+							in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -503,7 +505,7 @@ func (g *sqsScenarios) testSqsGenQueuePurgeQueue(ctx context.Context, t *harness
 			Params: `{"QueueUrl":{"$ref":"queue.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.PurgeQueueInput{}
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -518,8 +520,11 @@ func (g *sqsScenarios) testSqsGenQueuePurgeQueue(ctx context.Context, t *harness
 						Params: `{"AttributeNames":["ApproximateNumberOfMessages","ApproximateNumberOfMessagesNotVisible"],"QueueUrl":{"$ref":"queue.url"}}`,
 						Build: func(b *scenario.Binder) any {
 							in := &sqs.GetQueueAttributesInput{}
-							b.Set("AttributeNames", &in.AttributeNames, []any{"ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible"})
-							b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+							in.AttributeNames = []types.QueueAttributeName{
+								"ApproximateNumberOfMessages",
+								"ApproximateNumberOfMessagesNotVisible",
+							}
+							in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -541,7 +546,7 @@ func (g *sqsScenarios) testSqsGenQueueListQueues(ctx context.Context, t *harness
 			Params: `{"QueueNamePrefix":{"$name":"q"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.ListQueuesInput{}
-				b.Set("QueueNamePrefix", &in.QueueNamePrefix, scenario.Name("q"))
+				in.QueueNamePrefix = aws.String(scenario.Bind[string](b, "QueueNamePrefix", scenario.Name("q")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -565,7 +570,7 @@ func (g *sqsScenarios) testSqsGenQueueDeleteQueue(ctx context.Context, t *harnes
 			Params: `{"QueueUrl":{"$ref":"queue.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.DeleteQueueInput{}
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -580,8 +585,8 @@ func (g *sqsScenarios) testSqsGenQueueDeleteQueue(ctx context.Context, t *harnes
 						Params: `{"AttributeNames":["All"],"QueueUrl":{"$ref":"queue.url"}}`,
 						Build: func(b *scenario.Binder) any {
 							in := &sqs.GetQueueAttributesInput{}
-							b.Set("AttributeNames", &in.AttributeNames, []any{"All"})
-							b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+							in.AttributeNames = []types.QueueAttributeName{"All"}
+							in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -604,7 +609,7 @@ func (g *sqsScenarios) setupSqsGenMessage(ctx context.Context, t *harness.TestCo
 			Params: `{"QueueName":{"$name":"dlq"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.CreateQueueInput{}
-				b.Set("QueueName", &in.QueueName, scenario.Name("dlq"))
+				in.QueueName = aws.String(scenario.Bind[string](b, "QueueName", scenario.Name("dlq")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -619,8 +624,8 @@ func (g *sqsScenarios) setupSqsGenMessage(ctx context.Context, t *harness.TestCo
 			Params: `{"AttributeNames":["QueueArn"],"QueueUrl":{"$ref":"dlq.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.GetQueueAttributesInput{}
-				b.Set("AttributeNames", &in.AttributeNames, []any{"QueueArn"})
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("dlq.url"))
+				in.AttributeNames = []types.QueueAttributeName{"QueueArn"}
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("dlq.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -635,11 +640,11 @@ func (g *sqsScenarios) setupSqsGenMessage(ctx context.Context, t *harness.TestCo
 			Params: `{"Attributes":{"RedrivePolicy":{"$concat":["{\"deadLetterTargetArn\":\"",{"$ref":"dlq.arn"},"\",\"maxReceiveCount\":\"5\"}"]},"VisibilityTimeout":"30"},"QueueName":{"$name":"q"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.CreateQueueInput{}
-				b.Set("Attributes", &in.Attributes, map[string]any{
-					"RedrivePolicy":     scenario.Concat("{\"deadLetterTargetArn\":\"", scenario.Ref("dlq.arn"), "\",\"maxReceiveCount\":\"5\"}"),
+				in.Attributes = map[string]string{
+					"RedrivePolicy":     scenario.Bind[string](b, "Attributes", scenario.Concat("{\"deadLetterTargetArn\":\"", scenario.Ref("dlq.arn"), "\",\"maxReceiveCount\":\"5\"}")),
 					"VisibilityTimeout": "30",
-				})
-				b.Set("QueueName", &in.QueueName, scenario.Name("q"))
+				}
+				in.QueueName = aws.String(scenario.Bind[string](b, "QueueName", scenario.Name("q")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -654,8 +659,8 @@ func (g *sqsScenarios) setupSqsGenMessage(ctx context.Context, t *harness.TestCo
 			Params: `{"AttributeNames":["QueueArn"],"QueueUrl":{"$ref":"queue.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.GetQueueAttributesInput{}
-				b.Set("AttributeNames", &in.AttributeNames, []any{"QueueArn"})
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+				in.AttributeNames = []types.QueueAttributeName{"QueueArn"}
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -675,8 +680,8 @@ func (g *sqsScenarios) teardownSqsGenMessage(ctx context.Context, t *harness.Tes
 			Params: `{"QueueUrl":{"$ref":"queue.url"},"ReceiptHandle":{"$ref":"message.receiptHandle"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.DeleteMessageInput{}
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
-				b.Set("ReceiptHandle", &in.ReceiptHandle, scenario.Ref("message.receiptHandle"))
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
+				in.ReceiptHandle = aws.String(scenario.Bind[string](b, "ReceiptHandle", scenario.Ref("message.receiptHandle")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -688,7 +693,7 @@ func (g *sqsScenarios) teardownSqsGenMessage(ctx context.Context, t *harness.Tes
 			Params: `{"QueueUrl":{"$ref":"queue.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.DeleteQueueInput{}
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -700,7 +705,7 @@ func (g *sqsScenarios) teardownSqsGenMessage(ctx context.Context, t *harness.Tes
 			Params: `{"QueueUrl":{"$ref":"dlq.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.DeleteQueueInput{}
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("dlq.url"))
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("dlq.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -717,8 +722,8 @@ func (g *sqsScenarios) testSqsGenMessageSendMessage(ctx context.Context, t *harn
 			Params: `{"MessageBody":"compat scenario message","QueueUrl":{"$ref":"queue.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.SendMessageInput{}
-				b.Set("MessageBody", &in.MessageBody, "compat scenario message")
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+				in.MessageBody = aws.String("compat scenario message")
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -741,10 +746,10 @@ func (g *sqsScenarios) testSqsGenMessageSendMessage(ctx context.Context, t *harn
 						Params: `{"MaxNumberOfMessages":1,"QueueUrl":{"$ref":"queue.url"},"VisibilityTimeout":1,"WaitTimeSeconds":5}`,
 						Build: func(b *scenario.Binder) any {
 							in := &sqs.ReceiveMessageInput{}
-							b.Set("MaxNumberOfMessages", &in.MaxNumberOfMessages, 1)
-							b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
-							b.Set("VisibilityTimeout", &in.VisibilityTimeout, 1)
-							b.Set("WaitTimeSeconds", &in.WaitTimeSeconds, 5)
+							in.MaxNumberOfMessages = 1
+							in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
+							in.VisibilityTimeout = 1
+							in.WaitTimeSeconds = 5
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -766,9 +771,9 @@ func (g *sqsScenarios) testSqsGenMessageReceiveMessage(ctx context.Context, t *h
 			Params: `{"MaxNumberOfMessages":1,"QueueUrl":{"$ref":"queue.url"},"WaitTimeSeconds":5}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.ReceiveMessageInput{}
-				b.Set("MaxNumberOfMessages", &in.MaxNumberOfMessages, 1)
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
-				b.Set("WaitTimeSeconds", &in.WaitTimeSeconds, 5)
+				in.MaxNumberOfMessages = 1
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
+				in.WaitTimeSeconds = 5
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -793,9 +798,9 @@ func (g *sqsScenarios) testSqsGenMessageChangeMessageVisibility(ctx context.Cont
 			Params: `{"QueueUrl":{"$ref":"queue.url"},"ReceiptHandle":{"$ref":"message.receiptHandle"},"VisibilityTimeout":1}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.ChangeMessageVisibilityInput{}
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
-				b.Set("ReceiptHandle", &in.ReceiptHandle, scenario.Ref("message.receiptHandle"))
-				b.Set("VisibilityTimeout", &in.VisibilityTimeout, 1)
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
+				in.ReceiptHandle = aws.String(scenario.Bind[string](b, "ReceiptHandle", scenario.Ref("message.receiptHandle")))
+				in.VisibilityTimeout = 1
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -810,10 +815,10 @@ func (g *sqsScenarios) testSqsGenMessageChangeMessageVisibility(ctx context.Cont
 						Params: `{"MaxNumberOfMessages":1,"QueueUrl":{"$ref":"queue.url"},"VisibilityTimeout":1,"WaitTimeSeconds":5}`,
 						Build: func(b *scenario.Binder) any {
 							in := &sqs.ReceiveMessageInput{}
-							b.Set("MaxNumberOfMessages", &in.MaxNumberOfMessages, 1)
-							b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
-							b.Set("VisibilityTimeout", &in.VisibilityTimeout, 1)
-							b.Set("WaitTimeSeconds", &in.WaitTimeSeconds, 5)
+							in.MaxNumberOfMessages = 1
+							in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
+							in.VisibilityTimeout = 1
+							in.WaitTimeSeconds = 5
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -837,8 +842,8 @@ func (g *sqsScenarios) testSqsGenMessageDeleteMessage(ctx context.Context, t *ha
 			Params: `{"QueueUrl":{"$ref":"queue.url"},"ReceiptHandle":{"$ref":"message.receiptHandle"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.DeleteMessageInput{}
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
-				b.Set("ReceiptHandle", &in.ReceiptHandle, scenario.Ref("message.receiptHandle"))
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
+				in.ReceiptHandle = aws.String(scenario.Bind[string](b, "ReceiptHandle", scenario.Ref("message.receiptHandle")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -853,10 +858,10 @@ func (g *sqsScenarios) testSqsGenMessageDeleteMessage(ctx context.Context, t *ha
 						Params: `{"MaxNumberOfMessages":10,"QueueUrl":{"$ref":"queue.url"},"VisibilityTimeout":1,"WaitTimeSeconds":1}`,
 						Build: func(b *scenario.Binder) any {
 							in := &sqs.ReceiveMessageInput{}
-							b.Set("MaxNumberOfMessages", &in.MaxNumberOfMessages, 10)
-							b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
-							b.Set("VisibilityTimeout", &in.VisibilityTimeout, 1)
-							b.Set("WaitTimeSeconds", &in.WaitTimeSeconds, 1)
+							in.MaxNumberOfMessages = 10
+							in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
+							in.VisibilityTimeout = 1
+							in.WaitTimeSeconds = 1
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -880,7 +885,7 @@ func (g *sqsScenarios) setupSqsGenBatch(ctx context.Context, t *harness.TestCont
 			Params: `{"QueueName":{"$name":"dlq"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.CreateQueueInput{}
-				b.Set("QueueName", &in.QueueName, scenario.Name("dlq"))
+				in.QueueName = aws.String(scenario.Bind[string](b, "QueueName", scenario.Name("dlq")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -895,8 +900,8 @@ func (g *sqsScenarios) setupSqsGenBatch(ctx context.Context, t *harness.TestCont
 			Params: `{"AttributeNames":["QueueArn"],"QueueUrl":{"$ref":"dlq.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.GetQueueAttributesInput{}
-				b.Set("AttributeNames", &in.AttributeNames, []any{"QueueArn"})
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("dlq.url"))
+				in.AttributeNames = []types.QueueAttributeName{"QueueArn"}
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("dlq.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -911,11 +916,11 @@ func (g *sqsScenarios) setupSqsGenBatch(ctx context.Context, t *harness.TestCont
 			Params: `{"Attributes":{"RedrivePolicy":{"$concat":["{\"deadLetterTargetArn\":\"",{"$ref":"dlq.arn"},"\",\"maxReceiveCount\":\"5\"}"]},"VisibilityTimeout":"30"},"QueueName":{"$name":"q"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.CreateQueueInput{}
-				b.Set("Attributes", &in.Attributes, map[string]any{
-					"RedrivePolicy":     scenario.Concat("{\"deadLetterTargetArn\":\"", scenario.Ref("dlq.arn"), "\",\"maxReceiveCount\":\"5\"}"),
+				in.Attributes = map[string]string{
+					"RedrivePolicy":     scenario.Bind[string](b, "Attributes", scenario.Concat("{\"deadLetterTargetArn\":\"", scenario.Ref("dlq.arn"), "\",\"maxReceiveCount\":\"5\"}")),
 					"VisibilityTimeout": "30",
-				})
-				b.Set("QueueName", &in.QueueName, scenario.Name("q"))
+				}
+				in.QueueName = aws.String(scenario.Bind[string](b, "QueueName", scenario.Name("q")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -930,8 +935,8 @@ func (g *sqsScenarios) setupSqsGenBatch(ctx context.Context, t *harness.TestCont
 			Params: `{"AttributeNames":["QueueArn"],"QueueUrl":{"$ref":"queue.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.GetQueueAttributesInput{}
-				b.Set("AttributeNames", &in.AttributeNames, []any{"QueueArn"})
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+				in.AttributeNames = []types.QueueAttributeName{"QueueArn"}
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -951,10 +956,13 @@ func (g *sqsScenarios) teardownSqsGenBatch(ctx context.Context, t *harness.TestC
 			Params: `{"Entries":[{"Id":"1","ReceiptHandle":{"$ref":"batch.receiptHandle"}}],"QueueUrl":{"$ref":"queue.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.DeleteMessageBatchInput{}
-				b.Set("Entries", &in.Entries, []any{
-					map[string]any{"Id": "1", "ReceiptHandle": scenario.Ref("batch.receiptHandle")},
-				})
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+				in.Entries = []types.DeleteMessageBatchRequestEntry{
+					{
+						Id:            aws.String("1"),
+						ReceiptHandle: aws.String(scenario.Bind[string](b, "Entries", scenario.Ref("batch.receiptHandle"))),
+					},
+				}
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -966,7 +974,7 @@ func (g *sqsScenarios) teardownSqsGenBatch(ctx context.Context, t *harness.TestC
 			Params: `{"QueueUrl":{"$ref":"queue.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.DeleteQueueInput{}
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -978,7 +986,7 @@ func (g *sqsScenarios) teardownSqsGenBatch(ctx context.Context, t *harness.TestC
 			Params: `{"QueueUrl":{"$ref":"dlq.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.DeleteQueueInput{}
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("dlq.url"))
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("dlq.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -995,11 +1003,11 @@ func (g *sqsScenarios) testSqsGenBatchSendMessageBatch(ctx context.Context, t *h
 			Params: `{"Entries":[{"Id":"1","MessageBody":"compat batch message 1"},{"Id":"2","MessageBody":"compat batch message 2"}],"QueueUrl":{"$ref":"queue.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.SendMessageBatchInput{}
-				b.Set("Entries", &in.Entries, []any{
-					map[string]any{"Id": "1", "MessageBody": "compat batch message 1"},
-					map[string]any{"Id": "2", "MessageBody": "compat batch message 2"},
-				})
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+				in.Entries = []types.SendMessageBatchRequestEntry{
+					{Id: aws.String("1"), MessageBody: aws.String("compat batch message 1")},
+					{Id: aws.String("2"), MessageBody: aws.String("compat batch message 2")},
+				}
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -1022,9 +1030,9 @@ func (g *sqsScenarios) testSqsGenBatchSendMessageBatch(ctx context.Context, t *h
 						Params: `{"MaxNumberOfMessages":10,"QueueUrl":{"$ref":"queue.url"},"WaitTimeSeconds":5}`,
 						Build: func(b *scenario.Binder) any {
 							in := &sqs.ReceiveMessageInput{}
-							b.Set("MaxNumberOfMessages", &in.MaxNumberOfMessages, 10)
-							b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
-							b.Set("WaitTimeSeconds", &in.WaitTimeSeconds, 5)
+							in.MaxNumberOfMessages = 10
+							in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
+							in.WaitTimeSeconds = 5
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -1049,14 +1057,14 @@ func (g *sqsScenarios) testSqsGenBatchChangeMessageVisibilityBatch(ctx context.C
 			Params: `{"Entries":[{"Id":"1","ReceiptHandle":{"$ref":"batch.receiptHandle"},"VisibilityTimeout":1}],"QueueUrl":{"$ref":"queue.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.ChangeMessageVisibilityBatchInput{}
-				b.Set("Entries", &in.Entries, []any{
-					map[string]any{
-						"Id":                "1",
-						"ReceiptHandle":     scenario.Ref("batch.receiptHandle"),
-						"VisibilityTimeout": 1,
+				in.Entries = []types.ChangeMessageVisibilityBatchRequestEntry{
+					{
+						Id:                aws.String("1"),
+						ReceiptHandle:     aws.String(scenario.Bind[string](b, "Entries", scenario.Ref("batch.receiptHandle"))),
+						VisibilityTimeout: 1,
 					},
-				})
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+				}
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -1074,10 +1082,10 @@ func (g *sqsScenarios) testSqsGenBatchChangeMessageVisibilityBatch(ctx context.C
 						Params: `{"MaxNumberOfMessages":10,"QueueUrl":{"$ref":"queue.url"},"VisibilityTimeout":1,"WaitTimeSeconds":5}`,
 						Build: func(b *scenario.Binder) any {
 							in := &sqs.ReceiveMessageInput{}
-							b.Set("MaxNumberOfMessages", &in.MaxNumberOfMessages, 10)
-							b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
-							b.Set("VisibilityTimeout", &in.VisibilityTimeout, 1)
-							b.Set("WaitTimeSeconds", &in.WaitTimeSeconds, 5)
+							in.MaxNumberOfMessages = 10
+							in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
+							in.VisibilityTimeout = 1
+							in.WaitTimeSeconds = 5
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -1101,10 +1109,10 @@ func (g *sqsScenarios) testSqsGenBatchReceiveMessage(ctx context.Context, t *har
 			Params: `{"MaxNumberOfMessages":10,"QueueUrl":{"$ref":"queue.url"},"VisibilityTimeout":1,"WaitTimeSeconds":5}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.ReceiveMessageInput{}
-				b.Set("MaxNumberOfMessages", &in.MaxNumberOfMessages, 10)
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
-				b.Set("VisibilityTimeout", &in.VisibilityTimeout, 1)
-				b.Set("WaitTimeSeconds", &in.WaitTimeSeconds, 5)
+				in.MaxNumberOfMessages = 10
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
+				in.VisibilityTimeout = 1
+				in.WaitTimeSeconds = 5
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -1131,10 +1139,13 @@ func (g *sqsScenarios) testSqsGenBatchDeleteMessageBatch(ctx context.Context, t 
 			Params: `{"Entries":[{"Id":"1","ReceiptHandle":{"$ref":"batch.receiptHandle"}}],"QueueUrl":{"$ref":"queue.url"}}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.DeleteMessageBatchInput{}
-				b.Set("Entries", &in.Entries, []any{
-					map[string]any{"Id": "1", "ReceiptHandle": scenario.Ref("batch.receiptHandle")},
-				})
-				b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
+				in.Entries = []types.DeleteMessageBatchRequestEntry{
+					{
+						Id:            aws.String("1"),
+						ReceiptHandle: aws.String(scenario.Bind[string](b, "Entries", scenario.Ref("batch.receiptHandle"))),
+					},
+				}
+				in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
@@ -1149,10 +1160,10 @@ func (g *sqsScenarios) testSqsGenBatchDeleteMessageBatch(ctx context.Context, t 
 						Params: `{"MaxNumberOfMessages":10,"QueueUrl":{"$ref":"queue.url"},"VisibilityTimeout":1,"WaitTimeSeconds":5}`,
 						Build: func(b *scenario.Binder) any {
 							in := &sqs.ReceiveMessageInput{}
-							b.Set("MaxNumberOfMessages", &in.MaxNumberOfMessages, 10)
-							b.Set("QueueUrl", &in.QueueUrl, scenario.Ref("queue.url"))
-							b.Set("VisibilityTimeout", &in.VisibilityTimeout, 1)
-							b.Set("WaitTimeSeconds", &in.WaitTimeSeconds, 5)
+							in.MaxNumberOfMessages = 10
+							in.QueueUrl = aws.String(scenario.Bind[string](b, "QueueUrl", scenario.Ref("queue.url")))
+							in.VisibilityTimeout = 1
+							in.WaitTimeSeconds = 5
 							return in
 						},
 						Send: func(ctx context.Context, in any) (any, error) {
@@ -1186,7 +1197,7 @@ func (g *sqsScenarios) testSqsGenProbeListMessageMoveTasks(ctx context.Context, 
 			Params: `{"SourceArn":"arn:aws:sqs:us-east-1:123456789012:compat-scenario-nonexistent"}`,
 			Build: func(b *scenario.Binder) any {
 				in := &sqs.ListMessageMoveTasksInput{}
-				b.Set("SourceArn", &in.SourceArn, "arn:aws:sqs:us-east-1:123456789012:compat-scenario-nonexistent")
+				in.SourceArn = aws.String("arn:aws:sqs:us-east-1:123456789012:compat-scenario-nonexistent")
 				return in
 			},
 			Send: func(ctx context.Context, in any) (any, error) {
