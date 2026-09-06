@@ -40,6 +40,8 @@ A Lambda function gets `/aws/lambda/<function-name>` created for it at
 | Area | Behaviour |
 | --- | --- |
 | Groups, streams, events | Full CRUD, plus `GetLogEvents` and `FilterLogEvents` |
+| Paging | `DescribeLogGroups` and `DescribeLogStreams` honour `limit` (default and maximum 50) and page with `nextToken` |
+| Ingestion window | An out-of-window log event is discarded and reported in `rejectedLogEventsInfo`, and the call still succeeds |
 | Filter patterns | Plain text, JSON (`{ $.field = value }`), and space-delimited (`[col, ...]`) patterns |
 | Retention | `PutRetentionPolicy` is enforced by a background sweep every 5 minutes, in every storage mode. A group with no policy keeps events indefinitely |
 | Stream cleanup | The same sweep removes a stream once its last event has aged out and nothing is left buffered. A stream that never received an event is never removed |
@@ -50,23 +52,30 @@ A Lambda function gets `/aws/lambda/<function-name>` created for it at
 
 ## Validation
 
-Two input rules are enforced before anything is written, so a bad request never
-half-applies.
+Three input rules are enforced before anything is written, so a bad request
+never half-applies.
 
 | Input | Rule |
 | --- | --- |
 | `retentionInDays` | One of 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653 |
 | Tags | At most 50 per group, keys 1–128 characters, values 0–256, no key beginning `aws:` |
+| `logEvents` | Ascending by `timestamp`. An unordered batch is refused whole |
 
-Both return `InvalidParameterException` and leave existing state untouched.
+All three return `InvalidParameterException` and leave existing state untouched.
 `AWS::Logs::LogGroup` inherits them from the service, so a template carrying an
 unsupported `RetentionInDays` fails the resource and rolls the stack back.
+
+An event's timestamp is the exception to that rule. One more than two hours
+ahead of now, older than 14 days, or older than the log group's retention
+period is discarded rather than refused: `PutLogEvents` still answers `200` and
+names the discarded range in `rejectedLogEventsInfo`, which is the only signal
+a client gets that the data never landed.
 
 ## Differences from AWS
 
 | Area                      | On AWS                             | Overcast                                                                                                                                                                           |
 | ------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Logs Insights             | `StartQuery` and `GetQueryResults` | Both return `501`                                                                                                                                                                  |
+| Logs Insights             | `StartQuery` and `GetQueryResults` | Both return `501`, so `GetLogRecord` resolves only an `eventId` handed out by `FilterLogEvents`                                                                                    |
 | Subscription filters      | Fan out to Lambda or Kinesis       | `PutSubscriptionFilter` returns `501`; there is no fan-out                                                                                                                         |
 | Metric filters            | Log events become metrics          | `PutMetricFilter` returns `501`; they never do                                                                                                                                     |
 | `StartLiveTail` over CBOR | Supported                          | Returns `501`; only the JSON protocol serves it                                                                                                                                    |
@@ -99,7 +108,7 @@ which the console's tail view uses, needs nothing extra.
 
 ## Operations
 
-18 of 22 listed operations are implemented.
+19 of 23 listed operations are implemented.
 Per-operation status, notes and AWS API links: [CloudWatch Logs operations](cloudwatch-logs/operations.md).
 
 <!-- END overcast:capabilities -->

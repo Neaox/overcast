@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1486,
+  "total_ops": 1487,
   "services": [
     {
       "service": "s3",
@@ -6405,8 +6405,8 @@
     {
       "service": "cloudwatch-logs",
       "display_name": "CloudWatch Logs",
-      "total_ops": 22,
-      "implemented_ops": 18,
+      "total_ops": 23,
+      "implemented_ops": 19,
       "operations": [
         {
           "operation": "CreateLogGroup",
@@ -6418,7 +6418,7 @@
           "operation": "DescribeLogGroups",
           "category": "Log groups",
           "status": "✅ Supported",
-          "notes": "Optional `logGroupNamePrefix` filter"
+          "notes": "Optional `logGroupNamePrefix` filter; `limit` (default and maximum 50) and `nextToken` page the ASCII-sorted result"
         },
         {
           "operation": "DeleteLogGroup",
@@ -6436,7 +6436,7 @@
           "operation": "DescribeLogStreams",
           "category": "Log streams",
           "status": "✅ Supported",
-          "notes": "Optional `logStreamNamePrefix` filter"
+          "notes": "Optional `logStreamNamePrefix` filter; `limit` (default and maximum 50) and `nextToken` page the result (`orderBy`/`descending` are accepted but ignored)"
         },
         {
           "operation": "DeleteLogStream",
@@ -6448,7 +6448,7 @@
           "operation": "PutLogEvents",
           "category": "Log events",
           "status": "✅ Supported",
-          "notes": "Accepts batch of events; sets ingestion time"
+          "notes": "Accepts a batch of events and sets ingestion time; an event more than 2 hours ahead, older than 14 days or older than the group's retention is discarded and reported in `rejectedLogEventsInfo` behind a 200; a batch that is not in chronological order is refused with `InvalidParameterException`"
         },
         {
           "operation": "GetLogEvents",
@@ -6460,7 +6460,13 @@
           "operation": "FilterLogEvents",
           "category": "Log events",
           "status": "✅ Supported",
-          "notes": "Text patterns (AND, quoted, ?OR), JSON patterns (`{ $.field op value }` with `\u0026\u0026`/`||`, EXISTS, IS NULL), space-delimited patterns (`[col, col = val, ...]` with `*` glob, `%regex%`, numeric ops, `\u0026\u0026`/`||`, ellipsis); time range, stream name/prefix"
+          "notes": "Text patterns (AND, quoted, ?OR), JSON patterns (`{ $.field op value }` with `\u0026\u0026`/`||`, EXISTS, IS NULL), space-delimited patterns (`[col, col = val, ...]` with `*` glob, `%regex%`, numeric ops, `\u0026\u0026`/`||`, ellipsis); time range, stream name/prefix; each event carries an `eventId` that resolves through GetLogRecord"
+        },
+        {
+          "operation": "GetLogRecord",
+          "category": "Log events",
+          "status": "⚠️ Partial",
+          "notes": "Resolves an `eventId` returned by FilterLogEvents to that event's `@message`, `@timestamp`, `@ingestionTime`, `@log` and `@logStream`; a Logs Insights `@ptr` cannot be produced here because StartQuery is unimplemented, and a structured message is not split into per-field entries"
         },
         {
           "operation": "StartLiveTail",

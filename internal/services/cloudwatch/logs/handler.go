@@ -1,10 +1,7 @@
 package logs
 
 import (
-	"fmt"
 	"net/http"
-	"sort"
-	"strconv"
 
 	"github.com/overcast-sh/overcast/internal/clock"
 	"github.com/overcast-sh/overcast/internal/config"
@@ -50,6 +47,7 @@ func (h *Handler) initOps() {
 		"DescribeLogStreams": h.DescribeLogStreams,
 		"PutLogEvents":       h.PutLogEvents,
 		"GetLogEvents":       h.GetLogEvents,
+		"GetLogRecord":       h.GetLogRecord,
 		"StartLiveTail":      h.StartLiveTail,
 		// P2 — stubs (handler_stubs.go)
 		"DeleteLogGroup":  h.DeleteLogGroup,
@@ -93,43 +91,25 @@ func (h *Handler) CreateLogGroup(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, struct{}{})
 }
 
-// DescribeLogGroups returns a list of log groups.
+// DescribeLogGroups returns a page of log groups.
 // AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_DescribeLogGroups.html
+//
+// Delegates to describeLogGroupsTyped (typed_logic.go) so the JSON and
+// CBOR/typed-operation paths share one implementation of the limit + nextToken
+// contract. This handler used to carry its own copy, which is how the JSON
+// path — the one every SDK takes — returned every log group whatever `limit`
+// asked for (#1721).
 func (h *Handler) DescribeLogGroups(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		LogGroupNamePrefix string `json:"logGroupNamePrefix,omitempty"`
-		Limit              int    `json:"limit,omitempty"`
-		NextToken          string `json:"nextToken,omitempty"`
-	}
+	var req describeLogGroupsRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-
-	groups, aerr := h.store.listLogGroups(r.Context(), req.LogGroupNamePrefix)
+	resp, aerr := h.describeLogGroupsTyped(r.Context(), &req)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	type logGroupResp struct {
-		LogGroupName    string `json:"logGroupName"`
-		ARN             string `json:"arn"`
-		CreationTime    int64  `json:"creationTime"`
-		RetentionInDays int    `json:"retentionInDays,omitempty"`
-	}
-	out := make([]logGroupResp, 0, len(groups))
-	for _, g := range groups {
-		out = append(out, logGroupResp{
-			LogGroupName:    g.Name,
-			ARN:             g.ARN,
-			CreationTime:    g.CreationTime,
-			RetentionInDays: g.RetentionInDays,
-		})
-	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"logGroups": out,
-	})
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
 // CreateLogStream creates a new log stream within a group.
@@ -238,161 +218,39 @@ func (h *Handler) CreateLogStream(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, struct{}{})
 }
 
-// DescribeLogStreams lists log streams within a group.
+// DescribeLogStreams returns a page of log streams within a group.
 // AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_DescribeLogStreams.html
+//
+// Delegates to describeLogStreamsTyped — see DescribeLogGroups above.
 func (h *Handler) DescribeLogStreams(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		LogGroupName        string `json:"logGroupName"`
-		LogStreamNamePrefix string `json:"logStreamNamePrefix,omitempty"`
-		Limit               int    `json:"limit,omitempty"`
-		NextToken           string `json:"nextToken,omitempty"`
-	}
+	var req describeLogStreamsRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.LogGroupName == "" {
-		protocol.WriteJSONError(w, r, errInvalidParameter("logGroupName is required"))
-		return
-	}
-
-	ctx := r.Context()
-
-	// Group must exist.
-	if _, aerr := h.store.getLogGroup(ctx, req.LogGroupName); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	streams, aerr := h.store.listLogStreams(ctx, req.LogGroupName, req.LogStreamNamePrefix)
+	resp, aerr := h.describeLogStreamsTyped(r.Context(), &req)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	type logStreamResp struct {
-		LogStreamName       string `json:"logStreamName"`
-		ARN                 string `json:"arn"`
-		CreationTime        int64  `json:"creationTime"`
-		FirstEventTimestamp int64  `json:"firstEventTimestamp,omitempty"`
-		LastEventTimestamp  int64  `json:"lastEventTimestamp,omitempty"`
-		LastIngestionTime   int64  `json:"lastIngestionTime,omitempty"`
-		UploadSequenceToken string `json:"uploadSequenceToken,omitempty"`
-	}
-	out := make([]logStreamResp, 0, len(streams))
-	for _, s := range streams {
-		out = append(out, logStreamResp{
-			LogStreamName:       s.Name,
-			ARN:                 s.ARN,
-			CreationTime:        s.CreationTime,
-			FirstEventTimestamp: s.FirstEventTimestamp,
-			LastEventTimestamp:  s.LastEventTimestamp,
-			LastIngestionTime:   s.LastIngestionTime,
-			UploadSequenceToken: s.UploadSequenceToken,
-		})
-	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"logStreams": out,
-	})
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
 // PutLogEvents appends log events to a stream.
 // AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutLogEvents.html
+//
+// Delegates to putLogEventsTyped — see DescribeLogGroups above for why the two
+// wire paths share one implementation.
 func (h *Handler) PutLogEvents(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		LogGroupName  string `json:"logGroupName"`
-		LogStreamName string `json:"logStreamName"`
-		LogEvents     []struct {
-			Timestamp int64  `json:"timestamp"`
-			Message   string `json:"message"`
-		} `json:"logEvents"`
-	}
+	var req putLogEventsRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.LogGroupName == "" || req.LogStreamName == "" {
-		protocol.WriteJSONError(w, r, errInvalidParameter("logGroupName and logStreamName are required"))
-		return
-	}
-	if len(req.LogEvents) == 0 {
-		protocol.WriteJSONError(w, r, errInvalidParameter("logEvents must not be empty"))
-		return
-	}
-
-	ctx := r.Context()
-
-	// Group must exist.
-	if _, aerr := h.store.getLogGroup(ctx, req.LogGroupName); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	// Stream must exist.
-	ls, aerr := h.store.getLogStream(ctx, req.LogGroupName, req.LogStreamName)
+	resp, aerr := h.putLogEventsTyped(r.Context(), &req)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	now := h.clk.Now().UnixMilli()
-	events := make([]LogEvent, 0, len(req.LogEvents))
-	for _, e := range req.LogEvents {
-		events = append(events, LogEvent{
-			Timestamp:     e.Timestamp,
-			Message:       e.Message,
-			IngestionTime: now,
-		})
-	}
-
-	if aerr := h.store.appendEvents(ctx, req.LogGroupName, req.LogStreamName, events); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	// Update stream metadata.
-	sort.Slice(events, func(i, j int) bool { return events[i].Timestamp < events[j].Timestamp })
-	firstTs := events[0].Timestamp
-	lastTs := events[len(events)-1].Timestamp
-	if ls.FirstEventTimestamp == 0 || firstTs < ls.FirstEventTimestamp {
-		ls.FirstEventTimestamp = firstTs
-	}
-	if lastTs > ls.LastEventTimestamp {
-		ls.LastEventTimestamp = lastTs
-	}
-	ls.LastIngestionTime = now
-
-	// Increment sequence token.
-	seq, _ := strconv.Atoi(ls.UploadSequenceToken)
-	ls.UploadSequenceToken = fmt.Sprintf("%d", seq+1)
-
-	if aerr := h.store.putLogStream(ctx, req.LogGroupName, ls); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"nextSequenceToken": ls.UploadSequenceToken,
-	})
-
-	// Publish to the event bus so connected clients can tail this stream in real time.
-	if h.bus != nil {
-		items := make([]eventsbus.LogEventItem, 0, len(events))
-		for _, e := range events {
-			items = append(items, eventsbus.LogEventItem{
-				Timestamp: e.Timestamp,
-				Message:   e.Message,
-			})
-		}
-		h.bus.Publish(ctx, eventsbus.Event{
-			Type:   eventsbus.LogEventsWritten,
-			Source: "logs",
-			Payload: eventsbus.LogEventsWrittenPayload{
-				LogGroupName:  req.LogGroupName,
-				LogStreamName: req.LogStreamName,
-				Events:        items,
-			},
-		})
-	}
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
 // AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_GetLogEvents.html
@@ -431,6 +289,26 @@ func (h *Handler) FilterLogEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp, aerr := h.filterLogEventsTyped(r.Context(), &req)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
+}
+
+// GetLogRecord resolves an eventId returned by FilterLogEvents back to the
+// single event it names.
+// AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_GetLogRecord.html
+//
+// Delegates to getLogRecordTyped (typed_logic.go) — see GetLogEvents' doc
+// comment above for why the JSON and CBOR/typed-operation paths share one
+// implementation.
+func (h *Handler) GetLogRecord(w http.ResponseWriter, r *http.Request) {
+	var req getLogRecordRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	resp, aerr := h.getLogRecordTyped(r.Context(), &req)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return

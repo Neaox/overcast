@@ -12,6 +12,7 @@ import {
   ListTagsLogGroupCommand,
   PutRetentionPolicyCommand,
 } from "@aws-sdk/client-cloudwatch-logs"
+import type { LogGroup, LogStream } from "@aws-sdk/client-cloudwatch-logs"
 
 export interface CreateLogGroupInput {
   name: string
@@ -21,12 +22,27 @@ export interface CreateLogGroupInput {
   retentionInDays?: number
 }
 
+/** Pages of 50 to walk before giving up on a nextToken that never clears. */
+const maxListPages = 100
+
 export const logs = {
+  // DescribeLogGroups and DescribeLogStreams return at most 50 items per call,
+  // so both list helpers follow nextToken to the end: the console shows every
+  // group and stream, not the first page of them.
+  // maxListPages is a stop so a server that kept handing back a token could
+  // never spin the browser.
   listGroups: async (prefix?: string) => {
-    const res = await awsClients
-      .logs()
-      .send(new DescribeLogGroupsCommand({ logGroupNamePrefix: prefix || undefined }))
-    return res.logGroups ?? []
+    const groups: LogGroup[] = []
+    let nextToken: string | undefined
+    for (let page = 0; page < maxListPages; page++) {
+      const res = await awsClients
+        .logs()
+        .send(new DescribeLogGroupsCommand({ logGroupNamePrefix: prefix || undefined, nextToken }))
+      groups.push(...(res.logGroups ?? []))
+      nextToken = res.nextToken
+      if (!nextToken) break
+    }
+    return groups
   },
 
   createGroup: async ({ name, tags, retentionInDays }: CreateLogGroupInput) => {
@@ -57,13 +73,21 @@ export const logs = {
   },
 
   listStreams: async (groupName: string, prefix?: string) => {
-    const res = await awsClients.logs().send(
-      new DescribeLogStreamsCommand({
-        logGroupName: groupName,
-        logStreamNamePrefix: prefix || undefined,
-      }),
-    )
-    return res.logStreams ?? []
+    const streams: LogStream[] = []
+    let nextToken: string | undefined
+    for (let page = 0; page < maxListPages; page++) {
+      const res = await awsClients.logs().send(
+        new DescribeLogStreamsCommand({
+          logGroupName: groupName,
+          logStreamNamePrefix: prefix || undefined,
+          nextToken,
+        }),
+      )
+      streams.push(...(res.logStreams ?? []))
+      nextToken = res.nextToken
+      if (!nextToken) break
+    }
+    return streams
   },
 
   createStream: async (groupName: string, name: string) => {
