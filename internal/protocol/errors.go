@@ -49,6 +49,17 @@ type AWSError struct {
 	Message string
 	// HTTPStatus is the HTTP status code to send, e.g. 404, 400, 500.
 	HTTPStatus int
+	// QueryErrorCode, when set, is the legacy AWS Query-protocol error code
+	// for this error. WriteJSONError renders it as the x-amzn-query-error
+	// response header (format "<code>;Sender" or "<code>;Receiver", chosen
+	// from HTTPStatus) — the header AWS sends on every JSON-protocol error
+	// response for a service marked aws.protocols#awsQueryCompatible, so
+	// that clients still speaking the legacy Query error codes keep working.
+	// Left empty (the default, and the only value any service but SQS ever
+	// sets) it renders no header at all, so this field is a no-op for every
+	// service that never sets it. See internal/services/sqs's query error
+	// table for the one service that does, and why.
+	QueryErrorCode string
 	// cause is the underlying error that triggered this AWSError.
 	// It is not sent to clients — it is for internal logging and error chain
 	// inspection only. Equivalent to JavaScript's Error.cause.
@@ -106,10 +117,11 @@ func (e *AWSError) Unwrap() error {
 // Wrap never modifies the template — it always returns a new AWSError value.
 func Wrap(template *AWSError, cause error) *AWSError {
 	return &AWSError{
-		Code:       template.Code,
-		Message:    template.Message,
-		HTTPStatus: template.HTTPStatus,
-		cause:      cause,
+		Code:           template.Code,
+		Message:        template.Message,
+		HTTPStatus:     template.HTTPStatus,
+		QueryErrorCode: template.QueryErrorCode,
+		cause:          cause,
 	}
 }
 
@@ -355,11 +367,26 @@ func WriteJSONError(w http.ResponseWriter, r *http.Request, aerr *AWSError) {
 	w.Header().Set("Content-Type", "application/x-amz-json-1.0")
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.Header().Set("x-amzn-requestid", reqID)
+	if aerr.QueryErrorCode != "" {
+		w.Header().Set("x-amzn-query-error", aerr.QueryErrorCode+";"+querySenderOrReceiver(aerr.HTTPStatus))
+	}
 	if aerr.HTTPStatus == http.StatusNotImplemented {
 		w.Header().Set("x-emulator-unsupported", "true")
 	}
 	w.WriteHeader(aerr.HTTPStatus)
 	w.Write(body)
+}
+
+// querySenderOrReceiver classifies an HTTP status the way the
+// awsQueryCompatible protocol's x-amzn-query-error header does: a 5xx is the
+// service's own fault ("Receiver"), anything else is the caller's
+// ("Sender") — matching the smithy.api#error "client"/"server" trait value
+// AWS's error shapes carry, without needing to model that trait here too.
+func querySenderOrReceiver(httpStatus int) string {
+	if httpStatus >= http.StatusInternalServerError {
+		return "Receiver"
+	}
+	return "Sender"
 }
 
 // NotImplementedXML is a convenience handler for unimplemented S3 endpoints.

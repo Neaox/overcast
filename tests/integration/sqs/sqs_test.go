@@ -223,6 +223,31 @@ func TestGetQueueUrl_notFound(t *testing.T) {
 	helpers.AssertJSONError(t, resp, "AWS.SimpleQueueService.NonExistentQueue")
 }
 
+// TestGetQueueUrl_notFound_queryCompatibleHeader is #1810's regression test:
+// SQS's service shape is aws.protocols#awsQueryCompatible (see
+// models/aws/shapes/sqs.json), so every JSON-protocol error response must
+// carry x-amzn-query-error alongside the JSON body's own __type — real AWS
+// sends it so clients still speaking the legacy Query error codes keep
+// working. QueueDoesNotExist's legacy code happens to already be what
+// Overcast's __type carries, so this exercises the identity path through
+// internal/services/sqs/queryerror.go's table.
+func TestGetQueueUrl_notFound_queryCompatibleHeader(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := sqsCall(t, srv, "GetQueueUrl", map[string]any{
+		"QueueName": "no-such-queue",
+	})
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "AWS.SimpleQueueService.NonExistentQueue")
+
+	const want = "AWS.SimpleQueueService.NonExistentQueue;Sender"
+	if got := resp.Header.Get("x-amzn-query-error"); got != want {
+		t.Errorf("x-amzn-query-error = %q, want %q", got, want)
+	}
+}
+
 // ---- SendMessage -----------------------------------------------------------
 
 func TestSendMessage_success(t *testing.T) {
@@ -2781,6 +2806,16 @@ func TestCreateQueue_idempotent_differentAttributesReturnsError(t *testing.T) {
 	// Then: AWS returns QueueNameExists error because attributes differ.
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
 	helpers.AssertJSONError(t, resp, "QueueNameExists")
+
+	// And: the legacy Query-protocol code in x-amzn-query-error differs from
+	// the wire __type above — this is the translating half of #1810's table
+	// (QueueNameExists is the modeled shape name Overcast's __type carries;
+	// QueueAlreadyExists is what that shape's aws.protocols#awsQueryError
+	// trait says AWS actually sends as the legacy code).
+	const wantQueryError = "QueueAlreadyExists;Sender"
+	if got := resp.Header.Get("x-amzn-query-error"); got != wantQueryError {
+		t.Errorf("x-amzn-query-error = %q, want %q", got, wantQueryError)
+	}
 
 	// But when called with matching attributes, it returns the existing URL.
 	resp2 := sqsCall(t, srv, "CreateQueue", map[string]any{

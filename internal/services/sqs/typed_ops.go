@@ -12,70 +12,77 @@ import (
 
 // typedOps returns the typed operation registry for SQS, keyed by AWS
 // operation name. Built once at handler construction.
+//
+// Every function reference is wrapped with sqsTypedOp (queryerror.go), which
+// tags any *protocol.AWSError the operation returns with the legacy
+// x-amzn-query-error code before the dispatcher's codec writes it — the one
+// place every typed operation's error passes through, typed or not. See
+// queryerror.go's package doc comment for why the header lives there rather
+// than at each call site.
 func (h *Handler) typedOps() map[string]op.Operation {
 	return map[string]op.Operation{
 		"CreateQueue": op.NewTyped[createQueueRequest, createQueueResponse](
-			"CreateQueue", h.createQueueTyped,
+			"CreateQueue", sqsTypedOp(h.createQueueTyped),
 		),
 		"GetQueueUrl": op.NewTyped[getQueueURLRequest, getQueueURLResponse](
-			"GetQueueUrl", h.getQueueURLTyped,
+			"GetQueueUrl", sqsTypedOp(h.getQueueURLTyped),
 		),
 		"GetQueueAttributes": op.NewTyped[getQueueAttributesRequest, getQueueAttributesResponse](
-			"GetQueueAttributes", h.getQueueAttributesTyped,
+			"GetQueueAttributes", sqsTypedOp(h.getQueueAttributesTyped),
 		),
 		"SetQueueAttributes": op.NewTyped[setQueueAttributesRequest, struct{}](
-			"SetQueueAttributes", h.setQueueAttributesTyped,
+			"SetQueueAttributes", sqsTypedOp(h.setQueueAttributesTyped),
 		),
 		"DeleteQueue": op.NewTyped[deleteQueueRequest, struct{}](
-			"DeleteQueue", h.deleteQueueTyped,
+			"DeleteQueue", sqsTypedOp(h.deleteQueueTyped),
 		),
 		"ListQueues": op.NewTyped[listQueuesRequest, listQueuesResponse](
-			"ListQueues", h.listQueuesTyped,
+			"ListQueues", sqsTypedOp(h.listQueuesTyped),
 		),
 		"PurgeQueue": op.NewTyped[purgeQueueRequest, struct{}](
-			"PurgeQueue", h.purgeQueueTyped,
+			"PurgeQueue", sqsTypedOp(h.purgeQueueTyped),
 		),
 		"SendMessage": op.NewTyped[sendMessageRequest, sendMessageResponse](
-			"SendMessage", h.sendMessageTyped,
+			"SendMessage", sqsTypedOp(h.sendMessageTyped),
 		),
 		"ReceiveMessage": op.NewTyped[receiveMessageRequest, receiveMessageResponse](
-			"ReceiveMessage", h.receiveMessageTyped,
+			"ReceiveMessage", sqsTypedOp(h.receiveMessageTyped),
 		),
 		"DeleteMessage": op.NewTyped[deleteMessageRequest, struct{}](
-			"DeleteMessage", h.deleteMessageTyped,
+			"DeleteMessage", sqsTypedOp(h.deleteMessageTyped),
 		),
 		"SendMessageBatch": op.NewTyped[sendMessageBatchRequest, sendMessageBatchResponse](
-			"SendMessageBatch", h.sendMessageBatchTyped,
+			"SendMessageBatch", sqsTypedOp(h.sendMessageBatchTyped),
 		),
 		"DeleteMessageBatch": op.NewTyped[deleteMessageBatchRequest, deleteMessageBatchResponse](
-			"DeleteMessageBatch", h.deleteMessageBatchTyped,
+			"DeleteMessageBatch", sqsTypedOp(h.deleteMessageBatchTyped),
 		),
 		"ChangeMessageVisibility": op.NewTyped[changeMessageVisibilityRequest, struct{}](
-			"ChangeMessageVisibility", h.changeMessageVisibilityTyped,
+			"ChangeMessageVisibility", sqsTypedOp(h.changeMessageVisibilityTyped),
 		),
 		"ChangeMessageVisibilityBatch": op.NewTyped[changeMessageVisibilityBatchRequest, changeMessageVisibilityBatchResponse](
-			"ChangeMessageVisibilityBatch", h.changeMessageVisibilityBatchTyped,
+			"ChangeMessageVisibilityBatch", sqsTypedOp(h.changeMessageVisibilityBatchTyped),
 		),
 		"ListDeadLetterSourceQueues": op.NewTyped[listDeadLetterSourceQueuesRequest, listDeadLetterSourceQueuesResponse](
-			"ListDeadLetterSourceQueues", h.listDeadLetterSourceQueuesTyped,
+			"ListDeadLetterSourceQueues", sqsTypedOp(h.listDeadLetterSourceQueuesTyped),
 		),
 		"StartMessageMoveTask": op.NewTyped[startMessageMoveTaskRequest, startMessageMoveTaskResponse](
-			"StartMessageMoveTask", h.startMessageMoveTaskTyped,
+			"StartMessageMoveTask", sqsTypedOp(h.startMessageMoveTaskTyped),
 		),
 		"AddPermission": op.NewTyped[struct{}, struct{}](
-			"AddPermission", h.addPermissionTyped,
+			"AddPermission", sqsTypedOp(h.addPermissionTyped),
 		),
 		"RemovePermission": op.NewTyped[struct{}, struct{}](
-			"RemovePermission", h.removePermissionTyped,
+			"RemovePermission", sqsTypedOp(h.removePermissionTyped),
 		),
 		"ListQueueTags": op.NewTyped[listQueueTagsRequest, listQueueTagsResponse](
-			"ListQueueTags", h.listQueueTagsTyped,
+			"ListQueueTags", sqsTypedOp(h.listQueueTagsTyped),
 		),
 		"TagQueue": op.NewTyped[tagQueueRequest, struct{}](
-			"TagQueue", h.tagQueueTyped,
+			"TagQueue", sqsTypedOp(h.tagQueueTyped),
 		),
 		"UntagQueue": op.NewTyped[untagQueueRequest, struct{}](
-			"UntagQueue", h.untagQueueTyped,
+			"UntagQueue", sqsTypedOp(h.untagQueueTyped),
 		),
 	}
 }

@@ -305,13 +305,16 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 }
 
 // errInvalidAction is SQS's answer for an action naming no modeled operation,
-// in every protocol it speaks.
+// in every protocol it speaks. Reached via serviceutil.WriteUnhandledOperation
+// -> codec.WriteError, which bypasses both of queryerror.go's boundary
+// wrappers, so the x-amzn-query-error mapping is applied here directly
+// instead (harmless on the Query-XML path in query.go, which ignores it).
 func errInvalidAction(action string) *protocol.AWSError {
-	return &protocol.AWSError{
+	return withLegacyQueryError(&protocol.AWSError{
 		Code:       "InvalidAction",
 		Message:    "The action " + action + " is not valid for this web service.",
 		HTTPStatus: http.StatusBadRequest,
-	}
+	})
 }
 
 // RegisterRoutes mounts SQS handlers.

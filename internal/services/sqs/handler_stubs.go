@@ -37,13 +37,13 @@ func (h *Handler) ChangeMessageVisibility(w http.ResponseWriter, r *http.Request
 	}
 
 	if aerr := validateVisibilityTimeout("VisibilityTimeout", req.VisibilityTimeout); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 
 	_, messageID, err := decodeReceiptHandle(req.ReceiptHandle)
 	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
+		writeJSONError(w, r, &protocol.AWSError{
 			Code:       "ReceiptHandleIsInvalid",
 			Message:    "The receipt handle is invalid.",
 			HTTPStatus: http.StatusBadRequest,
@@ -54,11 +54,11 @@ func (h *Handler) ChangeMessageVisibility(w http.ResponseWriter, r *http.Request
 	queueName := queueNameFromURL(req.QueueUrl)
 	msg, aerr := h.store.getMessage(r.Context(), queueName, messageID)
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 	if msg.ReceiptHandle != req.ReceiptHandle {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
+		writeJSONError(w, r, &protocol.AWSError{
 			Code:       "ReceiptHandleIsInvalid",
 			Message:    "The receipt handle has expired or been superseded.",
 			HTTPStatus: http.StatusBadRequest,
@@ -70,7 +70,7 @@ func (h *Handler) ChangeMessageVisibility(w http.ResponseWriter, r *http.Request
 	msg.VisibleAfter = h.clk.Now().Add(time.Duration(req.VisibilityTimeout) * time.Second)
 	msg.VisibilityVersion++
 	if aerr := h.store.putMessage(r.Context(), queueName, msg); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 

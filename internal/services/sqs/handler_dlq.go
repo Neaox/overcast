@@ -240,7 +240,7 @@ func (h *Handler) ListDeadLetterSourceQueues(w http.ResponseWriter, r *http.Requ
 		QueueUrl: req.QueueUrl,
 	})
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, resp)
@@ -313,7 +313,7 @@ func (h *Handler) StartMessageMoveTask(w http.ResponseWriter, r *http.Request) {
 		DestinationArn: req.DestinationArn,
 	})
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+		writeJSONError(w, r, aerr)
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, resp)
